@@ -1,0 +1,120 @@
+{{- $name := include "embodied-runtime.devicePluginName" . -}}
+{{- $sa := include "embodied-runtime.serviceAccountName" . -}}
+{{- $cm := include "embodied-runtime.configMapName" . -}}
+{{- $namespace := .Values.namespace -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    app: {{ $name }}
+    {{- include "embodied-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/component: device-plugin
+spec:
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+        {{- include "embodied-runtime.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $sa }}
+
+      {{- if gt (len .Values.config.hostMacvlans) 0 }}
+      # hostPID is required by the on-demand macvlan setup (device gRPC service
+      # on devinit.sock): the device plugin reads the caller's PID from the
+      # Unix socket peer credentials (SO_PEERCRED) and stats
+      # /proc/<pid>/ns/net to detect hostNetwork pods and to create macvlans in
+      # the caller's network namespace. The peer (a pod's devinit init
+      # container) lives in a different pod PID namespace, so it is only
+      # visible when the device plugin shares the host PID namespace.
+      # Container-level `privileged: true` does NOT grant host PID ns.
+      hostPID: true
+      {{- end }}
+
+      {{- with .Values.devicePlugin.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+
+      {{- with .Values.devicePlugin.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      {{- with .Values.devicePlugin.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: device-plugin
+          image: {{ .Values.devicePlugin.image }}
+          imagePullPolicy: {{ .Values.devicePlugin.imagePullPolicy }}
+
+          {{- if include "embodied-runtime.webhookEnabled" . }}
+          # Expose the webhook port so the webhook Service can route to it.
+          ports:
+            - name: webhook
+              containerPort: {{ .Values.webhook.port }}
+          {{- end }}
+
+          args:
+            - --config=/etc/rlinf/device-plugin.yaml
+          {{- if include "embodied-runtime.webhookEnabled" . }}
+            # Mutating webhook: auto-inject the devinit init container into pods
+            # requesting the resource. The config/ca-secret names mirror the
+            # objects rendered by webhook.yaml so the device plugin manages the
+            # CA bundle of the very MutatingWebhookConfiguration this chart owns.
+            - --webhook
+            - --webhook-addr=:{{ .Values.webhook.port }}
+            - --webhook-mutating-config={{ include "embodied-runtime.webhookConfigName" . }}
+            - --webhook-service-name={{ include "embodied-runtime.webhookServiceName" . }}
+            - --webhook-service-namespace={{ $namespace }}
+            {{- if .Values.webhook.caSecret.name }}
+            - --webhook-ca-secret-name={{ .Values.webhook.caSecret.name }}
+            - --webhook-ca-secret-namespace={{ .Values.webhook.caSecret.namespace | default $namespace }}
+            {{- end }}
+            {{- if .Values.webhook.devinitImage }}
+            - --webhook-devinit-image={{ .Values.webhook.devinitImage }}
+            {{- end }}
+          {{- end }}
+
+          env:
+            # Downward API — required by pod-mode managers to discover the
+            # current pod (owner ref, tolerations, image, node name).
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+          volumeMounts:
+            - name: device-plugin-config
+              mountPath: /etc/rlinf/device-plugin.yaml
+              subPath: device-plugin.yaml
+            - name: kubelet-device-plugins
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: socket-dir
+              mountPath: /var/run/rlark
+
+          securityContext:
+            privileged: true
+
+      volumes:
+        - name: device-plugin-config
+          configMap:
+            name: {{ $cm }}
+        - name: kubelet-device-plugins
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+            type: DirectoryOrCreate
+        - name: socket-dir
+          hostPath:
+            path: /var/run/rlark
+            type: DirectoryOrCreate

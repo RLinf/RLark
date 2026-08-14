@@ -1,0 +1,1968 @@
+openapi: 3.0.3
+info:
+  title: Rlinf API
+  description: Kubernetes-style API for rlinf.io resources
+  version: v1alpha1
+
+tags:
+  - name: Job
+    description: Cluster-scoped Job resources
+  - name: Node
+    description: Namespaced Node resources
+  - name: Task
+    description: Namespaced Task resources
+  - name: Workflow
+    description: Cluster-scoped Workflow resources
+
+paths:
+  # ─── Job Collection ───────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/jobs:
+    get:
+      tags: [Job]
+      summary: List jobs
+      description: List jobs resources.
+      operationId: listJob
+      parameters:
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/continue'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fieldSelector'
+        - $ref: '#/components/parameters/labelSelector'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobList'
+        '401':
+          description: Unauthorized
+
+    post:
+      tags: [Job]
+      summary: Create a Job
+      description: Create a Job resource.
+      operationId: createJob
+      parameters:
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/dryRun'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Job'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          description: Unauthorized
+
+    delete:
+      tags: [Job]
+      summary: Delete collection of jobs
+      description: Delete a collection of jobs resources.
+      operationId: deleteCollectionJob
+      parameters:
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/continue'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fieldSelector'
+        - $ref: '#/components/parameters/labelSelector'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '401':
+          description: Unauthorized
+
+  # ─── Job Named ────────────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/jobs/{name}:
+    get:
+      tags: [Job]
+      summary: Get a Job
+      description: Get a Job resource.
+      operationId: readJob
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    put:
+      tags: [Job]
+      summary: Replace a Job
+      description: Replace a Job resource.
+      operationId: replaceJob
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Job'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    patch:
+      tags: [Job]
+      summary: Patch a Job
+      description: Patch a Job resource.
+      operationId: patchJob
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+        - $ref: '#/components/parameters/force'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Job'
+          application/strategic-merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Job'
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Job'
+          application/json-patch+json:
+            schema:
+              $ref: '#/components/schemas/JSONPatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    delete:
+      tags: [Job]
+      summary: Delete a Job
+      description: Delete a Job resource.
+      operationId: deleteJob
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+  # ─── Job Status Subresource ──────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/jobs/{name}/status:
+    get:
+      tags: [Job]
+      summary: Get Job status
+      description: Get the status subresource for Job.
+      operationId: readJobStatus
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    put:
+      tags: [Job]
+      summary: Replace Job status
+      description: Replace the status subresource for Job.
+      operationId: replaceJobStatus
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Job'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    patch:
+      tags: [Job]
+      summary: Patch Job status
+      description: Patch the status subresource for Job.
+      operationId: patchJobStatus
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+        - $ref: '#/components/parameters/force'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Job'
+          application/strategic-merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Job'
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Job'
+          application/json-patch+json:
+            schema:
+              $ref: '#/components/schemas/JSONPatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+  # ─── Job Logs (not yet implemented) ──────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs:
+    get:
+      tags: [Job]
+      summary: Get Job logs
+      description: Get logs for a Job resource. Not yet implemented.
+      operationId: readJobLogs
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+        '501':
+          description: Not Implemented
+
+  # ─── Job Metrics (not yet implemented) ───────────────────────────
+  /api/v1/rlinf.io/v1alpha1/jobs/{name}/metrics:
+    get:
+      tags: [Job]
+      summary: Get Job metrics
+      description: Get metrics for a Job resource. Not yet implemented.
+      operationId: readJobMetrics
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+        '501':
+          description: Not Implemented
+
+  # ─── Node Collection ─────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/nodes:
+    get:
+      tags: [Node]
+      summary: List nodes
+      description: List nodes resources.
+      operationId: listNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/continue'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fieldSelector'
+        - $ref: '#/components/parameters/labelSelector'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeList'
+        '401':
+          description: Unauthorized
+
+    post:
+      tags: [Node]
+      summary: Create a Node
+      description: Create a Node resource.
+      operationId: createNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/dryRun'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Node'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          description: Unauthorized
+
+    delete:
+      tags: [Node]
+      summary: Delete collection of nodes
+      description: Delete a collection of nodes resources.
+      operationId: deleteCollectionNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/continue'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fieldSelector'
+        - $ref: '#/components/parameters/labelSelector'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '401':
+          description: Unauthorized
+
+  # ─── Node Named ──────────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}:
+    get:
+      tags: [Node]
+      summary: Get a Node
+      description: Get a Node resource.
+      operationId: readNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    put:
+      tags: [Node]
+      summary: Replace a Node
+      description: Replace a Node resource.
+      operationId: replaceNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Node'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    patch:
+      tags: [Node]
+      summary: Patch a Node
+      description: Patch a Node resource.
+      operationId: patchNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+        - $ref: '#/components/parameters/force'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Node'
+          application/strategic-merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Node'
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Node'
+          application/json-patch+json:
+            schema:
+              $ref: '#/components/schemas/JSONPatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    delete:
+      tags: [Node]
+      summary: Delete a Node
+      description: Delete a Node resource.
+      operationId: deleteNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+  # ─── Node Status Subresource ─────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/status:
+    get:
+      tags: [Node]
+      summary: Get Node status
+      description: Get the status subresource for Node.
+      operationId: readNodeStatus
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    put:
+      tags: [Node]
+      summary: Replace Node status
+      description: Replace the status subresource for Node.
+      operationId: replaceNodeStatus
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Node'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    patch:
+      tags: [Node]
+      summary: Patch Node status
+      description: Patch the status subresource for Node.
+      operationId: patchNodeStatus
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+        - $ref: '#/components/parameters/force'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Node'
+          application/strategic-merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Node'
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Node'
+          application/json-patch+json:
+            schema:
+              $ref: '#/components/schemas/JSONPatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+  # ─── Task Collection ─────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/tasks:
+    get:
+      tags: [Task]
+      summary: List tasks
+      description: List tasks resources.
+      operationId: listTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/continue'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fieldSelector'
+        - $ref: '#/components/parameters/labelSelector'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskList'
+        '401':
+          description: Unauthorized
+
+    post:
+      tags: [Task]
+      summary: Create a Task
+      description: Create a Task resource.
+      operationId: createTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/dryRun'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Unauthorized
+
+    delete:
+      tags: [Task]
+      summary: Delete collection of tasks
+      description: Delete a collection of tasks resources.
+      operationId: deleteCollectionTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/continue'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fieldSelector'
+        - $ref: '#/components/parameters/labelSelector'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '401':
+          description: Unauthorized
+
+  # ─── Task Named ──────────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/tasks/{name}:
+    get:
+      tags: [Task]
+      summary: Get a Task
+      description: Get a Task resource.
+      operationId: readTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    put:
+      tags: [Task]
+      summary: Replace a Task
+      description: Replace a Task resource.
+      operationId: replaceTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    patch:
+      tags: [Task]
+      summary: Patch a Task
+      description: Patch a Task resource.
+      operationId: patchTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+        - $ref: '#/components/parameters/force'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/strategic-merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/json-patch+json:
+            schema:
+              $ref: '#/components/schemas/JSONPatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    delete:
+      tags: [Task]
+      summary: Delete a Task
+      description: Delete a Task resource.
+      operationId: deleteTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+  # ─── Task Status Subresource ─────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/tasks/{name}/status:
+    get:
+      tags: [Task]
+      summary: Get Task status
+      description: Get the status subresource for Task.
+      operationId: readTaskStatus
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    put:
+      tags: [Task]
+      summary: Replace Task status
+      description: Replace the status subresource for Task.
+      operationId: replaceTaskStatus
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    patch:
+      tags: [Task]
+      summary: Patch Task status
+      description: Patch the status subresource for Task.
+      operationId: patchTaskStatus
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+        - $ref: '#/components/parameters/force'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/strategic-merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/json-patch+json:
+            schema:
+              $ref: '#/components/schemas/JSONPatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+  # ─── Workflow Collection ─────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/workflows:
+    get:
+      tags: [Workflow]
+      summary: List workflows
+      description: List workflows resources.
+      operationId: listWorkflow
+      parameters:
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/continue'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fieldSelector'
+        - $ref: '#/components/parameters/labelSelector'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowList'
+        '401':
+          description: Unauthorized
+
+    post:
+      tags: [Workflow]
+      summary: Create a Workflow
+      description: Create a Workflow resource.
+      operationId: createWorkflow
+      parameters:
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/dryRun'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Workflow'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        '401':
+          description: Unauthorized
+
+    delete:
+      tags: [Workflow]
+      summary: Delete collection of workflows
+      description: Delete a collection of workflows resources.
+      operationId: deleteCollectionWorkflow
+      parameters:
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/continue'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fieldSelector'
+        - $ref: '#/components/parameters/labelSelector'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '401':
+          description: Unauthorized
+
+  # ─── Workflow Named ──────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/workflows/{name}:
+    get:
+      tags: [Workflow]
+      summary: Get a Workflow
+      description: Get a Workflow resource.
+      operationId: readWorkflow
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    put:
+      tags: [Workflow]
+      summary: Replace a Workflow
+      description: Replace a Workflow resource.
+      operationId: replaceWorkflow
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Workflow'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    patch:
+      tags: [Workflow]
+      summary: Patch a Workflow
+      description: Patch a Workflow resource.
+      operationId: patchWorkflow
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+        - $ref: '#/components/parameters/force'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Workflow'
+          application/strategic-merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Workflow'
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Workflow'
+          application/json-patch+json:
+            schema:
+              $ref: '#/components/schemas/JSONPatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    delete:
+      tags: [Workflow]
+      summary: Delete a Workflow
+      description: Delete a Workflow resource.
+      operationId: deleteWorkflow
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+  # ─── Workflow Status Subresource ─────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/workflows/{name}/status:
+    get:
+      tags: [Workflow]
+      summary: Get Workflow status
+      description: Get the status subresource for Workflow.
+      operationId: readWorkflowStatus
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    put:
+      tags: [Workflow]
+      summary: Replace Workflow status
+      description: Replace the status subresource for Workflow.
+      operationId: replaceWorkflowStatus
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Workflow'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+    patch:
+      tags: [Workflow]
+      summary: Patch Workflow status
+      description: Patch the status subresource for Workflow.
+      operationId: patchWorkflowStatus
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+        - $ref: '#/components/parameters/force'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Workflow'
+          application/strategic-merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Workflow'
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Workflow'
+          application/json-patch+json:
+            schema:
+              $ref: '#/components/schemas/JSONPatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workflow'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not Found
+
+components:
+  parameters:
+    name:
+      name: name
+      in: path
+      required: true
+      description: Name of the resource
+      schema:
+        type: string
+
+    namespace:
+      name: namespace
+      in: query
+      description: Namespace of the resource (required for namespaced resources)
+      schema:
+        type: string
+
+    pretty:
+      name: pretty
+      in: query
+      description: If 'true', then the output is pretty printed.
+      schema:
+        type: string
+
+    continue:
+      name: continue
+      in: query
+      description: The continue option should be set when retrieving more results from the server.
+      schema:
+        type: string
+
+    limit:
+      name: limit
+      in: query
+      description: Limit is a maximum number of responses to return for a list call.
+      schema:
+        type: integer
+        format: int32
+
+    fieldSelector:
+      name: fieldSelector
+      in: query
+      description: A selector to restrict the list of returned objects by their fields.
+      schema:
+        type: string
+
+    labelSelector:
+      name: labelSelector
+      in: query
+      description: A selector to restrict the list of returned objects by their labels.
+      schema:
+        type: string
+
+    dryRun:
+      name: dryRun
+      in: query
+      description: When present, indicates that modifications should not be persisted.
+      schema:
+        type: string
+        enum:
+          - All
+
+    fieldManager:
+      name: fieldManager
+      in: query
+      description: fieldManager is a name associated with the actor or entity that is making these changes.
+      schema:
+        type: string
+
+    fieldValidation:
+      name: fieldValidation
+      in: query
+      description: fieldValidation instructs the server on how to handle objects in the request that contain unknown or duplicate fields.
+      schema:
+        type: string
+        enum:
+          - Ignore
+          - Warn
+          - Strict
+
+    force:
+      name: force
+      in: query
+      description: Force is going to force the apply requests through.
+      schema:
+        type: boolean
+
+  schemas:
+    # ─── Common Kubernetes Schemas ──────────────────────────────────
+    ObjectMeta:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Name of the resource.
+        generateName:
+          type: string
+          description: GenerateName is an optional prefix used to generate a unique name.
+        namespace:
+          type: string
+          description: Namespace of the resource.
+        selfLink:
+          type: string
+        uid:
+          type: string
+          description: UID is the unique in time and space value for this object.
+        resourceVersion:
+          type: string
+          description: An opaque value that represents the internal version of this object.
+        generation:
+          type: integer
+          format: int64
+          description: A sequence number representing a specific generation of the desired state.
+        creationTimestamp:
+          type: string
+          format: date-time
+          description: CreationTimestamp is a timestamp representing the server time when this object was created.
+        deletionTimestamp:
+          type: string
+          format: date-time
+        deletionGracePeriodSeconds:
+          type: integer
+          format: int64
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          description: Map of string keys and values that can be used to organize and categorize objects.
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+          description: Annotations is an unstructured key value map stored with a resource.
+        ownerReferences:
+          type: array
+          items:
+            $ref: '#/components/schemas/OwnerReference'
+        finalizers:
+          type: array
+          items:
+            type: string
+        managedFields:
+          type: array
+          items:
+            type: object
+
+    OwnerReference:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - name
+        - uid
+      properties:
+        apiVersion:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        uid:
+          type: string
+        controller:
+          type: boolean
+        blockOwnerDeletion:
+          type: boolean
+
+    TypeMeta:
+      type: object
+      properties:
+        apiVersion:
+          type: string
+          description: APIVersion defines the versioned schema of this representation of an object.
+        kind:
+          type: string
+          description: Kind is a string value representing the REST resource this object represents.
+
+    ListMeta:
+      type: object
+      properties:
+        selfLink:
+          type: string
+        resourceVersion:
+          type: string
+        continue:
+          type: string
+          description: continue may be set if the resource set ran out of items.
+        remainingItemCount:
+          type: integer
+          format: int64
+
+    Condition:
+      type: object
+      description: Condition contains details for one aspect of the current state of this API Resource.
+      required:
+        - lastTransitionTime
+        - message
+        - reason
+        - status
+        - type
+      properties:
+        lastTransitionTime:
+          type: string
+          format: date-time
+          description: The last time the condition transitioned from one status to another.
+        message:
+          type: string
+          description: A human readable message indicating details about the transition.
+        observedGeneration:
+          type: integer
+          format: int64
+          description: The .metadata.generation that the condition was set based upon.
+        reason:
+          type: string
+          description: A programmatic identifier indicating the reason for the condition's last transition.
+        status:
+          type: string
+          enum:
+            - "True"
+            - "False"
+            - Unknown
+          description: Status of the condition, one of True, False, Unknown.
+        type:
+          type: string
+          description: Type of condition in CamelCase or in foo.example.com/CamelCase.
+
+    Status:
+      type: object
+      description: Status is a return value for calls that don't return other objects.
+      properties:
+        apiVersion:
+          type: string
+        kind:
+          type: string
+        metadata:
+          $ref: '#/components/schemas/ListMeta'
+        status:
+          type: string
+        message:
+          type: string
+        reason:
+          type: string
+        details:
+          type: object
+          properties:
+            name:
+              type: string
+            group:
+              type: string
+            kind:
+              type: string
+            uid:
+              type: string
+            causes:
+              type: array
+              items:
+                type: object
+                properties:
+                  reason:
+                    type: string
+                  message:
+                    type: string
+                  field:
+                    type: string
+            retryAfterSeconds:
+              type: integer
+              format: int32
+        code:
+          type: integer
+          format: int32
+
+    ResourceList:
+      type: object
+      description: ResourceList is a set of (resource name, quantity) pairs.
+      additionalProperties:
+        type: string
+
+    JSONPatch:
+      type: array
+      description: A JSON Patch document as defined by RFC 6902.
+      items:
+        type: object
+        required:
+          - op
+          - path
+        properties:
+          op:
+            type: string
+            enum:
+              - add
+              - remove
+              - replace
+              - move
+              - copy
+              - test
+          path:
+            type: string
+          from:
+            type: string
+          value: {}
+
+    # ─── Job Schemas ────────────────────────────────────────────────
+    Job:
+      type: object
+      required:
+        - apiVersion
+        - kind
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - rlinf.io/v1alpha1
+        kind:
+          type: string
+          enum:
+            - Job
+        metadata:
+          $ref: '#/components/schemas/ObjectMeta'
+        spec:
+          $ref: '#/components/schemas/JobSpec'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+
+    JobSpec:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobTaskTemplate'
+
+    JobTaskTemplate:
+      type: object
+      required:
+        - role
+      properties:
+        agentType:
+          type: string
+        docker:
+          $ref: '#/components/schemas/DockerTaskSpec'
+        head:
+          type: boolean
+        kubernetes:
+          $ref: '#/components/schemas/KubernetesTaskSpec'
+        name:
+          type: string
+        nodeSelector:
+          type: object
+          additionalProperties:
+            type: string
+        raw:
+          $ref: '#/components/schemas/RawTaskSpec'
+        role:
+          type: string
+        tensorBoardDir:
+          type: string
+
+    DockerTaskSpec:
+      type: object
+      properties:
+        containers:
+          type: array
+          items:
+            type: object
+
+    KubernetesTaskSpec:
+      type: object
+      properties:
+        workload:
+          $ref: '#/components/schemas/KubernetesWorkload'
+
+    KubernetesWorkload:
+      type: object
+      properties:
+        kind:
+          type: string
+        replicas:
+          type: integer
+        template:
+          type: object
+          description: PodTemplateSpec describes the data a pod should have when created from a template.
+
+    RawTaskSpec:
+      type: object
+      properties:
+        artifact:
+          type: string
+        entrypoint:
+          type: array
+          items:
+            type: string
+        environment:
+          type: array
+          items:
+            type: object
+
+    JobStatus:
+      type: object
+      properties:
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Condition'
+        endTime:
+          type: string
+          format: date-time
+        phase:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobTaskStatus'
+
+    JobTaskStatus:
+      type: object
+      properties:
+        message:
+          type: string
+        name:
+          type: string
+        phase:
+          type: string
+
+    JobList:
+      type: object
+      required:
+        - apiVersion
+        - kind
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - rlinf.io/v1alpha1
+        kind:
+          type: string
+          enum:
+            - JobList
+        metadata:
+          $ref: '#/components/schemas/ListMeta'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Job'
+
+    # ─── Node Schemas ──────────────────────────────────────────────
+    Node:
+      type: object
+      required:
+        - apiVersion
+        - kind
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - rlinf.io/v1alpha1
+        kind:
+          type: string
+          enum:
+            - Node
+        metadata:
+          $ref: '#/components/schemas/ObjectMeta'
+        spec:
+          $ref: '#/components/schemas/NodeSpec'
+        status:
+          $ref: '#/components/schemas/NodeStatus'
+
+    NodeSpec:
+      type: object
+      properties:
+        agentType:
+          type: string
+        unschedulable:
+          type: boolean
+
+    NodeStatus:
+      type: object
+      properties:
+        addresses:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeAddress'
+        allocatable:
+          $ref: '#/components/schemas/ResourceList'
+        capacity:
+          $ref: '#/components/schemas/ResourceList'
+        nodeInfo:
+          $ref: '#/components/schemas/NodeSystemInfo'
+        phase:
+          type: string
+        reason:
+          type: string
+        used:
+          $ref: '#/components/schemas/ResourceList'
+
+    NodeAddress:
+      type: object
+      description: NodeAddress contains information for the node's address.
+      required:
+        - address
+        - type
+      properties:
+        address:
+          type: string
+          description: The node address.
+        type:
+          type: string
+          description: Node address type, one of Hostname, ExternalIP or InternalIP.
+
+    NodeSystemInfo:
+      type: object
+      properties:
+        agentVersion:
+          type: string
+        architecture:
+          type: string
+        kernelVersion:
+          type: string
+        operatingSystem:
+          type: string
+
+    NodeList:
+      type: object
+      required:
+        - apiVersion
+        - kind
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - rlinf.io/v1alpha1
+        kind:
+          type: string
+          enum:
+            - NodeList
+        metadata:
+          $ref: '#/components/schemas/ListMeta'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Node'
+
+    # ─── Task Schemas ──────────────────────────────────────────────
+    Task:
+      type: object
+      required:
+        - apiVersion
+        - kind
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - rlinf.io/v1alpha1
+        kind:
+          type: string
+          enum:
+            - Task
+        metadata:
+          $ref: '#/components/schemas/ObjectMeta'
+        spec:
+          $ref: '#/components/schemas/TaskSpec'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+
+    TaskSpec:
+      type: object
+      required:
+        - role
+      properties:
+        agentType:
+          type: string
+        docker:
+          $ref: '#/components/schemas/DockerTaskSpec'
+        kubernetes:
+          $ref: '#/components/schemas/TaskKubernetesSpec'
+        nodeSelector:
+          type: object
+          additionalProperties:
+            type: string
+        raw:
+          $ref: '#/components/schemas/RawTaskSpec'
+        role:
+          type: string
+        tensorBoardDir:
+          type: string
+
+    TaskKubernetesSpec:
+      type: object
+      properties:
+        workload:
+          $ref: '#/components/schemas/KubernetesWorkload'
+
+    TaskStatus:
+      type: object
+      properties:
+        completionTime:
+          type: string
+          format: date-time
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Condition'
+        message:
+          type: string
+        observedNodes:
+          type: array
+          items:
+            type: object
+        phase:
+          type: string
+        retryCount:
+          type: integer
+        startTime:
+          type: string
+          format: date-time
+
+    TaskList:
+      type: object
+      required:
+        - apiVersion
+        - kind
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - rlinf.io/v1alpha1
+        kind:
+          type: string
+          enum:
+            - TaskList
+        metadata:
+          $ref: '#/components/schemas/ListMeta'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+
+    # ─── Workflow Schemas ──────────────────────────────────────────
+    Workflow:
+      type: object
+      required:
+        - apiVersion
+        - kind
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - rlinf.io/v1alpha1
+        kind:
+          type: string
+          enum:
+            - Workflow
+        metadata:
+          $ref: '#/components/schemas/ObjectMeta'
+        spec:
+          $ref: '#/components/schemas/WorkflowSpec'
+        status:
+          $ref: '#/components/schemas/WorkflowStatus'
+
+    WorkflowSpec:
+      type: object
+      properties:
+        jobTemplates:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowJobTemplate'
+
+    WorkflowJobTemplate:
+      type: object
+      properties:
+        dependencies:
+          type: array
+          items:
+            type: string
+        name:
+          type: string
+        spec:
+          $ref: '#/components/schemas/JobSpec'
+
+    WorkflowStatus:
+      type: object
+      properties:
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Condition'
+        endTime:
+          type: string
+          format: date-time
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowJobStatus'
+        phase:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+
+    WorkflowJobStatus:
+      type: object
+      properties:
+        message:
+          type: string
+        name:
+          type: string
+        phase:
+          type: string
+
+    WorkflowList:
+      type: object
+      required:
+        - apiVersion
+        - kind
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - rlinf.io/v1alpha1
+        kind:
+          type: string
+          enum:
+            - WorkflowList
+        metadata:
+          $ref: '#/components/schemas/ListMeta'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Workflow'

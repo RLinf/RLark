@@ -1,0 +1,155 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: camera-controller-config
+  namespace: default
+  labels:
+    app: camera-controller
+data:
+  camera-controller.yaml: |
+    cameras:
+    - id: "camera0"
+      name: "Camera 0"
+      camera_type: "v4l2"
+      params:
+        device: "/dev/video0"
+    - id: "camera1"
+      name: "Camera 1"
+      camera_type: "v4l2"
+      params:
+        device: "/dev/video1"
+    - id: "camera2"
+      name: "Camera 2"
+      camera_type: "v4l2"
+      params:
+        device: "/dev/video2"
+    - id: "camera3"
+      name: "Camera 3"
+      camera_type: "v4l2"
+      params:
+        device: "/dev/video3"
+    - id: "camera4"
+      name: "Camera 4"
+      camera_type: "v4l2"
+      params:
+        device: "/dev/video4"
+    - id: "camera5"
+      name: "Camera 5"
+      camera_type: "v4l2"
+      params:
+        device: "/dev/video5"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: camera-controller
+  namespace: default
+  labels:
+    app: camera-controller
+  annotations:
+    description: "Camera Controller — manages camera lifecycle"
+spec:
+  hostPID: true
+
+  priorityClassName: system-cluster-critical
+
+  initContainers:
+    # Copies binaries from embodied-runtime image into a shared emptyDir and
+    # to the host (for operator use).
+    - name: binary-init
+      image: rlinf/embodied-runtime:v0.1.0
+      imagePullPolicy: Always
+      command:
+        - sh
+        - -c
+        - |
+          set -e
+          cp /usr/local/bin/camera-controller /opt/rlinf/bin/camera-controller
+          cp /usr/local/bin/camctr /opt/rlinf/bin/camctr
+          cp /usr/local/bin/camctr /host-bin/camctr
+          echo "binaries deployed"
+      volumeMounts:
+        - name: cam-bin
+          mountPath: /opt/rlinf/bin
+        - name: camctr-host-bin
+          mountPath: /host-bin
+
+  containers:
+    - name: camera-controller
+      # The camera-controller binary is provided via the binary-init emptyDir.
+      image: rlinf/camera-base:v0.1.0
+      imagePullPolicy: Always
+
+      command:
+        - sh
+        - -c
+      args:
+        - |
+          /opt/rlinf/bin/camera-controller \
+            --config=/etc/rlinf/camera-controller.yaml \
+            --http-addr=:8080
+      env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+
+      securityContext:
+        privileged: true
+
+      volumeMounts:
+        - name: config
+          mountPath: /etc/rlinf
+          readOnly: true
+
+        - name: cam-bin
+          mountPath: /opt/rlinf/bin
+
+        - name: socket-dir
+          mountPath: /var/run/rlark
+
+      # resources:
+      #   requests:
+      #     cpu: 500m
+      #     memory: 512Mi
+      #   limits:
+      #     cpu: 2
+      #     memory: 2Gi
+
+      livenessProbe:
+        exec:
+          command: ["/opt/rlinf/bin/camctr", "--socket-path=/var/run/rlark/camera-ctrl.sock", "list"]
+        initialDelaySeconds: 10
+        periodSeconds: 15
+
+      readinessProbe:
+        exec:
+          command: ["/opt/rlinf/bin/camctr", "--socket-path=/var/run/rlark/camera-ctrl.sock", "list"]
+        initialDelaySeconds: 5
+        periodSeconds: 10
+
+  volumes:
+    - name: config
+      configMap:
+        name: camera-controller-config
+
+    - name: cam-bin
+      emptyDir: {}
+
+    - name: camctr-host-bin
+      hostPath:
+        path: /opt/rlinf/bin
+        type: DirectoryOrCreate
+
+    - name: socket-dir
+      hostPath:
+        path: /var/run/rlark
+        type: DirectoryOrCreate
+
+  nodeSelector:
+    kubernetes.io/hostname: your-node-name
+
+  tolerations:
+    - key: "rlinf.io/robot"
+      operator: "Exists"
+      effect: "NoSchedule"

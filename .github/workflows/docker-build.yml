@@ -1,0 +1,74 @@
+name: Docker Build
+
+on:
+  workflow_call:
+
+jobs:
+  build-rlark:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build rlark image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/rlark/Dockerfile
+          push: false
+          tags: rlark:latest
+
+  build-rlark-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/rlark-ui/package-lock.json
+
+      - name: Install dependencies and build
+        working-directory: apps/rlark-ui
+        run: npm ci && npm run build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build rlark-ui image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/rlark-ui/Dockerfile
+          push: false
+          tags: rlark-ui:latest
+
+  build-embodied-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "apps/embodied-runtime/go.mod"
+          cache: true
+          cache-dependency-path: "apps/embodied-runtime/go.sum"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build embodied-runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/embodied-runtime/Dockerfile
+          push: false
+          tags: embodied-runtime:latest

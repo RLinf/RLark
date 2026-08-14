@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: csi-driver-rclone-node
+  namespace: rlark-system
+  labels:
+    app: csi-driver-rclone-node
+spec:
+  selector:
+    matchLabels:
+      app: csi-driver-rclone-node
+  template:
+    metadata:
+      labels:
+        app: csi-driver-rclone-node
+    spec:
+      serviceAccountName: csi-driver-rclone
+      priorityClassName: system-cluster-critical
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: rclone
+          image: {{ .Values.rcloneImage }}
+          imagePullPolicy: Always
+          args:
+            - "--driver-name=$(DRIVER_NAME)"
+            - "--node-id=$(NODE_ID)"
+            - "--endpoint=unix://csi/csi.sock"
+            - "--v={{ .Values.nodeLogLevel }}"
+          env:
+            - name: DRIVER_NAME
+              value: {{ .Values.driverName }}
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: Bidirectional
+            - name: plugin-dir
+              mountPath: /var/lib/kubelet/plugins
+              mountPropagation: Bidirectional
+            - name: mount-dir
+              mountPath: /var/lib/kubelet/pods
+              mountPropagation: Bidirectional
+        - name: node-driver-registrar
+          image: {{ .Values.nodeDriverRegistrarImage }}
+          imagePullPolicy: Always
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
+            - "--v={{ .Values.nodeLogLevel }}"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: DRIVER_REG_SOCK_PATH
+              value: /var/lib/kubelet/plugins/{{ .Values.driverName }}/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+        - name: liveness-probe
+          image: {{ .Values.livenessProbeImage }}
+          imagePullPolicy: Always
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--health-timeout=30s"
+            - "--v={{ .Values.nodeLogLevel }}"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins
+            type: DirectoryOrCreate
+        - name: mount-dir
+          hostPath:
+            path: /var/lib/kubelet/pods
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: DirectoryOrCreate

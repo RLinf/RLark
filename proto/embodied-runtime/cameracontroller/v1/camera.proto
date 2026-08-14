@@ -1,0 +1,312 @@
+syntax = "proto3";
+
+package camera.controller.v1;
+
+option go_package = "github.com/rlinf/rlark/sdks/embodied-runtime-go/gen/cameracontroller/v1;cameracontrollerv1";
+
+// ---------------------------------------------------------------------------
+// CameraController manages camera devices on the robot.
+//
+// This service is exposed over a Unix socket. The camera-controller DaemonSet
+// provides the server side. User containers use the `camctr` CLI or gRPC
+// directly to list cameras, open/close them, and capture frames.
+// ---------------------------------------------------------------------------
+service CameraController {
+  // ListCameras returns all managed cameras with their current state.
+  rpc ListCameras(ListCamerasRequest) returns (ListCamerasResponse);
+
+  // GetCameraInfo returns detailed information about a specific camera.
+  rpc GetCameraInfo(GetCameraInfoRequest) returns (GetCameraInfoResponse);
+
+  // OpenCamera starts frame capture on the specified camera.
+  rpc OpenCamera(OpenCameraRequest) returns (OpenCameraResponse);
+
+  // CloseCamera stops frame capture on the specified camera.
+  rpc CloseCamera(CloseCameraRequest) returns (CloseCameraResponse);
+
+  // CaptureFrame returns the most recent frame from the specified camera.
+  // The camera must be open (frame capture running) before calling this.
+  rpc CaptureFrame(CaptureFrameRequest) returns (CaptureFrameResponse);
+
+  // CaptureFrames returns the most recent frame from multiple cameras in a
+  // single request.
+  //
+  // Each requested camera is read concurrently (all frame pointers are
+  // loaded in parallel), so the round-trip latency is the slowest camera
+  // rather than the sum of all cameras. Every camera returns the latest
+  // frame buffered by its background capture loop; because each loop runs
+  // independently, the per-camera timestamp_ns may differ slightly — this
+  // is acceptable for use cases such as pairing an RGB frame with its
+  // nearest depth map, where perfect hardware sync is not required.
+  //
+  // Partial failures are reported per camera in the response (see
+  // CapturedFrame.error / error_code) rather than failing the whole RPC.
+  // A camera that is not open, has no frame yet, or captures a bitstream
+  // encoding is returned with an error entry and empty data; the remaining
+  // cameras still return their frames.
+  rpc CaptureFrames(CaptureFramesRequest) returns (CaptureFramesResponse);
+
+  // WatchFrames streams frames continuously from an open camera.
+  //
+  // The camera must have been opened via OpenCamera before calling this RPC.
+  // Frames are pushed as they become available at the camera's configured
+  // frame rate. The stream ends when the client cancels the RPC context or
+  // when the camera is closed.
+  //
+  // For real-time consumption (e.g. display, ML inference) prefer this over
+  // polling CaptureFrame — it avoids the request/response overhead and
+  // delivers frames at the native camera rate.
+  rpc WatchFrames(WatchFramesRequest) returns (stream VideoFrame);
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+// CameraState represents the current lifecycle state of a camera device.
+enum CameraState {
+  CAMERA_STATE_UNSPECIFIED = 0;
+  CAMERA_STATE_CLOSED = 1;
+  CAMERA_STATE_OPEN = 2;
+  CAMERA_STATE_ERROR = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
+
+message ListCamerasRequest {}
+
+message CameraDescriptor {
+  // Unique identifier for the camera (e.g. "camera-0", "wrist-cam").
+  string camera_id = 1;
+
+  // Human-readable name (e.g. "Front Realsense", "Wrist Camera").
+  string name = 2;
+
+  // Camera type (e.g. "realsense", "usb_cam", "opencv_grabber").
+  string camera_type = 3;
+
+  // Serial number of the physical device.
+  string serial_number = 4;
+
+  // Capture resolution.
+  int32 width = 5;
+  int32 height = 6;
+
+  // Target frame rate.
+  int32 fps = 7;
+
+  // Whether depth stream is enabled (for depth-capable cameras).
+  bool enable_depth = 8;
+
+  // Current lifecycle state.
+  CameraState state = 9;
+
+  // Supported capture resolutions as "WxH" strings (e.g. "640x480",
+  // "1280x720"), ascending by pixel count. Populated by device autodetect;
+  // empty when the device did not enumerate its capabilities.
+  repeated string supported_resolutions = 10;
+
+  // Supported frame rates (fps), ascending. Populated by device autodetect;
+  // empty when the device did not enumerate its capabilities.
+  repeated int32 supported_fps = 11;
+
+  // Pixel format the camera is configured to capture in (e.g. "mjpeg",
+  // "h264", "yuyv"). Populated from params["pixel_format"] by device
+  // autodetect; empty when the device did not enumerate its capabilities
+  // or the format was not selected.
+  string pixel_format = 12;
+}
+
+message ListCamerasResponse {
+  repeated CameraDescriptor cameras = 1;
+}
+
+message GetCameraInfoRequest {
+  string camera_id = 1;
+}
+
+message GetCameraInfoResponse {
+  CameraDescriptor camera = 1;
+}
+
+message OpenCameraRequest {
+  string camera_id = 1;
+
+  // Optional per-open override of resolution / fps.
+  // If unset, the camera's default configuration is used.
+  optional int32 width = 2;
+  optional int32 height = 3;
+  optional int32 fps = 4;
+
+  // Encoding hint for the camera driver.
+  //
+  // Frame-mode still-image encodings (each message is one complete,
+  // independently decodable frame):
+  //   "jpeg"  — JPEG-compressed frames (default)
+  //   "png"   — PNG lossless-compressed frames
+  //   "bmp"   — BMP uncompressed frames
+  //   "tiff"  — TIFF lossless-compressed frames
+  //
+  // Bitstream-mode encodings (concatenate chunks for a valid stream):
+  //   "h264"  — H.264 Annex B elementary stream
+  //   "h265"  — H.265 (HEVC) Annex B elementary stream
+  //
+  // The ffmpeg driver captures in whatever format the device provides and
+  // transcodes to the requested output. For example, a YUYV-only camera
+  // produces JPEG output when encoding=jpeg.
+  optional string encoding = 5;
+}
+
+message OpenCameraResponse {
+  string camera_id = 1;
+  CameraState state = 2;
+
+  // Actual encoding of the captured frames.
+  // May differ from the requested encoding in OpenCameraRequest if the
+  // hardware does not support it (driver falls back to JPEG).
+  string encoding = 3;
+}
+
+message CloseCameraRequest {
+  string camera_id = 1;
+}
+
+message CloseCameraResponse {
+  string camera_id = 1;
+  CameraState state = 2;
+}
+
+message CaptureFrameRequest {
+  string camera_id = 1;
+
+  // Timeout in seconds to wait for a frame. Default: 5.
+  optional int32 timeout = 2;
+}
+
+message CaptureFrameResponse {
+  string camera_id = 1;
+
+  // Encoded image data in the camera's open encoding (see encoding field).
+  bytes data = 2;
+
+  // Actual width of the captured frame.
+  int32 width = 3;
+
+  // Actual height of the captured frame.
+  int32 height = 4;
+
+  // Encoding format of the image data. One of the supported open encodings:
+  // "jpeg", "png", "bmp", "tiff", "h264", or "h265" (see OpenCameraRequest).
+  string encoding = 5;
+
+  // Monotonic timestamp of the capture (nanoseconds).
+  int64 timestamp_ns = 6;
+}
+
+// CapturedFrame is a single camera's result within a CaptureFrames response.
+// It embeds the same fields as CaptureFrameResponse plus an error indicator
+// so that partial failures can be reported per camera without failing the
+// whole batch.
+message CapturedFrame {
+  // The camera_id this result corresponds to (always set).
+  string camera_id = 1;
+
+  // Frame payload. Empty when error / error_code is set.
+  bytes data = 2;
+  int32 width = 3;
+  int32 height = 4;
+  string encoding = 5;
+  int64 timestamp_ns = 6;
+
+  // gRPC status code (from google.rpc.Code) for this camera when capture
+  // failed. 0 (OK) means the frame was captured successfully. When non-zero,
+  // data is empty and error holds a human-readable message.
+  int32 error_code = 7;
+
+  // Human-readable error message when error_code != 0.
+  string error = 8;
+}
+
+message CaptureFramesRequest {
+  // Camera ids to capture from. Duplicates are de-duplicated; the response
+  // contains one entry per unique id, in the order of first appearance.
+  // Empty is invalid (InvalidArgument).
+  repeated string camera_ids = 1;
+
+  // Timeout in seconds to wait for a frame on each camera. Default: 5.
+  // Applies per camera; the overall RPC deadline is the client's responsibility.
+  optional int32 timeout = 2;
+}
+
+message CaptureFramesResponse {
+  // One result per requested camera_id (same order as the request after
+  // de-duplication). Cameras that failed capture are included with
+  // error_code set and empty data.
+  repeated CapturedFrame frames = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Video stream messages
+// ---------------------------------------------------------------------------
+
+// WatchFramesRequest configures a real-time video stream from an open camera.
+//
+// The stream delivers frames in whatever encoding the camera was opened with
+// (see OpenCameraRequest.encoding / OpenCameraResponse.encoding); the encoding
+// is not selectable per stream, and no transcoding is performed. The
+// interpretation of each VideoFrame depends on that open encoding — see the
+// VideoFrame message for the frame-mode vs bitstream-mode semantics.
+message WatchFramesRequest {
+  string camera_id = 1;
+}
+
+// VideoFrame is a single message delivered by the WatchFrames stream.
+//
+// Interpretation depends on the encoding the camera was opened with
+// (OpenCameraResponse.encoding):
+//
+//   FRAME MODE ("jpeg", "png", "bmp", "tiff"):
+//     data contains exactly one complete frame. Width/height are constant
+//     within a stream. Sequence increments by 1 per frame.
+//     Keyframe is always true (each frame is independently decodable).
+//
+//   BITSTREAM MODE ("h264", "h265"):
+//     data contains one or more NAL units of the video elementary stream
+//     (Annex B format with 0x00000001 start codes). The client MUST
+//     concatenate all chunks in order of sequence to produce a valid stream.
+//     Width/height are set on the first message and may change on keyframes
+//     (resolution change). Sequence is a byte-stream position hint, not a
+//     frame counter. Keyframe is true when the chunk contains an IDR frame.
+message VideoFrame {
+  // Encoded data — see the message-level doc for interpretation.
+  bytes data = 1;
+
+  // Frame/chunk width in pixels.
+  int32 width = 2;
+
+  // Frame/chunk height in pixels.
+  int32 height = 3;
+
+  // Encoding of data: "jpeg", "png", "bmp", "tiff", "h264", or "h265".
+  string encoding = 4;
+
+  // Monotonic timestamp of the capture (nanoseconds).
+  // In bitstream mode this is the PTS of the first frame in the chunk.
+  int64 timestamp_ns = 5;
+
+  // Monotonic sequence number.
+  //
+  // Frame mode: increments by 1 per frame. Use to detect dropped frames.
+  // Bitstream mode: byte-stream position (not a frame counter). Use to
+  // detect lost chunks and maintain ordering.
+  uint64 sequence = 6;
+
+  // Keyframe indicator.
+  //
+  // Frame mode: always true.
+  // Bitstream mode: true when the chunk contains an IDR (random access
+  // point). The client can safely begin decoding from this chunk.
+  bool keyframe = 7;
+}

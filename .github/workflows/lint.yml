@@ -1,0 +1,53 @@
+name: Lint
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+jobs:
+  lint-go:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: [api, apps/rlark, apps/embodied-runtime]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "${{ matrix.module }}/go.mod"
+          cache: true
+
+      - name: golangci-lint (${{ matrix.module }})
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          install-mode: goinstall
+          working-directory: ${{ matrix.module }}
+          args: --timeout 5m
+
+  lint-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/rlark-ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/rlark-ui
+        run: npm ci
+
+      - name: Run lint
+        working-directory: apps/rlark-ui
+        run: make lint
+
+      - name: Run prettier
+        working-directory: apps/rlark-ui
+        run: npx prettier --check .

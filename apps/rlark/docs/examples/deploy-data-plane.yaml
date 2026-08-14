@@ -1,0 +1,38 @@
+# 数据面部署示例
+# rlarkadm install -f deploy-data-plane.yaml
+#
+# cert 字段支持两种写法：
+#   1. 直接填入证书内容（推荐，从管理面"创建集群"页面复制）
+#   2. 填入文件路径（兼容旧方式）
+
+apiVersion: rlark.io/v1alpha1
+kind: DeployConfig
+plane: data
+control-plane-address: https://rlark-server.rlark-system.svc:8443
+
+cert:
+  ca-cert: |
+    -----BEGIN CERTIFICATE-----
+    <CA 证书内容>
+    -----END CERTIFICATE-----
+  agent-cert: |
+    -----BEGIN CERTIFICATE-----
+    <Agent 证书内容>
+    -----END CERTIFICATE-----
+  agent-key: |
+    -----BEGIN PRIVATE KEY-----
+    <Agent 私钥内容>
+    -----END PRIVATE KEY-----
+
+# --- 三选一 ---
+
+kubernetes:
+  kubeconfig: ~/.kube/config # 往 k8s 集群部署平台，访问集群的 kubeconfig
+  agent-image: rlark:latest
+  network-sidecar-image: rlark:latest # 可选，启用跨集群 Pod 网络互通
+
+#docker:
+#  agent-image: rlark-agent:latest
+
+#raw:
+#  agent-artifact: https://github.com/rlinf/rlark/releases/download/v0.1.0/rlark-agent

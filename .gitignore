@@ -1,0 +1,23 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Build output
+**/bin/
+**/dist/
+tmp/
+
+# macOS
+**/.DS_Store
+
+# Local config overrides
+*.local
+
+# Go test output
+*.out
+coverage.out
+
+# Dependencies
+**/node_modules/
+.glab/

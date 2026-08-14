@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: camera-controller-headless
+  namespace: rlark-system
+  labels:
+    app: embodied-runtime-device-plugin
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: camera-controller
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ros-controller-headless
+  namespace: rlark-system
+  labels:
+    app: embodied-runtime-device-plugin
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: ros-controller
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

@@ -1,0 +1,19 @@
+RLark
+Copyright 2026 RLinf
+
+This product includes software developed by the RLinf project
+(https://github.com/RLinf).
+
+This product includes software developed by third parties:
+
+- Kubernetes (https://github.com/kubernetes/kubernetes) - Apache License 2.0
+- kcp (https://github.com/kcp-dev/kcp) - Apache License 2.0
+- Gin (https://github.com/gin-gonic/gin) - MIT License
+- Bun ORM (https://github.com/uptrace/bun) - BSD 2-Clause License
+- React (https://github.com/facebook/react) - MIT License
+- gVisor (https://github.com/google/gvisor) - Apache License 2.0
+- remotedialer (https://github.com/rancher/remotedialer) - Apache License 2.0
+- RClone (https://github.com/rclone/rclone) - MIT License
+
+For full license texts of third-party dependencies, see the respective
+project repositories or the license files distributed with the source code.

@@ -1,0 +1,48 @@
+embodied-runtime device-plugin deployed in namespace {{ .Values.namespace }}.
+
+Advertises resource: rlinf.io/device{{- if .Values.config.model }}-{{ .Values.config.model }}{{- end }}.
+{{- with .Values.devicePlugin.nodeSelector }}
+
+DaemonSet node selector:
+{{ toYaml . | trimSuffix "\n" }}
+{{- end }}
+{{- if .Values.config.camera.enabled }}
+
+camera-controller (pod mode) — reachable via headless Service DNS (substitute <node>):
+  CAM=http://{{ .Values.config.camera.pod.pod_generate_name }}-<node>.{{ .Values.config.camera.pod.subdomain }}.{{ .Values.namespace }}.svc:{{ .Values.config.camera.httpPort }}/v1/cameras
+  curl $CAM/v1/cameras
+  curl $CAM/v1/cameras/camera0/frame -o frame.jpg
+{{- end }}
+{{- if .Values.config.ros.enabled }}
+
+ros-controller (pod mode) — reachable via headless Service DNS (substitute <node>):
+  ROS=http://{{ .Values.config.ros.pod.pod_generate_name }}-<node>.{{ .Values.config.ros.pod.subdomain }}.{{ .Values.namespace }}.svc:{{ .Values.config.ros.httpPort }}/v1/robots
+  curl $ROS/v1/robots
+  curl $ROS/v1/robots/<robot_id>/status
+  curl $ROS/v1/robots/<robot_id>/proxy/   # → robot's web_service
+{{- end }}
+{{- if .Values.config.ros2.enabled }}
+
+ros2-controller (pod mode) — reachable via headless Service DNS (substitute <node>):
+  ROS2=http://{{ .Values.config.ros2.pod.pod_generate_name }}-<node>.{{ .Values.config.ros2.pod.subdomain }}.{{ .Values.namespace }}.svc:{{ .Values.config.ros2.httpPort }}/v1/robots
+  curl $ROS2/v1/robots
+  curl $ROS2/v1/robots/<robot_id>/status
+  curl $ROS2/v1/robots/<robot_id>/proxy/   # → robot's web_service
+{{- end }}
+{{- if and (not .Values.config.camera.enabled) (not .Values.config.ros.enabled) (not .Values.config.ros2.enabled) }}
+
+No controllers are launched (none are enabled).
+{{- end }}
+
+Verify:
+  kubectl -n {{ .Values.namespace }} get daemonset {{ include "embodied-runtime.devicePluginName" . }}
+  kubectl -n {{ .Values.namespace }} logs -l app={{ include "embodied-runtime.devicePluginName" . }} -f
+{{- if include "embodied-runtime.webhookEnabled" . }}
+
+Mutating webhook is enabled. Pods requesting rlinf.io/device{{- if .Values.config.model }}-{{ .Values.config.model }}{{- end }}
+are auto-injected with the `devinit` init container (runs `devinit setup` to attach
+the node's host_macvlans into the pod netns). The caBundle is auto-managed:
+  MutatingWebhookConfiguration: {{ include "embodied-runtime.webhookConfigName" . }}
+  Service:                      {{ include "embodied-runtime.webhookServiceName" . }}
+  kubectl get mutatingwebhookconfiguration {{ include "embodied-runtime.webhookConfigName" . }} -o jsonpath='{.webhooks[0].clientConfig.caBundle}' | base64 -d | openssl x509 -text -noout
+{{- end }}

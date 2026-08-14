@@ -1,0 +1,101 @@
+apiVersion: rlinf.io/v1alpha1
+kind: Node
+metadata:
+  name: edge-node-1
+spec:
+  agentType: Kubernetes
+  unschedulable: false
+status:
+  phase: Online
+  reason: kubelet is ready
+  nodeInfo:
+    architecture: amd64
+    kernelVersion: 6.8.0
+    agentVersion: v0.1.0
+    operatingSystem: linux
+  addresses:
+    - type: InternalIP
+      address: 10.0.0.10
+    - type: Hostname
+      address: edge-node-1
+  capacity:
+    cpu: "8"
+    memory: 16Gi
+    ephemeral-storage: 200Gi
+    nvidia.com/gpu: "1"
+  allocatable:
+    cpu: "7"
+    memory: 14Gi
+    ephemeral-storage: 180Gi
+    nvidia.com/gpu: "1"
+  used:
+    cpu: "2"
+    memory: 4Gi
+    ephemeral-storage: 20Gi
+    nvidia.com/gpu: "0"
+---
+apiVersion: rlinf.io/v1alpha1
+kind: Node
+metadata:
+  name: edge-node-2
+spec:
+  agentType: Docker
+  unschedulable: false
+status:
+  phase: Online
+  reason: docker-agent-connected
+  nodeInfo:
+    architecture: amd64
+    kernelVersion: 6.8.0
+    agentVersion: v0.1.0
+    operatingSystem: linux
+  addresses:
+    - type: InternalIP
+      address: 10.0.0.11
+    - type: Hostname
+      address: edge-node-2
+  capacity:
+    cpu: "16"
+    memory: 64Gi
+    ephemeral-storage: 500Gi
+  allocatable:
+    cpu: "15"
+    memory: 60Gi
+    ephemeral-storage: 450Gi
+  used:
+    cpu: "6"
+    memory: 20Gi
+    ephemeral-storage: 60Gi
+---
+apiVersion: rlinf.io/v1alpha1
+kind: Node
+metadata:
+  name: edge-node-3
+spec:
+  agentType: Raw
+  unschedulable: true
+status:
+  phase: Offline
+  reason: maintenance-window
+  nodeInfo:
+    architecture: amd64
+    kernelVersion: 5.15.0
+    agentVersion: v0.1.0
+    operatingSystem: linux
+  addresses:
+    - type: InternalIP
+      address: 10.0.0.12
+    - type: Hostname
+      address: edge-node-3
+  capacity:
+    cpu: "32"
+    memory: 128Gi
+    ephemeral-storage: 1Ti
+  allocatable:
+    cpu: "30"
+    memory: 120Gi
+    ephemeral-storage: 900Gi
+  used:
+    cpu: "0"
+    memory: 0Gi
+    ephemeral-storage: 0Gi

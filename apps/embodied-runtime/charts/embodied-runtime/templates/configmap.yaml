@@ -1,0 +1,110 @@
+{{- $namespace := .Values.namespace -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "embodied-runtime.configMapName" . }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "embodied-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/component: device-plugin
+data:
+  # device-plugin configuration file. snake_case keys match the binary's
+  # config schema. init_image / node_name are omitted: the device-plugin
+  # auto-fills them from its own pod. pod.namespace is templated from
+  # .Values.namespace. pod.subdomain must equal the headless Service name.
+  # Pod-mode fields (http_addr, pod, ...) are emitted only when the
+  # controller is enabled; a disabled controller renders just its
+  # manager_mode line. http_addr is derived from <controller>.httpPort.
+  device-plugin.yaml: |
+    model: {{ .Values.config.model }}
+    device_count: {{ .Values.config.device_count }}
+    skip_register: {{ .Values.config.skip_register }}
+{{- if .Values.config.hostDevices }}
+    host_devices:
+{{ toYaml .Values.config.hostDevices | indent 6 }}
+{{- end }}
+{{- if .Values.config.hostMacvlans }}
+    host_macvlans:
+{{ toYaml .Values.config.hostMacvlans | indent 6 }}
+{{- end }}
+
+    camera:
+      manager_mode: {{ .Values.config.camera.enabled | ternary "pod" "disabled" }}
+{{- if .Values.config.camera.enabled }}
+      # HTTP/JSON gateway (controller-level), written into the
+      # camera-controller config as http_addr. Reachable via the headless
+      # Service at
+      # http://{{ .Values.config.camera.pod.pod_generate_name }}-<node>.{{ .Values.config.camera.pod.subdomain }}.{{ $namespace }}.svc:{{ .Values.config.camera.httpPort }}/v1/cameras
+      http_addr: :{{ .Values.config.camera.httpPort }}
+      pod:
+        namespace: {{ $namespace }}
+        image: {{ .Values.config.camera.pod.image }}
+        # init_image: auto-filled from the device-plugin pod
+        pod_generate_name: {{ .Values.config.camera.pod.pod_generate_name }}
+        # Headless-service DNS: subdomain must match the headless Service
+        # name. hostname is left empty to derive the pod's deterministic
+        # name (<PodGenerateName>-<NodeName>) so each node's pod gets a
+        # unique, stable per-pod A record.
+        subdomain: {{ .Values.config.camera.pod.subdomain }}
+        # Labels are the sole source of pod labels — the headless Service
+        # selector matches this map.
+        labels:
+{{ toYaml .Values.config.camera.pod.labels | indent 10 }}
+      auto_detect_v4l2: {{ .Values.config.camera.auto_detect_v4l2 }}
+      cameras:
+{{ toYaml .Values.config.camera.cameras | indent 8 }}
+{{- end }}
+
+    ros:
+      manager_mode: {{ .Values.config.ros.enabled | ternary "pod" "disabled" }}
+{{- if .Values.config.ros.enabled }}
+      # HTTP/JSON gateway (controller-level): REST API at /v1/ plus the
+      # per-robot web proxy at /v1/robots/{robot_id}/proxy/*. Reachable via
+      # the headless Service at
+      # http://{{ .Values.config.ros.pod.pod_generate_name }}-<node>.{{ .Values.config.ros.pod.subdomain }}.{{ $namespace }}.svc:{{ .Values.config.ros.httpPort }}/v1/robots
+      http_addr: :{{ .Values.config.ros.httpPort }}
+      pod:
+        namespace: {{ $namespace }}
+        image: {{ .Values.config.ros.pod.image }}
+        # init_image: auto-filled from the device-plugin pod
+        pod_generate_name: {{ .Values.config.ros.pod.pod_generate_name }}
+        subdomain: {{ .Values.config.ros.pod.subdomain }}
+        labels:
+{{ toYaml .Values.config.ros.pod.labels | indent 10 }}
+
+      macvlans:
+{{ toYaml .Values.config.ros.macvlans | indent 8 }}
+      types:
+{{ toYaml .Values.config.ros.types | indent 8 }}
+      robots:
+{{ toYaml .Values.config.ros.robots | indent 8 }}
+      allowed_launch_packages:
+{{ toYaml .Values.config.ros.allowed_launch_packages | indent 8 }}
+{{- end }}
+
+    ros2:
+      manager_mode: {{ .Values.config.ros2.enabled | ternary "pod" "disabled" }}
+{{- if .Values.config.ros2.enabled }}
+      # HTTP/JSON gateway (controller-level): REST API at /v1/ plus the
+      # per-robot web proxy at /v1/robots/{robot_id}/proxy/*. Reachable via
+      # the headless Service at
+      # http://{{ .Values.config.ros2.pod.pod_generate_name }}-<node>.{{ .Values.config.ros2.pod.subdomain }}.{{ $namespace }}.svc:{{ .Values.config.ros2.httpPort }}/v1/robots
+      http_addr: :{{ .Values.config.ros2.httpPort }}
+      pod:
+        namespace: {{ $namespace }}
+        image: {{ .Values.config.ros2.pod.image }}
+        # init_image: auto-filled from the device-plugin pod
+        pod_generate_name: {{ .Values.config.ros2.pod.pod_generate_name }}
+        subdomain: {{ .Values.config.ros2.pod.subdomain }}
+        labels:
+{{ toYaml .Values.config.ros2.pod.labels | indent 10 }}
+
+      macvlans:
+{{ toYaml .Values.config.ros2.macvlans | indent 8 }}
+      types:
+{{ toYaml .Values.config.ros2.types | indent 8 }}
+      robots:
+{{ toYaml .Values.config.ros2.robots | indent 8 }}
+      allowed_launch_packages:
+{{ toYaml .Values.config.ros2.allowed_launch_packages | indent 8 }}
+{{- end }}

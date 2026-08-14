@@ -1,0 +1,48 @@
+services:
+  # kcp - Kubernetes-like control plane
+  kcp:
+    image: ghcr.io/kcp-dev/kcp:v0.30.0
+    container_name: kcp
+    ports:
+      - "6443:6443"
+    volumes:
+      - kcp-data:/.kcp
+    environment:
+      - KCP_LOG_LEVEL=2
+    command: start
+    healthcheck:
+      test: ["CMD", "test", "-f", "/.kcp/admin.kubeconfig"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - rlark-network
+
+  # PostgreSQL - Database
+  postgresql:
+    image: postgres:15
+    container_name: postgresql
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rlark
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rlark-network
+
+volumes:
+  kcp-data:
+  postgres-data:
+
+networks:
+  rlark-network:
+    driver: bridge
