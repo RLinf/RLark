@@ -1,0 +1,176 @@
+# device-plugin configuration
+# Loaded via --config <path>. All fields are optional — omitted fields
+# fall back to built-in defaults.
+
+# --- Common ---
+# model: franka  # when set, resource becomes rlinf.io/device-franka and
+                # socket becomes rlinf-device-franka.sock, letting different
+                # device types be distinguished (or coexist) in a cluster
+device_count: 1
+skip_register: false
+
+# --- Host device passthrough ---
+# Directly mount host /dev/* nodes into pods at Allocate time. No
+# controller is launched — devices are passed through based on the list
+# below. Empty (or omitted) means no host device passthrough.
+host_devices:
+  - host_path: /dev/video0
+    # container_path: /dev/video0  # defaults to host_path when omitted
+    # permissions: rwm             # any of "r", "w", "m"; defaults to "rwm"
+  - host_path: /dev/ttyUSB0
+    permissions: rw
+
+# --- Host macvlan setup ---
+# On-demand macvlan interfaces attached to a requesting pod's network
+# namespace. NOT a device mount — a macvlan is a network interface created
+# inside the pod's netns. The plugin runs a device gRPC service on
+# /var/run/rlark/devinit.sock; a pod's init container runs `devinit setup`
+# to attach these macvlans into its netns. Pods using hostNetwork are
+# skipped. Each entry is a pkg/netmac MACVLANConfig:
+#   host_nic: auto-detected from the IP subnet when empty
+#   ip:       may be a network address (e.g. 172.16.0.0/24) → an unused
+#             host IP is auto-picked; or a concrete host IP (172.16.0.101/24)
+#   gateway:  optional default gateway for the robot subnet
+# Empty (or omitted) means the macvlan service is not started.
+host_macvlans:
+  - host_nic: eno1
+    name: macvlan0
+    ip: 172.16.0.0/24      # network addr → auto-pick an unused host IP
+    # gateway: 172.16.0.1  # optional default gateway for the robot subnet
+
+# --- Camera controller ---
+camera:
+  # "disabled" = no controller (default), "local" = subprocess, "pod" = Kubernetes Pod
+  manager_mode: local
+
+  # Local-mode fields (used when manager_mode == "local").
+  ctrl_config_path: /etc/rlinf/camera-controller.yaml
+  ctrl_bin: /usr/local/bin/camera-controller
+  ctr_cli: /opt/rlinf/bin/camctr
+
+  # HTTP/JSON gateway address (applies in both local and pod mode; written
+  # into the controller's config file as http_addr). Empty disables HTTP.
+  http_addr: :8080
+
+  # Pod-mode fields (used when manager_mode == "pod").
+  pod:
+    namespace: default
+    image: rlinf/camera-base:v0.1.0
+    init_image: rlinf/embodied-runtime:v0.1.0
+    pod_generate_name: camera-controller
+    # Headless-service DNS + selection: set labels (the sole source of pod
+    # labels — there are no built-ins), hostname + subdomain so the pod is
+    # reachable at <hostname>.<subdomain>.<ns>.svc.cluster.local via a
+    # headless Service named <subdomain> deployed alongside the device
+    # plugin. The device plugin does NOT create that Service — it only
+    # configures the pod side; the Service's selector must match the labels
+    # here. Hostname left empty defaults to the pod's deterministic name.
+    # labels:
+    #   app.kubernetes.io/name: camera-controller
+    #   app.kubernetes.io/managed-by: embodied-runtime-device-plugin
+    # hostname: camera-controller
+    # subdomain: camera-controller-headless
+
+  # Camera device definitions (inlined from the former device-config file).
+  # auto_detect_v4l2 defaults to true; set false to disable auto-detection.
+  # auto_detect_v4l2: true
+  cameras: []
+
+# --- ROS controller ---
+ros:
+  # "disabled" = no controller (default), "local" = subprocess, "pod" = Kubernetes Pod
+  manager_mode: local
+
+  # Local-mode fields (used when manager_mode == "local").
+  ctrl_config_path: /etc/rlinf/ros-controller.yaml
+  ctrl_bin: /usr/local/bin/ros-controller
+  ctr_cli: /opt/rlinf/bin/rosctr
+
+  # HTTP/JSON gateway address (applies in both local and pod mode; written
+  # into the controller's config file as http_addr). Empty disables HTTP.
+  http_addr: :8080
+
+  # Pod-mode fields (used when manager_mode == "pod").
+  pod:
+    namespace: default
+    image: rlinf/serl_franka_controllers:v0.1.0-libfranka-0.19.0-frankaros-0.10.2
+    init_image: rlinf/embodied-runtime:v0.1.0
+    pod_generate_name: ros-controller
+    # Headless-service DNS + selection: see the camera section above.
+    # labels:
+    #   app.kubernetes.io/name: ros-controller
+    #   app.kubernetes.io/managed-by: embodied-runtime-device-plugin
+    # hostname: ros-controller
+    # subdomain: ros-controller-headless
+
+  # ROS device definitions (inlined from the former device-config file).
+  macvlans:
+    - host_nic: eno1
+      name: macvlan0
+      ip: 172.16.0.101/24
+  types:
+    - type: franka
+      modes:
+        impedance:
+          package: serl_franka_controllers
+          launch_file: impedance.launch
+          passthrough_robot_args: true
+        joint:
+          package: serl_franka_controllers
+          launch_file: joint.launch
+          passthrough_robot_args: true
+  robots:
+    - id: franka-robot-1
+      type: franka
+      params:
+        robot_ip: 172.16.0.2
+      web_service: https://172.16.0.2/
+  allowed_launch_packages:
+    - serl_franka_controllers
+
+# --- ROS 2 controller ---
+ros2:
+  # "disabled" = no controller (default), "local" = subprocess, "pod" = Kubernetes Pod
+  manager_mode: local
+
+  # Local-mode fields (used when manager_mode == "local").
+  ctrl_config_path: /etc/rlinf/ros2-controller.yaml
+  ctrl_bin: /usr/local/bin/ros2-controller
+  ctr_cli: /opt/rlinf/bin/rosctr  # shared with ROS 1
+
+  # HTTP/JSON gateway address (applies in both local and pod mode; written
+  # into the controller's config file as http_addr). Empty disables HTTP.
+  http_addr: :8080
+
+  # Pod-mode fields (used when manager_mode == "pod").
+  pod:
+    namespace: default
+    image: rlinf/ros2-base:v0.1.0
+    init_image: rlinf/embodied-runtime:v0.1.0
+    pod_generate_name: ros2-controller
+    # Headless-service DNS + selection: see the camera section above.
+    # labels:
+    #   app.kubernetes.io/name: ros2-controller
+    # hostname: ros2-controller
+    # subdomain: ros2-controller-headless
+
+  # ROS 2 device definitions — ros2-controller config inlined.
+  macvlans:
+    - host_nic: eno1
+      name: macvlan0
+      ip: 172.16.0.101/24
+  types:
+    - type: franka
+      modes:
+        impedance:
+          package: moveit_servo
+          launch_file: servo.launch.py
+          passthrough_robot_args: true
+  robots:
+    - id: franka-robot-1
+      type: franka
+      params:
+        robot_ip: 172.16.0.2
+      domain_id: 5  # explicit ROS_DOMAIN_ID (auto-assigned if 0)
+  allowed_launch_packages:
+    - moveit_servo

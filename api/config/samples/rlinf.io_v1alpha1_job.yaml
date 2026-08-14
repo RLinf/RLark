@@ -1,0 +1,88 @@
+apiVersion: rlinf.io/v1alpha1
+kind: Job
+metadata:
+  name: embodied-train-job
+spec:
+  tasks:
+    - name: ray-head
+      head: true
+      agentType: Kubernetes
+      role: Actor
+      nodeSelector:
+        kubernetes.io/hostname: edge-node-1
+      tensorBoardDir: /data/tensorboard/ray-head
+      kubernetes:
+        workload:
+          kind: StatefulSet
+          replicas: 1
+          template:
+            metadata:
+              labels:
+                app: ray-head
+            spec:
+              containers:
+                - name: ray-head
+                  image: registry.example.com/ray/head:latest
+                  command:
+                    - ray
+                    - start
+                    - --head
+    - name: rollout-workers
+      agentType: Kubernetes
+      role: Rollout
+      nodeSelector:
+        kubernetes.io/hostname: edge-node-1
+      tensorBoardDir: /data/tensorboard/rollout
+      kubernetes:
+        workload:
+          kind: Deployment
+          replicas: 2
+          template:
+            metadata:
+              labels:
+                app: embodied-train
+                role: rollout
+            spec:
+              containers:
+                - name: rollout
+                  image: registry.example.com/rl/rollout:latest
+                  command:
+                    - python
+                    - /workspace/run_rollout.py
+                  args:
+                    - --head=$(HEAD_NODE)
+                    - --buffer-size=1024
+                  env:
+                    - name: HEAD_NODE
+                      value: ray-head-0
+                    - name: TENSORBOARD_DIR
+                      value: /data/tensorboard/rollout
+    - name: env-runner
+      agentType: Raw
+      role: Env
+      nodeSelector:
+        rlinf.io/node: edge-node-3
+      tensorBoardDir: /opt/rlinf/tensorboard/env
+      raw:
+        artifact: https://example.com/artifacts/env-runner.tar.gz
+        entrypoint:
+          - bash
+          - /opt/env-runner/start.sh
+        environment:
+          - name: HEAD_NODE
+            value: ray-head-0
+          - name: SIM_SCENE
+            value: warehouse_v2
+status:
+  phase: Running
+  tasks:
+    - name: ray-head
+      phase: Running
+      message: ray head is serving at ray-head-0:6379
+    - name: rollout-workers
+      phase: Running
+      message: rollout replicas are warming up
+    - name: env-runner
+      phase: Pending
+      message: waiting for raw node recovery
+  startTime: "2025-06-09T10:00:00Z"

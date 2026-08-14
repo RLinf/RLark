@@ -1,0 +1,127 @@
+apiVersion: rlinf.io/v1alpha1
+kind: Task
+metadata:
+  name: rollout-k8s-task
+spec:
+  agentType: Kubernetes
+  role: Rollout
+  nodeSelector:
+    kubernetes.io/hostname: edge-node-1
+  tensorBoardDir: /data/tensorboard/rollout-k8s
+  kubernetes:
+    workload:
+      kind: Deployment
+      replicas: 2
+      pvcStorageMap:
+        data-pvc: "standard"
+        model-pvc: "ssd"
+      template:
+        metadata:
+          labels:
+            app: rollout-k8s
+            role: rollout
+        spec:
+          containers:
+            - name: rollout
+              image: registry.example.com/rl/rollout:latest
+              command:
+                - python
+                - /workspace/run_rollout.py
+              args:
+                - --head=$(HEAD_NODE)
+                - --batch-size=8
+              env:
+                - name: HEAD_NODE
+                  value: ray-head-0
+                - name: TENSORBOARD_DIR
+                  value: /data/tensorboard/rollout-k8s
+              volumeMounts:
+                - name: data-vol
+                  mountPath: /workspace/data
+                - name: model-vol
+                  mountPath: /workspace/models
+              resources:
+                limits:
+                  cpu: "4"
+                  memory: 8Gi
+                  nvidia.com/gpu: "1"
+          volumes:
+            - name: data-vol
+              persistentVolumeClaim:
+                claimName: data-pvc
+            - name: model-vol
+              persistentVolumeClaim:
+                claimName: model-pvc
+status:
+  phase: Running
+  observedNodes:
+    - edge-node-1
+  startTime: "2025-06-09T10:00:00Z"
+  message: rollout deployment is progressing
+  retryCount: 0
+---
+apiVersion: rlinf.io/v1alpha1
+kind: Task
+metadata:
+  name: actor-docker-task
+spec:
+  agentType: Docker
+  role: Actor
+  nodeSelector:
+    rlinf.io/node: edge-node-2
+  tensorBoardDir: /var/lib/rlinf/tensorboard/actor
+  docker:
+    containers:
+      - name: actor-main
+        image: registry.example.com/rl/actor:latest
+        command:
+          - python
+        args:
+          - /workspace/run_actor.py
+          - --head=ray-head-0
+        environment:
+          - name: ROLE
+            value: actor
+          - name: TENSORBOARD_DIR
+            value: /var/lib/rlinf/tensorboard/actor
+        volumes:
+          - source: /var/lib/rlinf/checkpoints
+            target: /workspace/checkpoints
+status:
+  phase: Running
+  observedNodes:
+    - edge-node-2
+  startTime: "2025-06-09T10:05:00Z"
+  message: actor containers are healthy
+  retryCount: 1
+---
+apiVersion: rlinf.io/v1alpha1
+kind: Task
+metadata:
+  name: env-raw-task
+spec:
+  agentType: Raw
+  role: Env
+  nodeSelector:
+    rlinf.io/node: edge-node-3
+  tensorBoardDir: /opt/rlinf/tensorboard/env
+  raw:
+    artifact: https://example.com/artifacts/env-runner.tar.gz
+    entrypoint:
+      - bash
+      - /opt/env-runner/start.sh
+    environment:
+      - name: HEAD_NODE
+        value: ray-head-0
+      - name: SIM_SCENE
+        value: warehouse_v2
+      - name: TENSORBOARD_DIR
+        value: /opt/rlinf/tensorboard/env
+status:
+  phase: Failed
+  observedNodes:
+    - edge-node-3
+  startTime: "2025-06-09T10:10:00Z"
+  completionTime: "2025-06-09T10:12:00Z"
+  message: simulator startup failed because the GPU driver is unavailable
+  retryCount: 2

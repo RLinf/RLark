@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: embodied-runtime-device-plugin
+  namespace: rlark-system
+  labels:
+    app: embodied-runtime-device-plugin
+spec:
+  selector:
+    matchLabels:
+      app: embodied-runtime-device-plugin
+  template:
+    metadata:
+      labels:
+        app: embodied-runtime-device-plugin
+    spec:
+      serviceAccountName: embodied-runtime-device-plugin
+      priorityClassName: system-cluster-critical
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- $parts := splitList "=" .Values.nodeSelector }}
+        {{- if eq (len $parts) 2 }}
+        {{ index $parts 0 }}: {{ index $parts 1 }}
+        {{- end }}
+      {{- end }}
+      tolerations:
+        - key: {{ .Values.robotTolerationKey }}
+          operator: Exists
+          effect: NoSchedule
+      {{- if .Values.nodeOverrides }}
+      initContainers:
+        - name: config-renderer
+          image: {{ .Values.rendererImage }}
+          command: ["/bin/sh", "/etc/rlinf/template/render.sh"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: config-template
+              mountPath: /etc/rlinf/template
+            - name: rendered-config
+              mountPath: /etc/rlinf/rendered
+      {{- end }}
+      containers:
+        - name: device-plugin
+          image: {{ .Values.image }}
+          imagePullPolicy: Always
+          args:
+            - --config=/etc/rlinf/device-plugin.yaml
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            {{- if .Values.nodeOverrides }}
+            - name: rendered-config
+              mountPath: /etc/rlinf/device-plugin.yaml
+              subPath: device-plugin.yaml
+            {{- else }}
+            - name: config-template
+              mountPath: /etc/rlinf/device-plugin.yaml
+              subPath: device-plugin.yaml
+            {{- end }}
+            - name: kubelet-device-plugins
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: socket-dir
+              mountPath: /var/run/rlark
+          securityContext:
+            privileged: true
+      volumes:
+        - name: config-template
+          configMap:
+            name: embodied-runtime-device-plugin-template
+        {{- if .Values.nodeOverrides }}
+        - name: rendered-config
+          emptyDir: {}
+        {{- end }}
+        - name: kubelet-device-plugins
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+            type: DirectoryOrCreate
+        - name: socket-dir
+          hostPath:
+            path: /var/run/rlark
+            type: DirectoryOrCreate

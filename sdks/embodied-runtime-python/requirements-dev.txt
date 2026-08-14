@@ -1,0 +1,5 @@
+-r requirements.txt
+grpcio-tools>=1.60
+ruff>=0.6
+pytest>=7.0
+pytest-cov>=4.0

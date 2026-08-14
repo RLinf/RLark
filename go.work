@@ -1,0 +1,8 @@
+go 1.26.5
+
+use (
+	./api
+	./apps/embodied-runtime
+	./apps/rlark
+	./sdks/embodied-runtime-go
+)

@@ -1,0 +1,144 @@
+# embodied-runtime Helm chart values
+
+namespace: rlark-system
+
+nameOverride: ""
+fullnameOverride: ""
+
+devicePlugin:
+  image: rlinf/embodied-runtime:v0.1.0
+  imagePullPolicy: Always
+  priorityClassName: system-cluster-critical
+  nodeSelector: {}
+  tolerations:
+    - key: rlinf.io/robot
+      operator: Exists
+      effect: NoSchedule
+
+# Mutating webhook that auto-injects the `devinit` init container into pods
+# requesting the rlinf.io/device resource, so operators no longer add it by
+# hand. Only meaningful alongside config.hostMacvlans: the webhook is a no-op
+# (injects nothing) when host_macvlans is empty, and the device plugin skips
+# starting it in that case. When enabled, the chart renders a Service exposing
+# the webhook port and a MutatingWebhookConfiguration (empty caBundle — the
+# device plugin auto-generates the CA and patches it in on startup).
+#
+# MutatingWebhookConfiguration and Service names are derived from the release
+# (see _helpers.tpl); the device plugin is told the same names via CLI flags
+# so its caBundle sync targets the object this chart created.
+webhook:
+  enabled: false
+  # Port the webhook listens on (containerPort + Service port). Default 9443.
+  port: 9443
+  # Admission endpoint path served by the webhook; must match the device
+  # plugin's --webhook-path. Default "/mutate".
+  path: /mutate
+  # failurePolicy: what the API server does when the webhook is unreachable.
+  #   Ignore — pods are admitted without the devinit container (macvlan not
+  #            set up); the workload must handle that. Safer for availability.
+  #   Fail   — pod creation is rejected if the webhook is down. Use when the
+  #            macvlan MUST be attached before the pod runs.
+  # Default Ignore.
+  failurePolicy: Ignore
+  # CA Secret persistence. When name is set, the device plugin stores the CA
+  # cert+key in this Secret so the same CA survives restarts and is shared
+  # across device-plugin pods; namespace defaults to .Values.namespace. When
+  # name is empty, the CA lives in memory and is regenerated each start (the
+  # caBundle is re-synced on every startup).
+  caSecret:
+    name: ""
+    namespace: ""
+  # devinitImage overrides the injected init container image. It must contain
+  # the devinit binary at /usr/local/bin/devinit. When empty, the device
+  # plugin auto-discovers its own image (.Values.devicePlugin.image, via the
+  # downward API) which ships devinit — so this is rarely needed.
+  devinitImage: ""
+
+# device-plugin configuration file. Keys are snake_case to match the binary's
+# config schema. init_image / node_name are omitted: the device-plugin
+# auto-fills them from its own pod. pod.namespace is templated from
+# .Values.namespace. pod.subdomain MUST equal the corresponding headless
+# Service name (rendered from this same value, so they stay in sync).
+#
+# Each controller is toggled by `enabled` (true → pod mode, false →
+# disabled). This chart does NOT manage "local" mode. Pod-mode fields
+# (http_addr, pod, ...) are emitted only when enabled==true; a disabled
+# controller renders just its manager_mode line, and its headless Service
+# is omitted. http_addr is derived per-controller from httpPort
+# (→ "http_addr: :<httpPort>").
+config:
+  model: ""
+  device_count: 1
+  skip_register: false
+
+  # Host device passthrough: mount host /dev/* nodes directly into pods at
+  # Allocate time. No controller is launched — devices are passed through
+  # based on this list. Empty = no passthrough.
+  #   host_path:     required, host device node (e.g. /dev/video0)
+  #   container_path: optional, defaults to host_path
+  #   permissions:   optional, any of r/w/m; defaults to rwm
+  hostDevices: []
+  # - host_path: /dev/video0
+  #   # container_path: /dev/video0
+  #   # permissions: rwm
+  # - host_path: /dev/ttyUSB0
+  #   permissions: rw
+
+  # Host macvlan setup: attach the node's configured macvlan interfaces
+  # into a requesting pod's network namespace on demand. NOT a device
+  # mount — a macvlan is created inside the pod's netns via the device
+  # plugin's devinit gRPC service (/var/run/rlark/devinit.sock); a pod's
+  # init container runs `devinit setup`. Pods using hostNetwork are
+  # skipped. Each entry is a pkg/netmac MACVLANConfig:
+  #   host_nic: auto-detected from the IP subnet when empty
+  #   name:     macvlan interface name in the pod (e.g. macvlan0)
+  #   ip:       network address (e.g. 172.16.0.0/24) → auto-pick an unused
+  #             host IP; or a concrete host IP (172.16.0.101/24)
+  #   gateway:  optional default gateway for the robot subnet
+  hostMacvlans: []
+  # - host_nic: eno1
+  #   name: macvlan0
+  #   ip: 172.16.0.0/24
+  #   # gateway: 172.16.0.1
+
+  camera:
+    enabled: false
+    httpPort: 8080
+    pod:
+      image: rlinf/camera-base:v0.1.0
+      pod_generate_name: camera-controller
+      subdomain: camera-controller-headless
+      labels:
+        app.kubernetes.io/name: camera-controller
+    auto_detect_v4l2: true
+    cameras: []
+
+  ros:
+    enabled: false
+    httpPort: 8080
+    pod:
+      image: rlinf/serl_franka_controllers:v0.1.0-libfranka-0.19.0-frankaros-0.10.2
+      pod_generate_name: ros-controller
+      subdomain: ros-controller-headless
+      labels:
+        app.kubernetes.io/name: ros-controller
+    macvlans: []
+    types: []
+    robots: []
+    allowed_launch_packages: []
+
+  # ROS 2 controller (Humble). Mirrors the ros section above. Each robot
+  # gets a unique ROS_DOMAIN_ID for DDS isolation instead of a roscore.
+  ros2:
+    enabled: false
+    httpPort: 8080
+    pod:
+      image: rlinf/ros2-base:v0.1.0
+      pod_generate_name: ros2-controller
+      subdomain: ros2-controller-headless
+      labels:
+        app.kubernetes.io/name: ros2-controller
+    macvlans: []
+    types: []
+    robots: []
+    allowed_launch_packages: []

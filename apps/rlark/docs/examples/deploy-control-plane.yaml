@@ -1,0 +1,77 @@
+# 控制面部署示例
+# rlarkadm install -f deploy-control-plane.yaml
+
+apiVersion: rlark.io/v1alpha1
+kind: DeployConfig
+plane: control
+
+#db:
+#  host: 192.168.1.10
+#  port: 5432
+#  database: rlark
+#  user: rlark
+#  password: rlark123
+
+# --- 三选一 ---
+
+kubernetes:
+  kubeconfig: ~/.kube/config # kubeconfig for the target cluster
+  gateway-image: rlark:latest
+  controller-manager-image: rlark:latest
+  server-image: rlark:latest
+  kcp-image: kcp:v0.30.0
+  # etcd-image: etcd:3.5.15-0
+  postgresql-image: postgres:15
+  ui-image: rlark-ui:latest
+
+  # 全局默认，所有有状态组件继承（可被组件级覆盖）
+  #replicas: 1
+  storage:
+    type: pvc   # emptyDir | hostPath | pvc
+    # host-path: /data/rlark
+    storage-class: ""  # 空表示用集群默认 StorageClass
+    size: 10Gi
+    node-selector:
+      kubernetes.io/hostname: dev-worker
+
+  # 组件级配置（覆盖全局默认）
+  #kcp:
+  #  replicas: 1
+  #  storage:
+  #    type: hostPath
+  #    host-path: /data/kcp
+  #    node-selector:
+  #      kcp-node: "true"
+  #etcd:
+  #  # 方式一：使用外部 etcd（如云托管 etcd），不部署内置 etcd
+  #  address: https://my-etcd.example.com:2379
+  #
+  #  # 方式二：部署内置 etcd 集群（多实例 KCP 时建议奇数节点）
+  #  replicas: 3
+  #  storage:
+  #    type: pvc
+  #    storage-class: ""
+  #    size: 8Gi
+  #postgresql:
+  #  replicas: 1
+  #  storage:
+  #    type: pvc
+  #    storage-class: ""
+  #    size: 30Gi
+
+#docker:
+#  gateway-image: rlark-gateway:latest
+#  controller-manager-image: rlark-controller-manager:latest
+#  server-image: rlark-server:latest
+#  kcp-image: kcp:v0.30.0
+#  etcd-image: etcd:3.5
+#  postgresql-image: postgres:15
+#  ui-image: rlark-ui:latest
+
+#raw:
+#  gateway-artifact: https://github.com/rlinf/rlark/releases/download/v0.1.0/rlark-gateway
+#  controller-manager-artifact: https://github.com/rlinf/rlark/releases/download/v0.1.0/rlark-controller-manager
+#  server-artifact: https://github.com/rlinf/rlark/releases/download/v0.1.0/rlark-server
+#  kcp-artifact: https://github.com/kcp-dev/kcp/releases/download/v0.30.0/kcp
+#  etcd-artifact: https://github.com/etcd-io/etcd/releases/download/v3.5.0/etcd
+#  postgresql-artifact: https://github.com/rlinf/rlark/releases/download/v0.1.0/rlark-postgresql

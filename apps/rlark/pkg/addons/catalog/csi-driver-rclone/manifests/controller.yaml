@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csi-driver-rclone-controller
+  namespace: rlark-system
+  labels:
+    app: csi-driver-rclone-controller
+spec:
+  replicas: {{ .Values.controllerReplicas }}
+  selector:
+    matchLabels:
+      app: csi-driver-rclone-controller
+  template:
+    metadata:
+      labels:
+        app: csi-driver-rclone-controller
+    spec:
+      serviceAccountName: csi-driver-rclone
+      priorityClassName: system-cluster-critical
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: CriticalAddonsOnly
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: rclone
+          image: {{ .Values.rcloneImage }}
+          imagePullPolicy: Always
+          args:
+            - "--driver-name=$(DRIVER_NAME)"
+            - "--node-id=$(NODE_ID)"
+            - "--endpoint=unix://csi/csi.sock"
+            - "--v={{ .Values.controllerLogLevel }}"
+          env:
+            - name: DRIVER_NAME
+              value: {{ .Values.driverName }}
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: Bidirectional
+        - name: csi-provisioner
+          image: {{ .Values.csiProvisionerImage }}
+          imagePullPolicy: Always
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--v={{ .Values.controllerLogLevel }}"
+            - "--feature-gates=Topology=true"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+        - name: liveness-probe
+          image: {{ .Values.livenessProbeImage }}
+          imagePullPolicy: Always
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--health-timeout=30s"
+            - "--v={{ .Values.controllerLogLevel }}"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
