@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-logr/logr"
@@ -18,6 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
+	utilexec "k8s.io/client-go/util/exec"
 )
 
 const fileChunkSize = 32 * 1024
@@ -180,9 +183,17 @@ func (a *Agent) handleTerminal(c *gin.Context) {
 		TerminalSizeQueue: pipe.sizeQueue,
 	})
 	if err != nil {
+		var exitErr utilexec.ExitError
+		if errors.As(err, &exitErr) && exitErr.Exited() {
+			logger.Info("terminal session ended", "exitCode", exitErr.ExitStatus())
+			pipe.closeNormal(fmt.Sprintf("terminal exited with code %d", exitErr.ExitStatus()))
+			return
+		}
 		logger.Error(err, "exec stream error")
 		pipe.sendError(fmt.Sprintf("exec error: %v", err))
+		return
 	}
+	pipe.closeNormal("terminal session ended")
 }
 
 type wsPipe struct {
@@ -491,4 +502,14 @@ func (p *wsPipe) Close() error {
 	p.rcond.Broadcast()
 	p.rcond.L.Unlock()
 	return p.ws.Close()
+}
+
+func (p *wsPipe) closeNormal(reason string) {
+	p.wmu.Lock()
+	defer p.wmu.Unlock()
+	_ = p.ws.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, reason),
+		time.Now().Add(time.Second),
+	)
 }

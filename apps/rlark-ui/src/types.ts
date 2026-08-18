@@ -243,6 +243,7 @@ export interface CRDNode {
       operatingSystem?: string;
     };
     addresses?: Array<{ type: string; address: string }>;
+    diskPressure?: boolean;
     allocatable?: Record<string, string>;
     capacity?: Record<string, string>;
     used?: Record<string, string>;

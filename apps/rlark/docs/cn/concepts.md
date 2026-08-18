@@ -133,6 +133,21 @@ status:
 - **标签管理**：控制面可下发标签到 Node，Agent 的 Pull 控制器同步到本地 k8s Node
 - **污点管理**：通过 `unschedulable` 字段控制节点是否可调度
 
+### 管理员标注
+
+管理员可在管理端多选 Node 并批量设置由管理端和业务端共同使用的元数据：
+
+- `rlark.io/city` Annotation：管理员维护的物理位置
+- `rlark.io/node-category-{cloud,edge,robot}=true` Label：一个或多个节点分类
+- `rlark.io/gpu-model` Annotation：云算力节点的 GPU 型号
+- `rlark.io/device-model` Annotation：端算力和端真机节点的具身设备型号
+
+这些业务字段存储在 KCP Node CR 上，Agent 刷新 Kubernetes 自动发现状态时会保留它们。批量编辑器会带入共同的当前值、标识多值选择，并且只修改管理员明确启用的属性；清空已启用属性表示删除该值。管理端同时支持全选筛选结果、取消全选及批量 Cordon/Uncordon。一个节点可同时属于多个分类，并同时具有 GPU 和具身设备型号。
+
+业务平台的节点总数和集群详情节点列表包含带有 RLark 分类 Label 的可用 Worker；旧版 `rlark.io/node-category` 值及明确上报 GPU 或具身设备资源的未标注节点仍兼容展示。带有 Kubernetes `master` 或 `control-plane` 角色标签的节点仍只在管理平台中展示，不作为业务任务 Worker 统计和展示。
+
+节点详情中的 CPU、内存和 GPU 占用量按运行 Worker 的 Kubernetes `resources.requests` 汇总，反映调度器已预留资源，不代表 metrics-server 的实时硬件利用率。详情页同时列出该节点上的 Worker、所属 Job、角色、IP、资源申请和运行状态。
+
 ## 5. Node 调度控制（Cordon/Uncordon）
 
 通过 `unschedulable` 字段控制节点是否可调度。
@@ -553,6 +568,9 @@ Web Terminal 允许用户打开任何 rlark 管理的 Pod 的终端会话，无�
 3. Gateway 通过 Server 将 WebSocket 连接代理到 Pod 所在的 Agent
 4. Agent 打开 Pod 容器的 exec 会话，流式传输 I/O
 5. 终端会话保持到 WebSocket 关闭
+
+Web Terminal 支持在 macOS Safari 中使用 Vim 等交互式全屏程序。可打印字符和终端控制键会直接传给终端，同时保留浏览器快捷键及输入法组合输入的正常行为。
+Shell 退出（例如执行 `exit`）时，代理链会转发 WebSocket 正常关闭帧；非零退出状态会在页面保留退出码，传输故障则与进程退出明确区分。
 
 ## 18. Pod HTTP Proxy（Pod HTTP 代理）
 

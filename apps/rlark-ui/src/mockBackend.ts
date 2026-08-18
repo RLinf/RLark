@@ -221,6 +221,15 @@ function clusterPayload() {
   }));
 }
 
+const sshUserKeys = [
+  {
+    index: 0,
+    user: "admin",
+    public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockAdminKey rlark-admin",
+    added_at: "2026-08-10T08:30:00Z",
+  },
+];
+
 export function installMockBackend() {
   const nativeFetch = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -257,6 +266,9 @@ export function installMockBackend() {
       if (patch.metadata?.labels) {
         node.metadata.labels = { ...patch.metadata.labels };
       }
+      if (patch.metadata?.annotations) {
+        node.metadata.annotations = { ...patch.metadata.annotations };
+      }
       if (typeof patch.spec?.unschedulable === "boolean") {
         node.spec.unschedulable = patch.spec.unschedulable;
       }
@@ -264,6 +276,47 @@ export function installMockBackend() {
     }
     if (method === "GET" && path === "/api/v1/rlinf.io/v1alpha1/jobs")
       return json({ items: jobs });
+    if (
+      method === "PATCH" &&
+      path.startsWith("/api/v1/rlinf.io/v1alpha1/jobs/") &&
+      !path.endsWith("/logs")
+    ) {
+      const name = decodeURIComponent(path.split("/").pop()!);
+      const job = jobs.find((item) => item.metadata.name === name);
+      if (!job) return json({ error: "not found" }, 404);
+      const patch = await request.json();
+      if (typeof patch.spec?.stopped === "boolean") {
+        job.spec.stopped = patch.spec.stopped;
+        if (patch.spec.stopped) {
+          job.status = { ...job.status, phase: "Stopped" };
+        } else {
+          job.status = {
+            ...job.status,
+            phase: "Pending",
+            tasks: job.status?.tasks?.map((task) => ({
+              ...task,
+              phase: "Pending",
+            })),
+          };
+        }
+      }
+      if (patch.metadata?.annotations) {
+        job.metadata.annotations = {
+          ...job.metadata.annotations,
+          ...patch.metadata.annotations,
+        };
+      }
+      return json(job);
+    }
+    if (
+      method === "DELETE" &&
+      path.startsWith("/api/v1/rlinf.io/v1alpha1/jobs/")
+    ) {
+      const name = decodeURIComponent(path.split("/").pop()!);
+      const index = jobs.findIndex((item) => item.metadata.name === name);
+      if (index >= 0) jobs.splice(index, 1);
+      return json({ success: true });
+    }
     if (
       method === "GET" &&
       path.startsWith("/api/v1/rlinf.io/v1alpha1/jobs/") &&
@@ -371,7 +424,30 @@ export function installMockBackend() {
     }
     if (method === "GET" && path.includes("/list"))
       return json({ data: { objects: [] } });
-    if (method === "GET" && path === "/api/v1/ssh-user-keys") return json([]);
+    if (method === "GET" && path === "/api/v1/ssh-user-keys")
+      return json(sshUserKeys);
+    if (method === "POST" && path === "/api/v1/ssh-user-keys") {
+      const payload = await request.json();
+      sshUserKeys.push({
+        index: sshUserKeys.length,
+        user: payload.user,
+        public_key: payload.public_key,
+        added_at: new Date().toISOString(),
+      });
+      return json({ success: true });
+    }
+    if (method === "DELETE" && path.startsWith("/api/v1/ssh-user-keys/")) {
+      const index = Number(path.split("/").pop());
+      const user = url.searchParams.get("user");
+      const keyIndex = sshUserKeys.findIndex(
+        (item) => item.index === index && item.user === user,
+      );
+      if (keyIndex >= 0) sshUserKeys.splice(keyIndex, 1);
+      sshUserKeys.forEach((item, itemIndex) => {
+        item.index = itemIndex;
+      });
+      return json({ success: true });
+    }
     if (method === "GET" && path === "/api/v1/addons")
       return json({ data: [] });
     if (method === "GET" && path === "/api/v1/installed-addons")

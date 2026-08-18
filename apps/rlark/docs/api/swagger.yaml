@@ -1723,6 +1723,9 @@ components:
           $ref: '#/components/schemas/ResourceList'
         capacity:
           $ref: '#/components/schemas/ResourceList'
+        diskPressure:
+          type: boolean
+          description: Whether Kubernetes reports disk pressure on the node.
         nodeInfo:
           $ref: '#/components/schemas/NodeSystemInfo'
         phase:

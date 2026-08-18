@@ -6,13 +6,18 @@ import {
   CloudCog,
   MapPin,
   Network,
-  RefreshCw,
   Server,
 } from "lucide-react";
 import type { Copy } from "../i18n";
 import type { ClusterSummary, CRDNode, NodeCategory } from "../types";
 import { useAutoRefresh } from "../hooks";
-import { getNodeCategory } from "../utils/nodes";
+import {
+  getNodeCategories,
+  getNodeDeviceModel,
+  getNodeGPUModel,
+  hasNodeCategory,
+  isBusinessWorkerNode,
+} from "../utils/nodes";
 import {
   compareSortValues,
   MetricCard,
@@ -33,7 +38,11 @@ function clusterIDForNode(node: CRDNode) {
   );
 }
 
-function aggregateClusters(nodes: CRDNode[]): ClusterSummary[] {
+function aggregateClusters(
+  nodes: CRDNode[],
+  clusterTypes = new Map<string, string>(),
+  workerOnly = false,
+): ClusterSummary[] {
   const groups = new Map<string, CRDNode[]>();
   nodes.forEach((node) => {
     const id = clusterIDForNode(node);
@@ -48,29 +57,39 @@ function aggregateClusters(nodes: CRDNode[]): ClusterSummary[] {
         robot: 0,
         unknown: 0,
       };
-      clusterNodes.forEach((node) => categories[getNodeCategory(node)]++);
-      const onlineNodes = clusterNodes.filter(
-        (node) => node.status?.phase === "Online",
-      ).length;
-      const totalNodes = clusterNodes.length;
-      const phase =
-        onlineNodes === 0
-          ? "Offline"
-          : onlineNodes === totalNodes
-            ? "Online"
-            : "Degraded";
-      const type =
+      clusterNodes.forEach((node) =>
+        getNodeCategories(node).forEach((category) => categories[category]++),
+      );
+      const inferredType =
         categories.cloud > 0 && categories.edge === 0 && categories.robot === 0
           ? "Cloud"
           : categories.cloud === 0 &&
               (categories.edge > 0 || categories.robot > 0)
             ? "Embodied"
             : "Hybrid";
+      const type = clusterTypes.get(id) ?? inferredType;
+      const workerNodes = workerOnly
+        ? clusterNodes.filter(isBusinessWorkerNode)
+        : clusterNodes;
+      const onlineNodes = workerNodes.filter(
+        (node) => node.status?.phase === "Online",
+      ).length;
+      const totalNodes = workerNodes.length;
+      const phase =
+        onlineNodes === 0
+          ? "Offline"
+          : onlineNodes === totalNodes
+            ? "Online"
+            : "Degraded";
       const models = (category: NodeCategory) => [
         ...new Set(
           clusterNodes
-            .filter((node) => getNodeCategory(node) === category)
-            .map((node) => node.metadata.labels?.["rlark.io/model"])
+            .filter((node) => hasNodeCategory(node, category))
+            .map((node) =>
+              category === "cloud"
+                ? getNodeGPUModel(node)
+                : getNodeDeviceModel(node),
+            )
             .filter((value): value is string => Boolean(value)),
         ),
       ];
@@ -170,15 +189,16 @@ export function ClusterManagementPage({
   selectedClusterID,
   onSelectCluster,
   onSelectNode,
+  workerOnly = false,
 }: {
   copy: Copy;
   selectedClusterID?: string;
   onSelectCluster: (id?: string) => void;
   onSelectNode: (name: string) => void;
+  workerOnly?: boolean;
 }) {
   const zh = c.nav.overview === "总览";
   const [clusters, setClusters] = useState<ClusterSummary[]>([]);
-  const [nodes, setNodes] = useState<CRDNode[]>([]);
   const [detailNodes, setDetailNodes] = useState<CRDNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -214,31 +234,39 @@ export function ClusterManagementPage({
     } catch {
       resolvedNodes = [];
     }
-    setNodes(resolvedNodes);
 
     let resolvedClusters: ClusterSummary[] = [];
     try {
       const response = await fetch("/api/v1/clusters");
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json();
-      const nodeAggregates = new Map(
-        aggregateClusters(resolvedNodes).map((cluster) => [
-          cluster.id,
-          cluster,
+      const rawClusters = (body.data ?? []) as ClusterSummary[];
+      const clusterTypes = new Map(
+        rawClusters.map((cluster) => [
+          cluster.id || cluster.name,
+          cluster.type,
         ]),
       );
-      resolvedClusters = ((body.data ?? []) as ClusterSummary[]).map(
-        (cluster) =>
-          normalizeClusterSummary(
-            cluster,
-            nodeAggregates.get(cluster.id || cluster.name),
-          ),
+      const nodeAggregates = new Map(
+        aggregateClusters(resolvedNodes, clusterTypes, workerOnly).map(
+          (cluster) => [cluster.id, cluster],
+        ),
+      );
+      resolvedClusters = rawClusters.map((cluster) =>
+        normalizeClusterSummary(
+          cluster,
+          nodeAggregates.get(cluster.id || cluster.name),
+        ),
       );
     } catch {
       resolvedClusters = [];
     }
     if (resolvedClusters.length === 0) {
-      resolvedClusters = aggregateClusters(resolvedNodes);
+      resolvedClusters = aggregateClusters(
+        resolvedNodes,
+        new Map(),
+        workerOnly,
+      );
     }
 
     if (selectedClusterID) {
@@ -249,7 +277,31 @@ export function ClusterManagementPage({
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const body = await response.json();
         const detail = body.data as ClusterSummary & { nodes?: CRDNode[] };
-        setDetailNodes(detail.nodes ?? []);
+        const fullNodes = resolvedNodes.filter(
+          (node) => clusterIDForNode(node) === selectedClusterID,
+        );
+        const fullNodeByKey = new Map(
+          fullNodes.map((node) => [
+            `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
+            node,
+          ]),
+        );
+        const enrichedDetailNodes = (detail.nodes ?? []).map((node) => {
+          const fullNode = fullNodeByKey.get(
+            `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
+          );
+          return fullNode
+            ? {
+                ...node,
+                metadata: {
+                  ...node.metadata,
+                  labels: fullNode.metadata.labels,
+                  annotations: fullNode.metadata.annotations,
+                },
+              }
+            : node;
+        });
+        setDetailNodes(fullNodes.length > 0 ? fullNodes : enrichedDetailNodes);
         if (!resolvedClusters.some((cluster) => cluster.id === detail.id)) {
           resolvedClusters = [detail, ...resolvedClusters];
         }
@@ -309,6 +361,9 @@ export function ClusterManagementPage({
     : undefined;
 
   if (selectedClusterID && selectedCluster) {
+    const visibleDetailNodes = workerOnly
+      ? detailNodes.filter(isBusinessWorkerNode)
+      : detailNodes;
     const onlineRate = selectedCluster.totalNodes
       ? Math.round(
           (selectedCluster.onlineNodes / selectedCluster.totalNodes) * 100,
@@ -389,47 +444,6 @@ export function ClusterManagementPage({
           />
         </section>
 
-        <section className="panel cluster-composition-panel">
-          <div className="panel-title">
-            <div>
-              <span>Composition</span>
-              <h3>{zh ? "资源构成" : "Resource composition"}</h3>
-            </div>
-          </div>
-          <div className="cluster-composition-grid">
-            <div>
-              <span className="cat-cloud">
-                <CloudCog size={17} />
-              </span>
-              <small>{zh ? "云算力" : "Cloud"}</small>
-              <strong>{selectedCluster.cloudNodes}</strong>
-            </div>
-            <div>
-              <span className="cat-edge">
-                <Server size={17} />
-              </span>
-              <small>{zh ? "端算力" : "Edge"}</small>
-              <strong>{selectedCluster.embodiedNodes}</strong>
-            </div>
-            <div>
-              <span className="cat-robot">
-                <Bot size={17} />
-              </span>
-              <small>{zh ? "端真机" : "Robots"}</small>
-              <strong>{selectedCluster.robots}</strong>
-            </div>
-            <div>
-              <small>{zh ? "资源型号" : "Models"}</small>
-              <strong>
-                {[
-                  ...selectedCluster.gpuModels,
-                  ...selectedCluster.robotModels,
-                ].join("、") || "—"}
-              </strong>
-            </div>
-          </div>
-        </section>
-
         <section className="cluster-detail-nodes">
           <div className="section-heading compact">
             <div>
@@ -440,7 +454,7 @@ export function ClusterManagementPage({
             </div>
           </div>
           <NodeResourceBrowser
-            nodes={detailNodes}
+            nodes={visibleDetailNodes}
             copy={c}
             onRefresh={() => fetchClusters()}
             onSelectNode={onSelectNode}

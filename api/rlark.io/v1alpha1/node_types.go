@@ -41,13 +41,14 @@ type NodeSpec struct {
 }
 
 type NodeStatus struct {
-	Phase       NodePhase            `json:"phase,omitempty"`
-	Reason      string               `json:"reason,omitempty"`
-	NodeInfo    NodeInfo             `json:"nodeInfo,omitempty"`
-	Addresses   []corev1.NodeAddress `json:"addresses,omitempty"`
-	Allocatable corev1.ResourceList  `json:"allocatable,omitempty"` // 需要预留系统组件 agent
-	Capacity    corev1.ResourceList  `json:"capacity,omitempty"`
-	Used        corev1.ResourceList  `json:"used,omitempty"`
+	Phase        NodePhase            `json:"phase,omitempty"`
+	Reason       string               `json:"reason,omitempty"`
+	NodeInfo     NodeInfo             `json:"nodeInfo,omitempty"`
+	Addresses    []corev1.NodeAddress `json:"addresses,omitempty"`
+	DiskPressure *bool                `json:"diskPressure,omitempty"`
+	Allocatable  corev1.ResourceList  `json:"allocatable,omitempty"` // 需要预留系统组件 agent
+	Capacity     corev1.ResourceList  `json:"capacity,omitempty"`
+	Used         corev1.ResourceList  `json:"used,omitempty"`
 }
 
 type NodeInfo struct {

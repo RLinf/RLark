@@ -1,16 +1,28 @@
-import { useMemo, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   Activity,
-  ArrowUpRight,
+  Check,
+  ChevronRight,
   CloudCog,
+  Copy as CopyIcon,
   Cpu,
   HardDrive,
+  KeyRound,
   MemoryStick,
   Network,
   Package,
   RefreshCw,
   Server,
   Settings,
+  TerminalSquare,
 } from "lucide-react";
 import type { Phase } from "../data";
 import type { Copy } from "../i18n";
@@ -18,13 +30,47 @@ import type { CRDNode } from "../types";
 import { useAutoRefresh } from "../hooks";
 import {
   categoryLabels,
+  formatResourceQuantity,
+  getGPUResourceKey,
+  getNodeDeviceModel,
+  getNodeCategories,
   getNodeCategory,
+  getNodeGPUModel,
   getNodeLocation,
   getNodeResourceSummary,
+  isBusinessWorkerNode,
+  parseResourceQuantity,
 } from "../utils/nodes";
-import { MetricCard, StatusBadge } from "../components/shared";
+import {
+  compareSortValues,
+  MetricCard,
+  SortButton,
+  StatusBadge,
+  type SortDirection,
+} from "../components/shared";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
 import { formatChinaDateTime } from "../utils/time";
+
+type NodeWorker = {
+  id: string;
+  crName: string;
+  name: string;
+  job: string;
+  role: string;
+  node: string;
+  ip: string;
+  phase: string;
+  requests: Record<string, string>;
+};
+
+function addRequestedResource(
+  totals: Record<string, number>,
+  key: string,
+  raw?: string,
+) {
+  const value = parseResourceQuantity(key, raw);
+  if (value !== null) totals[key] = (totals[key] ?? 0) + value;
+}
 
 export function ClustersPage({
   copy: c,
@@ -51,11 +97,12 @@ export function ClustersPage({
       : "all";
   const initialQuery = searchParams.get("city") ?? searchParams.get("q") ?? "";
   const [realNodes, setRealNodes] = useState<CRDNode[]>([]);
+  const [nodeWorkloads, setNodeWorkloads] = useState<
+    Record<string, { jobs: string[]; workers: number }>
+  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [resourceView, setResourceView] = useState<"clusters" | "nodes">(
-    initialView ?? "clusters",
-  );
+  const resourceView = initialView ?? "clusters";
   const [selectedClusterNs, setSelectedClusterNs] = useState<string | null>(
     null,
   );
@@ -64,12 +111,59 @@ export function ClustersPage({
     if (isInitial) setLoading(true);
     setError("");
     try {
-      const resp = await fetch("/api/v1/rlinf.io/v1alpha1/nodes");
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      setRealNodes(data.items ?? []);
+      const [nodesResponse, tasksResponse, podsResponse] = await Promise.all([
+        fetch("/api/v1/rlinf.io/v1alpha1/nodes"),
+        fetch("/api/v1/rlinf.io/v1alpha1/tasks"),
+        fetch("/api/v1/rlinf.io/v1alpha1/pods"),
+      ]);
+      if (!nodesResponse.ok || !tasksResponse.ok || !podsResponse.ok) {
+        throw new Error(
+          `HTTP ${nodesResponse.status}/${tasksResponse.status}/${podsResponse.status}`,
+        );
+      }
+      const [nodesData, tasksData, podsData] = await Promise.all([
+        nodesResponse.json(),
+        tasksResponse.json(),
+        podsResponse.json(),
+      ]);
+      setRealNodes(nodesData.items ?? []);
+      const taskJobs = new Map<string, string>(
+        (tasksData.items ?? []).map(
+          (task: {
+            metadata?: { name?: string; labels?: Record<string, string> };
+          }) => [
+            task.metadata?.name ?? "",
+            task.metadata?.labels?.["rlinf.io/job"] ?? "",
+          ],
+        ),
+      );
+      const workloadMap = new Map<
+        string,
+        { jobs: Set<string>; workers: number }
+      >();
+      for (const pod of podsData.items ?? []) {
+        if (pod.status?.phase !== "Running" || !pod.status?.node) continue;
+        const nodeName = pod.status.node as string;
+        const current = workloadMap.get(nodeName) ?? {
+          jobs: new Set<string>(),
+          workers: 0,
+        };
+        const jobName = taskJobs.get(pod.spec?.taskName ?? "");
+        if (jobName) current.jobs.add(jobName);
+        current.workers += 1;
+        workloadMap.set(nodeName, current);
+      }
+      setNodeWorkloads(
+        Object.fromEntries(
+          [...workloadMap].map(([name, workload]) => [
+            name,
+            { jobs: [...workload.jobs].sort(), workers: workload.workers },
+          ]),
+        ),
+      );
     } catch (e) {
       setRealNodes([]);
+      setNodeWorkloads({});
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
@@ -78,15 +172,20 @@ export function ClustersPage({
 
   useAutoRefresh(fetchNodes, 10000);
 
+  const workerNodes = useMemo(
+    () => realNodes.filter(isBusinessWorkerNode),
+    [realNodes],
+  );
+
   const clustersList = useMemo(() => {
     const map = new Map<string, CRDNode[]>();
-    for (const n of realNodes) {
+    for (const n of workerNodes) {
       const ns = n.metadata.namespace ?? "default";
       if (!map.has(ns)) map.set(ns, []);
       map.get(ns)!.push(n);
     }
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [realNodes]);
+  }, [workerNodes]);
 
   const selectedCluster =
     clustersList.find(([ns]) => ns === selectedClusterNs) ?? clustersList[0];
@@ -95,7 +194,7 @@ export function ClustersPage({
   const onlineClusters = clustersList.filter(([, nsNodes]) =>
     nsNodes.some((n) => n.status?.phase === "Online"),
   ).length;
-  const totalNodes = realNodes.length;
+  const totalNodes = workerNodes.length;
 
   if (loading) {
     return (
@@ -134,7 +233,7 @@ export function ClustersPage({
   }
 
   const selectedNodeObj =
-    realNodes.find((n) => n.metadata.name === selectedNodeName) ?? null;
+    workerNodes.find((n) => n.metadata.name === selectedNodeName) ?? null;
 
   if (selectedNodeName && selectedNodeObj) {
     return (
@@ -207,14 +306,14 @@ export function ClustersPage({
             tone="mint"
             label={zh ? "节点总数" : "Nodes"}
             value={`${totalNodes}`}
-            note={`${realNodes.filter((n) => n.status?.phase === "Online").length} ${c.status.Online}`}
+            note={`${workerNodes.filter((n) => n.status?.phase === "Online").length} ${c.status.Online}`}
           />
           <MetricCard
             icon={Activity}
             tone="orange"
             label={zh ? "在线率" : "Online Rate"}
-            value={`${totalNodes > 0 ? Math.round((realNodes.filter((n) => n.status?.phase === "Online").length / totalNodes) * 100) : 0}%`}
-            note={`${realNodes.filter((n) => n.status?.phase === "Online").length}/${totalNodes} ${zh ? "在线" : "online"}`}
+            value={`${totalNodes > 0 ? Math.round((workerNodes.filter((n) => n.status?.phase === "Online").length / totalNodes) * 100) : 0}%`}
+            note={`${workerNodes.filter((n) => n.status?.phase === "Online").length}/${totalNodes} ${zh ? "在线" : "online"}`}
           />
         </section>
       )}
@@ -258,7 +357,8 @@ export function ClustersPage({
       {resourceView === "nodes" && (
         <section className="nodes-resource-section">
           <NodeResourceBrowser
-            nodes={realNodes}
+            nodes={workerNodes}
+            nodeWorkloads={nodeWorkloads}
             copy={c}
             initialCategory={initialCategory}
             initialQuery={initialQuery}
@@ -389,283 +489,863 @@ export function ClusterDetailReal({
 export function NodeDetailReal({
   node,
   copy: c,
-  hideLabels = false,
   onTaskNavigate,
 }: {
   node: CRDNode;
   copy: Copy;
-  hideLabels?: boolean;
   onTaskNavigate?: (name: string) => void;
 }) {
   const zh = c.nav.overview === "总览";
+  const [nodeWorkers, setNodeWorkers] = useState<NodeWorker[]>([]);
+  useAutoRefresh(
+    async () => {
+      const [tasksResponse, podsResponse] = await Promise.all([
+        fetch("/api/v1/rlinf.io/v1alpha1/tasks"),
+        fetch("/api/v1/rlinf.io/v1alpha1/pods"),
+      ]);
+      if (!tasksResponse.ok || !podsResponse.ok) {
+        throw new Error(`HTTP ${tasksResponse.status}/${podsResponse.status}`);
+      }
+      const [tasksBody, podsBody] = await Promise.all([
+        tasksResponse.json(),
+        podsResponse.json(),
+      ]);
+      const tasks = new Map<string, Record<string, unknown>>(
+        (tasksBody.items ?? []).map((task: Record<string, unknown>) => [
+          (task as { metadata?: { name?: string } }).metadata?.name ?? "",
+          task,
+        ]),
+      );
+      const workers: NodeWorker[] = (podsBody.items ?? [])
+        .filter(
+          (pod: { status?: { node?: string } }) =>
+            pod.status?.node === node.metadata.name,
+        )
+        .map(
+          (pod: {
+            metadata?: { name?: string; namespace?: string };
+            spec?: { taskName?: string; podName?: string };
+            status?: { phase?: string; ip?: string };
+          }) => {
+            const task = tasks.get(pod.spec?.taskName ?? "") as
+              | {
+                  metadata?: { labels?: Record<string, string> };
+                  spec?: {
+                    role?: string;
+                    kubernetes?: {
+                      workload?: {
+                        template?: {
+                          spec?: {
+                            containers?: Array<{
+                              resources?: {
+                                requests?: Record<string, string>;
+                              };
+                            }>;
+                          };
+                        };
+                      };
+                    };
+                  };
+                }
+              | undefined;
+            const job = task?.metadata?.labels?.["rlinf.io/job"];
+            if (!job) return null;
+            return {
+              id: `${pod.metadata?.namespace ?? ""}/${pod.metadata?.name ?? ""}`,
+              crName: pod.metadata?.name ?? "",
+              name: pod.spec?.podName || pod.metadata?.name || "—",
+              job,
+              role: task?.spec?.role ?? "—",
+              node: node.metadata.name,
+              ip: pod.status?.ip ?? "—",
+              phase: pod.status?.phase ?? "Pending",
+              requests:
+                task?.spec?.kubernetes?.workload?.template?.spec
+                  ?.containers?.[0]?.resources?.requests ?? {},
+            };
+          },
+        )
+        .filter(
+          (worker: NodeWorker | null): worker is NodeWorker => worker !== null,
+        );
+      setNodeWorkers(workers.sort((a, b) => a.name.localeCompare(b.name)));
+    },
+    10000,
+    [node.metadata.name],
+  );
   const phase = (node.status?.phase ?? "Offline") as Phase;
   const labels = node.metadata.labels ?? {};
-  const labelEntries = Object.entries(labels).filter(
-    ([k]) => k.startsWith("kubernetes.io/") || k.startsWith("rlark.io/"),
-  );
   const addresses = node.status?.addresses ?? [];
   const internalAddress =
     addresses.find((address) => address.type === "InternalIP")?.address ??
     addresses[0]?.address ??
     "—";
-  const category = getNodeCategory(node);
-  const categoryInfo = categoryLabels[category];
-  const taskName =
-    labels["rlark.io/embodied-task-name"] ?? labels["rlark.io/task-name"] ?? "";
-  const hasTask =
-    labels["rlark.io/embodied-task"] === "true" || Boolean(taskName);
-  const canOpenTask = Boolean(taskName && onTaskNavigate);
+  const categories = getNodeCategories(node);
   const capacity = node.status?.capacity ?? {};
   const allocatable = node.status?.allocatable ?? {};
-  const used = node.status?.used ?? {};
+  const requestedFallback = useMemo(() => {
+    const totals: Record<string, number> = {};
+    nodeWorkers.forEach((worker) =>
+      Object.entries(worker.requests).forEach(([key, value]) =>
+        addRequestedResource(totals, key, value),
+      ),
+    );
+    return Object.fromEntries(
+      Object.entries(totals).map(([key, value]) => [key, String(value)]),
+    );
+  }, [nodeWorkers]);
+  const reportedUsed = node.status?.used ?? {};
+  const used =
+    Object.keys(reportedUsed).length > 0 ? reportedUsed : requestedFallback;
   const getPercent = (key: string) => {
     const rawUsed = used[key];
+    if (!rawUsed && (capacity[key] ?? allocatable[key])) return 0;
     if (rawUsed?.endsWith("%"))
       return Math.min(100, Math.max(0, Number.parseFloat(rawUsed)));
-    const usedNumber = Number.parseFloat(rawUsed ?? "");
-    const capacityNumber = Number.parseFloat(capacity[key] ?? "");
-    return Number.isFinite(usedNumber) &&
-      Number.isFinite(capacityNumber) &&
-      capacityNumber > 0
+    const usedNumber = parseResourceQuantity(key, rawUsed);
+    const capacityNumber = parseResourceQuantity(
+      key,
+      capacity[key] ?? allocatable[key],
+    );
+    return usedNumber !== null && capacityNumber !== null && capacityNumber > 0
       ? Math.min(
           100,
           Math.max(0, Math.round((usedNumber / capacityNumber) * 100)),
         )
       : null;
   };
+  const formatUsedResource = (key: string) => {
+    const raw = used[key];
+    if (!raw && (capacity[key] ?? allocatable[key])) {
+      return formatResourceQuantity(key, "0");
+    }
+    if (raw?.endsWith("%")) {
+      const capacityValue = parseResourceQuantity(
+        key,
+        capacity[key] ?? allocatable[key],
+      );
+      const percent = Number.parseFloat(raw);
+      if (capacityValue !== null && Number.isFinite(percent)) {
+        return formatResourceQuantity(
+          key,
+          String((capacityValue * percent) / 100),
+        );
+      }
+    }
+    return formatResourceQuantity(key, raw);
+  };
+  const formatAvailableResource = (key: string) => {
+    const available = parseResourceQuantity(
+      key,
+      allocatable[key] ?? capacity[key],
+    );
+    const requested = parseResourceQuantity(key, used[key]);
+    if (available === null) return "—";
+    return formatResourceQuantity(
+      key,
+      String(Math.max(0, available - (requested ?? 0))),
+    );
+  };
+  const gpuResourceKey = getGPUResourceKey(node);
+  const resourceKeys = Array.from(
+    new Set([
+      ...Object.keys(capacity),
+      ...Object.keys(allocatable),
+      ...Object.keys(used),
+    ]),
+  );
+  const hasGPUResource = resourceKeys.includes(gpuResourceKey);
+  const deviceResourceKeys = resourceKeys.filter(
+    (key) => key === "rlinf.io/device" || key.startsWith("rlinf.io/device-"),
+  );
+  const deviceLabel = (key: string) => {
+    const model = key.replace(/^rlinf\.io\/device-?/, "");
+    if (!model) return zh ? "端侧设备" : "Edge device";
+    const reportedModel = labels["rlark.io/model"];
+    if (deviceResourceKeys.length === 1 && reportedModel) return reportedModel;
+    return model
+      .split("-")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  };
+  const hasDiskPressure = node.status?.diskPressure === true;
+  const diskPressureKnown = node.status?.diskPressure !== undefined;
   const resourceItems = [
-    { key: "cpu", label: "CPU", icon: Cpu },
-    { key: "memory", label: zh ? "内存" : "Memory", icon: MemoryStick },
-    { key: "nvidia.com/gpu", label: "GPU", icon: Activity },
+    { key: "cpu", label: "CPU", icon: Cpu, available: true },
+    {
+      key: "memory",
+      label: zh ? "内存" : "Memory",
+      icon: MemoryStick,
+      available: true,
+    },
+    {
+      key: "ephemeral-storage",
+      label: zh ? "磁盘" : "Storage",
+      icon: HardDrive,
+      available: Boolean(
+        capacity["ephemeral-storage"] ?? allocatable["ephemeral-storage"],
+      ),
+    },
+    {
+      key: gpuResourceKey,
+      label: "GPU",
+      icon: Activity,
+      available: hasGPUResource,
+    },
+    ...deviceResourceKeys.map((key) => ({
+      key,
+      label: deviceLabel(key),
+      icon: Package,
+      available: true,
+    })),
+    ...(deviceResourceKeys.length === 0
+      ? [
+          {
+            key: "rlinf.io/device",
+            label: zh ? "端侧设备" : "Edge device",
+            icon: Package,
+            available: false,
+          },
+        ]
+      : []),
   ];
   const created = formatChinaDateTime(node.metadata.creationTimestamp);
   return (
-    <div className="node-resource-detail node-insight-detail">
-      <header className="node-insight-hero">
-        <div className="node-insight-identity">
-          <span className={`node-insight-icon ${phase.toLowerCase()}`}>
-            <Server size={22} />
-          </span>
-          <div>
-            <span className="eyebrow">
-              {zh ? "节点运行概况" : "Node overview"}
+    <>
+      <div className="node-resource-detail node-insight-detail">
+        <header className="node-insight-hero">
+          <div className="node-insight-identity">
+            <span className={`node-insight-icon ${phase.toLowerCase()}`}>
+              <Server size={22} />
             </span>
-            <h3>{node.metadata.name}</h3>
-            <p>
-              <Network size={13} /> {node.metadata.namespace ?? "default"}
-              <span />
-              {internalAddress}
-            </p>
+            <div>
+              <span className="eyebrow">
+                {zh ? "节点运行概况" : "Node overview"}
+              </span>
+              <h3>{node.metadata.name}</h3>
+              <p>
+                <Network size={13} /> {node.metadata.namespace ?? "default"}
+                <span />
+                {internalAddress}
+              </p>
+            </div>
           </div>
-        </div>
-        <div className="node-insight-state">
-          <StatusBadge phase={phase} copy={c} />
-          <span
-            className={
-              node.spec.unschedulable
-                ? "schedule-chip blocked"
-                : "schedule-chip"
-            }
-          >
-            {node.spec.unschedulable
-              ? zh
-                ? "已停止调度"
-                : "Unschedulable"
-              : zh
-                ? "可调度"
-                : "Schedulable"}
-          </span>
-        </div>
-      </header>
-
-      {node.status?.reason && (
-        <div className="node-health-message">
-          <Activity size={15} />
-          <span>{node.status.reason}</span>
-        </div>
-      )}
-
-      <div className="node-insight-facts">
-        <div>
-          <small>{zh ? "节点类型" : "Node type"}</small>
-          <strong>{zh ? categoryInfo.zh : categoryInfo.en}</strong>
-        </div>
-        <div>
-          <small>{zh ? "接入形态" : "Agent type"}</small>
-          <strong>{node.spec.agentType ?? "—"}</strong>
-        </div>
-        <div>
-          <small>{zh ? "系统 / 架构" : "System / Arch"}</small>
-          <strong>
-            {node.status?.nodeInfo?.operatingSystem ?? "—"} ·{" "}
-            {node.status?.nodeInfo?.architecture ?? "—"}
-          </strong>
-        </div>
-        <div>
-          <small>{zh ? "Agent 版本" : "Agent version"}</small>
-          <strong>{node.status?.nodeInfo?.agentVersion ?? "—"}</strong>
-        </div>
-      </div>
-
-      <div className="node-insight-layout">
-        <div className="node-insight-main">
-          <section className="node-insight-section">
-            <div className="node-insight-section-head">
-              <div>
-                <span>{zh ? "健康与容量" : "Health & capacity"}</span>
-                <small>
-                  {zh ? "节点当前资源状态" : "Current node resources"}
-                </small>
-              </div>
-            </div>
-            <div className="node-capacity-grid">
-              {resourceItems.map(({ key, label, icon: Icon }) => {
-                const percent = getPercent(key);
-                return (
-                  <div className="node-capacity-card" key={key}>
-                    <div className="node-capacity-title">
-                      <span>
-                        <Icon size={16} />
-                      </span>
-                      <strong>{label}</strong>
-                      <b>{percent === null ? "—" : `${percent}%`}</b>
-                    </div>
-                    <div className="node-capacity-track">
-                      <i style={{ width: `${percent ?? 0}%` }} />
-                    </div>
-                    <small>
-                      {zh ? "已用" : "Used"} {used[key] ?? "—"}
-                      <span> / </span>
-                      {zh ? "可分配" : "Allocatable"}{" "}
-                      {allocatable[key] ?? capacity[key] ?? "—"}
-                    </small>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="node-insight-section">
-            <div className="node-insight-section-head">
-              <div>
-                <span>{zh ? "具身任务" : "Embodied task"}</span>
-                <small>
-                  {zh
-                    ? "当前与节点关联的任务"
-                    : "Task currently associated with this node"}
-                </small>
-              </div>
-            </div>
-            <button
-              type="button"
-              className={`node-task-callout${hasTask ? " active" : ""}${canOpenTask ? " interactive" : ""}`}
-              disabled={!canOpenTask}
-              onClick={() => taskName && onTaskNavigate?.(taskName)}
-              aria-label={
-                canOpenTask
-                  ? `${zh ? "查看任务" : "View task"} ${taskName}`
-                  : undefined
+          <div className="node-insight-state">
+            <StatusBadge phase={phase} copy={c} />
+            <span
+              className={
+                node.spec.unschedulable
+                  ? "schedule-chip blocked"
+                  : "schedule-chip"
               }
             >
-              <span>
-                <Package size={19} />
-              </span>
-              <div>
-                <strong>
-                  {hasTask
-                    ? taskName ||
-                      (zh ? "运行中的具身任务" : "Active embodied task")
-                    : zh
-                      ? "当前没有关联任务"
-                      : "No associated task"}
-                </strong>
-                <small>
-                  {hasTask
-                    ? zh
-                      ? "节点标签报告该任务正在关联运行"
-                      : "Reported by node task labels"
-                    : phase === "Online" && !node.spec.unschedulable
-                      ? zh
-                        ? "节点当前可用于新的任务调度"
-                        : "The node is available for new workloads"
-                      : zh
-                        ? "节点当前不可用于任务调度"
-                        : "The node is not available for scheduling"}
-                </small>
-              </div>
-              <b>
-                {hasTask ? (zh ? "运行中" : "Running") : zh ? "空闲" : "Idle"}
-              </b>
-              {canOpenTask && (
-                <ArrowUpRight size={16} className="node-task-link-icon" />
-              )}
-            </button>
-          </section>
+              {node.spec.unschedulable
+                ? zh
+                  ? "已停止调度"
+                  : "Unschedulable"
+                : zh
+                  ? "可调度"
+                  : "Schedulable"}
+            </span>
+          </div>
+        </header>
+
+        {node.status?.reason && (
+          <div className="node-health-message">
+            <Activity size={15} />
+            <span>{node.status.reason}</span>
+          </div>
+        )}
+
+        <div className="node-insight-facts">
+          <div>
+            <small>{zh ? "节点类型" : "Node type"}</small>
+            <strong>
+              {categories
+                .map((value) =>
+                  zh ? categoryLabels[value].zh : categoryLabels[value].en,
+                )
+                .join(" / ")}
+            </strong>
+          </div>
+          <div>
+            <small>{zh ? "接入形态" : "Agent type"}</small>
+            <strong>{node.spec.agentType ?? "—"}</strong>
+          </div>
+          <div>
+            <small>{zh ? "系统 / 架构" : "System / Arch"}</small>
+            <strong>
+              {node.status?.nodeInfo?.operatingSystem ?? "—"} ·{" "}
+              {node.status?.nodeInfo?.architecture ?? "—"}
+            </strong>
+          </div>
+          <div>
+            <small>{zh ? "Agent 版本" : "Agent version"}</small>
+            <strong>{node.status?.nodeInfo?.agentVersion ?? "—"}</strong>
+          </div>
         </div>
 
-        <aside className="node-insight-side">
-          <section className="node-insight-section">
-            <div className="node-insight-section-head">
-              <div>
-                <span>{zh ? "基础信息" : "Details"}</span>
-              </div>
-            </div>
-            <dl className="node-info-list">
-              <div>
-                <dt>{zh ? "所属集群" : "Cluster"}</dt>
-                <dd>{node.metadata.namespace ?? "default"}</dd>
-              </div>
-              <div>
-                <dt>{zh ? "内部地址" : "Internal IP"}</dt>
-                <dd>
-                  <code>{internalAddress}</code>
-                </dd>
-              </div>
-              <div>
-                <dt>{zh ? "节点型号" : "Model"}</dt>
-                <dd>{labels["rlark.io/model"] ?? "—"}</dd>
-              </div>
-              <div>
-                <dt>{zh ? "内核版本" : "Kernel"}</dt>
-                <dd>{node.status?.nodeInfo?.kernelVersion ?? "—"}</dd>
-              </div>
-              <div>
-                <dt>{zh ? "创建时间" : "Created"}</dt>
-                <dd>{created}</dd>
-              </div>
-            </dl>
-          </section>
-
-          {!hideLabels && (
-            <section className="node-insight-section node-label-section">
+        <div className="node-insight-layout">
+          <div className="node-insight-main">
+            <section className="node-insight-section">
               <div className="node-insight-section-head">
                 <div>
-                  <span>{zh ? "节点标签" : "Labels"}</span>
+                  <span>{zh ? "健康与容量" : "Health & capacity"}</span>
                   <small>
-                    {labelEntries.length} {zh ? "项" : "items"}
+                    {zh
+                      ? "资源占用按运行 Worker 申请统计，压力来自节点状态"
+                      : "Usage uses Worker requests; pressure uses node status"}
                   </small>
                 </div>
               </div>
-              <div className="label-list">
-                {labelEntries.length === 0 ? (
-                  <small className="muted">{zh ? "无标签" : "No labels"}</small>
-                ) : (
-                  labelEntries.map(([key, value]) => (
-                    <span
-                      key={key}
-                      className="label-chip"
-                      title={`${key}=${value}`}
-                    >
-                      <code>{key}</code>
-                      <i>{value}</i>
-                    </span>
-                  ))
-                )}
+              <div className="node-capacity-grid">
+                {resourceItems.map(({ key, label, icon: Icon, available }) => {
+                  if (key === "ephemeral-storage") {
+                    return (
+                      <div
+                        className={`node-capacity-card node-pressure-card ${
+                          hasDiskPressure ? "is-warning" : ""
+                        }`}
+                        key={key}
+                      >
+                        <div className="node-capacity-title">
+                          <span>
+                            <Icon size={16} />
+                          </span>
+                          <strong>{zh ? "磁盘压力" : "Disk pressure"}</strong>
+                          <b>
+                            {diskPressureKnown
+                              ? hasDiskPressure
+                                ? zh
+                                  ? "存在"
+                                  : "Detected"
+                                : zh
+                                  ? "正常"
+                                  : "Normal"
+                              : zh
+                                ? "未知"
+                                : "Unknown"}
+                          </b>
+                        </div>
+                        <div className="node-capacity-track">
+                          <i
+                            style={{ width: hasDiskPressure ? "100%" : "0%" }}
+                          />
+                        </div>
+                        <div className="node-capacity-amounts">
+                          <span>
+                            <em>{zh ? "状态" : "Status"}</em>
+                            <strong>
+                              {diskPressureKnown
+                                ? hasDiskPressure
+                                  ? zh
+                                    ? "节点存在磁盘压力"
+                                    : "Node has disk pressure"
+                                  : zh
+                                    ? "节点无磁盘压力"
+                                    : "No disk pressure"
+                                : zh
+                                  ? "未上报"
+                                  : "Not reported"}
+                            </strong>
+                          </span>
+                          <span>
+                            <em>{zh ? "可分配容量" : "Allocatable"}</em>
+                            <strong>
+                              {available
+                                ? formatResourceQuantity(
+                                    key,
+                                    allocatable[key] ?? capacity[key],
+                                  )
+                                : "—"}
+                            </strong>
+                          </span>
+                          <small>
+                            {zh ? "来自节点健康状态" : "From node health"}
+                          </small>
+                        </div>
+                      </div>
+                    );
+                  }
+                  const percent = available ? getPercent(key) : null;
+                  return (
+                    <div className="node-capacity-card" key={key}>
+                      <div className="node-capacity-title">
+                        <span>
+                          <Icon size={16} />
+                        </span>
+                        <strong>{label}</strong>
+                        <b>
+                          {available
+                            ? percent === null
+                              ? "—"
+                              : `${percent}%`
+                            : zh
+                              ? "无"
+                              : "None"}
+                        </b>
+                      </div>
+                      <div className="node-capacity-track">
+                        <i style={{ width: `${percent ?? 0}%` }} />
+                      </div>
+                      <div className="node-capacity-amounts">
+                        <span>
+                          <em>{zh ? "已请求" : "Requested"}</em>
+                          <strong>
+                            {available
+                              ? formatUsedResource(key)
+                              : zh
+                                ? "无"
+                                : "None"}
+                          </strong>
+                        </span>
+                        <span>
+                          <em>{zh ? "总量" : "Total"}</em>
+                          <strong>
+                            {available
+                              ? formatResourceQuantity(
+                                  key,
+                                  capacity[key] ?? allocatable[key],
+                                )
+                              : zh
+                                ? "无"
+                                : "None"}
+                          </strong>
+                        </span>
+                        <small>
+                          {zh ? "剩余" : "Available"}{" "}
+                          {available
+                            ? formatAvailableResource(key)
+                            : zh
+                              ? "无"
+                              : "None"}
+                        </small>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </section>
-          )}
-        </aside>
+          </div>
+
+          <aside className="node-insight-side">
+            <section className="node-insight-section">
+              <div className="node-insight-section-head">
+                <div>
+                  <span>{zh ? "基础信息" : "Details"}</span>
+                </div>
+              </div>
+              <dl className="node-info-list">
+                <div>
+                  <dt>{zh ? "所属集群" : "Cluster"}</dt>
+                  <dd>{node.metadata.namespace ?? "default"}</dd>
+                </div>
+                <div>
+                  <dt>{zh ? "内部地址" : "Internal IP"}</dt>
+                  <dd>
+                    <code>{internalAddress}</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>{zh ? "物理位置" : "Location"}</dt>
+                  <dd>
+                    {getNodeLocation(node) || (zh ? "未标注" : "Unlabeled")}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{zh ? "节点分类" : "Category"}</dt>
+                  <dd>
+                    {categories
+                      .map((value) =>
+                        zh
+                          ? categoryLabels[value].zh
+                          : categoryLabels[value].en,
+                      )
+                      .join(" / ")}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{zh ? "GPU 型号" : "GPU model"}</dt>
+                  <dd>
+                    {hasGPUResource
+                      ? getNodeGPUModel(node) || (zh ? "未标注" : "Unlabeled")
+                      : zh
+                        ? "无 GPU"
+                        : "No GPU"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{zh ? "端设备型号" : "Device model"}</dt>
+                  <dd>
+                    {deviceResourceKeys.length > 0
+                      ? getNodeDeviceModel(node) ||
+                        deviceResourceKeys.map(deviceLabel).join("、")
+                      : zh
+                        ? "无端设备"
+                        : "No device"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{zh ? "内核版本" : "Kernel"}</dt>
+                  <dd>{node.status?.nodeInfo?.kernelVersion ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt>{zh ? "创建时间" : "Created"}</dt>
+                  <dd>{created}</dd>
+                </div>
+              </dl>
+            </section>
+          </aside>
+        </div>
       </div>
+      <section className="node-worker-panel">
+        <div className="worker-panel-head">
+          <div>
+            <span className="eyebrow">
+              {zh ? "运行实例" : "Runtime instances"}
+            </span>
+            <h3>{zh ? "Worker 列表" : "Worker list"}</h3>
+          </div>
+          <span className="worker-total-count">
+            {nodeWorkers.length} {zh ? "个 Worker" : "workers"}
+          </span>
+        </div>
+        <NodeWorkerTable
+          workers={nodeWorkers}
+          copy={c}
+          onTaskNavigate={onTaskNavigate}
+        />
+      </section>
+    </>
+  );
+}
+
+function NodeWorkerTable({
+  workers,
+  copy: c,
+  onTaskNavigate,
+}: {
+  workers: NodeWorker[];
+  copy: Copy;
+  onTaskNavigate?: (name: string) => void;
+}) {
+  const zh = c.nav.overview === "总览";
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [sort, setSort] = useState<{
+    key: "name" | "job" | "role" | "ip" | "requests" | "phase";
+    direction: SortDirection;
+  }>({ key: "name", direction: "asc" });
+  const tableRef = useRef<HTMLDivElement>(null);
+  const dragState = useRef({ active: false, x: 0, scrollLeft: 0 });
+  const [dragging, setDragging] = useState(false);
+  const [sshConfig, setSSHConfig] = useState<{
+    sshJumpHost?: string;
+    sshJumpPort?: string;
+  }>({});
+  useEffect(() => {
+    fetch("/api/v1/system-config")
+      .then((response) => (response.ok ? response.json() : {}))
+      .then(setSSHConfig)
+      .catch(() => setSSHConfig({}));
+  }, []);
+  const requestTextFor = useCallback(
+    (worker: NodeWorker) =>
+      Object.entries(worker.requests)
+        .filter(
+          ([key, value]) =>
+            Number.parseFloat(value) > 0 &&
+            (/(^|[./-])gpu($|[./-])/i.test(key) ||
+              key === "rlinf.io/device" ||
+              key.startsWith("rlinf.io/device-")),
+        )
+        .map(([key, value]) => {
+          if (/(^|[./-])gpu($|[./-])/i.test(key)) return `GPU ${value}`;
+          const model = key.replace(/^rlinf\.io\/device-?/, "");
+          return `${model || (zh ? "设备" : "Device")} ${value}`;
+        })
+        .filter(Boolean)
+        .join(" · "),
+    [zh],
+  );
+  const sortedWorkers = useMemo(
+    () =>
+      [...workers].sort((a, b) => {
+        const value = (worker: NodeWorker) =>
+          sort.key === "requests" ? requestTextFor(worker) : worker[sort.key];
+        return compareSortValues(value(a), value(b), sort.direction);
+      }),
+    [workers, sort, requestTextFor],
+  );
+  const toggleSort = (key: typeof sort.key) =>
+    setSort((current) => ({
+      key,
+      direction:
+        current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }));
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !tableRef.current) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("button, a, [role='button']")) return;
+    dragState.current = {
+      active: true,
+      x: event.clientX,
+      scrollLeft: tableRef.current.scrollLeft,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragging(true);
+  };
+  const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragState.current.active || !tableRef.current) return;
+    tableRef.current.scrollLeft =
+      dragState.current.scrollLeft - (event.clientX - dragState.current.x);
+  };
+  const stopDragging = () => {
+    dragState.current.active = false;
+    setDragging(false);
+  };
+  if (workers.length === 0) {
+    return (
+      <div className="node-worker-empty">
+        {zh ? "当前没有运行中的 Worker" : "No running workers"}
+      </div>
+    );
+  }
+  const sshUser = sessionStorage.getItem("rlark-user-name") || "<ssh-user>";
+  return (
+    <div
+      ref={tableRef}
+      className={`node-worker-table-wrap worker-table worker-console-table worker-table-scroll${dragging ? " dragging" : ""}`}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={stopDragging}
+      onPointerCancel={stopDragging}
+    >
+      <table className="node-worker-table">
+        <thead>
+          <tr>
+            {(
+              [
+                ["name", zh ? "Worker 名称" : "Worker"],
+                ["job", "Job"],
+                ["role", zh ? "角色" : "Role"],
+                ["ip", "IP"],
+                ["requests", zh ? "GPU / 端设备" : "GPU / edge devices"],
+                ["phase", zh ? "状态" : "Status"],
+              ] as const
+            ).map(([key, label]) => (
+              <th key={key}>
+                <SortButton
+                  label={label}
+                  active={sort.key === key}
+                  direction={sort.direction}
+                  onClick={() => toggleSort(key)}
+                />
+              </th>
+            ))}
+            <th>{zh ? "操作" : "Actions"}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sortedWorkers.map((worker) => {
+            const requestText = requestTextFor(worker);
+            const sshJump = sshConfig.sshJumpHost
+              ? `${sshUser}@${sshConfig.sshJumpHost}${sshConfig.sshJumpPort ? `:${sshConfig.sshJumpPort}` : ""}`
+              : "";
+            const sshCommand = sshJump
+              ? `ssh -J ${sshJump} root@${worker.name}`
+              : "";
+            const isExpanded = expanded === worker.id;
+            return (
+              <Fragment key={worker.id}>
+                <tr>
+                  <td>
+                    <strong>{worker.name}</strong>
+                  </td>
+                  <td>
+                    <button
+                      className="plain-button node-worker-job-link"
+                      disabled={worker.job === "—" || !onTaskNavigate}
+                      onClick={() => onTaskNavigate?.(worker.job)}
+                    >
+                      {worker.job}
+                    </button>
+                  </td>
+                  <td>{worker.role}</td>
+                  <td>
+                    <code>{worker.ip}</code>
+                  </td>
+                  <td>{requestText || (zh ? "未使用" : "Not used")}</td>
+                  <td>
+                    <StatusBadge phase={worker.phase as Phase} copy={c} />
+                  </td>
+                  <td>
+                    <div className="worker-table-actions">
+                      <button
+                        className="icon-button worker-copy-ssh-icon"
+                        disabled={!sshCommand}
+                        title={zh ? "复制 SSH 命令" : "Copy SSH command"}
+                        onClick={async () => {
+                          if (!sshCommand) return;
+                          await navigator.clipboard.writeText(sshCommand);
+                          setCopied(worker.id);
+                          window.setTimeout(() => setCopied(null), 1500);
+                        }}
+                      >
+                        {copied === worker.id ? (
+                          <Check size={15} />
+                        ) : (
+                          <KeyRound size={15} />
+                        )}
+                      </button>
+                      <button
+                        className="icon-button worker-terminal-icon"
+                        disabled={!worker.crName}
+                        title={zh ? "打开 WebTerminal" : "Open WebTerminal"}
+                        onClick={() => {
+                          if (!worker.crName) return;
+                          const params = new URLSearchParams({
+                            job: worker.job,
+                            worker: worker.crName,
+                            status: worker.phase,
+                          });
+                          const terminalWindow = window.open(
+                            `/terminal?${params.toString()}`,
+                            "_blank",
+                          );
+                          if (terminalWindow) terminalWindow.opener = null;
+                        }}
+                      >
+                        <TerminalSquare size={15} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        title={zh ? "查看详情" : "View details"}
+                        onClick={() =>
+                          setExpanded(isExpanded ? null : worker.id)
+                        }
+                      >
+                        <ChevronRight
+                          size={15}
+                          style={{
+                            transform: isExpanded ? "rotate(90deg)" : "none",
+                          }}
+                        />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {isExpanded && (
+                  <tr className="worker-expanded-row node-worker-expanded">
+                    <td colSpan={7}>
+                      <div className="worker-detail-drawer">
+                        <div className="worker-detail-head">
+                          <div>
+                            <span className="eyebrow">
+                              {zh ? "Worker 详情" : "Worker details"}
+                            </span>
+                            <strong>{worker.name}</strong>
+                          </div>
+                          {sshCommand && (
+                            <div className="worker-ssh-inline">
+                              <KeyRound size={15} />
+                              <code title={sshCommand}>{sshCommand}</code>
+                              <button
+                                className="icon-button"
+                                onClick={async () => {
+                                  await navigator.clipboard.writeText(
+                                    sshCommand,
+                                  );
+                                  setCopied(worker.id);
+                                  window.setTimeout(
+                                    () => setCopied(null),
+                                    1500,
+                                  );
+                                }}
+                                aria-label={
+                                  zh ? "复制 SSH 地址" : "Copy SSH address"
+                                }
+                              >
+                                {copied === worker.id ? (
+                                  <Check size={15} />
+                                ) : (
+                                  <CopyIcon size={15} />
+                                )}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        <div className="worker-detail-grid">
+                          <div>
+                            <span>{zh ? "角色" : "Role"}</span>
+                            <strong>{worker.role}</strong>
+                          </div>
+                          <div>
+                            <span>{zh ? "节点" : "Node"}</span>
+                            <strong>{worker.node}</strong>
+                          </div>
+                          <div>
+                            <span>{zh ? "申请 CPU" : "CPU request"}</span>
+                            <strong>
+                              {worker.requests.cpu ||
+                                (zh ? "未申请" : "Not requested")}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>{zh ? "申请内存" : "Memory request"}</span>
+                            <strong>
+                              {worker.requests.memory ||
+                                (zh ? "未申请" : "Not requested")}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>
+                              {zh ? "GPU / 端设备" : "GPU / edge devices"}
+                            </span>
+                            <strong>
+                              {requestText || (zh ? "未使用" : "Not used")}
+                            </strong>
+                          </div>
+                        </div>
+                        <div className="pod-subtable">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>{zh ? "实例名称" : "Worker name"}</th>
+                                <th>Job</th>
+                                <th>{zh ? "实例 IP" : "Worker IP"}</th>
+                                <th>{zh ? "状态" : "Status"}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr>
+                                <td>
+                                  <code className="inline-code">
+                                    {worker.name}
+                                  </code>
+                                </td>
+                                <td>{worker.job}</td>
+                                <td>{worker.ip}</td>
+                                <td>
+                                  <StatusBadge
+                                    phase={worker.phase as Phase}
+                                    copy={c}
+                                  />
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -711,6 +711,11 @@ func (in *NodeStatus) DeepCopyInto(out *NodeStatus) {
 		*out = make([]corev1.NodeAddress, len(*in))
 		copy(*out, *in)
 	}
+	if in.DiskPressure != nil {
+		in, out := &in.DiskPressure, &out.DiskPressure
+		*out = new(bool)
+		**out = **in
+	}
 	if in.Allocatable != nil {
 		in, out := &in.Allocatable, &out.Allocatable
 		*out = make(corev1.ResourceList, len(*in))

@@ -8,11 +8,12 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/terminalrelay"
 )
 
-var wsTerminalUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
+// Browser traffic is same-origin, while the Gateway-to-Server connection does
+// not send an Origin header. Gorilla's default origin check supports both.
+var wsTerminalUpgrader = websocket.Upgrader{}
 
 func (s *Server) handleTerminalProxy(c *gin.Context) {
 	logger := log.FromContext(c.Request.Context())
@@ -58,28 +59,5 @@ func (s *Server) handleTerminalProxy(c *gin.Context) {
 	}
 	defer func() { _ = agentWs.Close() }()
 
-	relayWebSockets(browserWs, agentWs)
-}
-
-func relayWebSockets(a, b *websocket.Conn) {
-	done := make(chan struct{}, 2)
-
-	copyLoop := func(dst, src *websocket.Conn) {
-		defer func() { done <- struct{}{} }()
-		for {
-			msgType, data, err := src.ReadMessage()
-			if err != nil {
-				_ = dst.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("connection closed: %v\r\n", err)))
-				return
-			}
-			if err := dst.WriteMessage(msgType, data); err != nil {
-				return
-			}
-		}
-	}
-
-	go copyLoop(a, b)
-	go copyLoop(b, a)
-
-	<-done
+	terminalrelay.Relay(browserWs, agentWs)
 }

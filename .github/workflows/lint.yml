@@ -50,4 +50,4 @@ jobs:
 
       - name: Run prettier
         working-directory: apps/rlark-ui
-        run: npx prettier --check .
+        run: npx prettier --check 'src/' 'index.html' 'package.json' 'vite.config.ts' 'tsconfig*.json'

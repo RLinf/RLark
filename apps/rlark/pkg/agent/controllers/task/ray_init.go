@@ -161,6 +161,9 @@ func applyRayInit(template *corev1.PodTemplateSpec, mgmtTask *rlarkv1alpha1.Task
 					},
 				},
 			)
+			if mgmtTask.Spec.Domain != "" {
+				envs = append(envs, corev1.EnvVar{Name: "RLARK_DOMAIN", Value: mgmtTask.Spec.Domain})
+			}
 		} else {
 			headTaskName := annotations[rlarkv1alpha1.RayHeadTaskNameAnnotation]
 			if headTaskName != "" {

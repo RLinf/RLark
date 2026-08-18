@@ -12,8 +12,8 @@ const (
 	sidecarVolumeName     = "rlark-nodeserver-socket"
 )
 
-func applyNetworkSidecar(template *corev1.PodTemplateSpec, mgmtTask *rlarkv1alpha1.Task, sidecarImage string) {
-	if sidecarImage == "" || mgmtTask.Spec.Domain == "" {
+func applyNetworkSidecar(template *corev1.PodTemplateSpec, mgmtTask *rlarkv1alpha1.Task, image string) {
+	if image == "" || mgmtTask.Spec.Domain == "" {
 		return
 	}
 
@@ -23,7 +23,7 @@ func applyNetworkSidecar(template *corev1.PodTemplateSpec, mgmtTask *rlarkv1alph
 
 	sidecar := corev1.Container{
 		Name:            sidecarContainerName,
-		Image:           sidecarImage,
+		Image:           image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{"network-sidecar"},
 		Env: []corev1.EnvVar{

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="apps/rlark/docs/images/logo.png" alt="RLark Logo" width="400" />
+  <img src="apps/rlark/docs/images/logo-zh.png" alt="RLark Logo" width="400" />
 </div>
 
 <div align="center">
@@ -32,25 +32,24 @@
 
 ## 架构概览
 
-![系统架构](apps/rlark/docs/images/architecture.svg)
+![系统架构](apps/rlark/docs/images/architecture.png)
 
 ## 快速开始
 
+请参阅 [快速开始指南](apps/rlark/docs/cn/quickstart.md) 了解如何在本地搭建开发环境并运行第一个训练任务。
+
 ```bash
-# 1. 安装 CLI
+# 1. 编译
 git clone https://github.com/RLinf/RLark
 cd RLark && make build
 
-# 2. 部署控制面（Kubernetes 模式）
-./bin/rlarkadm install -f apps/rlark/docs/examples/deploy-control-plane.yaml
+# 2. 启动控制面（Docker Compose）
+docker compose -f apps/rlark/docs/examples/docker-compose.yml up -d
 
-# 3. 部署数据面 Agent
-./bin/rlarkadm install -f apps/rlark/docs/examples/deploy-data-plane.yaml
+# 3. 启动数据面（kind 集群）
+kind create cluster --name rlark-data
 
-# 4. 创建训练任务
-curl -X POST http://localhost:8080/api/v1/rlinf.io/v1alpha1/jobs \
-  -H "Content-Type: application/json" \
-  -d '{"apiVersion":"rlinf.io/v1alpha1","kind":"Job","metadata":{"name":"hello-world"},"spec":{"domain":"my-first-domain","tasks":[{"name":"trainer","head":true,"role":"Actor","agentType":"Kubernetes","kubernetes":{"workload":{"kind":"Deployment","replicas":1,"template":{"spec":{"containers":[{"name":"trainer","image":"busybox:latest","command":["sh","-c","echo Hello from rlark! && sleep 3600"]}]}}}}}}]}}'
+# 然后按照快速开始指南启动各组件并创建任务
 ```
 
 ## 文档索引

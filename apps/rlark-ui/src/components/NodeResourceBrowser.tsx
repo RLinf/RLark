@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, LayoutGrid } from "lucide-react";
+import { Ban, ChevronRight, LayoutGrid, LockOpen } from "lucide-react";
 import type { Phase } from "../data";
 import type { Copy } from "../i18n";
 import type { CRDNode, NodeCategory } from "../types";
 import {
   categoryLabels,
   getNodeCategory,
+  getNodeCategories,
   getNodeLocation,
   getNodeResourceSummary,
+  hasNodeCategory,
 } from "../utils/nodes";
 import {
   compareSortValues,
@@ -24,18 +26,32 @@ const categoryOrder: NodeCategory[] = ["cloud", "edge", "robot", "unknown"];
 
 export function NodeResourceBrowser({
   nodes,
+  nodeWorkloads = {},
   copy: c,
   onSelectNode,
   onRefresh,
+  onToggleScheduling,
+  updatingNode,
   initialCategory = "all",
   initialQuery = "",
+  selectedNodeKeys,
+  onSelectionChange,
+  onSelectFiltered,
+  onClearSelection,
 }: {
   nodes: CRDNode[];
+  nodeWorkloads?: Record<string, { jobs: string[]; workers: number }>;
   copy: Copy;
   onSelectNode: (name: string) => void;
   onRefresh?: () => void;
+  onToggleScheduling?: (node: CRDNode) => void;
+  updatingNode?: string | null;
   initialCategory?: CategoryFilter;
   initialQuery?: string;
+  selectedNodeKeys?: Set<string>;
+  onSelectionChange?: (keys: Set<string>) => void;
+  onSelectFiltered?: (keys: string[]) => void;
+  onClearSelection?: () => void;
 }) {
   const zh = c.nav.overview === "总览";
   const [category, setCategory] = useState<CategoryFilter>(initialCategory);
@@ -70,7 +86,9 @@ export function NodeResourceBrowser({
       robot: 0,
       unknown: 0,
     };
-    nodes.forEach((node) => counts[getNodeCategory(node)]++);
+    nodes.forEach((node) =>
+      getNodeCategories(node).forEach((nodeCategory) => counts[nodeCategory]++),
+    );
     return counts;
   }, [nodes]);
 
@@ -78,22 +96,20 @@ export function NodeResourceBrowser({
     const normalizedQuery = query.trim().toLowerCase();
     return nodes
       .filter((node) => {
-        const labels = node.metadata.labels ?? {};
         const address =
           node.status?.addresses?.find((item) => item.type === "InternalIP")
             ?.address ??
           node.status?.addresses?.[0]?.address ??
           "";
-        const taskName =
-          labels["rlark.io/embodied-task-name"] ??
-          labels["rlark.io/task-name"] ??
-          "";
+        const taskName = (nodeWorkloads[node.metadata.name]?.jobs ?? []).join(
+          " ",
+        );
         const location = getNodeLocation(node);
         const searchable =
           `${node.metadata.name} ${node.metadata.namespace ?? ""} ${node.spec.agentType ?? ""} ${address} ${taskName} ${location}`.toLowerCase();
         const phase = (node.status?.phase ?? "Offline") as Phase;
         return (
-          (category === "all" || getNodeCategory(node) === category) &&
+          (category === "all" || hasNodeCategory(node, category)) &&
           (phaseFilter === "All" || phase === phaseFilter) &&
           (!normalizedQuery || searchable.includes(normalizedQuery))
         );
@@ -106,10 +122,7 @@ export function NodeResourceBrowser({
               ?.address ??
             node.status?.addresses?.[0]?.address ??
             "";
-          const task =
-            labels["rlark.io/embodied-task-name"] ??
-            labels["rlark.io/task-name"] ??
-            "";
+          const workload = nodeWorkloads[node.metadata.name];
           if (sort.key === "name") return node.metadata.name;
           if (sort.key === "type") return getNodeCategory(node);
           if (sort.key === "phase") return node.status?.phase ?? "Offline";
@@ -123,7 +136,7 @@ export function NodeResourceBrowser({
             return (
               Number.parseFloat(getNodeResourceSummary(node, zh).primary) || 0
             );
-          return task;
+          return workload?.jobs.length ?? 0;
         };
         const order = compareSortValues(
           value(a),
@@ -138,7 +151,7 @@ export function NodeResourceBrowser({
           })
         );
       });
-  }, [category, nodes, phaseFilter, query, sort, zh]);
+  }, [category, nodeWorkloads, nodes, phaseFilter, query, sort, zh]);
 
   const totalPages = Math.max(1, Math.ceil(filteredNodes.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -149,6 +162,21 @@ export function NodeResourceBrowser({
   const onlineCount = filteredNodes.filter(
     (node) => node.status?.phase === "Online",
   ).length;
+  const selectable = Boolean(selectedNodeKeys && onSelectionChange);
+  const nodeKey = (node: CRDNode) =>
+    `${node.metadata.namespace ?? ""}/${node.metadata.name}`;
+  const filteredKeys = filteredNodes.map(nodeKey);
+  const allFilteredSelected =
+    filteredKeys.length > 0 &&
+    filteredKeys.every((key) => selectedNodeKeys?.has(key));
+  const toggleAllFiltered = () => {
+    if (!selectedNodeKeys || !onSelectionChange) return;
+    const next = new Set(selectedNodeKeys);
+    filteredKeys.forEach((key) =>
+      allFilteredSelected ? next.delete(key) : next.add(key),
+    );
+    onSelectionChange(next);
+  };
 
   useEffect(() => setPage(1), [category, pageSize, phaseFilter, query]);
   useEffect(() => setCategory(initialCategory), [initialCategory]);
@@ -225,10 +253,42 @@ export function NodeResourceBrowser({
               {zh ? "在线" : "online"}
             </small>
           </div>
-          <span>{zh ? "点击节点查看详情" : "Select a node for details"}</span>
+          {selectable ? (
+            <div className="node-batch-selection-actions">
+              <label className="node-batch-select-all">
+                <input
+                  type="checkbox"
+                  checked={allFilteredSelected}
+                  onChange={toggleAllFiltered}
+                />
+                {zh ? "全选筛选结果" : "Select filtered"}
+              </label>
+              <button
+                type="button"
+                className="plain-button"
+                onClick={() => onSelectFiltered?.(filteredKeys)}
+                disabled={filteredKeys.length === 0}
+              >
+                {zh ? "全选" : "Select all"}
+              </button>
+              <button
+                type="button"
+                className="plain-button"
+                onClick={onClearSelection}
+                disabled={!selectedNodeKeys?.size}
+              >
+                {zh ? "取消全选" : "Clear all"}
+              </button>
+            </div>
+          ) : (
+            <span>{zh ? "点击节点查看详情" : "Select a node for details"}</span>
+          )}
         </div>
         <div className="node-resource-table">
-          <div className="node-resource-table-head">
+          <div
+            className={`node-resource-table-head${onToggleScheduling ? " has-admin-actions" : ""}${selectable ? " has-selection" : ""}`}
+          >
+            {selectable && <span aria-label={zh ? "选择" : "Select"} />}
             <SortButton
               label={zh ? "节点名称" : "Node"}
               active={sort.key === "name"}
@@ -277,14 +337,14 @@ export function NodeResourceBrowser({
               direction={sort.direction}
               onClick={() => toggleSort("task")}
             />
-            <span />
+            <span>
+              {onToggleScheduling ? (zh ? "调度管理" : "Scheduling") : ""}
+            </span>
           </div>
           <div className="node-resource-table-body">
             {pagedNodes.map((node) => {
               const phase = (node.status?.phase ?? "Offline") as Phase;
-              const nodeCategory = getNodeCategory(node);
-              const categoryInfo = categoryLabels[nodeCategory];
-              const CategoryIcon = categoryInfo.icon;
+              const nodeCategories = getNodeCategories(node);
               const labels = node.metadata.labels ?? {};
               const cluster =
                 node.metadata.namespace ?? labels["rlark.io/cluster-id"] ?? "—";
@@ -294,23 +354,52 @@ export function NodeResourceBrowser({
                 )?.address ??
                 node.status?.addresses?.[0]?.address ??
                 "—";
-              const taskName =
-                labels["rlark.io/embodied-task-name"] ??
-                labels["rlark.io/task-name"] ??
-                "";
-              const hasEmbodiedTask =
-                labels["rlark.io/embodied-task"] === "true" ||
-                Boolean(taskName);
+              const workload = nodeWorkloads[node.metadata.name];
+              const jobCount = workload?.jobs.length ?? 0;
+              const workerCount = workload?.workers ?? 0;
+              const taskSummary = jobCount
+                ? zh
+                  ? `${jobCount} 个任务 · ${workerCount} 个 Worker`
+                  : `${jobCount} jobs · ${workerCount} workers`
+                : zh
+                  ? "无"
+                  : "None";
               const location = getNodeLocation(node) || "—";
               const resource = getNodeResourceSummary(node, zh);
+              const key = nodeKey(node);
+              const checked = selectedNodeKeys?.has(key) ?? false;
               return (
-                <button
-                  type="button"
-                  className="node-resource-row"
-                  key={`${node.metadata.namespace ?? ""}/${node.metadata.name}`}
+                <div
+                  className={`node-resource-row${onToggleScheduling ? " has-admin-actions" : ""}${selectable ? " has-selection" : ""}${checked ? " selected" : ""}`}
+                  key={key}
                   onClick={() => onSelectNode(node.metadata.name)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelectNode(node.metadata.name);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
                   aria-label={`${zh ? "查看节点" : "View node"} ${node.metadata.name}`}
                 >
+                  {selectable && (
+                    <span className="node-batch-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        aria-label={`${zh ? "选择节点" : "Select node"} ${node.metadata.name}`}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={() => {
+                          if (!selectedNodeKeys || !onSelectionChange) return;
+                          const next = new Set(selectedNodeKeys);
+                          if (checked) next.delete(key);
+                          else next.add(key);
+                          onSelectionChange(next);
+                        }}
+                      />
+                    </span>
+                  )}
                   <span className="node-row-primary">
                     <span
                       className={`node-status-ring ${phase.toLowerCase()}`}
@@ -319,9 +408,20 @@ export function NodeResourceBrowser({
                       {node.metadata.name}
                     </strong>
                   </span>
-                  <span className={`node-type-cell cat-${nodeCategory}`}>
-                    <CategoryIcon size={14} />
-                    {zh ? categoryInfo.zh : categoryInfo.en}
+                  <span className="node-type-list">
+                    {nodeCategories.map((item) => {
+                      const info = categoryLabels[item];
+                      const Icon = info.icon;
+                      return (
+                        <span
+                          key={item}
+                          className={`node-type-cell cat-${item}`}
+                        >
+                          <Icon size={13} />
+                          {zh ? info.zh : info.en}
+                        </span>
+                      );
+                    })}
                   </span>
                   <span>
                     <StatusBadge phase={phase} copy={c} />
@@ -340,14 +440,63 @@ export function NodeResourceBrowser({
                     <strong>{resource.primary}</strong>
                     <small>{resource.secondary}</small>
                   </span>
-                  <span className="node-row-task" title={taskName}>
+                  <span
+                    className="node-row-task"
+                    title={workload?.jobs.join("、") ?? ""}
+                  >
                     <i
-                      className={`embodied-task-dot ${hasEmbodiedTask ? "active" : "idle"}`}
+                      className={`embodied-task-dot ${jobCount ? "active" : "idle"}`}
                     />
-                    {taskName || (zh ? "无" : "None")}
+                    {taskSummary}
                   </span>
-                  <ChevronRight size={15} className="node-row-chevron" />
-                </button>
+                  {onToggleScheduling ? (
+                    <span className="node-scheduling-actions">
+                      <span
+                        className={`node-scheduling-state${node.spec.unschedulable ? " cordoned" : ""}`}
+                      >
+                        {node.spec.unschedulable
+                          ? zh
+                            ? "已封锁"
+                            : "Cordoned"
+                          : zh
+                            ? "可调度"
+                            : "Schedulable"}
+                      </span>
+                      <button
+                        type="button"
+                        className={
+                          node.spec.unschedulable
+                            ? "secondary-button node-scheduling-button"
+                            : "secondary-button danger node-scheduling-button"
+                        }
+                        disabled={updatingNode === node.metadata.name}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onToggleScheduling(node);
+                        }}
+                      >
+                        {node.spec.unschedulable ? (
+                          <LockOpen size={14} />
+                        ) : (
+                          <Ban size={14} />
+                        )}
+                        {updatingNode === node.metadata.name
+                          ? zh
+                            ? "处理中"
+                            : "Updating"
+                          : node.spec.unschedulable
+                            ? zh
+                              ? "解封"
+                              : "Uncordon"
+                            : zh
+                              ? "封锁"
+                              : "Cordon"}
+                      </button>
+                    </span>
+                  ) : (
+                    <ChevronRight size={15} className="node-row-chevron" />
+                  )}
+                </div>
               );
             })}
             {pagedNodes.length === 0 && (

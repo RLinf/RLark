@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   ArrowRight,
-  Boxes,
   CircleDot,
   CloudCog,
   Languages,
@@ -18,6 +17,7 @@ import { StorageClassesPage, StorageClassCreatePage } from "../pages/Storage";
 import { CreateClusterPage } from "./CreateCluster";
 import { AddonsPage } from "./Addons";
 import { AdminPage } from "./AdminPage";
+import { AdminDashboard } from "./AdminDashboard";
 import { Header, Logo, PlatformFooter } from "../components/shared";
 import { useBackendMode, usePersistentState } from "../hooks";
 import { SSHKeysPage } from "../pages/SSHKeys";
@@ -26,6 +26,7 @@ import {
   ImageRegistryCreatePage,
 } from "../pages/ImageRegistries";
 import { SystemConfigPage } from "../pages/SystemConfig";
+import { JobsPage } from "../pages/Jobs";
 
 export function AdminLogin({
   copy: c,
@@ -89,7 +90,16 @@ export function AdminLogin({
     <div className={"admin-login-page theme-" + theme}>
       <div className="admin-login-topbar">
         <div className="admin-brand">
-          <img src="/rlark-logo.png" alt="RLark" className="brand-logo" />
+          <img
+            src={`/rlark-logo-${lang}-light.png`}
+            alt="RLark"
+            className="brand-logo brand-logo-light"
+          />
+          <img
+            src={`/rlark-logo-${lang}-dark.png`}
+            alt="RLark"
+            className="brand-logo brand-logo-dark"
+          />
           <div className="admin-brand-text">
             <strong>RLark</strong>
             <small>ADMIN</small>
@@ -208,6 +218,7 @@ export function AdminApp() {
       .replace(/\/+$/, "");
     const parts = p.split("/").filter(Boolean);
     const valid = [
+      "dashboard",
       "clusters-list",
       "create-cluster",
       "clusters-nodes",
@@ -218,9 +229,10 @@ export function AdminApp() {
       "config",
       "storageClass",
       "image-registries",
+      "ssh-keys",
     ];
     if (valid.includes(parts[0])) return parts[0];
-    return parts.length > 0 ? "clusters-nodes" : "clusters-list";
+    return parts.length > 0 ? "clusters-nodes" : "dashboard";
   });
   const [adminSub, setAdminSub] = useState(() => {
     const p = window.location.pathname
@@ -228,6 +240,7 @@ export function AdminApp() {
       .replace(/\/+$/, "");
     const parts = p.split("/").filter(Boolean);
     const explicitPages = [
+      "dashboard",
       "clusters-list",
       "create-cluster",
       "clusters-nodes",
@@ -238,6 +251,7 @@ export function AdminApp() {
       "config",
       "storageClass",
       "image-registries",
+      "ssh-keys",
     ];
     const subParts = explicitPages.includes(parts[0]) ? parts.slice(1) : parts;
     return subParts.length > 0 ? decodeURIComponent(subParts.join("/")) : "";
@@ -255,7 +269,7 @@ export function AdminApp() {
   const navigate = (id: string, sub?: string) => {
     setAdminPage(id);
     setAdminSub(sub ?? "");
-    let path = id === "clusters-list" && !sub ? "/admin" : `/admin/${id}`;
+    let path = id === "dashboard" && !sub ? "/admin" : `/admin/${id}`;
     if (sub) path += "/" + encodeURIComponent(sub);
     window.history.pushState({}, "", path);
   };
@@ -267,6 +281,7 @@ export function AdminApp() {
         .replace(/\/+$/, "");
       const parts = p.split("/").filter(Boolean);
       const valid = [
+        "dashboard",
         "clusters-list",
         "create-cluster",
         "clusters-nodes",
@@ -285,7 +300,7 @@ export function AdminApp() {
           ? parts[0]
           : parts.length > 0
             ? "clusters-nodes"
-            : "clusters-list",
+            : "dashboard",
       );
       const subParts = valid.includes(parts[0]) ? parts.slice(1) : parts;
       setAdminSub(
@@ -318,7 +333,7 @@ export function AdminApp() {
       }
     >
       <aside className="sidebar">
-        <Logo />
+        <Logo lang={lang} />
         <nav>
           <span className="nav-label">{zh ? "管理后台" : "Admin"}</span>
           {adminNavItems.map((item) => {
@@ -421,6 +436,9 @@ export function AdminApp() {
           }}
           createLabel={zh ? "创建集群" : "Create Cluster"}
         />
+        {adminPage === "dashboard" && (
+          <AdminDashboard copy={c} onNavigate={navigate} />
+        )}
         {adminPage === "clusters-nodes" && (
           <AdminPage
             copy={c}
@@ -437,18 +455,13 @@ export function AdminApp() {
           />
         )}
         {adminPage === "jobs" && (
-          <div className="page-content">
-            <div className="section-heading">
-              <div>
-                <span className="eyebrow">
-                  <Boxes size={13} />
-                  {zh ? "任务管理" : "Jobs"}
-                </span>
-                <h2>{zh ? "任务管理" : "Jobs"}</h2>
-              </div>
-            </div>
-            <p className="muted">{zh ? "即将推出" : "Coming soon"}</p>
-          </div>
+          <JobsPage
+            copy={c}
+            isMockMode={isMockMode}
+            selectedName={adminSub}
+            onSelect={(name?: string) => navigate("jobs", name)}
+            adminMode
+          />
         )}
         {adminPage === "domains" && (
           <DomainsPage
@@ -496,6 +509,7 @@ export function AdminApp() {
             onCreate={() => navigate("image-registries", "create")}
           />
         )}
+        {adminPage === "ssh-keys" && <SSHKeysPage copy={c} />}
         <PlatformFooter />
       </main>
     </div>
