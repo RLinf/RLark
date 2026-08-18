@@ -6,21 +6,7 @@ build:
     python: "3.12"
   jobs:
     post_build:
-      # Remove RTD's JavaScript injection to prevent conflicts with mkdocs-material theme
-      - python -c "
-import os, re
-out = os.environ['READTHEDOCS_OUTPUT']
-for root, dirs, files in os.walk(os.path.join(out, 'html')):
-    for f in files:
-        if f.endswith('.html'):
-            p = os.path.join(root, f)
-            with open(p) as fh:
-                c = fh.read()
-            c = re.sub(r'<script[^>]*readthedocs[^>]*></script>', '', c)
-            c = re.sub(r'<link[^>]*readthedocs[^>]*>', '', c)
-            with open(p, 'w') as fh:
-                fh.write(c)
-"
+      - python apps/rlark/docs/scripts/remove_rtd_injection.py
 
 mkdocs:
   configuration: apps/rlark/mkdocs.yml
