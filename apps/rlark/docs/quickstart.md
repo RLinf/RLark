@@ -57,9 +57,21 @@ docker compose -f apps/rlark/docs/examples/docker-compose.yml ps
 # Extract admin kubeconfig from kcp container
 docker cp kcp:/.kcp/admin.kubeconfig ~/.rlark/admin.kubeconfig
 
-# Replace Docker internal IP with localhost (macOS/Linux with Docker Desktop)
-sed -i '' 's|https://[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+:6443|https://localhost:6443|g' ~/.rlark/admin.kubeconfig 2>/dev/null || \
-sed -i    's|https://[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+:6443|https://localhost:6443|g' ~/.rlark/admin.kubeconfig
+# Replace Docker internal IP with localhost and skip TLS verification
+# (kcp's TLS certificate is for the Docker IP, not localhost)
+python3 -c "
+import yaml, re
+with open('$HOME/.rlark/admin.kubeconfig') as f:
+    config = yaml.safe_load(f)
+for cluster in config.get('clusters', []):
+    cluster['cluster']['server'] = re.sub(
+        r'https://[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:',
+        'https://localhost:', cluster['cluster']['server'])
+    cluster['cluster']['insecure-skip-tls-verify'] = True
+    cluster['cluster'].pop('certificate-authority-data', None)
+with open('$HOME/.rlark/admin.kubeconfig', 'w') as f:
+    yaml.dump(config, f)
+"
 
 # Install CRDs into kcp (required before starting components)
 kubectl --kubeconfig ~/.rlark/admin.kubeconfig apply -f api/config/crd/bases/
@@ -97,7 +109,8 @@ Open three terminals and start Server, Controller-Manager, and Gateway:
   --kubeconfig ~/.rlark/admin.kubeconfig \
   --server-address https://localhost:8443 \
   --leader-elect=false \
-  --metrics-bind-address :0
+  --metrics-bind-address :0 \
+  --db-config apps/rlark/docs/examples/db-config.yaml
 
 # Terminal 3: Start Gateway
 ./apps/rlark/bin/gateway \
@@ -189,6 +202,7 @@ curl -X POST "http://localhost:8080/api/v1/rlinf.io/v1alpha1/jobs" \
           "head": true,
           "role": "Actor",
           "agentType": "Kubernetes",
+          "nodeSelector": { "rlark.io/cluster-id": "my-cluster" },
           "kubernetes": {
             "workload": {
               "kind": "Deployment",

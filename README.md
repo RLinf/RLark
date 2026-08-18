@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="apps/rlark/docs/images/logo.png" alt="RLark Logo" width="400" />
+  <img src="apps/rlark/docs/images/logo-en.png" alt="RLark Logo" width="400" />
 </div>
 
 <div align="center">
@@ -32,25 +32,24 @@ Manage cross-cluster embodied intelligence workloads natively with Kubernetes, f
 
 ## Architecture Overview
 
-![System Architecture](apps/rlark/docs/images/architecture.svg)
+![System Architecture](apps/rlark/docs/images/architecture.png)
 
 ## Quick Start
 
+See the [Quick Start Guide](apps/rlark/docs/quickstart.md) for a step-by-step guide to set up a local development environment and run your first training job.
+
 ```bash
-# 1. Install CLI
+# 1. Build
 git clone https://github.com/RLinf/RLark
 cd RLark && make build
 
-# 2. Deploy control plane (Kubernetes mode)
-./bin/rlarkadm install -f apps/rlark/docs/examples/deploy-control-plane.yaml
+# 2. Start control plane (Docker Compose)
+docker compose -f apps/rlark/docs/examples/docker-compose.yml up -d
 
-# 3. Deploy data plane Agent
-./bin/rlarkadm install -f apps/rlark/docs/examples/deploy-data-plane.yaml
+# 3. Start data plane (kind cluster)
+kind create cluster --name rlark-data
 
-# 4. Create a training job
-curl -X POST http://localhost:8080/api/v1/rlinf.io/v1alpha1/jobs \
-  -H "Content-Type: application/json" \
-  -d '{"apiVersion":"rlinf.io/v1alpha1","kind":"Job","metadata":{"name":"hello-world"},"spec":{"domain":"my-first-domain","tasks":[{"name":"trainer","head":true,"role":"Actor","agentType":"Kubernetes","kubernetes":{"workload":{"kind":"Deployment","replicas":1,"template":{"spec":{"containers":[{"name":"trainer","image":"busybox:latest","command":["sh","-c","echo Hello from rlark! && sleep 3600"]}]}}}}}}]}}'
+# Then follow the quickstart guide to start components and create a job
 ```
 
 ## Documentation

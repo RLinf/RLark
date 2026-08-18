@@ -12,6 +12,11 @@ import {
   Activity,
   ArrowDown,
   ArrowUp,
+  Check,
+  Circle,
+  Clock3,
+  LoaderCircle,
+  X,
 } from "lucide-react";
 import type { Phase } from "../data";
 import type { Copy, Lang, Theme } from "../i18n";
@@ -32,7 +37,7 @@ export function PlatformFooter() {
         </a>
         <span aria-hidden="true">·</span>
         <a
-          href="https://github.com/RLinf/RLark/wiki"
+          href="https://github.com/RLinf/RLark/tree/main/apps/rlark/docs"
           target="_blank"
           rel="noreferrer"
         >
@@ -105,16 +110,17 @@ export function SortButton({
   );
 }
 
-export function Logo() {
+export function Logo({ lang }: { lang: Lang }) {
+  const locale = lang === "zh" ? "zh" : "en";
   return (
     <div className="brand">
       <img
-        src="/rlark-logo.png"
+        src={`/rlark-logo-${locale}-light.png`}
         alt="RLark"
         className="brand-logo brand-logo-light"
       />
       <img
-        src="/rlark-logo-white.png"
+        src={`/rlark-logo-${locale}-dark.png`}
         alt="RLark"
         className="brand-logo brand-logo-dark"
       />
@@ -123,9 +129,19 @@ export function Logo() {
 }
 
 export function StatusBadge({ phase, copy: c }: { phase: Phase; copy: Copy }) {
+  const Icon =
+    phase === "Running"
+      ? LoaderCircle
+      : phase === "Succeeded" || phase === "Online"
+        ? Check
+        : phase === "Pending"
+          ? Clock3
+          : phase === "Failed" || phase === "Offline"
+            ? X
+            : Circle;
   return (
     <span className={"status status-" + phase.toLowerCase()}>
-      <i />
+      <Icon className="status-icon" aria-hidden="true" />
       {c.status[phase]}
     </span>
   );

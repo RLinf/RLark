@@ -7,11 +7,13 @@ import {
   Download,
   ExternalLink,
   KeyRound,
+  LoaderCircle,
   MoreVertical,
   Network,
   Pencil,
   Play,
   Plus,
+  RotateCcw,
   Square,
   Search,
   TerminalSquare,
@@ -45,6 +47,18 @@ function taskResourceName(jobName: string, taskName: string) {
     .replace(/\s+/g, "-");
 }
 
+function effectiveJobPhase(job: Job, workerPhases?: string[]): Phase {
+  if (job.stopped || job.phase === "Stopped") return "Stopped";
+  const phases = (
+    workerPhases ?? job.taskStatuses.map((task) => task.phase)
+  ).filter(Boolean);
+  if (phases.length === 0 || job.phase !== "Running") return job.phase;
+  if (phases.some((phase) => phase === "Failed")) return "Failed";
+  if (phases.every((phase) => phase === "Succeeded")) return "Succeeded";
+  if (!phases.some((phase) => phase === "Running")) return "Pending";
+  return "Running";
+}
+
 async function copyText(value: string) {
   try {
     if (navigator.clipboard?.writeText) {
@@ -76,14 +90,16 @@ export function JobsPage({
   onCreate,
   onClone,
   onEdit,
+  adminMode = false,
 }: {
   copy: CopyType;
   isMockMode: boolean;
   selectedName: string;
   onSelect: (name?: string) => void;
-  onCreate: () => void;
-  onClone: (job: Job) => void;
-  onEdit: (job: Job) => void;
+  onCreate?: () => void;
+  onClone?: (job: Job) => void;
+  onEdit?: (job: Job) => void;
+  adminMode?: boolean;
 }) {
   const zh = c.nav.overview === "总览";
   const [query, setQuery] = useState("");
@@ -165,12 +181,46 @@ export function JobsPage({
     }
   };
 
+  const handleRestart = async (job: Job) => {
+    if (
+      !confirm(
+        zh
+          ? `确定重新启动任务 "${job.name}" 吗？`
+          : `Restart job "${job.name}"?`,
+      )
+    )
+      return;
+    try {
+      const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/merge-patch+json" },
+        body: JSON.stringify({
+          metadata: {
+            annotations: { "rlark.io/restarted-at": new Date().toISOString() },
+          },
+          spec: { stopped: false },
+        }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      setRealJobs((prev) =>
+        prev.map((item) =>
+          item.id === job.id
+            ? { ...item, stopped: false, phase: "Pending" as Phase }
+            : item,
+        ),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const allJobs = realJobs;
   const filtered = allJobs.filter((j) => {
     const queryHit = `${j.id} ${j.displayName} ${j.type}`
       .toLowerCase()
       .includes(query.toLowerCase());
-    const phaseHit = phaseFilter === "All" || j.phase === phaseFilter;
+    const phaseHit =
+      phaseFilter === "All" || effectiveJobPhase(j) === phaseFilter;
     return queryHit && phaseHit;
   });
   const sortedJobs = useMemo(
@@ -178,6 +228,7 @@ export function JobsPage({
       [...filtered].sort((a, b) => {
         const value = (job: Job) => {
           if (sort.key === "workers") return job.progress;
+          if (sort.key === "phase") return effectiveJobPhase(job);
           return job[sort.key];
         };
         return compareSortValues(
@@ -213,7 +264,19 @@ export function JobsPage({
         copy={c}
         isMockMode={isMockMode}
         onBack={() => onSelect(undefined)}
-        onClone={() => onClone(selected)}
+        onClone={adminMode ? undefined : () => onClone?.(selected)}
+        adminActions={
+          adminMode
+            ? {
+                onStop: () => handleToggleStop(selected),
+                onRestart: () => handleRestart(selected),
+                onDelete: async () => {
+                  await handleDelete(selected);
+                  onSelect(undefined);
+                },
+              }
+            : undefined
+        }
       />
     );
   }
@@ -222,14 +285,30 @@ export function JobsPage({
     <div className="page-content resource-page jobs-list-page">
       <div className="section-heading">
         <div>
-          <span className="eyebrow">{c.jobs.eyebrow}</span>
-          <h2>{c.jobs.title}</h2>
-          <p>{c.jobs.desc}</p>
+          <span className="eyebrow">
+            {adminMode
+              ? zh
+                ? "ADMIN / JOBS"
+                : "ADMIN / JOBS"
+              : c.jobs.eyebrow}
+          </span>
+          <h2>
+            {adminMode ? (zh ? "任务管理" : "Job management") : c.jobs.title}
+          </h2>
+          <p>
+            {adminMode
+              ? zh
+                ? "查看全平台任务状态，并执行停止、重启和删除等管理操作。"
+                : "Review platform jobs and perform stop, restart, and delete operations."
+              : c.jobs.desc}
+          </p>
         </div>
-        <button className="primary-button" onClick={onCreate}>
-          <Plus size={17} />
-          {c.common.createJob}
-        </button>
+        {!adminMode && (
+          <button className="primary-button" onClick={onCreate}>
+            <Plus size={17} />
+            {c.common.createJob}
+          </button>
+        )}
       </div>
       <PageToolbar
         placeholder={c.jobs.search}
@@ -331,10 +410,12 @@ export function JobsPage({
                         ? "创建强化学习、数据采集、评测或自定义任务。"
                         : "Create an RL, data collection, evaluation, or custom job."}
                     </small>
-                    <button className="secondary-button" onClick={onCreate}>
-                      <Plus size={15} />
-                      {c.common.createJob}
-                    </button>
+                    {!adminMode && (
+                      <button className="secondary-button" onClick={onCreate}>
+                        <Plus size={15} />
+                        {c.common.createJob}
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -356,7 +437,7 @@ export function JobsPage({
                   <span className="role-chip">{c.jobType[job.type]}</span>
                 </td>
                 <td>
-                  <StatusBadge phase={job.phase} copy={c} />
+                  <StatusBadge phase={effectiveJobPhase(job)} copy={c} />
                 </td>
                 <td>
                   <span className="inline-progress">
@@ -370,14 +451,24 @@ export function JobsPage({
                 <td>{formatTaskTime(job.submittedAt)}</td>
                 <td>{formatTaskTime(job.stoppedAt)}</td>
                 <td>
-                  <JobActionMenu
-                    job={job}
-                    zh={zh}
-                    onEdit={() => onEdit(job)}
-                    onClone={() => onClone(job)}
-                    onDelete={() => handleDelete(job)}
-                    onToggleStop={() => handleToggleStop(job)}
-                  />
+                  {adminMode ? (
+                    <AdminJobActions
+                      job={job}
+                      zh={zh}
+                      onStop={() => handleToggleStop(job)}
+                      onRestart={() => handleRestart(job)}
+                      onDelete={() => handleDelete(job)}
+                    />
+                  ) : (
+                    <JobActionMenu
+                      job={job}
+                      zh={zh}
+                      onEdit={() => onEdit?.(job)}
+                      onClone={() => onClone?.(job)}
+                      onDelete={() => handleDelete(job)}
+                      onToggleStop={() => handleToggleStop(job)}
+                    />
+                  )}
                 </td>
               </tr>
             ))}
@@ -542,18 +633,73 @@ function JobActionMenu({
   );
 }
 
+function AdminJobActions({
+  job,
+  zh,
+  onStop,
+  onRestart,
+  onDelete,
+}: {
+  job: Job;
+  zh: boolean;
+  onStop: () => void;
+  onRestart: () => void;
+  onDelete: () => void;
+}) {
+  const canStop =
+    !job.stopped && !["Stopped", "Succeeded", "Failed"].includes(job.phase);
+
+  return (
+    <div className="row-actions admin-job-actions">
+      {canStop ? (
+        <button
+          className="icon-button"
+          onClick={onStop}
+          title={zh ? "停止任务" : "Stop job"}
+          aria-label={zh ? `停止任务 ${job.name}` : `Stop ${job.name}`}
+        >
+          <Square size={15} />
+        </button>
+      ) : (
+        <button
+          className="icon-button"
+          onClick={onRestart}
+          title={zh ? "重启任务" : "Restart job"}
+          aria-label={zh ? `重启任务 ${job.name}` : `Restart ${job.name}`}
+        >
+          <RotateCcw size={15} />
+        </button>
+      )}
+      <button
+        className="icon-button danger"
+        onClick={onDelete}
+        title={zh ? "删除任务" : "Delete job"}
+        aria-label={zh ? `删除任务 ${job.name}` : `Delete ${job.name}`}
+      >
+        <Trash2 size={15} />
+      </button>
+    </div>
+  );
+}
+
 export function JobDetailPage({
   job,
   copy: c,
   isMockMode,
   onBack,
   onClone,
+  adminActions,
 }: {
   job: Job;
   copy: CopyType;
   isMockMode: boolean;
   onBack: () => void;
-  onClone: () => void;
+  onClone?: () => void;
+  adminActions?: {
+    onStop: () => void;
+    onRestart: () => void;
+    onDelete: () => void;
+  };
 }) {
   const zh = c.nav.overview === "总览";
   const [activeTab, setActiveTab] = useState<"workers" | "logs" | "metrics">(
@@ -730,11 +876,10 @@ export function JobDetailPage({
               ts.observedNodes?.join(", ") ??
               "—",
             phase: (ts.phase || "Pending") as Phase,
-            cpu: Math.min(96, 38 + i * 9 + (ts.phase === "Running" ? 12 : 0)),
-            memory: Math.min(92, 42 + i * 7 + (ts.phase === "Running" ? 8 : 0)),
+            cpu: job.resources.find((item) => item.role === ts.name)?.cpu ?? "",
+            memory:
+              job.resources.find((item) => item.role === ts.name)?.memory ?? "",
             gpu: job.resources.find((item) => item.role === ts.name)?.gpu,
-            latency: i % 2 === 0 ? `${42 + i * 7} ms` : undefined,
-            fps: i % 2 === 1 ? 24 + i * 3 : undefined,
             logs: ts.message
               ? [ts.message]
               : [
@@ -760,17 +905,9 @@ export function JobDetailPage({
             role,
             node: pod.node || "—",
             phase: (pod.phase || "Pending") as Phase,
-            cpu: Math.min(
-              96,
-              38 + (index % 6) * 9 + (pod.phase === "Running" ? 12 : 0),
-            ),
-            memory: Math.min(
-              92,
-              42 + (index % 6) * 7 + (pod.phase === "Running" ? 8 : 0),
-            ),
+            cpu: resource?.cpu ?? "",
+            memory: resource?.memory ?? "",
             gpu: resource?.gpu,
-            latency: index % 2 === 0 ? `${42 + (index % 5) * 7} ms` : undefined,
-            fps: index % 2 === 1 ? 24 + (index % 5) * 3 : undefined,
             logs: pod.message
               ? [pod.message]
               : [
@@ -783,6 +920,10 @@ export function JobDetailPage({
   const runningWorkerCount = jobWorkers.filter(
     (worker) => worker.phase === "Running",
   ).length;
+  const displayPhase = effectiveJobPhase(
+    job,
+    jobWorkers.map((worker) => worker.phase),
+  );
   const workerPodsByTask = new Map<string, PodInfo[]>();
   for (const worker of jobWorkers) {
     workerPodsByTask.set(
@@ -924,8 +1065,10 @@ export function JobDetailPage({
         onBack={onBack}
         runningWorkerCount={runningWorkerCount}
         totalWorkers={jobWorkers.length || job.workers}
+        displayPhase={displayPhase}
         tensorBoardProxy={tensorBoardProxy}
         onClone={onClone}
+        adminActions={adminActions}
       />
       <div className="sub-tabs">
         {tabs.map((tab) => (
@@ -1050,7 +1193,22 @@ export function JobDetailPage({
             </div>
           </div>
           {logsLoading ? (
-            <code>{zh ? "加载日志中…" : "Loading logs…"}</code>
+            <div className="log-loading-state" role="status" aria-live="polite">
+              <span className="log-loading-icon">
+                <LoaderCircle size={20} />
+              </span>
+              <div>
+                <strong>
+                  {zh ? "正在连接 Worker 日志" : "Connecting to worker logs"}
+                </strong>
+                <small>
+                  {zh
+                    ? "正在汇总各实例的最新输出…"
+                    : "Collecting the latest output from each instance…"}
+                </small>
+              </div>
+              <i className="log-loading-shimmer" aria-hidden="true" />
+            </div>
           ) : logsError ? (
             <code className="log-error">{logsError}</code>
           ) : podLogs.length === 0 ? (
@@ -1185,16 +1343,24 @@ function JobPublicOverview({
   onBack,
   runningWorkerCount,
   totalWorkers,
+  displayPhase,
   tensorBoardProxy,
   onClone,
+  adminActions,
 }: {
   job: Job;
   copy: CopyType;
   onBack: () => void;
   runningWorkerCount: number;
   totalWorkers: number;
+  displayPhase: Phase;
   tensorBoardProxy?: string;
-  onClone: () => void;
+  onClone?: () => void;
+  adminActions?: {
+    onStop: () => void;
+    onRestart: () => void;
+    onDelete: () => void;
+  };
 }) {
   const zh = c.nav.overview === "总览";
   const baseConfigRows = [
@@ -1221,23 +1387,63 @@ function JobPublicOverview({
           </p>
         </div>
         <div className="job-detail-summary-status">
-          <StatusBadge phase={job.phase} copy={c} />
+          <StatusBadge phase={displayPhase} copy={c} />
           <small>
             {job.stopped
               ? zh
                 ? "任务已终止"
                 : "Job stopped"
-              : zh
-                ? "任务保持活跃"
-                : "Job active"}
+              : displayPhase === "Pending"
+                ? zh
+                  ? "Worker 正在等待调度或启动"
+                  : "Workers are waiting to schedule or start"
+                : displayPhase === "Succeeded"
+                  ? zh
+                    ? "所有 Worker 已完成"
+                    : "All workers completed"
+                  : zh
+                    ? "任务保持活跃"
+                    : "Job active"}
           </small>
-          <button
-            className="secondary-button job-detail-clone-button"
-            onClick={onClone}
-          >
-            <Copy size={15} />
-            {zh ? "复制任务" : "Clone job"}
-          </button>
+          {adminActions ? (
+            <div className="admin-job-detail-actions">
+              {!job.stopped &&
+              !["Stopped", "Succeeded", "Failed"].includes(job.phase) ? (
+                <button
+                  className="secondary-button"
+                  onClick={adminActions.onStop}
+                >
+                  <Square size={15} />
+                  {zh ? "停止任务" : "Stop job"}
+                </button>
+              ) : (
+                <button
+                  className="secondary-button"
+                  onClick={adminActions.onRestart}
+                >
+                  <RotateCcw size={15} />
+                  {zh ? "重启任务" : "Restart job"}
+                </button>
+              )}
+              <button
+                className="secondary-button danger"
+                onClick={adminActions.onDelete}
+              >
+                <Trash2 size={15} />
+                {zh ? "删除任务" : "Delete job"}
+              </button>
+            </div>
+          ) : (
+            onClone && (
+              <button
+                className="secondary-button job-detail-clone-button"
+                onClick={onClone}
+              >
+                <Copy size={15} />
+                {zh ? "复制任务" : "Clone job"}
+              </button>
+            )
+          )}
         </div>
       </div>
 
@@ -1768,8 +1974,7 @@ function formatWorkerCreatedAt(startedAt: string, index: number) {
 
 function getNodeKindLabel(worker: WorkerItem) {
   const value = `${worker.node} ${worker.role}`.toLowerCase();
-  if (value.includes("robot") || value.includes("environment"))
-    return "具身真机";
+  if (value.includes("robot")) return "具身真机";
   if (value.includes("edge") || value.includes("camera")) return "具身算力";
   return "云算力";
 }
@@ -2074,7 +2279,14 @@ function WorkerTableRow({
               <small>
                 {isHeader
                   ? "Header Worker"
-                  : `${worker.latency ?? `${worker.fps ?? "-"} fps`}`}
+                  : [
+                      worker.cpu ? `CPU ${worker.cpu}` : "",
+                      worker.gpu && worker.gpu !== "0"
+                        ? `GPU ${worker.gpu}`
+                        : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || (zh ? "未申请资源" : "No requests")}
               </small>
             </span>
           </span>
@@ -2218,15 +2430,25 @@ function WorkerTableRow({
                   <strong>{worker.node}</strong>
                 </div>
                 <div>
-                  <span>CPU / {zh ? "内存" : "Memory"}</span>
+                  <span>{zh ? "申请 CPU" : "CPU request"}</span>
                   <strong>
-                    {worker.cpu}% / {worker.memory}%
+                    {worker.cpu || (zh ? "未申请" : "Not requested")}
                   </strong>
                 </div>
                 <div>
-                  <span>{zh ? "通信状态" : "Runtime"}</span>
+                  <span>{zh ? "申请内存" : "Memory request"}</span>
                   <strong>
-                    {worker.latency ?? `${worker.fps ?? "-"} fps`}
+                    {worker.memory || (zh ? "未申请" : "Not requested")}
+                  </strong>
+                </div>
+                <div>
+                  <span>{zh ? "申请 GPU" : "GPU request"}</span>
+                  <strong>
+                    {worker.gpu && worker.gpu !== "0"
+                      ? worker.gpu
+                      : zh
+                        ? "未申请"
+                        : "Not requested"}
                   </strong>
                 </div>
               </div>

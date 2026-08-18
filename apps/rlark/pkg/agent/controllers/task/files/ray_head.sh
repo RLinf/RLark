@@ -8,12 +8,15 @@ if [ -n "$WAIT_NETWORK_SCRIPT" ]; then
     bash "$WAIT_NETWORK_SCRIPT" "network"
 fi
 
-# Phase 0: Inject SSH public key into authorized_keys
-if [ -n "$RLARK_SSH_PUBLIC_KEY" ]; then
+# Phase 0: Start rlark-sshd if the binary is available
+if [ -n "$RLARK_SSH_PUBLIC_KEY" ] && [ -x /sshd/rlark-sshd ]; then
+    nohup /sshd/rlark-sshd -port 22 > /tmp/rlark-sshd.log 2>&1 &
+    echo "rlark-sshd started on port 22"
+elif [ -n "$RLARK_SSH_PUBLIC_KEY" ]; then
     mkdir -p ~/.ssh && chmod 700 ~/.ssh
     echo "$RLARK_SSH_PUBLIC_KEY" >> ~/.ssh/authorized_keys
     chmod 600 ~/.ssh/authorized_keys
-    echo "SSH public key injected into authorized_keys"
+    echo "SSH public key injected into authorized_keys (fallback: no rlark-sshd binary)"
 fi
 
 # Phase 1: Prepare script (executed before Ray starts)
@@ -35,6 +38,20 @@ if [ -n "$RAY_TEMP_DIR" ]; then
 fi
 
 NODE_IP="${RLARK_NODE_IP:-$(hostname -I | awk '{print $1}')}"
+if [ -n "$RLARK_DOMAIN" ]; then
+    DOMAIN_HOSTNAME="$(hostname).rlark-domain"
+    for i in $(seq 1 120); do
+        DOMAIN_IP=$(getent hosts "$DOMAIN_HOSTNAME" 2>/dev/null | awk '{print $1}' | head -1)
+        if [ -n "$DOMAIN_IP" ]; then
+            NODE_IP="$DOMAIN_IP"
+            echo "Resolved domain IP: $NODE_IP ($DOMAIN_HOSTNAME)"
+            break
+        fi
+        echo "Waiting for domain IP from /etc/hosts... (attempt $i)"
+        sleep 1
+    done
+fi
+
 ray start --head --dashboard-host=0.0.0.0 --disable-usage-stats \
     --node-ip-address="$NODE_IP" --port=${RLARK_RAY_PORT} --temp-dir $TEMP_DIR &
 RAY_HEAD_PID=$!

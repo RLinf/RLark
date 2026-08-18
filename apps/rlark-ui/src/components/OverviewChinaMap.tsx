@@ -13,7 +13,7 @@ import {
 import type { Copy } from "../i18n";
 import type { CRDNode, Page } from "../types";
 import type { Cluster, Job } from "../data";
-import { getNodeCategory } from "../utils/nodes";
+import { getNodeCategories, getNodeLocation } from "../utils/nodes";
 
 type Position = [number, number];
 type Geometry = {
@@ -93,7 +93,7 @@ interface CityData {
   dominant: "cloud" | "edge" | "robot";
 }
 
-function parseIPLocation(nodes: CRDNode[]): {
+function parseNodeLocations(nodes: CRDNode[]): {
   cities: CityData[];
   totalByCat: { cloud: number; edge: number; robot: number };
 } {
@@ -110,21 +110,13 @@ function parseIPLocation(nodes: CRDNode[]): {
   const totalByCat = { cloud: 0, edge: 0, robot: 0 };
 
   for (const node of nodes) {
-    const raw = node.metadata.annotations?.["rlark.io/ip-location"];
-    if (!raw) continue;
-    let loc: { city?: string; province?: string };
-    try {
-      loc = JSON.parse(raw);
-    } catch {
-      continue;
-    }
-    const city = loc.city;
+    const city = getNodeLocation(node);
     if (!city) continue;
 
-    const cat = getNodeCategory(node);
-    if (cat === "cloud" || cat === "edge" || cat === "robot") {
-      totalByCat[cat]++;
-    }
+    const categories = getNodeCategories(node).filter(
+      (category) => category !== "unknown",
+    );
+    categories.forEach((category) => totalByCat[category]++);
 
     const ns = node.metadata.namespace ?? "";
     if (!cityMap.has(city)) {
@@ -139,9 +131,7 @@ function parseIPLocation(nodes: CRDNode[]): {
     const entry = cityMap.get(city)!;
     entry.nodes++;
     if (ns) entry.clusters.add(ns);
-    if (cat === "cloud") entry.cloud++;
-    else if (cat === "edge") entry.edge++;
-    else if (cat === "robot") entry.robot++;
+    categories.forEach((category) => entry[category]++);
   }
 
   const cities: CityData[] = [];
@@ -272,7 +262,10 @@ export function OverviewChinaMap({
   const hasDraggedRef = useRef(false);
   const zh = c.nav.overview === "总览";
 
-  const { cities, totalByCat } = useMemo(() => parseIPLocation(nodes), [nodes]);
+  const { cities, totalByCat } = useMemo(
+    () => parseNodeLocations(nodes),
+    [nodes],
+  );
   const connections = useMemo(() => buildConnections(cities), [cities]);
 
   const totalNodes = nodes.length;

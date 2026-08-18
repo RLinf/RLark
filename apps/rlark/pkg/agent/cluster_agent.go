@@ -58,7 +58,7 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		ManagementClient:    mclient,
 		ManagementNamespace: clusterID,
 		AgentType:           agentType,
-		NetworkSidecarImage: c.a.config.NetworkSidecarImage,
+		Image:               c.a.config.Image,
 	}
 
 	var lm interface {

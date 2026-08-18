@@ -80,6 +80,8 @@ spec:
                   x-kubernetes-int-or-string: true
                 description: ResourceList is a set of (resource name, quantity) pairs.
                 type: object
+              diskPressure:
+                type: boolean
               nodeInfo:
                 properties:
                   agentVersion:

@@ -58,11 +58,9 @@ export interface Worker {
   role: string;
   node: string;
   phase: Phase;
-  cpu: number;
-  memory: number;
+  cpu: string;
+  memory: string;
   gpu?: string;
-  latency?: string;
-  fps?: number;
   webTerminalUrl?: string;
   logs: string[];
 }

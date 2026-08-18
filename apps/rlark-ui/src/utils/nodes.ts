@@ -2,35 +2,47 @@ import { useEffect, useState } from "react";
 import { Bot, CircleDot, CloudCog, Server } from "lucide-react";
 import { nodes as mockNodes, type NodeKind } from "../data";
 import type { CRDNode, CRDNodeLite, NodeCategory } from "../types";
+import {
+  getNodeCategories,
+  getNodeCategory,
+  hasNodeCategory,
+  isBusinessWorkerNode,
+  NODE_CATEGORY_LABEL,
+} from "./nodeVisibility";
 
-const NODE_CATEGORY_LABEL = "rlark.io/node-category";
-
-export function getNodeCategory(node: CRDNode): NodeCategory {
-  const v = node.metadata.labels?.[NODE_CATEGORY_LABEL];
-  if (v === "cloud" || v === "edge" || v === "robot") return v;
-  return "unknown";
-}
+export {
+  getNodeCategories,
+  getNodeCategory,
+  hasNodeCategory,
+  isBusinessWorkerNode,
+};
 
 export function getNodeLocation(node: CRDNode): string {
-  const raw = node.metadata.annotations?.["rlark.io/ip-location"];
-  if (raw) {
-    try {
-      const location = JSON.parse(raw) as {
-        city?: string;
-        province?: string;
-        country?: string;
-      };
-      const parts = [location.province, location.city].filter(
-        (value, index, values): value is string =>
-          Boolean(value) && values.indexOf(value) === index,
-      );
-      if (parts.length > 0) return parts.join(" · ");
-      if (location.country) return location.country;
-    } catch {
-      // Fall back to the legacy city label below.
-    }
-  }
-  return node.metadata.labels?.["rlark.io/city"] ?? "";
+  return (
+    node.metadata.annotations?.["rlark.io/city"] ??
+    node.metadata.labels?.["rlark.io/city"] ??
+    ""
+  );
+}
+
+export function getNodeGPUModel(node: CRDNode): string {
+  return (
+    node.metadata.annotations?.["rlark.io/gpu-model"] ??
+    node.metadata.labels?.["rlark.io/gpu-model"] ??
+    node.metadata.annotations?.["rlark.io/model"] ??
+    node.metadata.labels?.["rlark.io/model"] ??
+    ""
+  );
+}
+
+export function getNodeDeviceModel(node: CRDNode): string {
+  return (
+    node.metadata.annotations?.["rlark.io/device-model"] ??
+    node.metadata.labels?.["rlark.io/device-model"] ??
+    node.metadata.annotations?.["rlark.io/model"] ??
+    node.metadata.labels?.["rlark.io/model"] ??
+    ""
+  );
 }
 
 function resourceNumber(value?: string): number {
@@ -42,6 +54,63 @@ function formatResourceNumber(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+export function getGPUResourceKey(node: CRDNode): string {
+  const resources = [
+    node.status?.capacity ?? {},
+    node.status?.allocatable ?? {},
+    node.status?.used ?? {},
+  ];
+  if (resources.some((values) => "nvidia.com/gpu" in values)) {
+    return "nvidia.com/gpu";
+  }
+  return (
+    resources
+      .flatMap(Object.keys)
+      .find((key) => /(^|[./-])gpu($|[./-])/i.test(key)) ?? "nvidia.com/gpu"
+  );
+}
+
+export function parseResourceQuantity(
+  key: string,
+  raw?: string,
+): number | null {
+  if (!raw) return null;
+  const match = raw.trim().match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+))([a-zA-Z]*)$/);
+  if (!match) return null;
+  const value = Number.parseFloat(match[1]);
+  if (!Number.isFinite(value)) return null;
+  const suffix = match[2];
+  if (key === "cpu") {
+    const factors: Record<string, number> = { n: 1e-9, u: 1e-6, m: 1e-3 };
+    return value * (factors[suffix] ?? 1);
+  }
+  if (key === "memory" || key === "ephemeral-storage") {
+    const factors: Record<string, number> = {
+      Ki: 1024,
+      Mi: 1024 ** 2,
+      Gi: 1024 ** 3,
+      Ti: 1024 ** 4,
+      K: 1000,
+      M: 1000 ** 2,
+      G: 1000 ** 3,
+      T: 1000 ** 4,
+    };
+    return value * (factors[suffix] ?? 1);
+  }
+  return value;
+}
+
+export function formatResourceQuantity(key: string, raw?: string): string {
+  const value = parseResourceQuantity(key, raw);
+  if (value === null) return "—";
+  if (key === "memory" || key === "ephemeral-storage") {
+    const gb = value / 1000 ** 3;
+    return `${gb >= 100 ? gb.toFixed(0) : gb.toFixed(1)} GB`;
+  }
+  if (key === "cpu") return `${formatResourceNumber(value)} 核`;
+  return formatResourceNumber(value);
+}
+
 export function getNodeResourceSummary(
   node: CRDNode,
   zh: boolean,
@@ -50,7 +119,29 @@ export function getNodeResourceSummary(
   const capacity = node.status?.capacity ?? node.status?.allocatable ?? {};
   const allocatable = node.status?.allocatable ?? capacity;
   const used = node.status?.used ?? {};
-  const model = node.metadata.labels?.["rlark.io/model"] ?? "";
+  const model =
+    category === "cloud" ? getNodeGPUModel(node) : getNodeDeviceModel(node);
+
+  // Existing GPU nodes may predate the RLark category label. The Kubernetes
+  // extended resource is authoritative, so show it regardless of category.
+  const gpuKey = getGPUResourceKey(node);
+  const gpuTotal = resourceNumber(capacity[gpuKey] ?? allocatable[gpuKey]);
+  if (gpuTotal > 0 && (category === "cloud" || category === "unknown")) {
+    const allocatableGPU = resourceNumber(
+      allocatable[gpuKey] ?? capacity[gpuKey],
+    );
+    const hasUsage = Object.prototype.hasOwnProperty.call(used, gpuKey);
+    const available = Math.max(
+      0,
+      allocatableGPU - resourceNumber(used[gpuKey]),
+    );
+    return {
+      primary: hasUsage
+        ? `${formatResourceNumber(gpuTotal)} GPU · ${zh ? "可用" : "free"} ${formatResourceNumber(available)}`
+        : `${formatResourceNumber(gpuTotal)} GPU · ${zh ? "可分配" : "allocatable"} ${formatResourceNumber(allocatableGPU)}`,
+      secondary: model || "—",
+    };
+  }
 
   if (category === "cloud") {
     const total = resourceNumber(capacity["nvidia.com/gpu"]);

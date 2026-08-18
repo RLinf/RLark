@@ -13,7 +13,12 @@ import type { Copy } from "../i18n";
 import type { CRDJob, CRDNode, Page, ResourceRow } from "../types";
 import { useAutoRefresh } from "../hooks";
 import { crdToJob } from "../utils/crd";
-import { getNodeCategory } from "../utils/nodes";
+import {
+  getNodeCategories,
+  getNodeDeviceModel,
+  getNodeGPUModel,
+  hasNodeCategory,
+} from "../utils/nodes";
 import {
   MetricCard,
   ResourceDistribution,
@@ -58,15 +63,14 @@ export function Overview({
   }, 15000);
 
   const displayNodes = realNodes;
-  const cloudClusters = realClusters.filter((x) => x.type === "Cloud");
   const embodiedClusters = realClusters.filter((x) => x.type === "Embodied");
   const runningJobs = realJobs.filter((x) => x.phase === "Running").length;
   const gpuModelList = Array.from(
     new Set(
       isMockMode
         ? displayNodes
-            .filter((node) => getNodeCategory(node) === "cloud")
-            .map((node) => node.metadata.labels?.["rlark.io/model"] ?? "")
+            .filter((node) => hasNodeCategory(node, "cloud"))
+            .map(getNodeGPUModel)
             .filter(Boolean)
         : realClusters.flatMap((x) => x.gpuModels),
     ),
@@ -75,8 +79,8 @@ export function Overview({
     new Set(
       isMockMode
         ? displayNodes
-            .filter((node) => getNodeCategory(node) === "robot")
-            .map((node) => node.metadata.labels?.["rlark.io/model"] ?? "")
+            .filter((node) => hasNodeCategory(node, "robot"))
+            .map(getNodeDeviceModel)
             .filter(Boolean)
         : realClusters.flatMap((x) => x.robotModels),
     ),
@@ -85,10 +89,11 @@ export function Overview({
   const categoryCounts = useMemo(() => {
     const counts = { cloud: 0, edge: 0, robot: 0 };
     for (const n of displayNodes) {
-      const cat = getNodeCategory(n);
-      if (cat === "cloud") counts.cloud++;
-      else if (cat === "edge") counts.edge++;
-      else if (cat === "robot") counts.robot++;
+      for (const cat of getNodeCategories(n)) {
+        if (cat === "cloud") counts.cloud++;
+        else if (cat === "edge") counts.edge++;
+        else if (cat === "robot") counts.robot++;
+      }
     }
     return counts;
   }, [displayNodes]);
@@ -101,14 +106,20 @@ export function Overview({
       );
   const embodiedModelCount = new Set(
     displayNodes
-      .filter((node) => getNodeCategory(node) !== "cloud")
-      .map((node) => node.metadata.labels?.["rlark.io/model"])
+      .filter(
+        (node) =>
+          hasNodeCategory(node, "edge") || hasNodeCategory(node, "robot"),
+      )
+      .map(getNodeDeviceModel)
       .filter(Boolean),
   ).size;
   const embodiedClusterCount = isMockMode
     ? new Set(
         displayNodes
-          .filter((node) => getNodeCategory(node) !== "cloud")
+          .filter(
+            (node) =>
+              hasNodeCategory(node, "edge") || hasNodeCategory(node, "robot"),
+          )
           .map((node) => node.metadata.namespace),
       ).size
     : embodiedClusters.length;
@@ -134,7 +145,7 @@ export function Overview({
     },
   ];
 
-  const robotNodes = displayNodes.filter((n) => getNodeCategory(n) === "robot");
+  const robotNodes = displayNodes.filter((n) => hasNodeCategory(n, "robot"));
   return (
     <div className="page-content overview-page">
       <div className="section-heading">
@@ -158,7 +169,7 @@ export function Overview({
           tone="mint"
           label={isZh ? "具身节点数量" : "Embodied nodes"}
           value={`${embodiedNodeCount}`}
-          note={isZh ? "算力节点与真机" : "Compute nodes and robots"}
+          note={isZh ? "端算力与具身 Worker" : "Edge and embodied workers"}
           onClick={() => navigate("clusters-nodes")}
         />
         <MetricCard
@@ -228,7 +239,7 @@ export function Overview({
               robotNodes.slice(0, 6).map((n) => {
                 const phase = (n.status?.phase ?? "Offline") as Phase;
                 const model =
-                  n.metadata.labels?.["rlark.io/model"] ||
+                  getNodeDeviceModel(n) ||
                   n.metadata.labels?.["node.kubernetes.io/instance-type"] ||
                   "—";
                 const reason = n.status?.reason || "—";

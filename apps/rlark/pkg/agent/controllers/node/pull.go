@@ -42,9 +42,21 @@ func (r *pullNodeReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 		localNode.Labels = make(map[string]string)
 	}
 
-	for k, v := range mgmtNode.Labels {
-		if localNode.Labels[k] != v {
-			localNode.Labels[k] = v
+	for key := range localNode.Labels {
+		if !isManagementOwnedNodeLabel(key) {
+			continue
+		}
+		if _, exists := mgmtNode.Labels[key]; !exists {
+			delete(localNode.Labels, key)
+			changed = true
+		}
+	}
+	for key, value := range mgmtNode.Labels {
+		if !isManagementOwnedNodeLabel(key) {
+			continue
+		}
+		if localNode.Labels[key] != value {
+			localNode.Labels[key] = value
 			changed = true
 		}
 	}
@@ -63,6 +75,6 @@ func (r *pullNodeReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 		return reconcile.Result{}, err
 	}
 
-	logger.Info("synced labels and schedulability from management Node to local K8s Node")
+	logger.Info("synced scheduling labels and schedulability from management Node to local K8s Node")
 	return reconcile.Result{}, nil
 }

@@ -21,6 +21,7 @@ import (
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
+	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
 // Constants used by the package.
@@ -98,7 +99,7 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 	}
 
 	workloadSpec := mgmtTask.Spec.Kubernetes.Workload
-	applyTemplateMutations(&workloadSpec.Template, &mgmtTask, r.c.NetworkSidecarImage)
+	applyTemplateMutations(&workloadSpec.Template, &mgmtTask, r.c.Image)
 
 	workloadNamespace := getWorkloadNamespace(&mgmtTask)
 	if err := r.ensureImagePullSecrets(ctx, &workloadSpec.Template, workloadNamespace); err != nil {
@@ -463,13 +464,36 @@ func applyAntiAffinity(template *corev1.PodTemplateSpec) {
 }
 
 // applyTemplateMutations applies all common pod template mutations shared by workload builders.
-func applyTemplateMutations(template *corev1.PodTemplateSpec, mgmtTask *rlarkv1alpha1.Task, sidecarImage string) {
+func applyTemplateMutations(template *corev1.PodTemplateSpec, mgmtTask *rlarkv1alpha1.Task, image string) {
 	applyDomainAnnotation(template, mgmtTask)
 	applyRayInit(template, mgmtTask)
-	applyNetworkSidecar(template, mgmtTask, sidecarImage)
+	applyNetworkSidecar(template, mgmtTask, image)
+	applySSHServer(template, mgmtTask, image)
 	ensureLabels(template, mgmtTask.Name)
 	applyNodeSelector(&template.Spec, mgmtTask.Spec.NodeSelector)
 	applyAntiAffinity(template)
+
+	// todo 后续 rlinf 使用新方式访问真机设备后去掉
+	role := ""
+	if mgmtTask.Annotations != nil {
+		role = mgmtTask.Annotations[rlarkv1alpha1.RayRoleAnnotation]
+	}
+	if role != rlarkv1alpha1.RayRoleHead {
+		template.Spec.HostNetwork = true
+		template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
+	}
+	for i := range template.Spec.Containers {
+		if template.Spec.Containers[i].SecurityContext == nil {
+			template.Spec.Containers[i].SecurityContext = &corev1.SecurityContext{}
+		}
+		template.Spec.Containers[i].SecurityContext.Privileged = utils.Ptr(true)
+	}
+	for i := range template.Spec.InitContainers {
+		if template.Spec.InitContainers[i].SecurityContext == nil {
+			template.Spec.InitContainers[i].SecurityContext = &corev1.SecurityContext{}
+		}
+		template.Spec.InitContainers[i].SecurityContext.Privileged = utils.Ptr(true)
+	}
 }
 
 // ensureImagePullSecrets syncs image registry secrets from the management cluster

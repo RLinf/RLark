@@ -27,6 +27,12 @@ export const navItems: NavParent[] = [
 
 export const adminNavItems: AdminNavItem[] = [
   {
+    id: "dashboard",
+    icon: LayoutDashboard,
+    zh: "管理工作台",
+    en: "Dashboard",
+  },
+  {
     id: "clusters",
     icon: Network,
     zh: "集群管理",
@@ -53,6 +59,7 @@ export const adminNavItems: AdminNavItem[] = [
   { id: "api", icon: Braces, zh: "接口参考", en: "API Reference" },
   { id: "config", icon: Settings, zh: "系统配置", en: "Config" },
   { id: "storageClass", icon: HardDrive, zh: "存储管理", en: "Storage" },
+  { id: "ssh-keys", icon: Terminal, zh: "SSH 公钥", en: "SSH Keys" },
   {
     id: "image-registries",
     icon: Image,

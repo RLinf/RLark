@@ -68,7 +68,7 @@ cert:
 kubernetes:
   kubeconfig: /path/to/data-kubeconfig
   agent-image: rlark-agent:latest
-  network-sidecar-image: rlark-network-sidecar:latest
+  image: rlark:latest
 ```
 
 ## 3. Kubernetes 部署
@@ -197,7 +197,7 @@ volumes:
 | `--rlark-server-ssh-host-key` | `""` | Server SSH 主机密钥 |
 | `--agent-type` | `auto` | Agent 类型：`kubernetes` / `docker` / `raw`（根据 env 模式自动检测） |
 | `--leader-election` | `true` | 启用 Leader 选举（副本数=1 时自动禁用） |
-| `--network-sidecar-image` | `""` | 网络 Sidecar 容器镜像 |
+| `--image` | `""` | RLark 容器镜像（网络 Sidecar、SSH server 等） |
 | `--in-cluster` | `false` | 使用集群内 Kubernetes 配置（K8s 模式下自动设置） |
 | `--insecure-skip-tls-verify` | `false` | 跳过 TLS 证书验证 |
 

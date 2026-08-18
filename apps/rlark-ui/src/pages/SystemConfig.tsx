@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Settings, Save, Check } from "lucide-react";
+import { Settings, Save, Check, Copy as CopyIcon } from "lucide-react";
 import type { Copy } from "../i18n";
 
 interface SystemConfig {
@@ -17,6 +17,7 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     fetchConfig();
@@ -63,6 +64,12 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
   const sshCommand = config.sshJumpHost
     ? `ssh -J <ssh-user>@${config.sshJumpHost}${config.sshJumpPort ? ":" + config.sshJumpPort : ""} root@<pod-name>`
     : "";
+
+  const copySSHCommand = async () => {
+    await navigator.clipboard.writeText(sshCommand);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <div className="page-content resource-page">
@@ -173,19 +180,19 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
             </div>
           </div>
           <div style={{ padding: "16px 20px" }}>
-            <code
-              style={{
-                display: "block",
-                padding: "12px 16px",
-                background: "var(--surface-2, #f5f5f5)",
-                borderRadius: 8,
-                fontFamily: "var(--font-mono, monospace)",
-                fontSize: 13,
-                wordBreak: "break-all",
-              }}
-            >
-              {sshCommand}
-            </code>
+            <div className="system-config-ssh-preview">
+              <code>{sshCommand}</code>
+              <button
+                type="button"
+                className="system-config-copy-button"
+                onClick={copySSHCommand}
+                aria-label={zh ? "复制 SSH 命令" : "Copy SSH command"}
+                title={zh ? "复制 SSH 命令" : "Copy SSH command"}
+              >
+                {copied ? <Check size={14} /> : <CopyIcon size={14} />}
+                {copied ? (zh ? "已复制" : "Copied") : zh ? "复制" : "Copy"}
+              </button>
+            </div>
           </div>
         </section>
       )}

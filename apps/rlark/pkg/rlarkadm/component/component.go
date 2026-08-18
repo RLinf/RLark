@@ -549,8 +549,8 @@ var components = []types.Component{
 				"--mode=cluster",
 			}
 
-			if sidecar := networkSidecarImage(cfg); sidecar != "" {
-				args = append(args, "--network-sidecar-image="+sidecar)
+			if img := rlarkImage(cfg); img != "" {
+				args = append(args, "--image="+img)
 			}
 
 			if cfg.Kubernetes != nil {
@@ -828,15 +828,15 @@ func imageByMode(cfg *types.DeployConfig, k8sFn func(*types.KubernetesEnv) strin
 	return ""
 }
 
-func networkSidecarImage(cfg *types.DeployConfig) string {
+func rlarkImage(cfg *types.DeployConfig) string {
 	switch cfg.EnvMode() {
 	case "Kubernetes":
 		if cfg.Kubernetes != nil {
-			return cfg.Kubernetes.NetworkSidecarImage
+			return cfg.Kubernetes.Image
 		}
 	case "Docker":
 		if cfg.Docker != nil {
-			return cfg.Docker.NetworkSidecarImage
+			return cfg.Docker.Image
 		}
 	}
 	return ""

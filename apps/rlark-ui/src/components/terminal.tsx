@@ -3,6 +3,14 @@ import { Download, TerminalSquare, Upload } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import {
+  getSafariTerminalInput,
+  getTerminalCloseExitCode,
+  getTerminalProcessExitCode,
+  isTerminalProcessExitMessage,
+  isSafariUserAgent,
+  stripLegacyProxyCloseMessage,
+} from "../utils/terminalKeyboard";
 import "@xterm/xterm/css/xterm.css";
 
 const workerStatusLabels: Record<string, string> = {
@@ -36,7 +44,8 @@ export function TerminalPage({
   >("connecting");
 
   useEffect(() => {
-    if (!termRef.current) return;
+    const terminalContainer = termRef.current;
+    if (!terminalContainer) return;
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
@@ -46,8 +55,9 @@ export function TerminalPage({
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.loadAddon(new WebLinksAddon());
-    term.open(termRef.current);
+    term.open(terminalContainer);
     fitAddon.fit();
+    term.focus();
     termRefInner.current = term;
 
     term.writeln(`Connecting to ${workerName} ...`);
@@ -73,6 +83,8 @@ export function TerminalPage({
     let downloading = false;
     let downloadChunks: Uint8Array[] = [];
     let downloadName = "";
+    let legacyProxyCloseReceived = false;
+    let terminalProcessExitCode: number | null = null;
 
     ws.onopen = () => {
       setConnectionState("connected");
@@ -81,7 +93,13 @@ export function TerminalPage({
     };
     ws.onmessage = (e) => {
       if (typeof e.data === "string") {
-        if (e.data.startsWith("{")) {
+        const sanitized = stripLegacyProxyCloseMessage(e.data);
+        if (sanitized.legacyClose) {
+          legacyProxyCloseReceived = true;
+          if (!sanitized.output) return;
+        }
+        const messageData = sanitized.output;
+        if (messageData.startsWith("{")) {
           let msg: {
             type?: string;
             name?: string;
@@ -91,9 +109,9 @@ export function TerminalPage({
             message?: string;
           };
           try {
-            msg = JSON.parse(e.data);
+            msg = JSON.parse(messageData);
           } catch {
-            term.write(e.data);
+            term.write(messageData);
             return;
           }
           if (msg.type === "file-download-start") {
@@ -135,13 +153,17 @@ export function TerminalPage({
             return;
           }
           if (msg.type === "error") {
-            term.writeln(
-              `\r\n\x1b[31m${msg.message || msg.error || "unknown error"}\x1b[0m`,
-            );
+            const errorMessage = msg.message || msg.error || "unknown error";
+            if (isTerminalProcessExitMessage(errorMessage)) {
+              terminalProcessExitCode =
+                getTerminalProcessExitCode(errorMessage);
+              return;
+            }
+            term.writeln(`\r\n\x1b[31m${errorMessage}\x1b[0m`);
             return;
           }
         }
-        term.write(e.data);
+        term.write(messageData);
       } else if (e.data instanceof ArrayBuffer) {
         if (downloading) {
           downloadChunks.push(new Uint8Array(e.data));
@@ -152,25 +174,52 @@ export function TerminalPage({
     };
     ws.onerror = () => {
       setConnectionState("disconnected");
-      term.writeln("\r\n\x1b[31mWebSocket error.\x1b[0m");
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setConnectionState("disconnected");
-      term.writeln("\r\n\x1b[33mConnection closed.\x1b[0m");
+      const exitCode =
+        terminalProcessExitCode ?? getTerminalCloseExitCode(event.reason);
+      if (exitCode !== null) {
+        term.writeln(
+          `\r\n\x1b[33mSession ended (exit code ${exitCode}).\x1b[0m`,
+        );
+      } else if (event.code === 1000 || legacyProxyCloseReceived) {
+        term.writeln("\r\n\x1b[33mSession ended.\x1b[0m");
+      } else {
+        const reason = event.reason ? `: ${event.reason}` : "";
+        term.writeln(
+          `\r\n\x1b[31mConnection closed unexpectedly (${event.code})${reason}.\x1b[0m`,
+        );
+      }
     };
     const encoder = new TextEncoder();
-    term.onData((data) => {
+    const sendTerminalInput = (data: string) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(encoder.encode(data));
       }
-    });
+    };
+    term.onData(sendTerminalInput);
+    if (isSafariUserAgent(navigator.userAgent)) {
+      term.attachCustomKeyEventHandler((event) => {
+        const data = getSafariTerminalInput(event);
+        if (data === null) return true;
+        event.preventDefault();
+        event.stopPropagation();
+        sendTerminalInput(data);
+        return false;
+      });
+    }
     term.onResize(() => sendResize());
+
+    const focusTerminal = () => term.focus();
+    terminalContainer.addEventListener("mousedown", focusTerminal);
 
     const onResize = () => fitAddon.fit();
     window.addEventListener("resize", onResize);
 
     return () => {
       window.removeEventListener("resize", onResize);
+      terminalContainer.removeEventListener("mousedown", focusTerminal);
       ws.close();
       term.dispose();
       termRefInner.current = null;

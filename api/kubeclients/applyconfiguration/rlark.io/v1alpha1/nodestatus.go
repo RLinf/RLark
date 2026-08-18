@@ -25,11 +25,12 @@ import (
 // NodeStatusApplyConfiguration represents a declarative configuration of the NodeStatus type for use
 // with apply.
 type NodeStatusApplyConfiguration struct {
-	Phase       *rlarkiov1alpha1.NodePhase  `json:"phase,omitempty"`
-	Reason      *string                     `json:"reason,omitempty"`
-	NodeInfo    *NodeInfoApplyConfiguration `json:"nodeInfo,omitempty"`
-	Addresses   []v1.NodeAddress            `json:"addresses,omitempty"`
-	Allocatable *v1.ResourceList            `json:"allocatable,omitempty"`
+	Phase        *rlarkiov1alpha1.NodePhase  `json:"phase,omitempty"`
+	Reason       *string                     `json:"reason,omitempty"`
+	NodeInfo     *NodeInfoApplyConfiguration `json:"nodeInfo,omitempty"`
+	Addresses    []v1.NodeAddress            `json:"addresses,omitempty"`
+	DiskPressure *bool                       `json:"diskPressure,omitempty"`
+	Allocatable  *v1.ResourceList            `json:"allocatable,omitempty"`
 	// 需要预留系统组件 agent
 	Capacity *v1.ResourceList `json:"capacity,omitempty"`
 	Used     *v1.ResourceList `json:"used,omitempty"`
@@ -72,6 +73,14 @@ func (b *NodeStatusApplyConfiguration) WithAddresses(values ...v1.NodeAddress) *
 	for i := range values {
 		b.Addresses = append(b.Addresses, values[i])
 	}
+	return b
+}
+
+// WithDiskPressure sets the DiskPressure field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DiskPressure field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithDiskPressure(value bool) *NodeStatusApplyConfiguration {
+	b.DiskPressure = &value
 	return b
 }
 

@@ -11,14 +11,15 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/terminalrelay"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const websocketDialTimeout = 15 * time.Second
 
-var gwTerminalUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
+// The default Gorilla origin check accepts requests without an Origin header
+// and otherwise requires Origin.Host to equal Request.Host.
+var gwTerminalUpgrader = websocket.Upgrader{}
 
 func (g *Gateway) handlePodTerminal(c *gin.Context) {
 	logger := log.FromContext(c.Request.Context())
@@ -96,28 +97,5 @@ func (g *Gateway) handlePodTerminal(c *gin.Context) {
 	}
 	defer func() { _ = serverWs.Close() }()
 
-	relayWebSockets(browserWs, serverWs)
-}
-
-func relayWebSockets(a, b *websocket.Conn) {
-	done := make(chan struct{}, 2)
-
-	copyLoop := func(dst, src *websocket.Conn) {
-		defer func() { done <- struct{}{} }()
-		for {
-			msgType, data, err := src.ReadMessage()
-			if err != nil {
-				_ = dst.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("connection closed: %v\r\n", err)))
-				return
-			}
-			if err := dst.WriteMessage(msgType, data); err != nil {
-				return
-			}
-		}
-	}
-
-	go copyLoop(a, b)
-	go copyLoop(b, a)
-
-	<-done
+	terminalrelay.Relay(browserWs, serverWs)
 }

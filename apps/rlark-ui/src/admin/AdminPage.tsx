@@ -16,11 +16,24 @@ import {
 import { type Phase } from "../data";
 import { type Copy } from "../i18n";
 import { type CRDNode, type NodeCategory } from "../types";
-import { categoryLabels, getNodeCategory } from "../utils/nodes";
+import {
+  categoryLabels,
+  getNodeCategories,
+  getNodeDeviceModel,
+  getNodeGPUModel,
+  getNodeLocation,
+} from "../utils/nodes";
 import { useAutoRefresh } from "../hooks";
 import { MetricCard, StatusBadge } from "../components/shared";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
 import { ClusterDetailReal, NodeDetailReal } from "../pages/Clusters";
+
+const NODE_FREE_TEXT_KEYS = [
+  "rlark.io/city",
+  "rlark.io/gpu-model",
+  "rlark.io/device-model",
+] as const;
+type BatchMetadataField = "location" | "categories" | "gpu" | "device";
 
 export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
   const zh = c.nav.overview === "总览";
@@ -76,7 +89,7 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
       unknown: 0,
     };
     for (const n of nodes) {
-      counts[getNodeCategory(n)]++;
+      getNodeCategories(n).forEach((category) => counts[category]++);
     }
     return counts;
   }, [nodes]);
@@ -371,7 +384,6 @@ export function NodeDetailPanel({
   onNewLabelValue: (v: string) => void;
 }) {
   const { zh, c } = ctx;
-  const phase = (node.status?.phase ?? "Offline") as Phase;
   const isEditing = ctx.editingNode === node.metadata.name;
   const labels = node.metadata.labels ?? {};
   const adminInsight = (
@@ -425,7 +437,7 @@ export function NodeDetailPanel({
         </div>
       </div>
 
-      <NodeDetailReal node={node} copy={c} hideLabels />
+      <NodeDetailReal node={node} copy={c} />
 
       <section className="admin-node-labels node-insight-section">
         <div className="node-insight-section-head">
@@ -811,7 +823,23 @@ export function AdminPage({
   const [newLabelKey, setNewLabelKey] = useState("");
   const [newLabelValue, setNewLabelValue] = useState("");
   const [saving, setSaving] = useState(false);
-  const [cordoning, setCordoning] = useState(false);
+  const [cordoningNode, setCordoningNode] = useState<string | null>(null);
+  const [selectedNodeKeys, setSelectedNodeKeys] = useState<Set<string>>(
+    new Set(),
+  );
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchLocation, setBatchLocation] = useState("");
+  const [batchGPUModel, setBatchGPUModel] = useState("");
+  const [batchDeviceModel, setBatchDeviceModel] = useState("");
+  const [batchCategories, setBatchCategories] = useState<NodeCategory[]>([]);
+  const [batchFields, setBatchFields] = useState<Set<BatchMetadataField>>(
+    new Set(),
+  );
+  const [batchMixedFields, setBatchMixedFields] = useState<
+    Set<BatchMetadataField>
+  >(new Set());
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [batchScheduling, setBatchScheduling] = useState(false);
 
   const fetchNodes = async (isInitial = true) => {
     if (isInitial) setLoading(true);
@@ -833,7 +861,19 @@ export function AdminPage({
 
   const startEdit = (node: CRDNode) => {
     setEditingNode(node.metadata.name);
-    setLabelDraft({ ...(node.metadata.labels ?? {}) });
+    setLabelDraft({
+      ...(node.metadata.labels ?? {}),
+      ...Object.fromEntries(
+        NODE_FREE_TEXT_KEYS.map((key) => [
+          key,
+          key === "rlark.io/city"
+            ? getNodeLocation(node)
+            : (node.metadata.annotations?.[key] ??
+              node.metadata.labels?.[key] ??
+              ""),
+        ]),
+      ),
+    });
     setNewLabelKey("");
     setNewLabelValue("");
   };
@@ -849,7 +889,20 @@ export function AdminPage({
     setSaving(true);
     setError("");
     try {
-      const patch = { metadata: { labels: labelDraft } };
+      const labels = { ...labelDraft };
+      const annotations = {
+        ...(nodes.find((node) => node.metadata.name === nodeName)?.metadata
+          .annotations ?? {}),
+      };
+      NODE_FREE_TEXT_KEYS.forEach((key) => {
+        annotations[key] = labels[key]?.trim() ?? "";
+        delete labels[key];
+      });
+      const labelPatch: Record<string, string | null> = { ...labels };
+      NODE_FREE_TEXT_KEYS.forEach((key) => {
+        labelPatch[key] = null;
+      });
+      const patch = { metadata: { labels: labelPatch, annotations } };
       const resp = await fetch(
         `/api/v1/rlinf.io/v1alpha1/nodes/${nodeName}?namespace=${encodeURIComponent(namespace)}`,
         {
@@ -863,7 +916,7 @@ export function AdminPage({
       setNodes((prev) =>
         prev.map((n) =>
           n.metadata.name === nodeName
-            ? { ...n, metadata: { ...n.metadata, labels: { ...labelDraft } } }
+            ? { ...n, metadata: { ...n.metadata, labels, annotations } }
             : n,
         ),
       );
@@ -895,7 +948,20 @@ export function AdminPage({
   };
 
   const toggleCordon = async (node: CRDNode) => {
-    setCordoning(true);
+    const willCordon = !node.spec.unschedulable;
+    if (
+      !confirm(
+        willCordon
+          ? zh
+            ? `确认封锁节点“${node.metadata.name}”吗？封锁后将不再接收新任务，已运行任务不会被终止。`
+            : `Cordon node "${node.metadata.name}"? It will stop accepting new jobs, while running jobs remain active.`
+          : zh
+            ? `确认解封节点“${node.metadata.name}”并恢复任务调度吗？`
+            : `Uncordon node "${node.metadata.name}" and resume scheduling?`,
+      )
+    )
+      return;
+    setCordoningNode(node.metadata.name);
     setError("");
     try {
       const patch = { spec: { unschedulable: !node.spec.unschedulable } };
@@ -922,7 +988,232 @@ export function AdminPage({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setCordoning(false);
+      setCordoningNode(null);
+    }
+  };
+
+  const saveBatchMetadata = async () => {
+    const selectedNodes = nodes.filter((node) =>
+      selectedNodeKeys.has(
+        `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
+      ),
+    );
+    if (selectedNodes.length === 0) return;
+    if (batchFields.size === 0) {
+      setError(zh ? "请至少填写一个批量设置字段" : "Enter at least one field");
+      return;
+    }
+    setBatchSaving(true);
+    setError("");
+    try {
+      await Promise.all(
+        selectedNodes.map(async (node) => {
+          const labels = { ...(node.metadata.labels ?? {}) };
+          const annotations = { ...(node.metadata.annotations ?? {}) };
+          const removedLabelKeys = new Set<string>();
+          if (batchFields.has("location")) {
+            const value = batchLocation.trim();
+            if (value) annotations["rlark.io/city"] = value;
+            else delete annotations["rlark.io/city"];
+            delete labels["rlark.io/city"];
+            removedLabelKeys.add("rlark.io/city");
+          }
+          const categories = batchFields.has("categories")
+            ? batchCategories
+            : getNodeCategories(node);
+          const appliesGPU = categories.includes("cloud");
+          const appliesDevice =
+            categories.includes("edge") || categories.includes("robot");
+          if (batchFields.has("categories")) {
+            delete labels["rlark.io/node-category"];
+            removedLabelKeys.add("rlark.io/node-category");
+            (["cloud", "edge", "robot"] as const).forEach((category) => {
+              const key = `rlark.io/node-category-${category}`;
+              if (batchCategories.includes(category)) labels[key] = "true";
+              else delete labels[key];
+            });
+          }
+          if (batchFields.has("gpu") && appliesGPU) {
+            const value = batchGPUModel.trim();
+            if (value) annotations["rlark.io/gpu-model"] = value;
+            else delete annotations["rlark.io/gpu-model"];
+            delete labels["rlark.io/gpu-model"];
+            removedLabelKeys.add("rlark.io/gpu-model");
+          }
+          if (batchFields.has("device") && appliesDevice) {
+            const value = batchDeviceModel.trim();
+            if (value) annotations["rlark.io/device-model"] = value;
+            else delete annotations["rlark.io/device-model"];
+            delete labels["rlark.io/device-model"];
+            removedLabelKeys.add("rlark.io/device-model");
+          }
+          const labelPatch: Record<string, string | null> = { ...labels };
+          removedLabelKeys.forEach((key) => {
+            labelPatch[key] = null;
+          });
+          const annotationPatch: Record<string, string | null> = {
+            ...annotations,
+          };
+          if (batchFields.has("location") && !batchLocation.trim())
+            annotationPatch["rlark.io/city"] = null;
+          if (batchFields.has("gpu") && appliesGPU && !batchGPUModel.trim())
+            annotationPatch["rlark.io/gpu-model"] = null;
+          if (
+            batchFields.has("device") &&
+            appliesDevice &&
+            !batchDeviceModel.trim()
+          )
+            annotationPatch["rlark.io/device-model"] = null;
+          const resp = await fetch(
+            `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node.metadata.name)}?namespace=${encodeURIComponent(node.metadata.namespace ?? "")}`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/merge-patch+json" },
+              body: JSON.stringify({
+                metadata: { labels: labelPatch, annotations: annotationPatch },
+              }),
+            },
+          );
+          if (!resp.ok) {
+            throw new Error(
+              `${node.metadata.name}: HTTP ${resp.status} ${await resp.text()}`,
+            );
+          }
+          return { node, labels, annotations };
+        }),
+      ).then((updated) => {
+        const updates = new Map(
+          updated.map(({ node, labels, annotations }) => [
+            `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
+            { labels, annotations },
+          ]),
+        );
+        setNodes((current) =>
+          current.map((node) => {
+            const metadata = updates.get(
+              `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
+            );
+            return metadata
+              ? {
+                  ...node,
+                  metadata: { ...node.metadata, ...metadata },
+                }
+              : node;
+          }),
+        );
+      });
+      setSelectedNodeKeys(new Set());
+      setBatchOpen(false);
+      setBatchLocation("");
+      setBatchGPUModel("");
+      setBatchDeviceModel("");
+      setBatchCategories([]);
+      setBatchFields(new Set());
+      setBatchMixedFields(new Set());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
+  const openBatchEditor = () => {
+    const selected = nodes.filter((node) =>
+      selectedNodeKeys.has(
+        `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
+      ),
+    );
+    const mixed = new Set<BatchMetadataField>();
+    const commonValue = (field: BatchMetadataField, values: string[]) => {
+      if (values.length > 0 && values.every((value) => value === values[0]))
+        return values[0];
+      mixed.add(field);
+      return "";
+    };
+    setBatchLocation(commonValue("location", selected.map(getNodeLocation)));
+    setBatchGPUModel(commonValue("gpu", selected.map(getNodeGPUModel)));
+    setBatchDeviceModel(
+      commonValue("device", selected.map(getNodeDeviceModel)),
+    );
+    const categorySets = selected.map((node) =>
+      getNodeCategories(node).filter((category) => category !== "unknown"),
+    );
+    const sameCategories =
+      categorySets.length > 0 &&
+      categorySets.every(
+        (categories) => categories.join(",") === categorySets[0].join(","),
+      );
+    if (!sameCategories) mixed.add("categories");
+    setBatchCategories(sameCategories ? categorySets[0] : []);
+    setBatchMixedFields(mixed);
+    setBatchFields(new Set());
+    setBatchOpen(true);
+  };
+
+  const toggleBatchField = (field: BatchMetadataField) => {
+    setBatchFields((current) => {
+      const next = new Set(current);
+      if (next.has(field)) next.delete(field);
+      else next.add(field);
+      return next;
+    });
+  };
+
+  const updateSelectedScheduling = async (unschedulable: boolean) => {
+    const selectedNodes = nodes.filter((node) =>
+      selectedNodeKeys.has(
+        `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
+      ),
+    );
+    if (selectedNodes.length === 0) return;
+    const action = unschedulable
+      ? zh
+        ? "封锁"
+        : "cordon"
+      : zh
+        ? "解封"
+        : "uncordon";
+    if (
+      !confirm(
+        zh
+          ? `确认批量${action} ${selectedNodes.length} 个节点吗？`
+          : `Confirm ${action} for ${selectedNodes.length} nodes?`,
+      )
+    )
+      return;
+    setBatchScheduling(true);
+    setError("");
+    try {
+      await Promise.all(
+        selectedNodes.map(async (node) => {
+          const resp = await fetch(
+            `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node.metadata.name)}?namespace=${encodeURIComponent(node.metadata.namespace ?? "")}`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/merge-patch+json" },
+              body: JSON.stringify({ spec: { unschedulable } }),
+            },
+          );
+          if (!resp.ok) {
+            throw new Error(
+              `${node.metadata.name}: HTTP ${resp.status} ${await resp.text()}`,
+            );
+          }
+        }),
+      );
+      setNodes((current) =>
+        current.map((node) =>
+          selectedNodeKeys.has(
+            `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
+          )
+            ? { ...node, spec: { ...node.spec, unschedulable } }
+            : node,
+        ),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBatchScheduling(false);
     }
   };
 
@@ -934,7 +1225,7 @@ export function AdminPage({
     newLabelKey,
     newLabelValue,
     saving,
-    cordoning,
+    cordoning: cordoningNode !== null,
     onStartEdit: startEdit,
     onToggleCordon: toggleCordon,
     onCancelEdit: cancelEdit,
@@ -986,16 +1277,369 @@ export function AdminPage({
               : "Browse every node type in one list, then manage scheduling and labels in details."}
           </p>
         </div>
-        <button className="secondary-button" onClick={() => fetchNodes()}>
-          <RefreshCw size={16} />
-          {c.common.refresh}
-        </button>
+        <div className="admin-node-list-actions">
+          <button
+            className="secondary-button danger"
+            disabled={selectedNodeKeys.size === 0 || batchScheduling}
+            onClick={() => updateSelectedScheduling(true)}
+          >
+            <Ban size={15} />
+            {zh ? "批量封锁" : "Cordon"}
+          </button>
+          <button
+            className="secondary-button"
+            disabled={selectedNodeKeys.size === 0 || batchScheduling}
+            onClick={() => updateSelectedScheduling(false)}
+          >
+            {zh ? "批量解封" : "Uncordon"}
+          </button>
+          <button
+            className="primary-button"
+            disabled={selectedNodeKeys.size === 0}
+            onClick={openBatchEditor}
+          >
+            <Pencil size={15} />
+            {zh
+              ? `批量设置 (${selectedNodeKeys.size})`
+              : `Batch edit (${selectedNodeKeys.size})`}
+          </button>
+          <button className="secondary-button" onClick={() => fetchNodes()}>
+            <RefreshCw size={16} />
+            {c.common.refresh}
+          </button>
+        </div>
       </div>
 
       {error && (
         <div className="cert-error" style={{ marginBottom: 12 }}>
           {error}
         </div>
+      )}
+
+      {batchOpen && (
+        <section className="panel admin-node-batch-panel">
+          <div className="admin-node-batch-head">
+            <div>
+              <span className="eyebrow">
+                {zh ? "批量标注" : "Batch metadata"}
+              </span>
+              <strong>
+                {zh
+                  ? `已选择 ${selectedNodeKeys.size} 个节点`
+                  : `${selectedNodeKeys.size} nodes selected`}
+              </strong>
+              <small>
+                {zh
+                  ? "先启用需要修改的字段；未启用字段保持原值。清空已启用字段可删除原值。"
+                  : "Enable only fields to change. Disabled fields stay unchanged; clear an enabled field to remove it."}
+              </small>
+            </div>
+            <button
+              className="icon-button"
+              onClick={() => setBatchOpen(false)}
+              aria-label={zh ? "关闭" : "Close"}
+            >
+              <X size={17} />
+            </button>
+          </div>
+          <div className="admin-node-batch-fields">
+            <div
+              className={`admin-node-batch-field${batchFields.has("location") ? " active" : ""}`}
+            >
+              <button
+                type="button"
+                className="admin-node-batch-field-toggle"
+                aria-pressed={batchFields.has("location")}
+                onClick={() => toggleBatchField("location")}
+              >
+                <span className="admin-node-batch-field-icon">
+                  <MapPin size={16} />
+                </span>
+                <span>
+                  <strong>{zh ? "地理位置" : "Location"}</strong>
+                  <small>
+                    {batchMixedFields.has("location")
+                      ? zh
+                        ? "当前存在多个值"
+                        : "Multiple current values"
+                      : batchLocation || (zh ? "当前未设置" : "Not set")}
+                  </small>
+                </span>
+                <i>
+                  {batchFields.has("location")
+                    ? zh
+                      ? "将修改"
+                      : "Changing"
+                    : zh
+                      ? "保持原值"
+                      : "Keep"}
+                </i>
+              </button>
+              <input
+                hidden={!batchFields.has("location")}
+                value={batchLocation}
+                onChange={(event) => setBatchLocation(event.target.value)}
+                placeholder={
+                  batchMixedFields.has("location")
+                    ? zh
+                      ? "多个不同值"
+                      : "Multiple values"
+                    : zh
+                      ? "例如：杭州市"
+                      : "e.g. Hangzhou"
+                }
+              />
+              {batchFields.has("location") && (
+                <div className="admin-node-batch-examples">
+                  <span>{zh ? "示例" : "Examples"}</span>
+                  {["杭州市", "北京市", "上海市"].map((value) => (
+                    <button
+                      type="button"
+                      key={value}
+                      onClick={() => setBatchLocation(value)}
+                    >
+                      {value}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div
+              className={`admin-node-batch-field${batchFields.has("categories") ? " active" : ""}`}
+            >
+              <button
+                type="button"
+                className="admin-node-batch-field-toggle"
+                aria-pressed={batchFields.has("categories")}
+                onClick={() => toggleBatchField("categories")}
+              >
+                <span className="admin-node-batch-field-icon">
+                  <Network size={16} />
+                </span>
+                <span>
+                  <strong>{zh ? "节点分类" : "Node categories"}</strong>
+                  <small>
+                    {batchMixedFields.has("categories")
+                      ? zh
+                        ? "当前存在多个值"
+                        : "Multiple current values"
+                      : batchCategories.length
+                        ? batchCategories
+                            .map((category) =>
+                              category === "robot" && zh
+                                ? "具身节点"
+                                : categoryLabels[category][zh ? "zh" : "en"],
+                            )
+                            .join("、")
+                        : zh
+                          ? "当前未设置"
+                          : "Not set"}
+                  </small>
+                </span>
+                <i>
+                  {batchFields.has("categories")
+                    ? zh
+                      ? "将修改"
+                      : "Changing"
+                    : zh
+                      ? "保持原值"
+                      : "Keep"}
+                </i>
+              </button>
+              {batchFields.has("categories") && (
+                <>
+                  <div
+                    className="admin-node-category-chips"
+                    role="group"
+                    aria-label={zh ? "节点分类（可多选）" : "Node categories"}
+                  >
+                    {(["cloud", "edge", "robot"] as NodeCategory[]).map(
+                      (category) => (
+                        <button
+                          type="button"
+                          key={category}
+                          className={
+                            batchCategories.includes(category) ? "selected" : ""
+                          }
+                          aria-pressed={batchCategories.includes(category)}
+                          onClick={() =>
+                            setBatchCategories((current) =>
+                              current.includes(category)
+                                ? current.filter((item) => item !== category)
+                                : [...current, category],
+                            )
+                          }
+                        >
+                          {zh
+                            ? category === "robot"
+                              ? "具身节点"
+                              : categoryLabels[category].zh
+                            : categoryLabels[category].en}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                  <small className="admin-node-batch-hint">
+                    {zh
+                      ? "可多选。例如 GPU 服务器选择“云算力”，机器人本体可同时选择“端算力”和“具身节点”。"
+                      : "Multiple selections are allowed. For example, choose Cloud for GPU servers; a robot may be both Edge and Embodied."}
+                  </small>
+                </>
+              )}
+            </div>
+            <div
+              className={`admin-node-batch-field${batchFields.has("gpu") ? " active" : ""}`}
+            >
+              <button
+                type="button"
+                className="admin-node-batch-field-toggle"
+                aria-pressed={batchFields.has("gpu")}
+                onClick={() => toggleBatchField("gpu")}
+              >
+                <span className="admin-node-batch-field-icon">
+                  <CloudCog size={16} />
+                </span>
+                <span>
+                  <strong>{zh ? "GPU 型号" : "GPU model"}</strong>
+                  <small>
+                    {batchMixedFields.has("gpu")
+                      ? zh
+                        ? "当前存在多个值"
+                        : "Multiple current values"
+                      : batchGPUModel || (zh ? "当前未设置" : "Not set")}
+                  </small>
+                </span>
+                <i>
+                  {batchFields.has("gpu")
+                    ? zh
+                      ? "将修改"
+                      : "Changing"
+                    : zh
+                      ? "保持原值"
+                      : "Keep"}
+                </i>
+              </button>
+              <input
+                hidden={!batchFields.has("gpu")}
+                value={batchGPUModel}
+                onChange={(event) => setBatchGPUModel(event.target.value)}
+                placeholder={
+                  batchMixedFields.has("gpu")
+                    ? zh
+                      ? "多个不同值"
+                      : "Multiple values"
+                    : "NVIDIA H800"
+                }
+              />
+              {batchFields.has("gpu") && (
+                <div className="admin-node-batch-examples">
+                  <span>{zh ? "示例" : "Examples"}</span>
+                  {["NVIDIA H800", "NVIDIA A100", "NVIDIA RTX 4090"].map(
+                    (value) => (
+                      <button
+                        type="button"
+                        key={value}
+                        onClick={() => setBatchGPUModel(value)}
+                      >
+                        {value}
+                      </button>
+                    ),
+                  )}
+                </div>
+              )}
+            </div>
+            <div
+              className={`admin-node-batch-field${batchFields.has("device") ? " active" : ""}`}
+            >
+              <button
+                type="button"
+                className="admin-node-batch-field-toggle"
+                aria-pressed={batchFields.has("device")}
+                onClick={() => toggleBatchField("device")}
+              >
+                <span className="admin-node-batch-field-icon">
+                  <Server size={16} />
+                </span>
+                <span>
+                  <strong>
+                    {zh ? "具身设备型号" : "Embodied device model"}
+                  </strong>
+                  <small>
+                    {batchMixedFields.has("device")
+                      ? zh
+                        ? "当前存在多个值"
+                        : "Multiple current values"
+                      : batchDeviceModel || (zh ? "当前未设置" : "Not set")}
+                  </small>
+                </span>
+                <i>
+                  {batchFields.has("device")
+                    ? zh
+                      ? "将修改"
+                      : "Changing"
+                    : zh
+                      ? "保持原值"
+                      : "Keep"}
+                </i>
+              </button>
+              <input
+                hidden={!batchFields.has("device")}
+                value={batchDeviceModel}
+                onChange={(event) => setBatchDeviceModel(event.target.value)}
+                placeholder={
+                  batchMixedFields.has("device")
+                    ? zh
+                      ? "多个不同值"
+                      : "Multiple values"
+                    : "Unitree G1"
+                }
+              />
+              {batchFields.has("device") && (
+                <div className="admin-node-batch-examples">
+                  <span>{zh ? "示例" : "Examples"}</span>
+                  {["Unitree G1", "Unitree Go2", "Robodog OT-T12"].map(
+                    (value) => (
+                      <button
+                        type="button"
+                        key={value}
+                        onClick={() => setBatchDeviceModel(value)}
+                      >
+                        {value}
+                      </button>
+                    ),
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="admin-node-batch-actions">
+            <span>
+              {zh
+                ? `将修改 ${batchFields.size} 项属性 · ${selectedNodeKeys.size} 个节点`
+                : `${batchFields.size} properties · ${selectedNodeKeys.size} nodes`}
+            </span>
+            <button
+              className="secondary-button"
+              onClick={() => setBatchOpen(false)}
+            >
+              {zh ? "取消" : "Cancel"}
+            </button>
+            <button
+              className="primary-button"
+              disabled={batchSaving || batchFields.size === 0}
+              onClick={saveBatchMetadata}
+            >
+              <Save size={15} />
+              {batchSaving
+                ? zh
+                  ? "保存中…"
+                  : "Saving…"
+                : zh
+                  ? "应用设置"
+                  : "Apply"}
+            </button>
+          </div>
+        </section>
       )}
 
       {loading ? (
@@ -1006,6 +1650,14 @@ export function AdminPage({
           copy={c}
           onRefresh={() => fetchNodes()}
           onSelectNode={(name) => onNavigate(name)}
+          onToggleScheduling={toggleCordon}
+          updatingNode={cordoningNode}
+          selectedNodeKeys={selectedNodeKeys}
+          onSelectionChange={setSelectedNodeKeys}
+          onSelectFiltered={(keys) =>
+            setSelectedNodeKeys((current) => new Set([...current, ...keys]))
+          }
+          onClearSelection={() => setSelectedNodeKeys(new Set())}
         />
       )}
     </div>

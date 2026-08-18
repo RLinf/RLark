@@ -7,6 +7,7 @@ spec:
   unschedulable: false
 status:
   phase: Online
+  diskPressure: false
   reason: kubelet is ready
   nodeInfo:
     architecture: amd64
@@ -43,6 +44,7 @@ spec:
   unschedulable: false
 status:
   phase: Online
+  diskPressure: false
   reason: docker-agent-connected
   nodeInfo:
     architecture: amd64
@@ -76,6 +78,7 @@ spec:
   unschedulable: true
 status:
   phase: Offline
+  diskPressure: false
   reason: maintenance-window
   nodeInfo:
     architecture: amd64

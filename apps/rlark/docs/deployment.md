@@ -68,7 +68,7 @@ cert:
 kubernetes:
   kubeconfig: /path/to/data-kubeconfig
   agent-image: rlark-agent:latest
-  network-sidecar-image: rlark-network-sidecar:latest
+  image: rlark:latest
 ```
 
 ## 3. Kubernetes Deployment
@@ -197,7 +197,7 @@ volumes:
 | `--rlark-server-ssh-host-key` | `""` | Server SSH host key |
 | `--agent-type` | `auto` | Agent type: `kubernetes` / `docker` / `raw` (auto-detected from env mode) |
 | `--leader-election` | `true` | Enable leader election (disabled when replicas=1) |
-| `--network-sidecar-image` | `""` | Network sidecar container image |
+| `--image` | `""` | RLark container image (network sidecar, SSH server, etc.) |
 | `--in-cluster` | `false` | Use in-cluster Kubernetes config (auto-set in K8s mode) |
 | `--insecure-skip-tls-verify` | `false` | Skip TLS certificate verification |
 
