@@ -1,0 +1,59 @@
+site_name: rlark
+site_description: Reinforcement Learning Infrastructure for Embodied and Agentic AI
+repo_url: https://github.com/RLinf/RLark
+edit_uri: edit/main/apps/rlark/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.expand
+    - navigation.indexes
+    - toc.follow
+    - content.code.copy
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - 中文:
+    - 首页: cn/README.md
+    - 快速开始: cn/quickstart.md
+    - Web 控制台: cn/ui-behavior.md
+    - 核心概念: cn/concepts.md
+    - 架构设计: cn/architecture.md
+    - 部署指南: cn/deployment.md
+    - API 参考: cn/api/reference.md
+    - API 示例: cn/api/examples.md
+  - English:
+    - Quick Start: quickstart.md
+    - Web Console: ui-behavior.md
+    - Core Concepts: concepts.md
+    - Architecture: architecture.md
+    - Deployment Guide: deployment.md
+    - API Reference: api/reference.md
+    - API Examples: api/examples.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
