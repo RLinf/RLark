@@ -1,7 +1,10 @@
-site_name: rlark
+site_name: RLark
+site_url: !ENV READTHEDOCS_CANONICAL_URL
 site_description: Reinforcement Learning Infrastructure for Embodied and Agentic AI
 repo_url: https://github.com/RLinf/RLark
 edit_uri: edit/main/apps/rlark/docs/
+exclude_docs: |
+  README.md
 
 theme:
   name: material
@@ -19,40 +22,130 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    - navigation.instant
-    - navigation.tracking
-    - navigation.expand
+    # navigation.instant disabled: conflicts with ReadTheDocs injected JS
+    - navigation.sections
     - navigation.indexes
     - toc.follow
     - content.code.copy
 
+extra_css:
+  - extra.css
+
 plugins:
+  - i18n:
+      docs_structure: folder
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+          site_name: "RLark Embodied AI Cloud-Native Management Platform"
+        - locale: zh
+          name: 中文
+          build: true
+          site_name: "RLark 具身智能云原生纳管平台"
+          nav_translations:
+            Overview: 概览
+            "What is RLark": "RLark 是什么"
+            "Core Capabilities": 核心能力
+            "Core Concepts": 核心概念
+            "System Architecture": 系统架构
+            "Quick Start": 快速开始
+            "Platform User Guide": 平台使用指南
+            "User Guide Overview": 使用指南概览
+            "Console Access and Navigation": 控制台访问与导航
+            "Find Compute Resources": 查找算力资源
+            "Submit and Manage Jobs": 提交和管理任务
+            "Build Workflows": 构建工作流
+            "Attach Storage": 挂载存储
+            "Connect with SSH Keys": 使用 SSH 密钥连接
+            "RL Training Best Practices": "RL 训练最佳实践"
+            "Administrator Guide": 管理员指南
+            "Administrator Guide Overview": 管理员指南概览
+            "Production Control Plane": 生产级控制面部署
+            "GPU Cluster Onboarding": GPU 集群接入
+            "Embodied Device Onboarding": 具身设备接入
+            "Embodied Runtime": "Embodied Runtime"
+            "Agent Installation and Upgrade": "Agent 安装与升级"
+            "Node and Resource Management": 节点与资源管理
+            "Networking and Security": 网络与安全
+            "Operations and Troubleshooting": 运维与故障排查
+            "Complete Deployment Reference": 完整部署参考
+            "Developer Guide": 开发者指南
+            "Developer Guide Overview": 开发者指南概览
+            "Local Development and Debugging": 本地开发与调试
+            "Project Layout": 项目结构
+            "Technical Architecture": 技术架构
+            "New Device Integration": 新设备适配
+            Contributing: 贡献指南
+            Reference: 参考手册
+            "Reference Overview": 参考手册概览
+            CLI: CLI
+            "Gateway API Reference": "Gateway API 参考"
+            "API Examples": "API 示例"
+            "OpenAPI Specification": "OpenAPI 规范"
+            "Storage API": "存储 API"
+            "CRD Schema Reference": "CRD Schema 参考"
+            Configuration: 配置项
+            "Release Notes / Changelog": "版本发布 / Changelog"
+            Debugging: 调试
   - search
 
 nav:
-  - Home: index.md
-  - 中文:
-    - 首页: cn/README.md
-    - 快速开始: cn/quickstart.md
-    - Web 控制台: cn/ui-behavior.md
-    - 核心概念: cn/concepts.md
-    - 架构设计: cn/architecture.md
-    - 部署指南: cn/deployment.md
-    - API 参考: cn/api/reference.md
-    - API 示例: cn/api/examples.md
-  - English:
-    - Quick Start: quickstart.md
-    - Web Console: ui-behavior.md
+  - Overview:
+    - What is RLark: index.md
+    - Core Capabilities: overview/capabilities.md
     - Core Concepts: concepts.md
-    - Architecture: architecture.md
-    - Deployment Guide: deployment.md
+    - System Architecture: architecture.md
+  - Quick Start: quickstart.md
+  - Platform User Guide:
+    - User Guide Overview: user-guide/index.md
+    - RL Training Best Practices: user-guide/best-practices.md
+    - Console Access and Navigation: user-guide/console.md
+    - Find Compute Resources: user-guide/clusters-nodes.md
+    - Submit and Manage Jobs: user-guide/jobs.md
+    - Build Workflows: user-guide/workflows.md
+    - Attach Storage: user-guide/storage.md
+    - Connect with SSH Keys: user-guide/ssh-keys.md
+  - Administrator Guide:
+    - Administrator Guide Overview: admin-guide/index.md
+    - Production Control Plane: admin-guide/control-plane.md
+    - GPU Cluster Onboarding: admin-guide/data-plane.md
+    - Embodied Device Onboarding: admin-guide/embodied-runtime.md
+    - Agent Installation and Upgrade: admin-guide/agent.md
+    - Node and Resource Management: admin-guide/nodes.md
+    - Networking and Security: admin-guide/network-security.md
+    - Operations and Troubleshooting: admin-guide/operations.md
+    - Complete Deployment Reference: deployment.md
+  - Developer Guide:
+    - Developer Guide Overview: developer-guide/index.md
+    - Local Development and Debugging: developer-guide/local-development.md
+    - Debugging: developer-guide/debugging.md
+    - Project Layout: developer-guide/project-layout.md
+    - New Device Integration: developer-guide/device-integration.md
+    - Embodied Runtime: developer-guide/embodied-runtime-reference.md
+    - Contributing: developer-guide/contributing.md
+  - Reference:
+    - Reference Overview: reference/index.md
+    - CLI: reference/cli.md
     - API Reference: api/reference.md
     - API Examples: api/examples.md
+    - OpenAPI Specification: api/swagger.yaml
+    - Storage API: storage-api.md
+    - CRDs: reference/crd.md
+    - Configuration: reference/configuration.md
+    - Release Notes / Changelog: reference/changelog.md
 
 markdown_extensions:
   - admonition
   - pymdownx.highlight
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.details
   - tables
   - toc:

@@ -75,12 +75,16 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.KubernetesWorkloadSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Node"):
 		return &rlarkiov1alpha1.NodeApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeEvent"):
+		return &rlarkiov1alpha1.NodeEventApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeInfo"):
 		return &rlarkiov1alpha1.NodeInfoApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeSpec"):
 		return &rlarkiov1alpha1.NodeSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeStatus"):
 		return &rlarkiov1alpha1.NodeStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("PullProgress"):
+		return &rlarkiov1alpha1.PullProgressApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Pod"):
 		return &rlarkiov1alpha1.PodApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PodSpec"):

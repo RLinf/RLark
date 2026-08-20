@@ -2,7 +2,7 @@
 
 ## 1. Deployment Architecture
 
-rlark supports three deployment modes for different scenarios:
+RLark supports three deployment modes for different scenarios:
 
 | Mode | Complexity | Use Case |
 |------|-----------|----------|
@@ -12,7 +12,7 @@ rlark supports three deployment modes for different scenarios:
 
 ## 2. Deployment Tool: rlarkadm
 
-`rlarkadm` is rlark's deployment CLI, unifying installation, uninstallation, and health checks for both control and data planes.
+`rlarkadm` is RLark's deployment CLI for installing and uninstalling control-plane and data-plane components. Installation waits up to 180 seconds for each Kubernetes workload to become ready; there is no separate `health` subcommand.
 
 ```bash
 # Install
@@ -20,40 +20,38 @@ rlarkadm install -f <config-file>
 
 # Uninstall
 rlarkadm uninstall -f <config-file>
-
-# Health check
-rlarkadm health -f <config-file>
 ```
 
 ### Configuration File Structure
 
+A file describes exactly one plane and exactly one environment (`kubernetes`, `docker`, or `raw`). Start from the maintained examples instead of combining both planes in one YAML document:
+
 ```yaml
+# Control plane
 apiVersion: rlark.io/v1alpha1
 kind: DeployConfig
-plane: control              # control | data
-
-# Control plane configuration
-kubernetes:                 # Deploy to K8s cluster
-  kubeconfig: /path/to/kubeconfig
-  # Image configuration
-  gateway-image: rlark-gateway:latest
-  controller-manager-image: rlark-controller-manager:latest
-  server-image: rlark-server:latest
+plane: control
+kubernetes:
+  kubeconfig: /path/to/control-kubeconfig
+  gateway-image: rlark:latest
+  controller-manager-image: rlark:latest
+  server-image: rlark:latest
   kcp-image: kcp:v0.30.0
-  postgresql-image: postgres:15
   ui-image: rlark-ui:latest
-  # Storage configuration
   storage:
-    type: pvc               # emptyDir | hostPath | pvc
+    type: pvc
     storage-class: ""
     size: 10Gi
-    node-selector:
-      kubernetes.io/hostname: dev-worker
+```
 
-# Data plane configuration
+```yaml
+# Data plane
+apiVersion: rlark.io/v1alpha1
+kind: DeployConfig
 plane: data
+control-plane-address: https://rlark.example.com:8443
 cert:
-  ca-cert: |
+  ca-cert: |                # Inline PEM or an existing file path
     -----BEGIN CERTIFICATE-----
     ...
     -----END CERTIFICATE-----
@@ -67,8 +65,8 @@ cert:
     -----END PRIVATE KEY-----
 kubernetes:
   kubeconfig: /path/to/data-kubeconfig
-  agent-image: rlark-agent:latest
-  image: rlark:latest
+  agent-image: rlark:latest
+  image: rlark:latest       # Optional; enables Pod networking and SSH support
 ```
 
 ## 3. Kubernetes Deployment
@@ -92,12 +90,12 @@ Control plane components:
 | Component | Replicas | Ports | Description |
 |-----------|----------|-------|-------------|
 | kcp | 1 | 6443 | API Server |
-| etcd | 1 | 2379 | kcp data storage (optional external) |
-| postgresql | 1 | 5432 | rlark data storage |
-| server | 1 | 8443, 2222 | HTTPS + SSH |
-| controller-manager | 1 | - | Control plane controllers |
-| gateway | 1 | 8080 | API Gateway |
-| ui | 1 | 80 | Web management UI |
+| etcd | 1 | 2379 | kcp storage; deployed only with `etcd-image` and no external address |
+| postgresql | 1 | 5432 | RLark storage; deployed only when the top-level `db` block is set |
+| server | 1 | 8443, 2222, 8888 | HTTPS, SSH, and health/metrics HTTP |
+| controller-manager | 1 | 8080, 8081 | Metrics and health probes |
+| gateway | 1 | 8090 | API Gateway in an `rlarkadm` deployment |
+| ui | 1 | 80 | Web UI; proxies `/api/` to Gateway |
 
 ### 3.2 Data Plane Deployment
 
@@ -117,8 +115,9 @@ Data plane components:
 
 | Component | Replicas | Description |
 |-----------|----------|-------------|
-| agent | DaemonSet | cluster + node mode |
-| network-sidecar | Pod injection | Auto-injected into training Pods |
+| agent | Deployment | Cluster-level synchronization (`--mode=cluster`) |
+| agent-node | DaemonSet | Node networking and image pre-pull (`--mode=node`) |
+| network-sidecar | Injected container | Added to eligible training Pods when `kubernetes.image` is set |
 
 ## 4. Docker Compose Deployment (Development)
 
@@ -157,53 +156,54 @@ volumes:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--kubeconfig` | `""` | Control plane kubeconfig |
+| `--kubeconfig` | `$KUBECONFIG` | Control plane kubeconfig |
 | `--https-port` | `8443` | HTTPS service port |
 | `--ssh-port` | `2222` | SSH service port |
+| `--unsafe-http-port` | `8888` | Unauthenticated HTTP port for `/healthz`, `/readyz`, and metrics |
 | `--db-config` | `""` | Database config file path |
-| `--ca-cert` | `""` | CA certificate path |
-| `--ca-key` | `""` | CA private key path |
-| `--auto-sign-tls-ca-cert` | `false` | Automatically sign TLS certificates using CA |
-| `--tls-domains` | `""` | TLS domain list for auto certificate generation |
+| `--auto-sign-tls-ca-cert` | `false` | Generate the TLS CA and server certificate in Kubernetes when absent |
+| `--tls-domains` | `localhost` | Comma-separated DNS names in the generated server certificate |
 
 ### 5.2 Controller-Manager
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--kubeconfig` | `""` | Control plane kubeconfig |
-| `--server-address` | `""` | Server address (for certificate signing) |
+| `--kubeconfig` | `$KUBECONFIG` | Control plane kubeconfig |
+| `--server-address` | `https://rlark-server.rlark-system.svc:8443` | Server address |
 | `--leader-elect` | `true` | Enable leader election |
+| `--metrics-bind-address` | `:8080` | Metrics bind address |
+| `--health-probe-bind-address` | `:8081` | `/healthz` and `/readyz` bind address |
 
 ### 5.3 Gateway
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--kubeconfig` | `""` | Control plane kubeconfig |
-| `--addr` | `:8080` | HTTP service address |
+| `--kubeconfig` | `$KUBECONFIG` | Control plane kubeconfig |
+| `--addr` | `:8080` | Standalone default; `rlarkadm` overrides it to `:8090` |
 | `--db-config` | `""` | Database config file path |
-| `--server-address` | `""` | Control plane Server address for certificate signing |
+| `--server-address` | `https://rlark-server.rlark-system.svc:8443` | Server address for certificate signing |
 
 ### 5.4 Agent
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--kubeconfig` | `""` | Data plane kubeconfig |
-| `--server-address` | `""` | Control plane Server address |
+| `--kubeconfig` | `$KUBECONFIG` | Data plane kubeconfig |
+| `--server-address` | `https://localhost:8443` | Control plane Server address |
 | `--client-cert` | `""` | Agent certificate path |
 | `--client-key` | `""` | Agent private key path |
 | `--ca-cert` | `""` | CA certificate path |
-| `--mode` | `both` | Run mode: `cluster` / `node` / `both` |
-| `--rlark-server-ssh-address` | `""` | Server SSH address (cross-cluster networking) |
-| `--rlark-server-ssh-host-key` | `""` | Server SSH host key |
-| `--agent-type` | `auto` | Agent type: `kubernetes` / `docker` / `raw` (auto-detected from env mode) |
-| `--leader-election` | `true` | Enable leader election (disabled when replicas=1) |
+| `--mode` | `cluster` | Run mode: `cluster` / `node` / `both` |
+| `--rlark-server-ssh-address` | `""` | Server SSH address (`user@host:port`) |
+| `--rlark-server-ssh-host-key` | `""` | Server SSH host public key |
+| `--agent-type` | `Kubernetes` | Agent type: `Kubernetes` / `Docker` / `Raw` |
+| `--leader-election` | `false` | `rlarkadm` enables it for multi-replica cluster agents |
 | `--image` | `""` | RLark container image (network sidecar, SSH server, etc.) |
-| `--in-cluster` | `false` | Use in-cluster Kubernetes config (auto-set in K8s mode) |
+| `--in-cluster` | `false` | `rlarkadm` sets it in Kubernetes mode |
 | `--insecure-skip-tls-verify` | `false` | Skip TLS certificate verification |
 
 ### 5.5 Env Mode
 
-rlark supports three deployment environment modes, configured in the DeployConfig YAML:
+RLark supports three deployment environment modes, configured in the DeployConfig YAML:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
@@ -345,22 +345,27 @@ curl -X DELETE "http://localhost:8080/api/v1/clusters/agent-beijing/addons/embod
 
 | Component | Port | Protocol | Description |
 |-----------|------|----------|-------------|
-| Gateway | 8080 | HTTP | User API access |
-| Server | 8443 | HTTPS | Agent tunnel connections |
-| Server | 2222 | TCP | SSH user login |
-| kcp | 6443 | HTTPS | Control plane API |
+| UI | 80 | HTTP | Browser entry; proxies `/api/` to Gateway |
+| Gateway | 8090 | HTTP | Internal API in `rlarkadm` (`8080` standalone default) |
+| Server | 8443 | HTTPS/WSS | Agent tunnels, proxying, and certificates |
+| Server | 2222 | SSH | User and cross-cluster SSH |
+| Server | 8888 | HTTP | Internal health and metrics |
+| kcp | 6443 | HTTPS | Internal control plane API |
 
 ### 8.2 Network Topology
 
-```
-Internet / User Network
-    │
-    ├──▶ Gateway (:8080) ── REST API
-    └──▶ Server (:2222)  ── SSH Login
-         Server (:8443)  ◀── Agent WebSocket (outbound)
+```text
+User / browser ──HTTP──▶ UI (:80) ──/api proxy──▶ Gateway (:8090)
+User SSH client ───────▶ Server (:2222)
+                                      ▲
+Data plane cluster ──outbound WSS─────┤ Server (:8443)
+  ├─ agent Deployment (cluster mode)  │
+  └─ agent-node DaemonSet (node mode) ┘
+
+Server / Gateway / Controller Manager ──HTTPS──▶ kcp (:6443)
 ```
 
-Agent connects to Server via **outbound** WebSocket — no inbound ports need to be exposed on the data plane.
+Both data-plane agents initiate outbound connections to Server, so no inbound data-plane port is required. Expose UI port 80 and, when needed, Server ports 8443 and 2222; keep Gateway, kcp, and health/metrics ports internal.
 
 ## 9. Certificate Management
 
@@ -376,9 +381,12 @@ Agent connects to Server via **outbound** WebSocket — no inbound ports need to
 ### 9.2 Issuing Agent Certificates
 
 ```bash
+# UI proxies /api/ to Gateway.
+kubectl port-forward -n rlark-system svc/rlark-ui 8080:80
+
 curl -X POST "http://localhost:8080/api/v1/certificates/agent" \
   -H "Content-Type: application/json" \
-  -d '{"agentID": "agent-beijing"}'
+  -d '{"cluster_id": "beijing"}'
 ```
 
 Returns certificate and private key for deployment to the data plane Agent.
@@ -394,20 +402,13 @@ During deployment, `rlarkadm` automatically creates a `rlark-ui-auth` Secret in 
 
 Passwords are displayed in the install summary. The web UI uses `POST /api/v1/auth/login` to authenticate.
 
-## 10. High Availability
+## 10. Production Deployment and High Availability
 
-### 10.1 Multi-Replica Deployment
+### 10.1 Current `rlarkadm` Scope
 
-Recommended replica counts for production:
+The maintained `rlarkadm` example deploys one replica of each enabled control-plane component. Although the configuration accepts global and component-level `replicas`, RLark does not currently document or validate a production HA topology for Gateway, Server, kcp, etcd, or PostgreSQL. Increasing replica counts alone must not be assumed to provide high availability.
 
-| Component | Replicas | Notes |
-|-----------|----------|-------|
-| Gateway | 2+ | Stateless, horizontally scalable |
-| Server | 2+ | Interconnected via Peer Manager |
-| Controller-Manager | 1 | Leader election, active-standby |
-| kcp | 1 | Single instance (can use external etcd cluster) |
-| etcd | 3 | Odd-numbered Raft cluster |
-| postgresql | 1 | Primary-replica replication |
+For production, keep the maintained single-replica topology unless you have independently designed and tested the component topology, shared state, traffic routing, failure recovery, and storage behavior. Use externally managed highly available data services where required; `rlarkadm` does not configure PostgreSQL primary/standby replication.
 
 ### 10.2 External etcd
 
@@ -422,7 +423,7 @@ kubernetes:
 
 ```yaml
 db:
-  host: pg-primary.example.com
+  host: pg-managed.example.com
   port: 5432
   database: rlark
   user: rlark
@@ -451,13 +452,26 @@ LOG_LEVEL=debug ./bin/server --kubeconfig ...
 
 ### 11.3 Health Checks
 
-```bash
-# Check control plane
-rlarkadm health -f deploy-control-plane.yaml
+`rlarkadm install` waits for each Deployment, StatefulSet, and DaemonSet to report all desired replicas ready. For later checks:
 
-# Check data plane
-rlarkadm health -f deploy-data-plane.yaml
+```bash
+kubectl get deploy,statefulset,daemonset -n rlark-system
+kubectl rollout status deployment/rlark-server -n rlark-system
+kubectl rollout status deployment/rlark-agent -n rlark-system
+kubectl rollout status daemonset/rlark-agent-node -n rlark-system
+
+# Server health (normally cluster-internal)
+kubectl port-forward -n rlark-system svc/rlark-server 8888:8888
+curl --fail http://localhost:8888/healthz
+curl --fail http://localhost:8888/readyz
+
+# Controller Manager health
+kubectl port-forward -n rlark-system deployment/rlark-controller-manager 8081:8081
+curl --fail http://localhost:8081/healthz
+curl --fail http://localhost:8081/readyz
 ```
+
+Gateway and Agent expose metrics but do not define dedicated HTTP health routes; use Kubernetes workload readiness and logs for them.
 
 ## 12. Upgrades
 

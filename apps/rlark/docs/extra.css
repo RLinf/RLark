@@ -1,0 +1,37 @@
+/*
+ * Read the Docs renders the documentation viewport below Material's
+ * 76.25rem desktop breakpoint. Material therefore uses its mobile
+ * drill-down navigation, where every child nav is an absolute, full-height
+ * layer. In RTD's persistent sidebar this leaves empty space after closing
+ * a section and makes sibling arrows appear ineffective.
+ *
+ * Use an accordion layout whenever the permanent sidebar has enough room
+ * (48rem and above), including Material's desktop layout. The native checkbox
+ * toggles remain authoritative, so both section titles and arrows
+ * expand/collapse normally in Trae's narrow preview and a wide Chrome window.
+ */
+@media screen and (min-width: 48rem) {
+  .md-nav--primary .md-nav__item--nested > .md-nav {
+    position: static;
+    width: auto;
+    height: auto;
+    max-height: none;
+    margin-left: 0.6rem;
+    overflow: visible;
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .md-nav--primary .md-nav__item--nested > .md-nav__toggle:not(:checked) ~ .md-nav {
+    display: none;
+  }
+
+  .md-nav--primary .md-nav__item--nested > .md-nav__toggle:checked ~ .md-nav {
+    display: block;
+  }
+
+  .md-nav--primary .md-nav__item--nested > .md-nav > .md-nav__title {
+    display: none;
+  }
+}

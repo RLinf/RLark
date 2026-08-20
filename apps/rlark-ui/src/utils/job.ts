@@ -95,6 +95,18 @@ export function selectorToStr(sel: Record<string, string>): string {
     .join(",");
 }
 
+export function toResourceName(value: string): string {
+  return Array.from(value.toLowerCase())
+    .map((char) =>
+      /^[a-z0-9.-]$/.test(char)
+        ? char
+        : `-${char.codePointAt(0)?.toString(16)}-`,
+    )
+    .join("")
+    .replace(/-+/g, "-")
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
+}
+
 export function computePvcStorageMap(
   role: string,
   mounts: Array<{
@@ -105,11 +117,11 @@ export function computePvcStorageMap(
   }>,
   jobName?: string,
 ): Record<string, string> | undefined {
-  const roleSlug = role.toLowerCase().replace(/\s+/g, "-");
+  const roleSlug = toResourceName(role);
   const storageMounts = mounts.filter((m) => m.type === "storage");
   if (storageMounts.length === 0) return undefined;
   const map: Record<string, string> = {};
-  const jobSlug = jobName ? jobName.toLowerCase().replace(/\s+/g, "-") : "";
+  const jobSlug = jobName ? toResourceName(jobName) : "";
   storageMounts.forEach((m) => {
     const volName =
       m.mountPath.replace(/\//g, "-").replace(/^-|-$/g, "") || "vol";
@@ -145,8 +157,8 @@ export function generateJobCRD(opts: {
           .map((e) => ({ name: e.key, value: e.value })),
         { name: "RLARK_TASK_ROLE", value: role },
       ];
-      const taskName = role.toLowerCase().replace(/\s+/g, "-");
-      const jobSlug = opts.name.toLowerCase().replace(/\s+/g, "-");
+      const taskName = toResourceName(role);
+      const jobSlug = toResourceName(opts.name);
 
       const hostMounts = roleMounts.filter((m) => m.type === "host");
       const storageMounts = roleMounts.filter((m) => m.type === "storage");

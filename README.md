@@ -14,7 +14,7 @@
   <sub>RLark — Cross-Cluster Embodied Intelligence Cloud-Native Platform</sub>
 </h1>
 
-Manage cross-cluster embodied intelligence workloads natively with Kubernetes, from cloud GPU training to edge device deployment. Through unified job scheduling, cross-cluster Pod-to-Pod networking, and multi-runtime support (k8s preview, Docker/Raw experimental), RLark enables seamless collaboration between GPU clusters, robot arms, sensors, and other heterogeneous devices.
+Manage cross-cluster embodied intelligence workloads through a unified cloud-native platform spanning cloud GPU training, cross-cluster collaboration, and edge device deployment across heterogeneous resources such as GPU clusters, robot arms, sensors, and cameras.
 
 ## What's NEW!
 
@@ -23,11 +23,11 @@ Manage cross-cluster embodied intelligence workloads natively with Kubernetes, f
 ## Key Capabilities
 
 - **Embodied AI Workload Orchestration**: From cloud GPU training (RL/LLM) to edge deployment (robot arm, sensor, camera), unified declarative Job/Workflow/Task abstraction across the full pipeline
-- **Multi-Runtime Data Plane**: Native support for Kubernetes runtime (preview), with Docker and Raw runtimes in experimental/planned status — GPU clusters run k8s for large-scale training, edge devices run k8s or Docker for lightweight embodied deployment
-- **Cross-Cluster Resource Abstraction**: Unify multi-site GPU clusters and edge devices via Domain (security domain) and Node (compute node) CRDs, with the control plane running on kcp
+- **Multi-Runtime Data Plane**: Kubernetes provides unified management for cloud GPU clusters and edge devices across the complete training-to-deployment lifecycle; Docker and Raw runtime support will extend coverage to lightweight edge scenarios where Kubernetes is not suitable
+- **Cross-Cluster Resource Abstraction**: Unify multi-site GPU clusters and edge devices via Domain (virtual network domain) and Node (compute node) CRDs, with the control plane running on kcp
 - **Declarative Training Jobs**: Multi-layer abstraction (Job/Workflow/Task) with DAG-based training pipelines and declarative Ray cluster definition
 - **Cross-Cluster Pod Networking**: Virtual network based on TUN devices + gVisor netstack + SSH tunnels, enabling Pod-to-Pod communication without NAT traversal — cloud GPUs and edge robots communicate directly
-- **Certificate System**: Dual-layer X.509 + SSH certificates for Agent access, Domain isolation, and user SSH authentication
+- **Certificate System**: Dual-layer X.509 + SSH certificates for Agent access, Domain-scoped cross-cluster forwarding authentication, and user SSH authentication
 - **Observability**: Prometheus metrics, real-time Pod log streaming, and web management UI
 
 ## Architecture Overview
@@ -68,7 +68,7 @@ kind create cluster --name rlark-data
 | [Go SDK](sdks/embodied-runtime-go/README.md) | Go client for embodied-runtime gRPC stubs |
 | [Proto Definitions](proto/embodied-runtime/README.md) | gRPC service definitions for embodied-runtime |
 
-> [中文文档](apps/rlark/docs/cn/README.md)
+> [中文文档](apps/rlark/docs/zh/README.md)
 
 ## Tech Stack
 

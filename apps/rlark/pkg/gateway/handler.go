@@ -91,20 +91,24 @@ func parseLabelSelector(s string) (db.LabelSelector, error) {
 func (g *Gateway) handleList(resource string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if g.dbClient != nil {
-			g.handleListDB(c, resource)
-		} else {
-			g.handleListKube(c, resource)
+			if _, ok := g.stores[resource]; ok {
+				g.handleListDB(c, resource)
+				return
+			}
 		}
+		g.handleListKube(c, resource)
 	}
 }
 
 func (g *Gateway) handleGet(resource string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if g.dbClient != nil {
-			g.handleGetDB(c, resource)
-		} else {
-			g.handleGetKube(c, resource)
+			if _, ok := g.stores[resource]; ok {
+				g.handleGetDB(c, resource)
+				return
+			}
 		}
+		g.handleGetKube(c, resource)
 	}
 }
 

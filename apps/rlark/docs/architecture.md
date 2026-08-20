@@ -2,17 +2,17 @@
 
 ## 1. Design Goals
 
-rlark is an embodied intelligence cloud-native management platform for cross-cluster, multi-runtime scenarios. Core design goals:
+RLark is an embodied intelligence cloud-native management platform for cross-cluster, multi-runtime scenarios. Core design goals:
 
 1. **Cloud-to-Edge workload orchestration**: From cloud GPU training (RL/LLM) to edge deployment (robot arm, sensor, camera), unified declarative abstraction across the full embodied AI pipeline
-2. **Multi-runtime data plane**: Native support for Kubernetes, Docker, and Raw runtimes — GPU clusters run k8s for large-scale training, edge devices run k8s or Docker/Raw for lightweight embodied deployment (Docker/Raw runtimes: framework in place, runtime implementation TODO)
+2. **Multi-runtime data plane**: Kubernetes provides unified management for cloud GPU clusters and edge devices, completing the path from cloud training and cross-cluster collaboration to embodied device deployment; Docker and Raw runtimes will extend coverage to additional lightweight edge scenarios
 3. **Cross-cluster resource pooling**: Unify GPU clusters and edge devices distributed across different regions into a single logical resource pool
 4. **Direct Pod-to-Pod network communication**: Embodied AI workloads require real-time communication between training actors and edge robots, requiring cross-cluster Pods to establish direct TCP connections
 5. **Security isolation**: Multi-tenant embodied AI tasks require network isolation — different teams/projects must not access each other's devices or data
 
 ## 2. Overall Architecture
 
-rlark uses a **control plane—data plane** separation architecture. The control plane runs on kcp (Kubernetes Control Plane), and data plane Agents are deployed in each GPU cluster or edge device, supporting k8s, Docker, and Raw runtimes. The **embodied-runtime** (Device Plugin + Controllers) runs as a DaemonSet on each data plane node to manage robot (ROS 1/2) and camera hardware, exposing them as Kubernetes device resources.
+RLark uses a **control plane—data plane** separation architecture. The control plane uses kcp as its Kubernetes-compatible API server, while Agents connect cloud GPU clusters and edge Kubernetes nodes through one management plane. The optional **embodied-runtime** Device Plugin runs on Kubernetes nodes equipped with robot (ROS 1/2) or camera hardware and exposes those devices as Kubernetes resources; future Docker and Raw data plane runtimes will extend coverage to additional lightweight edge environments.
 
 ![System Architecture](images/architecture.svg)
 
@@ -26,12 +26,12 @@ Server is the core of the control plane, responsible for managing all Agent and 
 
 | Function                | Implementation                                                                                | Key File                                                     |
 | ----------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Agent Tunnel Management | Reverse proxy based on remotedialer; Agent actively connects to Server via WebSocket          | [handle\_proxy.go](../../pkg/server/handle_proxy.go)         |
-| Certificate Signing     | X.509 and SSH certificate issuance/revocation, supporting agent/domain/ssh-guest roles        | [sign.go](../../pkg/server/sign.go)                          |
-| SSH Service             | Two-phase user SSH authentication (certificate + public key), direct-tcpip channel forwarding | [ssh\_server.go](../../pkg/server/ssh_server.go)             |
-| Peer Interconnection    | Server-to-Server P2P connections for high availability                                        | [peer\_manager.go](../../pkg/server/peer_manager.go)         |
-| K8s Proxy               | Forward K8s API requests to data plane clusters via Agent tunnels                             | [kube\_proxy.go](../../pkg/server/kube_proxy.go)             |
-| Pod Cache               | In-memory Pod cache based on Informer for fast SSH Pod lookup                                 | [caches/pod\_cache.go](../../pkg/server/caches/pod_cache.go) |
+| Agent Tunnel Management | Reverse proxy based on remotedialer; Agent actively connects to Server via WebSocket          | [handle\_proxy.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/handle_proxy.go)         |
+| Certificate Signing     | X.509 and SSH certificate issuance/revocation, supporting agent/domain/ssh-guest roles        | [sign.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/sign.go)                          |
+| SSH Service             | Two-phase user SSH authentication (certificate + public key), direct-tcpip channel forwarding | [ssh\_server.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/ssh_server.go)             |
+| Peer Interconnection    | Server-to-Server P2P connection management                                                     | [peer\_manager.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/peer_manager.go)         |
+| K8s Proxy               | Forward K8s API requests to data plane clusters via Agent tunnels                             | [kube\_proxy.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/kube_proxy.go)             |
+| Pod Cache               | In-memory Pod cache based on Informer for fast SSH Pod lookup                                 | [caches/pod\_cache.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/caches/pod_cache.go) |
 
 **Agent Connection Lifecycle**:
 
@@ -56,11 +56,11 @@ Gateway is the user-facing HTTP API gateway providing RESTful interfaces.
 
 | Function               | Route                                                            | File                                                  |
 | ---------------------- | ---------------------------------------------------------------- | ----------------------------------------------------- |
-| CRD CRUD               | `GET/POST/PUT/PATCH/DELETE /api/v1/rlinf.io/v1alpha1/{resource}` | [router.go](../../pkg/gateway/router.go)              |
-| Certificate Management | `POST /api/v1/certificates/agent`                                | [cert\_handler.go](../../pkg/gateway/cert_handler.go) |
-| SSH Keys               | `GET/POST/DELETE /api/v1/ssh-user-keys`                          | [suk\_handler.go](../../pkg/gateway/suk_handler.go)   |
-| Pod Logs               | `GET /api/v1/.../jobs/:name/logs`                                | [job\_logs.go](../../pkg/gateway/job_logs.go)         |
-| Prometheus Metrics     | Middleware                                                       | [metrics.go](../../pkg/gateway/metrics.go)            |
+| CRD CRUD               | `GET/POST/PUT/PATCH/DELETE /api/v1/rlinf.io/v1alpha1/{resource}` | [router.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/router.go)              |
+| Certificate Management | `POST /api/v1/certificates/agent`                                | [cert\_handler.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/cert_handler.go) |
+| SSH Keys               | `GET/POST/DELETE /api/v1/ssh-user-keys`                          | [suk\_handler.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/suk_handler.go)   |
+| Pod Logs               | `GET /api/v1/.../jobs/:name/logs`                                | [job\_logs.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/job_logs.go)         |
+| Prometheus Metrics     | Middleware                                                       | [metrics.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/metrics.go)            |
 
 ### 3.3 Controller-Manager
 
@@ -70,11 +70,11 @@ Controller-Manager runs in the control plane, coordinating the lifecycle of high
 
 | Controller          | Responsibility                                                               | Key File                                           |
 | ------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------- |
-| Job Controller      | Split Job into Tasks, drive state machine (Pending→Running→Succeeded/Failed) | [job/](../../pkg/controllermanager/job/)           |
-| Domain Controller   | Manage Domain CRD, allocate IP subnets, sign DomainPeer certificates         | [domain/](../../pkg/controllermanager/domain/)     |
-| Task Controller     | Watch Task status, sync to corresponding Job                                 | [task/](../../pkg/controllermanager/task/)         |
-| Node Controller     | Watch Node registration/offline events                                       | [node/](../../pkg/controllermanager/node/)         |
-| Workflow Controller | DAG orchestration, schedule Jobs in dependency order                         | [workflow/](../../pkg/controllermanager/workflow/) |
+| Job Controller      | Split Job into Tasks, drive state machine (Pending→Running→Succeeded/Failed) | [job/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/job/)           |
+| Domain Controller   | Manage Domain CRD, allocate IP subnets, sign DomainPeer certificates         | [domain/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/domain/)     |
+| Task Controller     | Watch Task status, sync to corresponding Job                                 | [task/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/task/)         |
+| Node Controller     | Watch Node registration/offline events                                       | [node/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/node/)         |
+| Workflow Controller | DAG orchestration, schedule Jobs in dependency order                         | [workflow/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/workflow/) |
 
 **Job State Machine**:
 
@@ -97,7 +97,7 @@ Agent is deployed in each data plane cluster with two operating modes:
 | Mode      | Component    | Responsibility                                                                                                                   |
 | --------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | `cluster` | clusterAgent | Resource sync: Pull controllers (control plane CR → local k8s resources) + Push controllers (local k8s state → control plane CR) |
-| `node`    | nodeAgent    | Network routing: Runs NodeServer, handles cross-cluster Pod traffic forwarding                                                   |
+| `node`    | nodeAgent    | Network routing: Runs NodeServer, handles cross-cluster Pod traffic forwarding; Image pre-pull: pre-pulls dispatched task images into the node container runtime (containerd/docker) |
 
 **clusterAgent Controllers**:
 
@@ -138,7 +138,7 @@ graph LR
 
 Sidecar is injected as a container into each training Pod, enabling cross-cluster Pod-to-Pod network communication.
 
-**Key File**: [sidecar/server.go](../../pkg/network/sidecar/server.go)
+**Key File**: [sidecar/server.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/network/sidecar/server.go)
 
 **Dual Role**:
 
@@ -164,7 +164,7 @@ graph LR
 
 NodeServer runs on each node (managed by nodeAgent), handling node-level network routing.
 
-**Key File**: [nodeserver/server.go](../../pkg/network/nodeserver/server.go)
+**Key File**: [nodeserver/server.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/network/nodeserver/server.go)
 
 **Core Functions**:
 
@@ -175,7 +175,7 @@ NodeServer runs on each node (managed by nodeAgent), handling node-level network
 
 ### 4.4 ContainerNetworkAdapter
 
-**Key File**: [container/network.go](../../pkg/agent/container/network.go)
+**Key File**: [container/network.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/agent/container/network.go)
 
 **Routing Decision**:
 
@@ -183,7 +183,7 @@ NodeServer runs on each node (managed by nodeAgent), handling node-level network
 func (a *containerNetworkAdapter) GetContainerNetworkDial(...) (utils.Dial, error) {
     // 1. Same cluster → direct TCP to target Pod's Proxy
     if targetPod.GlobalNamespace == a.globalNamespace {
-        return dialer.DialContext("tcp", targetPod.LocalIP + ":57")
+        return dialer.DialContext(ctx, "tcp", net.JoinHostPort(targetPod.LocalIP, "5700"))
     }
     // 2. Cross-cluster → SSH tunnel
     return a.sshDialer.DialContext(ctx, domainID, sshAddr, cert, key, target)
@@ -192,7 +192,7 @@ func (a *containerNetworkAdapter) GetContainerNetworkDial(...) (utils.Dial, erro
 
 ### 4.5 SSHDialer
 
-**Key File**: [container/ssh\_dialer.go](../../pkg/agent/container/ssh_dialer.go)
+**Key File**: [container/ssh\_dialer.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/agent/container/ssh_dialer.go)
 
 Per-Domain SSH connection pool. Design highlights:
 
@@ -206,18 +206,18 @@ Per-Domain SSH connection pool. Design highlights:
 
 The **embodied-runtime** is a node-level component deployed as a DaemonSet on each data plane node, managing robot (ROS 1/2) and camera hardware. It integrates with the Agent to expose physical devices as Kubernetes device resources (`rlinf.io/device`), allowing training Tasks to request robot arms and cameras just like GPU resources.
 
-**Key Files**: [apps/embodied-runtime/](../../../embodied-runtime/)
+**Key Files**: [apps/embodied-runtime/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/)
 
 **Component Overview**:
 
 | Component | Responsibility | Key File |
 |-----------|---------------|----------|
-| Device Plugin | Registers `rlinf.io/device` with kubelet; detects node-local hardware; injects sockets and CLI binaries into Task Pods | [plugin.go](../../../../embodied-runtime/pkg/deviceplugin/plugin.go) |
-| Mutating Webhook | Auto-injects `devinit` init container into Pods requesting `rlinf.io/device`; manages CA certificate and serving certificate | [webhook.go](../../../../embodied-runtime/pkg/deviceplugin/webhook.go) |
-| ros-controller | Manages ROS 1 (`roscore` + `roslaunch`) robot lifecycle; exposes gRPC API via Unix socket | [roscontroller/](../../../../embodied-runtime/pkg/roscontroller/) |
-| ros2-controller | Manages ROS 2 robot lifecycle; exposes gRPC API via Unix socket | [ros2controller/](../../../../embodied-runtime/pkg/ros2controller/) |
-| camera-controller | Manages camera (V4L2 / RTSP / RealSense) lifecycle; ffmpeg transcoding; exposes gRPC API via Unix socket | [cameracontroller/](../../../../embodied-runtime/pkg/cameracontroller/) |
-| CLI (rosctr / camctr) | Command-line tools mounted into Task Pods for direct robot/camera control | [cmd/rosctr/](../../../../embodied-runtime/cmd/rosctr/) |
+| Device Plugin | Registers `rlinf.io/device` with kubelet; detects node-local hardware; injects sockets and CLI binaries into Task Pods | [plugin.go](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/pkg/deviceplugin/plugin.go) |
+| Mutating Webhook | Auto-injects `devinit` init container into Pods requesting `rlinf.io/device`; manages CA certificate and serving certificate | [webhook.go](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/pkg/deviceplugin/webhook.go) |
+| ros-controller | Manages ROS 1 (`roscore` + `roslaunch`) robot lifecycle; exposes gRPC API via Unix socket | [roscontroller/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/pkg/roscontroller/) |
+| ros2-controller | Manages ROS 2 robot lifecycle; exposes gRPC API via Unix socket | [ros2controller/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/pkg/ros2controller/) |
+| camera-controller | Manages camera (V4L2 / RTSP / RealSense) lifecycle; ffmpeg transcoding; exposes gRPC API via Unix socket | [cameracontroller/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/pkg/cameracontroller/) |
+| CLI (rosctr / camctr) | Command-line tools mounted into Task Pods for direct robot/camera control | [cmd/rosctr/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/cmd/rosctr/) |
 
 **Device Lifecycle**:
 
@@ -281,8 +281,8 @@ graph TD
 | ---------------- | --------------------------------------------------------------------------- |
 | `agent`          | Connect to Server tunnel, proxy K8s API requests                            |
 | `domain`         | Access Pods in the same Domain, establish cross-cluster network connections |
-| `ssh-guest`      | SSH login to authorized Pods                                                |
-| `admin`          | Issue/revoke certificates, Kubernetes impersonation                         |
+| `ssh-guest`      | SSH bastion access after user-key authentication; per-Pod authorization is not implemented |
+| `admin`          | Issue certificates and Kubernetes impersonation; Gateway revocation is not implemented |
 
 ### 6.3 User SSH Login Flow
 
@@ -333,7 +333,7 @@ flowchart LR
 
 ### 8.1 Why kcp instead of native k8s API Server?
 
-kcp is more lightweight than a native k8s API Server and can run independently without a full Kubernetes cluster, reducing the control plane's resource overhead and operational complexity. Additionally, kcp's native logical cluster concept aligns naturally with rlark's Domain concept, leaving room for future multi-tenant scenarios.
+kcp is more lightweight than a native k8s API Server and can run independently without a full Kubernetes cluster, reducing the control plane's resource overhead and operational complexity. Additionally, kcp's native logical cluster concept aligns naturally with RLark's Domain concept, leaving room for future multi-tenant scenarios.
 
 ### 8.2 Why SSH tunnels instead of VPN?
 
@@ -348,7 +348,7 @@ VPN solutions require opening the underlying network, which is complex in hetero
 
 iptables/CNI solutions require modifying node network configuration with high privilege requirements. TUN + gVisor approach:
 
-- Runs in userspace; gVisor netstack supports full TCP/UDP/ICMP protocol family (note: creating TUN devices requires privileged access)
-- gVisor netstack supports full TCP/UDP/ICMP protocol family
+- Runs in userspace; creating TUN devices still requires privileged access
+- gVisor netstack supports the required network protocol handling
 - Can be injected as a Sidecar container, decoupled from business containers
 

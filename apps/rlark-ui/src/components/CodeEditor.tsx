@@ -90,7 +90,6 @@ export function CodeEditorField({
   language?: string;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
   const lineCount = useMemo(() => value.split("\n").length, [value]);
   return (
     <div
@@ -100,24 +99,11 @@ export function CodeEditorField({
     >
       <div className="code-editor-body" style={{ minHeight }}>
         <LineNumbers count={lineCount} offset={scrollTop} />
-        <pre
-          className="code-editor-highlight"
-          aria-hidden="true"
-          style={{
-            minHeight,
-            transform: `translate(${-scrollLeft}px, ${-scrollTop}px)`,
-          }}
-        >
-          <code>
-            <HighlightedCode code={value} />
-          </code>
-        </pre>
         <textarea
           value={value}
           onChange={onChange}
           onScroll={(event) => {
             setScrollTop(event.currentTarget.scrollTop);
-            setScrollLeft(event.currentTarget.scrollLeft);
           }}
           placeholder={placeholder}
           spellCheck={false}

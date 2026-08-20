@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -60,13 +61,12 @@ func (s *Server) ListenAndServe() error {
 		return fmt.Errorf("sshd: generate host key: %w", err)
 	}
 
-	authorizedKeys, err := s.loadAuthorizedKeys()
-	if err != nil {
-		return err
-	}
-
 	cfg := &gossh.ServerConfig{
 		PublicKeyCallback: func(_ gossh.ConnMetadata, key gossh.PublicKey) (*gossh.Permissions, error) {
+			authorizedKeys, err := s.loadAuthorizedKeys()
+			if err != nil {
+				return nil, fmt.Errorf("sshd: load authorized keys: %w", err)
+			}
 			wire := key.Marshal()
 			for _, ak := range authorizedKeys {
 				if bytesEqual(wire, ak.Marshal()) {
@@ -112,19 +112,70 @@ func (s *Server) serveConn(conn net.Conn, cfg *gossh.ServerConfig) {
 		return
 	}
 	defer func() { _ = sc.Close() }()
+	defer log.GetLogger().Info("sshd connection closed", "remote", conn.RemoteAddr())
+	log.GetLogger().Info("sshd connection established", "remote", conn.RemoteAddr(), "user", sc.User())
 	go s.keepAlive(sc, globalReqs)
 
 	for newCh := range chans {
-		if newCh.ChannelType() != "session" {
-			_ = newCh.Reject(gossh.Prohibited, "only session channels are supported")
-			continue
+		switch newCh.ChannelType() {
+		case "session":
+			ch, chReqs, err := newCh.Accept()
+			if err != nil {
+				continue
+			}
+			go s.serveSession(ch, chReqs)
+
+		case "direct-tcpip":
+			extraData := newCh.ExtraData()
+			ch, chReqs, err := newCh.Accept()
+			if err != nil {
+				continue
+			}
+			go s.serveDirectTCP(ch, chReqs, extraData)
+
+		default:
+			_ = newCh.Reject(gossh.UnknownChannelType, fmt.Sprintf("unsupported channel type: %s", newCh.ChannelType()))
 		}
-		ch, chReqs, err := newCh.Accept()
-		if err != nil {
-			continue
-		}
-		go s.serveSession(ch, chReqs)
 	}
+}
+
+// directTCPMsg maps to the SSH "direct-tcpip" channel request payload (RFC 4254 §7.2).
+type directTCPMsg struct {
+	Addr       string
+	Port       uint32
+	OriginAddr string
+	OriginPort uint32
+}
+
+// serveDirectTCP handles a direct-tcpip channel: dials the requested address
+// and bridges I/O bidirectionally. This enables SSH port forwarding (-L/-D),
+// which VSCode Remote SSH requires.
+func (s *Server) serveDirectTCP(ch gossh.Channel, reqs <-chan *gossh.Request, extraData []byte) {
+	defer func() { _ = ch.Close() }()
+	go gossh.DiscardRequests(reqs)
+
+	var msg directTCPMsg
+	if err := gossh.Unmarshal(extraData, &msg); err != nil {
+		return
+	}
+
+	dst := net.JoinHostPort(msg.Addr, fmt.Sprintf("%d", msg.Port))
+	log.GetLogger().Info("sshd direct-tcpip request", "dst", dst)
+	conn, err := net.Dial("tcp", dst)
+	if err != nil {
+		log.GetLogger().Error(err, "sshd direct-tcpip dial failed", "dst", dst)
+		_, _ = fmt.Fprintf(ch.Stderr(), "sshd: connect %s: %v\r\n", dst, err)
+		return
+	}
+	defer func() { _ = conn.Close() }()
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(conn, ch)
+		close(done)
+	}()
+	_, _ = io.Copy(ch, conn)
+	<-done
 }
 
 // keepAlive sends periodic global keepalive requests to detect dead
@@ -172,14 +223,38 @@ func (s *Server) serveSession(ch gossh.Channel, reqs <-chan *gossh.Request) {
 
 		case "shell":
 			_ = req.Reply(true, nil)
-			s.runCommand(ch, exec.Command(shell, "-l"), &ptyReq, hasPTY, reqs)
+			// Only use a login shell (-l) for interactive PTY sessions. For
+			// non-PTY shells (e.g. VSCode's `ssh -T -D <port> host` keepalive
+			// connection), -l causes bash to source /etc/profile etc., which
+			// can exit early in minimal images and tear down the forwarding
+			// channel.
+			var cmd *exec.Cmd
+			if hasPTY {
+				cmd = exec.Command(shell, "-l")
+			} else {
+				cmd = exec.Command(shell)
+			}
+			log.GetLogger().Info("sshd shell request", "shell", shell, "hasPTY", hasPTY)
+			s.runCommand(ch, cmd, &ptyReq, hasPTY, reqs)
+			log.GetLogger().Info("sshd shell session ended")
 			return
 
 		case "exec":
 			_ = req.Reply(true, nil)
 			var msg struct{ Command string }
 			if err := gossh.Unmarshal(req.Payload, &msg); err == nil {
+				log.GetLogger().Info("sshd exec request", "command", msg.Command, "hasPTY", hasPTY)
 				s.runCommand(ch, exec.Command(shell, "-c", msg.Command), &ptyReq, hasPTY, reqs)
+			} else {
+				log.GetLogger().Error(err, "sshd failed to unmarshal exec payload")
+			}
+			return
+
+		case "subsystem":
+			_ = req.Reply(true, nil)
+			var msg struct{ Subsystem string }
+			if err := gossh.Unmarshal(req.Payload, &msg); err == nil && msg.Subsystem == "sftp" {
+				s.runSFTP(ch)
 			}
 			return
 
@@ -208,6 +283,9 @@ func (s *Server) runCommand(ch gossh.Channel, cmd *exec.Cmd, ptyReq *ptyRequestM
 		if errors.As(err, &ee) {
 			exitCode = ee.ExitCode()
 		}
+		log.GetLogger().Info("sshd command exited with error", "err", err, "exitCode", exitCode)
+	} else {
+		log.GetLogger().Info("sshd command exited cleanly")
 	}
 	var buf [4]byte
 	binary.BigEndian.PutUint32(buf[:], uint32(exitCode))
@@ -251,12 +329,28 @@ func (s *Server) runPTY(ch gossh.Channel, cmd *exec.Cmd, ptyReq *ptyRequestMsg, 
 }
 
 // runPipe starts cmd with stdio wired directly to the SSH channel (no PTY).
+// stderr is sent via SSH extended-data (stderr) so it doesn't pollute stdout.
 func (s *Server) runPipe(ch gossh.Channel, cmd *exec.Cmd) {
 	cmd.Stdin = ch
 	cmd.Stdout = ch
-	cmd.Stderr = ch
+
+	stderrWriter := ch.Stderr()
+	cmd.Stderr = stderrWriter
+
 	if err := cmd.Start(); err != nil {
-		_, _ = fmt.Fprintf(ch, "sshd: failed to start: %v\r\n", err)
+		_, _ = fmt.Fprintf(stderrWriter, "sshd: failed to start: %v\r\n", err)
+		return
+	}
+}
+
+// runSFTP starts an SFTP server subsystem on the given channel.
+func (s *Server) runSFTP(ch gossh.Channel) {
+	cmd := exec.Command("sftp-server")
+	cmd.Stdin = ch
+	cmd.Stdout = ch
+	cmd.Stderr = ch.Stderr()
+	if err := cmd.Start(); err != nil {
+		_, _ = fmt.Fprintf(ch.Stderr(), "sshd: sftp-server not found: %v\r\n", err)
 		return
 	}
 }
@@ -276,15 +370,15 @@ func generateHostKey() (gossh.Signer, error) {
 }
 
 // loadAuthorizedKeys collects authorized public keys from the struct field,
-// the RLARK_SSH_PUBLIC_KEY env var, and optionally a file pointed to by
-// RLARK_SSH_AUTHORIZED_KEYS_FILE.
+// the RLARK_SSH_PUBLIC_KEY env var, and ~/.ssh/authorized_keys.
 func (s *Server) loadAuthorizedKeys() ([]gossh.PublicKey, error) {
 	sources := s.AuthorizedKeys
 	if v := os.Getenv("RLARK_SSH_PUBLIC_KEY"); v != "" {
 		sources = append(sources, strings.Split(v, "\n")...)
 	}
-	if fn := os.Getenv("RLARK_SSH_AUTHORIZED_KEYS_FILE"); fn != "" {
-		if data, err := os.ReadFile(fn); err == nil {
+
+	if home, err := os.UserHomeDir(); err == nil {
+		if data, err := os.ReadFile(filepath.Join(home, ".ssh", "authorized_keys")); err == nil {
 			sources = append(sources, strings.Split(string(data), "\n")...)
 		}
 	}

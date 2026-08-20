@@ -23,6 +23,7 @@ import {
   Server,
   Settings,
   TerminalSquare,
+  Download,
 } from "lucide-react";
 import type { Phase } from "../data";
 import type { Copy } from "../i18n";
@@ -371,6 +372,18 @@ export function ClustersPage({
   );
 }
 
+// formatBytes converts a byte count into a human-readable string (B/KB/MB/GB).
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes < 0) return "0B";
+  const GB = 1024 * 1024 * 1024;
+  const MB = 1024 * 1024;
+  const KB = 1024;
+  if (bytes >= GB) return (bytes / GB).toFixed(1) + "GB";
+  if (bytes >= MB) return (bytes / MB).toFixed(1) + "MB";
+  if (bytes >= KB) return (bytes / KB).toFixed(1) + "KB";
+  return bytes + "B";
+}
+
 export function ClusterDetailReal({
   namespace,
   nodes: clusterNodes,
@@ -459,10 +472,26 @@ export function ClusterDetailReal({
                     <code>{address}</code>
                   </td>
                   <td>
-                    <small>{resource.primary}</small>
+                    {resource.lines.length ? (
+                      resource.lines.map((line) => (
+                        <small key={line.key} className="cluster-resource-line">
+                          {line.primary}
+                        </small>
+                      ))
+                    ) : (
+                      <small>{resource.primary}</small>
+                    )}
                   </td>
                   <td>
-                    <small>{resource.secondary}</small>
+                    {resource.lines.length ? (
+                      resource.lines.map((line) => (
+                        <small key={line.key} className="cluster-resource-line">
+                          {line.secondary}
+                        </small>
+                      ))
+                    ) : (
+                      <small>—</small>
+                    )}
                   </td>
                 </tr>
               );
@@ -597,6 +626,7 @@ export function NodeDetailReal({
   const reportedUsed = node.status?.used ?? {};
   const used =
     Object.keys(reportedUsed).length > 0 ? reportedUsed : requestedFallback;
+  const pullProgress = node.status?.pullProgress ?? [];
   const getPercent = (key: string) => {
     const rawUsed = used[key];
     if (!rawUsed && (capacity[key] ?? allocatable[key])) return 0;
@@ -927,6 +957,67 @@ export function NodeDetailReal({
                 })}
               </div>
             </section>
+
+            {pullProgress.length > 0 && (
+              <section className="node-insight-section">
+                <div className="node-insight-section-head">
+                  <div>
+                    <span>
+                      <Download size={13} style={{ verticalAlign: -2 }} />{" "}
+                      {zh ? "镜像拉取进度" : "Image Pull Progress"}
+                    </span>
+                    <small>
+                      {zh
+                        ? "节点正在拉取的镜像及其进度"
+                        : "Images currently being pulled on this node"}
+                    </small>
+                  </div>
+                </div>
+                <div className="node-pull-progress-list">
+                  {pullProgress.map((p, i) => {
+                    const pct =
+                      p.total > 0
+                        ? Math.min(
+                            100,
+                            Math.round((p.downloaded / p.total) * 100),
+                          )
+                        : 0;
+                    const isPulling = p.status === "pulling";
+                    return (
+                      <div className="node-pull-progress-entry" key={i}>
+                        <div className="node-pull-progress-header">
+                          <code className="node-pull-image" title={p.image}>
+                            {p.image}
+                          </code>
+                          <span className={`node-pull-status chip-${p.status}`}>
+                            {p.message || p.status}
+                          </span>
+                        </div>
+                        {isPulling && p.total > 0 && (
+                          <div className="node-pull-progress-bar">
+                            <i style={{ width: `${pct}%` }} />
+                            <b>{pct}%</b>
+                          </div>
+                        )}
+                        {(p.total > 0 || p.speed > 0) && (
+                          <div className="node-pull-progress-meta">
+                            {p.total > 0 && (
+                              <span>
+                                {formatBytes(p.downloaded)} /{" "}
+                                {formatBytes(p.total)}
+                              </span>
+                            )}
+                            {p.speed > 0 && (
+                              <span>{formatBytes(p.speed)}/s</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
           </div>
 
           <aside className="node-insight-side">

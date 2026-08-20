@@ -16,6 +16,12 @@ export {
   hasNodeCategory,
   isBusinessWorkerNode,
 };
+export {
+  formatResourceQuantity,
+  getGPUResourceKey,
+  getNodeResourceSummary,
+  parseResourceQuantity,
+} from "./nodeResources";
 
 export function getNodeLocation(node: CRDNode): string {
   return (
@@ -43,177 +49,6 @@ export function getNodeDeviceModel(node: CRDNode): string {
     node.metadata.labels?.["rlark.io/model"] ??
     ""
   );
-}
-
-function resourceNumber(value?: string): number {
-  const parsed = Number.parseFloat(value ?? "0");
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatResourceNumber(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
-export function getGPUResourceKey(node: CRDNode): string {
-  const resources = [
-    node.status?.capacity ?? {},
-    node.status?.allocatable ?? {},
-    node.status?.used ?? {},
-  ];
-  if (resources.some((values) => "nvidia.com/gpu" in values)) {
-    return "nvidia.com/gpu";
-  }
-  return (
-    resources
-      .flatMap(Object.keys)
-      .find((key) => /(^|[./-])gpu($|[./-])/i.test(key)) ?? "nvidia.com/gpu"
-  );
-}
-
-export function parseResourceQuantity(
-  key: string,
-  raw?: string,
-): number | null {
-  if (!raw) return null;
-  const match = raw.trim().match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+))([a-zA-Z]*)$/);
-  if (!match) return null;
-  const value = Number.parseFloat(match[1]);
-  if (!Number.isFinite(value)) return null;
-  const suffix = match[2];
-  if (key === "cpu") {
-    const factors: Record<string, number> = { n: 1e-9, u: 1e-6, m: 1e-3 };
-    return value * (factors[suffix] ?? 1);
-  }
-  if (key === "memory" || key === "ephemeral-storage") {
-    const factors: Record<string, number> = {
-      Ki: 1024,
-      Mi: 1024 ** 2,
-      Gi: 1024 ** 3,
-      Ti: 1024 ** 4,
-      K: 1000,
-      M: 1000 ** 2,
-      G: 1000 ** 3,
-      T: 1000 ** 4,
-    };
-    return value * (factors[suffix] ?? 1);
-  }
-  return value;
-}
-
-export function formatResourceQuantity(key: string, raw?: string): string {
-  const value = parseResourceQuantity(key, raw);
-  if (value === null) return "—";
-  if (key === "memory" || key === "ephemeral-storage") {
-    const gb = value / 1000 ** 3;
-    return `${gb >= 100 ? gb.toFixed(0) : gb.toFixed(1)} GB`;
-  }
-  if (key === "cpu") return `${formatResourceNumber(value)} 核`;
-  return formatResourceNumber(value);
-}
-
-export function getNodeResourceSummary(
-  node: CRDNode,
-  zh: boolean,
-): { primary: string; secondary: string } {
-  const category = getNodeCategory(node);
-  const capacity = node.status?.capacity ?? node.status?.allocatable ?? {};
-  const allocatable = node.status?.allocatable ?? capacity;
-  const used = node.status?.used ?? {};
-  const model =
-    category === "cloud" ? getNodeGPUModel(node) : getNodeDeviceModel(node);
-
-  // Existing GPU nodes may predate the RLark category label. The Kubernetes
-  // extended resource is authoritative, so show it regardless of category.
-  const gpuKey = getGPUResourceKey(node);
-  const gpuTotal = resourceNumber(capacity[gpuKey] ?? allocatable[gpuKey]);
-  if (gpuTotal > 0 && (category === "cloud" || category === "unknown")) {
-    const allocatableGPU = resourceNumber(
-      allocatable[gpuKey] ?? capacity[gpuKey],
-    );
-    const hasUsage = Object.prototype.hasOwnProperty.call(used, gpuKey);
-    const available = Math.max(
-      0,
-      allocatableGPU - resourceNumber(used[gpuKey]),
-    );
-    return {
-      primary: hasUsage
-        ? `${formatResourceNumber(gpuTotal)} GPU · ${zh ? "可用" : "free"} ${formatResourceNumber(available)}`
-        : `${formatResourceNumber(gpuTotal)} GPU · ${zh ? "可分配" : "allocatable"} ${formatResourceNumber(allocatableGPU)}`,
-      secondary: model || "—",
-    };
-  }
-
-  if (category === "cloud") {
-    const total = resourceNumber(capacity["nvidia.com/gpu"]);
-    const hasUsage = Object.prototype.hasOwnProperty.call(
-      used,
-      "nvidia.com/gpu",
-    );
-    const available = Math.max(
-      0,
-      resourceNumber(allocatable["nvidia.com/gpu"]) -
-        resourceNumber(used["nvidia.com/gpu"]),
-    );
-    return {
-      primary:
-        total > 0
-          ? hasUsage
-            ? `${formatResourceNumber(total)} GPU · ${zh ? "空闲" : "free"} ${formatResourceNumber(available)}`
-            : `${formatResourceNumber(total)} GPU · ${zh ? `可分配 ${formatResourceNumber(resourceNumber(allocatable["nvidia.com/gpu"]))}` : `allocatable ${formatResourceNumber(resourceNumber(allocatable["nvidia.com/gpu"]))}`}`
-          : zh
-            ? "暂无 GPU"
-            : "No GPU",
-      secondary: model || "—",
-    };
-  }
-
-  if (category === "edge" || category === "robot") {
-    const resourceKeys = Array.from(
-      new Set([
-        ...Object.keys(capacity),
-        ...Object.keys(allocatable),
-        ...Object.keys(used),
-      ]),
-    ).filter(
-      (key) => key === "rlinf.io/device" || key.startsWith("rlinf.io/device-"),
-    );
-    const total = resourceKeys.reduce(
-      (sum, key) => sum + resourceNumber(capacity[key] ?? allocatable[key]),
-      0,
-    );
-    const available = Math.max(
-      0,
-      resourceKeys.reduce(
-        (sum, key) =>
-          sum +
-          Math.max(
-            0,
-            resourceNumber(allocatable[key] ?? capacity[key]) -
-              resourceNumber(used[key]),
-          ),
-        0,
-      ),
-    );
-    const hasUsage = resourceKeys.some((key) =>
-      Object.prototype.hasOwnProperty.call(used, key),
-    );
-    const resourceModels = resourceKeys
-      .map((key) => key.replace(/^rlinf\.io\/device-?/, ""))
-      .filter(Boolean);
-    return {
-      primary:
-        total > 0
-          ? hasUsage
-            ? `${formatResourceNumber(total)} ${zh ? "台设备" : "devices"} · ${zh ? "空闲" : "free"} ${formatResourceNumber(available)}`
-            : `${formatResourceNumber(total)} ${zh ? "台设备" : "devices"} · ${zh ? "空闲未知" : "free unknown"}`
-          : zh
-            ? "暂无设备"
-            : "No devices",
-      secondary: model || resourceModels.join(" / ") || "—",
-    };
-  }
-
-  return { primary: zh ? "暂无资源" : "No resources", secondary: model || "—" };
 }
 
 export const categoryLabels: Record<
@@ -262,9 +97,6 @@ export function buildMockCRDNodes(): CRDNode[] {
                     : `edge-inference-${node.id.replace(/^edge-/, "")}`,
               }
             : {}),
-        },
-        annotations: {
-          "rlark.io/ip-location": JSON.stringify({ city }),
         },
         creationTimestamp: "2026-06-29T10:00:00Z",
       },

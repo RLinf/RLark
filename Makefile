@@ -40,15 +40,15 @@ go-tidy: ## Run go mod tidy on all workspace modules
 
 ##@ Code generation
 
-.PHONY: generate generate-crd generate-api-docs proto
+.PHONY: generate generate-crd generate-crd-schema-docs proto
 
-generate: generate-crd generate-api-docs ## Generate CRD manifests and API docs
+generate: generate-crd generate-crd-schema-docs ## Generate CRD manifests, clients, and schema docs
 
 generate-crd: ## Generate CRD manifests and clients
 	$(MAKE) -C api generate-crd $(MAKEOVERRIDES)
 
-generate-api-docs: generate-crd ## Generate API reference docs
-	go run ./apps/rlark/cmd/crd-api-docgen api/config/crd/bases apps/rlark/docs/api/reference.md
+generate-crd-schema-docs: generate-crd ## Generate CRD schema reference docs
+	go run ./apps/rlark/cmd/crd-api-docgen api/config/crd/bases apps/rlark/docs/reference/crd.md
 
 proto: ## Generate protobuf stubs
 	$(MAKE) -C proto/embodied-runtime proto $(MAKEOVERRIDES)

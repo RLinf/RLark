@@ -8836,8 +8836,67 @@ spec:
                 items:
                   type: string
                 type: array
+              events:
+                description: |-
+                  Events 在 Task 处于 Pending 期间由控制面 Task reconciler 从各节点
+                  Node.status.events 聚合而来，包含 DiskPressure 等 Warning 事件及镜像
+                  拉取/调度相关事件。Task 离开 Pending 后被清空。
+                items:
+                  properties:
+                    count:
+                      format: int32
+                      type: integer
+                    lastTime:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    objectKind:
+                      type: string
+                    objectName:
+                      type: string
+                    reason:
+                      type: string
+                    source:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - reason
+                  - type
+                  type: object
+                type: array
               phase:
                 type: string
+              pullProgress:
+                description: |-
+                  PullProgress 由数据面节点上的 image pull monitor 上报，仅在 Pod 处于
+                  ContainerCreating（尚未 Running）期间由 cluster-agent 聚合写入。Pod 进入
+                  Running 后被清空。供前端展示镜像拉取进度/速度。
+                items:
+                  properties:
+                    downloaded:
+                      format: int64
+                      type: integer
+                    image:
+                      type: string
+                    message:
+                      type: string
+                    speed:
+                      type: number
+                    status:
+                      type: string
+                    total:
+                      format: int64
+                      type: integer
+                  required:
+                  - downloaded
+                  - image
+                  - speed
+                  - status
+                  - total
+                  type: object
+                type: array
               retryCount:
                 format: int32
                 type: integer

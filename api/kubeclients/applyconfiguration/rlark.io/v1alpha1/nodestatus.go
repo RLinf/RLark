@@ -32,8 +32,10 @@ type NodeStatusApplyConfiguration struct {
 	DiskPressure *bool                       `json:"diskPressure,omitempty"`
 	Allocatable  *v1.ResourceList            `json:"allocatable,omitempty"`
 	// 需要预留系统组件 agent
-	Capacity *v1.ResourceList `json:"capacity,omitempty"`
-	Used     *v1.ResourceList `json:"used,omitempty"`
+	Capacity     *v1.ResourceList                 `json:"capacity,omitempty"`
+	Used         *v1.ResourceList                 `json:"used,omitempty"`
+	PullProgress []PullProgressApplyConfiguration `json:"pullProgress,omitempty"`
+	Events       []NodeEventApplyConfiguration    `json:"events,omitempty"`
 }
 
 // NodeStatusApplyConfiguration constructs a declarative configuration of the NodeStatus type for use with
@@ -105,5 +107,25 @@ func (b *NodeStatusApplyConfiguration) WithCapacity(value v1.ResourceList) *Node
 // If called multiple times, the Used field is set to the value of the last call.
 func (b *NodeStatusApplyConfiguration) WithUsed(value v1.ResourceList) *NodeStatusApplyConfiguration {
 	b.Used = &value
+	return b
+}
+
+// WithPullProgress adds the given value to the PullProgress field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the PullProgress field.
+func (b *NodeStatusApplyConfiguration) WithPullProgress(values ...PullProgressApplyConfiguration) *NodeStatusApplyConfiguration {
+	for i := range values {
+		b.PullProgress = append(b.PullProgress, values[i])
+	}
+	return b
+}
+
+// WithEvents adds the given value to the Events field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Events field.
+func (b *NodeStatusApplyConfiguration) WithEvents(values ...NodeEventApplyConfiguration) *NodeStatusApplyConfiguration {
+	for i := range values {
+		b.Events = append(b.Events, values[i])
+	}
 	return b
 }

@@ -61,11 +61,11 @@ func (r *pushStatefulSetReconciler) Reconcile(ctx context.Context, req reconcile
 	}
 
 	phase, message := statefulSetPhase(&sts)
-	observedNodes, err := collectObservedNode(ctx, r.c.LocalKubeClient, sts.Namespace, sts.Spec.Selector.MatchLabels)
+	pods, err := listTaskPods(ctx, r.c.LocalKubeClient, sts.Namespace, sts.Spec.Selector.MatchLabels)
 	if err != nil {
-		logger.Error(err, "failed to collect observed nodes")
-		observedNodes = nil
+		logger.Error(err, "failed to list pods")
 	}
+	observedNodes := podNodeNames(pods)
 	return updateMgmtTaskStatus(ctx, logger, r.c.ManagementClient, &mgmtTask, phase, message, observedNodes)
 }
 

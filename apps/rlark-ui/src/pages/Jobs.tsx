@@ -1,11 +1,14 @@
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
+  AlertTriangle,
   Check,
   ChevronRight,
   Copy,
   Download,
   ExternalLink,
+  Info,
   KeyRound,
   LoaderCircle,
   MoreVertical,
@@ -25,10 +28,11 @@ import {
   type Job,
   type Phase,
   type PodInfo,
+  type PullProgressEntry,
   type Worker as WorkerItem,
 } from "../data";
 import type { Copy as CopyType } from "../i18n";
-import type { CRDJob } from "../types";
+import type { CRDJob, CRDNode, NodeEventEntry } from "../types";
 import { useAutoRefresh } from "../hooks";
 import { crdToJob } from "../utils/crd";
 import { formatChinaDateTime } from "../utils/time";
@@ -82,6 +86,85 @@ async function copyText(value: string) {
   return copied;
 }
 
+// aggregateJobPullProgress collects pullProgress entries from nodePullProgressMap
+// for all nodes referenced by the job's taskStatuses.observedNodes. Used by the
+// list/detail top StatusBadge hover to surface image pull progress while a job
+// is Pending (mirrors WorkerRow's worker-level tooltip).
+function aggregateJobPullProgress(
+  job: Job,
+  nodePullProgressMap: Record<string, PullProgressEntry[]>,
+): PullProgressEntry[] {
+  const nodeNames = new Set<string>();
+  for (const ts of job.taskStatuses ?? []) {
+    for (const n of ts.observedNodes ?? []) {
+      if (n) nodeNames.add(n);
+    }
+  }
+  const aggregated: PullProgressEntry[] = [];
+  const seen = new Set<string>();
+  for (const nodeName of nodeNames) {
+    const entries = nodePullProgressMap[nodeName];
+    if (!entries) continue;
+    for (const p of entries) {
+      // Dedup by image+status to avoid showing identical entries from
+      // multiple nodes pulling the same image.
+      const key = `${p.image}|${p.status}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      aggregated.push(p);
+    }
+  }
+  return aggregated;
+}
+
+// aggregateJobEvents mirrors aggregateJobPullProgress but for Node.status.events
+// (DiskPressure 等 Warning 事件)。在任务 Pending 期间，从 taskStatuses 中
+// observedNodes 命中的节点上聚合 warning 事件，供列表/详情顶部 StatusBadge
+// 的 "i" tooltip 展示。多节点同一事件按 (objectKind, objectName, reason)
+// 去重，保留 lastTime 最新的一条。
+function aggregateJobEvents(
+  job: Job,
+  nodeEventsMap: Record<string, NodeEventEntry[]>,
+): NodeEventEntry[] {
+  const nodeNames = new Set<string>();
+  for (const ts of job.taskStatuses ?? []) {
+    for (const n of ts.observedNodes ?? []) {
+      if (n) nodeNames.add(n);
+    }
+  }
+  const merged = new Map<string, NodeEventEntry>();
+  for (const nodeName of nodeNames) {
+    const entries = nodeEventsMap[nodeName];
+    if (!entries) continue;
+    for (const ev of entries) {
+      const key = `${ev.objectKind ?? ""}|${ev.objectName ?? ""}|${ev.reason ?? ""}`;
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, ev);
+        continue;
+      }
+      // keep the entry with the latest lastTime so a re-observed event
+      // refreshes rather than duplicates.
+      if (
+        ev.lastTime &&
+        (!existing.lastTime || ev.lastTime > existing.lastTime)
+      ) {
+        merged.set(key, ev);
+      }
+    }
+  }
+  const out = [...merged.values()];
+  // newest-first by lastTime; fall back to reason for stable ordering when
+  // timestamps tie (or are absent).
+  out.sort((a, b) => {
+    const ta = a.lastTime ?? "";
+    const tb = b.lastTime ?? "";
+    if (ta === tb) return (a.reason ?? "").localeCompare(b.reason ?? "");
+    return tb.localeCompare(ta);
+  });
+  return out;
+}
+
 export function JobsPage({
   copy: c,
   isMockMode,
@@ -89,7 +172,7 @@ export function JobsPage({
   onSelect,
   onCreate,
   onClone,
-  onEdit,
+  onEditAndRestart,
   adminMode = false,
 }: {
   copy: CopyType;
@@ -98,7 +181,7 @@ export function JobsPage({
   onSelect: (name?: string) => void;
   onCreate?: () => void;
   onClone?: (job: Job) => void;
-  onEdit?: (job: Job) => void;
+  onEditAndRestart?: (job: Job) => void;
   adminMode?: boolean;
 }) {
   const zh = c.nav.overview === "总览";
@@ -107,6 +190,11 @@ export function JobsPage({
   const [realJobs, setRealJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [jobAction, setJobAction] = useState<
+    "start" | "stop" | "restart" | "delete" | null
+  >(null);
+  const [restartTarget, setRestartTarget] = useState<Job | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Job | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [sort, setSort] = useState<{
@@ -126,16 +214,63 @@ export function JobsPage({
       direction:
         current.key === key && current.direction === "asc" ? "desc" : "asc",
     }));
+  // Per-node pull progress cache, refreshed alongside jobs. Keyed by node name
+  // so list/detail top StatusBadge hover can aggregate progress for nodes
+  // referenced by job.taskStatuses[].observedNodes.
+  const [nodePullProgressMap, setNodePullProgressMap] = useState<
+    Record<string, PullProgressEntry[]>
+  >({});
+  // Per-node warning events cache（Node.status.events），同样 keyed by node
+  // name，供列表/详情顶部 StatusBadge 的 "i" tooltip 在 Pending 时聚合展示。
+  const [nodeEventsMap, setNodeEventsMap] = useState<
+    Record<string, NodeEventEntry[]>
+  >({});
+  const [nodeDeviceModelMap, setNodeDeviceModelMap] = useState<
+    Record<string, { gpuModel?: string; deviceModel?: string }>
+  >({});
 
   const fetchJobs = async (isInitial = true) => {
     if (isInitial) setLoading(true);
     setError("");
     try {
-      const resp = await fetch("/api/v1/rlinf.io/v1alpha1/jobs");
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
+      const [jobsResp, nodesResp] = await Promise.all([
+        fetch("/api/v1/rlinf.io/v1alpha1/jobs"),
+        fetch("/api/v1/rlinf.io/v1alpha1/nodes"),
+      ]);
+      if (!jobsResp.ok) throw new Error(`HTTP ${jobsResp.status}`);
+      const data = await jobsResp.json();
       const items: CRDJob[] = data.items ?? [];
       setRealJobs(items.map(crdToJob));
+      // Build nodeName -> pullProgress / nodeName -> events maps. Failures
+      // here are non-fatal: the hover tooltip simply won't appear.
+      if (nodesResp.ok) {
+        const nodesData = await nodesResp.json();
+        const nodeItems: CRDNode[] = nodesData.items ?? [];
+        const progressMap: Record<string, PullProgressEntry[]> = {};
+        const eventsMap: Record<string, NodeEventEntry[]> = {};
+        const deviceModelMap: Record<
+          string,
+          { gpuModel?: string; deviceModel?: string }
+        > = {};
+        for (const n of nodeItems) {
+          const pp = n.status?.pullProgress;
+          if (Array.isArray(pp) && pp.length > 0) {
+            progressMap[n.metadata.name] = pp;
+          }
+          const evs = n.status?.events;
+          if (Array.isArray(evs) && evs.length > 0) {
+            eventsMap[n.metadata.name] = evs;
+          }
+          const gpuModel = n.metadata.annotations?.["rlark.io/gpu-model"];
+          const deviceModel = n.metadata.annotations?.["rlark.io/device-model"];
+          if (gpuModel || deviceModel) {
+            deviceModelMap[n.metadata.name] = { gpuModel, deviceModel };
+          }
+        }
+        setNodePullProgressMap(progressMap);
+        setNodeEventsMap(eventsMap);
+        setNodeDeviceModelMap(deviceModelMap);
+      }
     } catch (e) {
       setRealJobs([]);
       setError(e instanceof Error ? e.message : String(e));
@@ -147,25 +282,38 @@ export function JobsPage({
   useAutoRefresh(fetchJobs, 10000);
 
   const handleDelete = async (job: Job) => {
-    if (
-      !confirm(
-        zh ? `确定删除任务 "${job.name}" 吗?` : `Delete job "${job.name}"?`,
-      )
-    )
-      return;
+    setJobAction("delete");
+    setError("");
     try {
       const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`, {
         method: "DELETE",
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       setRealJobs((prev) => prev.filter((j) => j.id !== job.id));
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setJobAction(null);
     }
   };
 
-  const handleToggleStop = async (job: Job) => {
-    const stopped = !job.stopped;
+  const handleSetStopped = async (job: Job, stopped: boolean) => {
+    if (
+      !confirm(
+        stopped
+          ? zh
+            ? `确定停止任务 "${job.name}" 吗？`
+            : `Stop job "${job.name}"?`
+          : zh
+            ? `确定启动任务 "${job.name}" 吗？`
+            : `Start job "${job.name}"?`,
+      )
+    )
+      return false;
+    setJobAction(stopped ? "stop" : "start");
+    setError("");
     try {
       const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`, {
         method: "PATCH",
@@ -174,22 +322,28 @@ export function JobsPage({
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       setRealJobs((prev) =>
-        prev.map((j) => (j.id === job.id ? { ...j, stopped } : j)),
+        prev.map((j) =>
+          j.id === job.id
+            ? {
+                ...j,
+                stopped,
+                phase: stopped ? ("Stopped" as Phase) : ("Pending" as Phase),
+              }
+            : j,
+        ),
       );
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setJobAction(null);
     }
   };
 
   const handleRestart = async (job: Job) => {
-    if (
-      !confirm(
-        zh
-          ? `确定重新启动任务 "${job.name}" 吗？`
-          : `Restart job "${job.name}"?`,
-      )
-    )
-      return;
+    setJobAction("restart");
+    setError("");
     try {
       const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`, {
         method: "PATCH",
@@ -209,8 +363,12 @@ export function JobsPage({
             : item,
         ),
       );
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setJobAction(null);
     }
   };
 
@@ -259,25 +417,62 @@ export function JobsPage({
 
   if (selected) {
     return (
-      <JobDetailPage
-        job={selected}
-        copy={c}
-        isMockMode={isMockMode}
-        onBack={() => onSelect(undefined)}
-        onClone={adminMode ? undefined : () => onClone?.(selected)}
-        adminActions={
-          adminMode
-            ? {
-                onStop: () => handleToggleStop(selected),
-                onRestart: () => handleRestart(selected),
-                onDelete: async () => {
-                  await handleDelete(selected);
-                  onSelect(undefined);
-                },
-              }
-            : undefined
-        }
-      />
+      <>
+        <JobDetailPage
+          job={selected}
+          copy={c}
+          isMockMode={isMockMode}
+          onBack={() => onSelect(undefined)}
+          onClone={adminMode ? undefined : () => onClone?.(selected)}
+          lifecycleActions={{
+            pending: jobAction,
+            error,
+            onStart: () => handleSetStopped(selected, false),
+            onStop: () => handleSetStopped(selected, true),
+            onRestart: () => setRestartTarget(selected),
+            onDelete: () => setDeleteTarget(selected),
+          }}
+          nodePullProgressMap={nodePullProgressMap}
+          nodeEventsMap={nodeEventsMap}
+          nodeDeviceModelMap={nodeDeviceModelMap}
+        />
+        {restartTarget && (
+          <RestartChoiceDialog
+            job={restartTarget}
+            zh={zh}
+            onClose={() => setRestartTarget(null)}
+            onRestart={() => {
+              const job = restartTarget;
+              setRestartTarget(null);
+              void handleRestart(job);
+            }}
+            onEditRestart={
+              adminMode || !onEditAndRestart
+                ? undefined
+                : () => {
+                    const job = restartTarget;
+                    setRestartTarget(null);
+                    onEditAndRestart(job);
+                  }
+            }
+          />
+        )}
+        {deleteTarget && (
+          <DeleteJobDialog
+            job={deleteTarget}
+            zh={zh}
+            pending={jobAction === "delete"}
+            error={error}
+            onClose={() => setDeleteTarget(null)}
+            onConfirm={async () => {
+              const deleted = await handleDelete(deleteTarget);
+              if (!deleted) return;
+              setDeleteTarget(null);
+              onSelect(undefined);
+            }}
+          />
+        )}
+      </>
     );
   }
 
@@ -420,58 +615,88 @@ export function JobsPage({
                 </td>
               </tr>
             )}
-            {pagedJobs.map((job) => (
-              <tr key={job.id}>
-                <td>
-                  <button
-                    className="link-cell"
-                    onClick={() => onSelect(job.id)}
-                  >
-                    <strong>{job.id}</strong>
-                    {job.displayName !== job.id && (
-                      <small>{job.displayName}</small>
+            {pagedJobs.map((job) => {
+              const jobPullProgress =
+                job.phase === "Pending"
+                  ? aggregateJobPullProgress(job, nodePullProgressMap)
+                  : [];
+              const jobEvents =
+                job.phase === "Pending"
+                  ? aggregateJobEvents(job, nodeEventsMap)
+                  : [];
+              return (
+                <tr key={job.id}>
+                  <td>
+                    <button
+                      className="link-cell"
+                      onClick={() => onSelect(job.id)}
+                    >
+                      <strong>{job.id}</strong>
+                      {job.displayName !== job.id && (
+                        <small>{job.displayName}</small>
+                      )}
+                    </button>
+                  </td>
+                  <td>
+                    <span className="role-chip">{c.jobType[job.type]}</span>
+                  </td>
+                  <td>
+                    <div className="status-with-info">
+                      <StatusBadge phase={effectiveJobPhase(job)} copy={c} />
+                      {(jobPullProgress.length > 0 || jobEvents.length > 0) && (
+                        <PullProgressInfo
+                          progress={jobPullProgress}
+                          events={jobEvents}
+                          zh={zh}
+                        />
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    <span className="inline-progress">
+                      <i>
+                        <b style={{ width: job.progress + "%" }} />
+                      </i>
+                      {job.runningWorkers}/{job.workers}
+                    </span>
+                  </td>
+                  <td>{job.roleCount}</td>
+                  <td>{formatTaskTime(job.submittedAt)}</td>
+                  <td>{formatTaskTime(job.stoppedAt)}</td>
+                  <td>
+                    {adminMode ? (
+                      <AdminJobActions
+                        job={job}
+                        zh={zh}
+                        onStop={() => handleSetStopped(job, true)}
+                        onRestart={() => {
+                          if (
+                            confirm(
+                              zh
+                                ? `确定重新启动任务 "${job.name}" 吗？`
+                                : `Restart job "${job.name}"?`,
+                            )
+                          ) {
+                            void handleRestart(job);
+                          }
+                        }}
+                        onDelete={() => setDeleteTarget(job)}
+                      />
+                    ) : (
+                      <JobActionMenu
+                        job={job}
+                        zh={zh}
+                        pending={jobAction !== null}
+                        onClone={() => onClone?.(job)}
+                        onDelete={() => setDeleteTarget(job)}
+                        onToggleStop={() => handleSetStopped(job, !job.stopped)}
+                        onRestart={() => setRestartTarget(job)}
+                      />
                     )}
-                  </button>
-                </td>
-                <td>
-                  <span className="role-chip">{c.jobType[job.type]}</span>
-                </td>
-                <td>
-                  <StatusBadge phase={effectiveJobPhase(job)} copy={c} />
-                </td>
-                <td>
-                  <span className="inline-progress">
-                    <i>
-                      <b style={{ width: job.progress + "%" }} />
-                    </i>
-                    {job.runningWorkers}/{job.workers}
-                  </span>
-                </td>
-                <td>{job.roleCount}</td>
-                <td>{formatTaskTime(job.submittedAt)}</td>
-                <td>{formatTaskTime(job.stoppedAt)}</td>
-                <td>
-                  {adminMode ? (
-                    <AdminJobActions
-                      job={job}
-                      zh={zh}
-                      onStop={() => handleToggleStop(job)}
-                      onRestart={() => handleRestart(job)}
-                      onDelete={() => handleDelete(job)}
-                    />
-                  ) : (
-                    <JobActionMenu
-                      job={job}
-                      zh={zh}
-                      onEdit={() => onEdit?.(job)}
-                      onClone={() => onClone?.(job)}
-                      onDelete={() => handleDelete(job)}
-                      onToggleStop={() => handleToggleStop(job)}
-                    />
-                  )}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -483,6 +708,39 @@ export function JobsPage({
         onPageSizeChange={setPageSize}
         zh={zh}
       />
+      {restartTarget && (
+        <RestartChoiceDialog
+          job={restartTarget}
+          zh={zh}
+          onClose={() => setRestartTarget(null)}
+          onRestart={() => {
+            const job = restartTarget;
+            setRestartTarget(null);
+            void handleRestart(job);
+          }}
+          onEditRestart={
+            !onEditAndRestart
+              ? undefined
+              : () => {
+                  const job = restartTarget;
+                  setRestartTarget(null);
+                  onEditAndRestart(job);
+                }
+          }
+        />
+      )}
+      {deleteTarget && (
+        <DeleteJobDialog
+          job={deleteTarget}
+          zh={zh}
+          pending={jobAction === "delete"}
+          error={error}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={async () => {
+            if (await handleDelete(deleteTarget)) setDeleteTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -490,45 +748,53 @@ export function JobsPage({
 function JobActionMenu({
   job,
   zh,
-  onEdit,
+  pending,
   onClone,
   onDelete,
   onToggleStop,
+  onRestart,
 }: {
   job: Job;
   zh: boolean;
-  onEdit: () => void;
+  pending: boolean;
   onClone: () => void;
   onDelete: () => void;
   onToggleStop: () => void;
+  onRestart: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   useLayoutEffect(() => {
     if (!open || !ref.current) return;
-    const btn = ref.current.querySelector("button");
+    const btn = btnRef.current;
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
     const dropdownEl = ref.current.querySelector(
       ".action-dropdown",
     ) as HTMLElement | null;
     const ddHeight = dropdownEl?.offsetHeight ?? 200;
+    const ddWidth = dropdownEl?.offsetWidth ?? 140;
     const spaceBelow = window.innerHeight - rect.bottom;
     const dropUp = spaceBelow < ddHeight + 8;
+    const menuLeft = Math.max(
+      8,
+      Math.min(rect.right - ddWidth, window.innerWidth - ddWidth - 8),
+    );
     setMenuStyle(
       dropUp
         ? {
             position: "fixed",
-            left: rect.left,
+            left: menuLeft,
             bottom: window.innerHeight - rect.top + 4,
             right: "auto",
             top: "auto",
           }
         : {
             position: "fixed",
-            left: rect.left,
+            left: menuLeft,
             top: rect.bottom + 4,
             right: "auto",
             bottom: "auto",
@@ -544,40 +810,70 @@ function JobActionMenu({
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
+    const handleClose = () => setOpen(false);
     document.addEventListener("pointerdown", handlePointer);
     document.addEventListener("keydown", handleKey);
+    window.addEventListener("scroll", handleClose, true);
+    window.addEventListener("resize", handleClose);
     return () => {
       document.removeEventListener("pointerdown", handlePointer);
       document.removeEventListener("keydown", handleKey);
+      window.removeEventListener("scroll", handleClose, true);
+      window.removeEventListener("resize", handleClose);
     };
   }, [open]);
 
   const isStopped = job.stopped || job.phase === "Stopped";
-  const isTerminal = job.phase === "Succeeded";
+  const isTerminal = ["Succeeded", "Failed"].includes(job.phase);
+
+  const handleToggle = () => {
+    setOpen((v) => !v);
+  };
 
   return (
     <div className="row-actions" ref={ref} style={{ position: "relative" }}>
       <button
+        className={`icon-button job-quick-lifecycle${isStopped ? " start" : " stop"}`}
+        onClick={onToggleStop}
+        disabled={pending || isTerminal}
+        title={
+          isTerminal
+            ? zh
+              ? "终态任务无法启动或停止"
+              : "Terminal jobs cannot be started or stopped"
+            : isStopped
+              ? zh
+                ? "启动任务"
+                : "Start job"
+              : zh
+                ? "停止任务"
+                : "Stop job"
+        }
+        aria-label={
+          isStopped
+            ? zh
+              ? `启动任务 ${job.name}`
+              : `Start ${job.name}`
+            : zh
+              ? `停止任务 ${job.name}`
+              : `Stop ${job.name}`
+        }
+      >
+        {isStopped ? <Play size={15} /> : <Square size={14} />}
+      </button>
+      <button
+        ref={btnRef}
         className="icon-button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={handleToggle}
         title={zh ? "操作" : "Actions"}
         aria-expanded={open}
+        disabled={pending}
       >
         <MoreVertical size={16} />
       </button>
       {open && (
         <>
           <div className="action-dropdown" style={menuStyle}>
-            <button
-              className="action-dropdown-item"
-              onClick={() => {
-                setOpen(false);
-                onEdit();
-              }}
-            >
-              <Pencil size={14} />
-              {zh ? "编辑" : "Edit"}
-            </button>
             <button
               className="action-dropdown-item"
               onClick={() => {
@@ -590,31 +886,13 @@ function JobActionMenu({
             </button>
             <button
               className="action-dropdown-item"
-              disabled={isTerminal}
               onClick={() => {
-                if (isTerminal) return;
                 setOpen(false);
-                onToggleStop();
+                onRestart();
               }}
-              title={
-                isTerminal
-                  ? zh
-                    ? "终态任务无法操作"
-                    : "Terminal job cannot be toggled"
-                  : ""
-              }
             >
-              {isStopped ? (
-                <>
-                  <Play size={14} />
-                  {zh ? "启动" : "Start"}
-                </>
-              ) : (
-                <>
-                  <Square size={14} />
-                  {zh ? "停止" : "Stop"}
-                </>
-              )}
+              <RotateCcw size={14} />
+              {zh ? "重启" : "Restart"}
             </button>
             <button
               className="action-dropdown-item danger"
@@ -682,24 +960,241 @@ function AdminJobActions({
   );
 }
 
+function DeleteJobDialog({
+  job,
+  zh,
+  pending,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  job: Job;
+  zh: boolean;
+  pending: boolean;
+  error: string;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !pending) onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose, pending]);
+
+  return (
+    <div
+      className="modal-backdrop delete-job-backdrop"
+      onMouseDown={(event) =>
+        event.target === event.currentTarget && !pending && onClose()
+      }
+    >
+      <section
+        className="modal delete-job-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-job-title"
+      >
+        <div className="delete-job-head">
+          <span className="delete-job-icon">
+            <Trash2 size={20} />
+          </span>
+          <div>
+            <span className="eyebrow">{zh ? "危险操作" : "Danger zone"}</span>
+            <h2 id="delete-job-title">
+              {zh ? "确认删除任务？" : "Delete this job?"}
+            </h2>
+          </div>
+          <button
+            className="icon-button"
+            onClick={onClose}
+            aria-label={zh ? "关闭" : "Close"}
+            disabled={pending}
+          >
+            ×
+          </button>
+        </div>
+        <div className="delete-job-body">
+          <p>
+            {zh
+              ? "删除后，任务定义及其关联的运行实例将从平台移除。"
+              : "The job definition and its associated runtime instances will be removed from the platform."}
+          </p>
+          <div className="delete-job-target">
+            <span>{zh ? "即将删除" : "Job to delete"}</span>
+            <strong>{job.name}</strong>
+          </div>
+          <div className="delete-job-warning">
+            <AlertTriangle size={15} />
+            <span>
+              {zh
+                ? "此操作不可撤销，请确认该任务已不再需要。"
+                : "This action cannot be undone. Confirm that this job is no longer needed."}
+            </span>
+          </div>
+          {error && (
+            <div className="delete-job-error" role="alert">
+              {zh ? "删除失败：" : "Delete failed: "}
+              {error}
+            </div>
+          )}
+        </div>
+        <div className="delete-job-actions">
+          <button
+            className="secondary-button"
+            onClick={onClose}
+            disabled={pending}
+          >
+            {zh ? "取消" : "Cancel"}
+          </button>
+          <button
+            className="delete-job-confirm"
+            onClick={() => void onConfirm()}
+            disabled={pending}
+          >
+            {pending ? (
+              <LoaderCircle className="job-action-loading" size={15} />
+            ) : (
+              <Trash2 size={15} />
+            )}
+            {pending
+              ? zh
+                ? "删除中…"
+                : "Deleting…"
+              : zh
+                ? "确认删除"
+                : "Delete job"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function RestartChoiceDialog({
+  job,
+  zh,
+  onClose,
+  onRestart,
+  onEditRestart,
+}: {
+  job: Job;
+  zh: boolean;
+  onClose: () => void;
+  onRestart: () => void;
+  onEditRestart?: () => void;
+}) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return (
+    <div
+      className="modal-backdrop restart-choice-backdrop"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <section
+        className="modal restart-choice-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="restart-choice-title"
+      >
+        <div className="restart-choice-head">
+          <span className="restart-choice-icon">
+            <RotateCcw size={19} />
+          </span>
+          <div>
+            <span className="eyebrow">{zh ? "重启方式" : "Restart mode"}</span>
+            <h2 id="restart-choice-title">{zh ? "重启任务" : "Restart job"}</h2>
+            <p>{job.name}</p>
+          </div>
+          <button
+            className="icon-button"
+            onClick={onClose}
+            aria-label={zh ? "关闭" : "Close"}
+          >
+            ×
+          </button>
+        </div>
+        <div className="restart-choice-options">
+          <button className="restart-choice-option primary" onClick={onRestart}>
+            <span>
+              <RotateCcw size={18} />
+            </span>
+            <strong>{zh ? "一键重启" : "Restart now"}</strong>
+            <small>
+              {zh
+                ? "保持当前任务配置，立即重新创建 Worker。"
+                : "Keep the current configuration and recreate workers now."}
+            </small>
+            <ChevronRight size={17} />
+          </button>
+          {onEditRestart && (
+            <button className="restart-choice-option" onClick={onEditRestart}>
+              <span>
+                <Pencil size={18} />
+              </span>
+              <strong>{zh ? "编辑后重启" : "Edit and restart"}</strong>
+              <small>
+                {zh
+                  ? "进入任务配置，保存修改后自动触发重启。"
+                  : "Review the job configuration and restart after saving."}
+              </small>
+              <ChevronRight size={17} />
+            </button>
+          )}
+        </div>
+        <div className="restart-choice-note">
+          {zh
+            ? "重启会终止当前 Worker，运行中的连接将中断。"
+            : "Restarting terminates current workers and interrupts active connections."}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+type JobLifecycleActions = {
+  pending: "start" | "stop" | "restart" | "delete" | null;
+  error: string;
+  onStart: () => void;
+  onStop: () => void;
+  onRestart: () => void;
+  onDelete: () => void;
+};
+
 export function JobDetailPage({
   job,
   copy: c,
   isMockMode,
   onBack,
   onClone,
-  adminActions,
+  lifecycleActions,
+  nodePullProgressMap = {},
+  nodeEventsMap = {},
+  nodeDeviceModelMap = {},
 }: {
   job: Job;
   copy: CopyType;
   isMockMode: boolean;
   onBack: () => void;
   onClone?: () => void;
-  adminActions?: {
-    onStop: () => void;
-    onRestart: () => void;
-    onDelete: () => void;
-  };
+  lifecycleActions: JobLifecycleActions;
+  // Per-node pullProgress cache shared from JobsPage; used by the top
+  // StatusBadge hover to surface image pull progress while the job is Pending.
+  nodePullProgressMap?: Record<string, PullProgressEntry[]>;
+  // Per-node warning events cache（Node.status.events），用于详情顶部
+  // StatusBadge 的 "i" tooltip 及 worker 行 tooltip 在 Pending 时聚合展示。
+  nodeEventsMap?: Record<string, NodeEventEntry[]>;
+  nodeDeviceModelMap?: Record<
+    string,
+    { gpuModel?: string; deviceModel?: string }
+  >;
 }) {
   const zh = c.nav.overview === "总览";
   const [activeTab, setActiveTab] = useState<"workers" | "logs" | "metrics">(
@@ -707,6 +1202,17 @@ export function JobDetailPage({
   );
   const [taskNodes, setTaskNodes] = useState<Record<string, string>>({});
   const [tensorBoardProxy, setTensorBoardProxy] = useState<string>("");
+  const [pullProgressMap, setPullProgressMap] = useState<
+    Record<string, PullProgressEntry[]>
+  >({});
+  // Task.status.events 缓存，keyed by lowercased task 名；用于无 pod.node
+  // 的 fallback worker 行展示 warning 事件。
+  const [taskEventsMap, setTaskEventsMap] = useState<
+    Record<string, NodeEventEntry[]>
+  >({});
+  const [podEventsMap, setPodEventsMap] = useState<
+    Record<string, NodeEventEntry[]>
+  >({});
   const [pods, setPods] = useState<PodInfo[]>([]);
   const [domainIPMap, setDomainIPMap] = useState<Record<string, string>>({});
   const [podLogs, setPodLogs] = useState<
@@ -729,13 +1235,28 @@ export function JobDetailPage({
   const workerTableRef = useRef<HTMLDivElement>(null);
   const workerTableDrag = useRef({ active: false, x: 0, scrollLeft: 0 });
   const [workerTableDragging, setWorkerTableDragging] = useState(false);
+  const [workerRefreshKey, setWorkerRefreshKey] = useState(0);
+  const [workerRefreshing, setWorkerRefreshing] = useState(false);
   const [logRoleFilter, setLogRoleFilter] = useState("All");
   const [logWorkerFilter, setLogWorkerFilter] = useState("All");
   const [logQuery, setLogQuery] = useState("");
   const [logRange, setLogRange] = useState("1h");
   const [logStreamEnabled, setLogStreamEnabled] = useState(false);
 
-  useAutoRefresh(
+  // Aggregate Node CR pullProgress for the top StatusBadge hover. Uses Node CR
+  // (not the Task CR-derived pullProgressMap used by WorkerRow) so the tooltip
+  // reflects raw node-agent reported progress while the job is Pending.
+  const jobPullProgress =
+    job.phase === "Pending"
+      ? aggregateJobPullProgress(job, nodePullProgressMap)
+      : [];
+  // 同样从 Node CR events 聚合本 job 的 warning 事件，用于详情顶部
+  // StatusBadge 的 "i" tooltip。worker 行 tooltip 则按节点取
+  // nodeEventsMap[pod.node]，并在 pod.node 缺失时回退到 Task.status.events。
+  const jobEvents =
+    job.phase === "Pending" ? aggregateJobEvents(job, nodeEventsMap) : [];
+
+  const { refresh: refreshTasks } = useAutoRefresh(
     async () => {
       const labelSelector = `rlinf.io/job=${job.name}`;
       const resp = await fetch(
@@ -745,6 +1266,8 @@ export function JobDetailPage({
       const data = await resp.json();
       const items = data.items ?? [];
       const nodeMap: Record<string, string> = {};
+      const progressMap: Record<string, PullProgressEntry[]> = {};
+      const taskEventsMap: Record<string, NodeEventEntry[]> = {};
       let tbProxy = "";
       for (const item of items) {
         const taskName = item.metadata?.name ?? "";
@@ -753,9 +1276,24 @@ export function JobDetailPage({
         if (item.status?.tensorBoardProxy) {
           tbProxy = item.status.tensorBoardProxy;
         }
+        const pp: PullProgressEntry[] = item.status?.pullProgress ?? [];
+        if (Array.isArray(pp) && pp.length > 0) {
+          // Key case-insensitively so it matches the lowercased lookup keys
+          // built from job/task names below.
+          progressMap[taskName.toLowerCase()] = pp;
+        }
+        // 控制面 task reconciler 已将各节点 events 聚合到
+        // Task.status.events；按 task 名保存，供 fallback worker 行
+        // （无 pod.node 时）展示事件。
+        const evs: NodeEventEntry[] = item.status?.events ?? [];
+        if (Array.isArray(evs) && evs.length > 0) {
+          taskEventsMap[taskName.toLowerCase()] = evs;
+        }
       }
       setTaskNodes(nodeMap);
       setTensorBoardProxy(tbProxy);
+      setPullProgressMap(progressMap);
+      setTaskEventsMap(taskEventsMap);
     },
     10000,
     [job.name],
@@ -774,6 +1312,7 @@ export function JobDetailPage({
       return;
     }
     let cancelled = false;
+    setWorkerRefreshing(true);
     const labelSelector = `rlark.io/task-name in (${workerTaskNamesKey})`;
 
     const domainsPromise = fetch(`/api/v1/rlinf.io/v1alpha1/domains`).then(
@@ -830,11 +1369,53 @@ export function JobDetailPage({
         if (cancelled) return;
         setPods([]);
         setDomainIPMap({});
+      })
+      .finally(() => {
+        if (!cancelled) setWorkerRefreshing(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [workerTaskNamesKey]);
+  }, [workerTaskNamesKey, workerRefreshKey]);
+
+  const pendingPodNames = useMemo(
+    () =>
+      pods
+        .filter((pod) => pod.phase !== "Running")
+        .map((pod) => pod.name)
+        .filter(Boolean)
+        .sort(),
+    [pods],
+  );
+  const pendingPodNamesKey = pendingPodNames.join(",");
+  useAutoRefresh(
+    async () => {
+      if (pendingPodNames.length === 0) {
+        setPodEventsMap({});
+        return;
+      }
+      const entries = await Promise.all(
+        pendingPodNames.map(async (podName) => {
+          try {
+            const response = await fetch(
+              `/api/v1/rlinf.io/v1alpha1/pods/${encodeURIComponent(podName)}/events`,
+            );
+            if (!response.ok) return [podName, []] as const;
+            const data = await response.json();
+            return [
+              podName,
+              Array.isArray(data.events) ? data.events : [],
+            ] as const;
+          } catch {
+            return [podName, []] as const;
+          }
+        }),
+      );
+      setPodEventsMap(Object.fromEntries(entries));
+    },
+    5000,
+    [pendingPodNamesKey],
+  );
 
   const fetchLogs = async (isInitial = true) => {
     if (activeTab !== "logs") return;
@@ -886,6 +1467,14 @@ export function JobDetailPage({
                   `${ts.name}: worker state synced`,
                   `${ts.name}: waiting for runtime heartbeat`,
                 ],
+            pullProgress:
+              pullProgressMap[jobChildName] ??
+              pullProgressMap[ts.name.toLowerCase()] ??
+              [],
+            events:
+              taskEventsMap[jobChildName] ??
+              taskEventsMap[ts.name.toLowerCase()] ??
+              [],
           };
         })
       : [];
@@ -898,6 +1487,25 @@ export function JobDetailPage({
       ? pods.map((pod, index) => {
           const resource = resourceForTask(pod.taskName);
           const role = resource?.role ?? pod.taskName;
+          const phase = (pod.phase || "Pending") as Phase;
+          // When the worker is still Pending, query the hosting node's
+          // pullProgress (reported by node-agent) so the StatusBadge "i"
+          // hover surfaces live image pull progress for this worker.
+          const nodePullProgress =
+            phase === "Pending" && pod.node
+              ? (nodePullProgressMap[pod.node] ?? [])
+              : [];
+          // 同样从 Node.status.events 取节点 warning 事件；当 pod.node
+          // 缺失时回退到 Task.status.events，让 Pending worker 行 tooltip
+          // 在调度前就能展示 DiskPressure 等原因。
+          const workerEvents =
+            phase === "Pending"
+              ? (podEventsMap[pod.name] ?? []).length > 0
+                ? (podEventsMap[pod.name] ?? [])
+                : pod.node && (nodeEventsMap[pod.node] ?? []).length > 0
+                  ? (nodeEventsMap[pod.node] ?? [])
+                  : (taskEventsMap[pod.taskName?.toLowerCase() ?? ""] ?? [])
+              : [];
           return {
             id: `${pod.namespace}/${pod.podNamespace}/${pod.podName}`,
             name: pod.podName || `${role}-${index}`,
@@ -914,6 +1522,8 @@ export function JobDetailPage({
                   `${role}: worker state synced`,
                   `${role}: waiting for runtime heartbeat`,
                 ],
+            pullProgress: nodePullProgress,
+            events: workerEvents,
           };
         })
       : fallbackWorkers;
@@ -1068,7 +1678,9 @@ export function JobDetailPage({
         displayPhase={displayPhase}
         tensorBoardProxy={tensorBoardProxy}
         onClone={onClone}
-        adminActions={adminActions}
+        lifecycleActions={lifecycleActions}
+        jobPullProgress={jobPullProgress}
+        jobEvents={jobEvents}
       />
       <div className="sub-tabs">
         {tabs.map((tab) => (
@@ -1090,15 +1702,33 @@ export function JobDetailPage({
               </span>
               <h3>{zh ? "Worker 列表" : "Worker list"}</h3>
             </div>
-            <span className="worker-total-count">
-              {filteredWorkers.length} {zh ? "个 Worker" : "workers"}
-            </span>
+            <div className="worker-panel-actions">
+              <span className="worker-total-count">
+                {filteredWorkers.length} {zh ? "个 Worker" : "workers"}
+              </span>
+              <button
+                className="secondary-button worker-refresh-button"
+                onClick={() => {
+                  refreshTasks();
+                  setWorkerRefreshKey((key) => key + 1);
+                }}
+                disabled={workerRefreshing}
+                title={zh ? "刷新 Worker 列表" : "Refresh worker list"}
+              >
+                <RotateCcw
+                  size={14}
+                  className={workerRefreshing ? "job-action-loading" : ""}
+                />
+                {zh ? "刷新" : "Refresh"}
+              </button>
+            </div>
           </div>
           <RoleRuntimeConfig
             job={job}
             copy={c}
             roles={workerRoles}
             selectedRole={workerRoleFilter}
+            nodeDeviceModelMap={nodeDeviceModelMap}
             onRoleChange={(role) => {
               setWorkerRoleFilter(role);
               setWorkerPage(1);
@@ -1297,13 +1927,20 @@ export function JobDetailPage({
                 aria-live={logStreamEnabled ? "polite" : "off"}
               >
                 {filteredLogEntries.length > 0 ? (
-                  filteredLogEntries.map((entry) => (
-                    <div className="log-list-row" key={entry.id}>
-                      <span className="log-worker-name">{entry.worker}</span>
-                      <span className="log-role-name">{entry.role}</span>
-                      <p>{entry.message}</p>
+                  <>
+                    <div className="log-list-head" aria-hidden="true">
+                      <span>{zh ? "角色" : "Role"}</span>
+                      <span>Worker</span>
+                      <span>{zh ? "日志内容" : "Log message"}</span>
                     </div>
-                  ))
+                    {filteredLogEntries.map((entry) => (
+                      <div className="log-list-row" key={entry.id}>
+                        <span className="log-role-name">{entry.role}</span>
+                        <span className="log-worker-name">{entry.worker}</span>
+                        <p>{entry.message}</p>
+                      </div>
+                    ))}
+                  </>
                 ) : (
                   <div className="empty-inline">
                     {zh ? "未找到匹配的日志。" : "No matching logs found."}
@@ -1346,7 +1983,9 @@ function JobPublicOverview({
   displayPhase,
   tensorBoardProxy,
   onClone,
-  adminActions,
+  lifecycleActions,
+  jobPullProgress = [],
+  jobEvents = [],
 }: {
   job: Job;
   copy: CopyType;
@@ -1356,11 +1995,12 @@ function JobPublicOverview({
   displayPhase: Phase;
   tensorBoardProxy?: string;
   onClone?: () => void;
-  adminActions?: {
-    onStop: () => void;
-    onRestart: () => void;
-    onDelete: () => void;
-  };
+  lifecycleActions: JobLifecycleActions;
+  // Per-node pullProgress cache shared from JobsPage; surfaced next to the
+  // top StatusBadge while the job is still Pending.
+  jobPullProgress?: PullProgressEntry[];
+  // 节点级 Warning 事件聚合，在 Pending 时与 pullProgress 一并展示。
+  jobEvents?: NodeEventEntry[];
 }) {
   const zh = c.nav.overview === "总览";
   const baseConfigRows = [
@@ -1387,7 +2027,16 @@ function JobPublicOverview({
           </p>
         </div>
         <div className="job-detail-summary-status">
-          <StatusBadge phase={displayPhase} copy={c} />
+          <div className="status-with-info">
+            <StatusBadge phase={displayPhase} copy={c} />
+            {(jobPullProgress.length > 0 || jobEvents.length > 0) && (
+              <PullProgressInfo
+                progress={jobPullProgress}
+                events={jobEvents}
+                zh={zh}
+              />
+            )}
+          </div>
           <small>
             {job.stopped
               ? zh
@@ -1405,44 +2054,74 @@ function JobPublicOverview({
                     ? "任务保持活跃"
                     : "Job active"}
           </small>
-          {adminActions ? (
-            <div className="admin-job-detail-actions">
-              {!job.stopped &&
-              !["Stopped", "Succeeded", "Failed"].includes(job.phase) ? (
-                <button
-                  className="secondary-button"
-                  onClick={adminActions.onStop}
-                >
-                  <Square size={15} />
-                  {zh ? "停止任务" : "Stop job"}
-                </button>
-              ) : (
-                <button
-                  className="secondary-button"
-                  onClick={adminActions.onRestart}
-                >
-                  <RotateCcw size={15} />
-                  {zh ? "重启任务" : "Restart job"}
-                </button>
-              )}
-              <button
-                className="secondary-button danger"
-                onClick={adminActions.onDelete}
-              >
-                <Trash2 size={15} />
-                {zh ? "删除任务" : "Delete job"}
-              </button>
-            </div>
-          ) : (
-            onClone && (
+          <div className="job-detail-actions">
+            {onClone && (
               <button
                 className="secondary-button job-detail-clone-button"
                 onClick={onClone}
+                disabled={lifecycleActions.pending !== null}
               >
                 <Copy size={15} />
-                {zh ? "复制任务" : "Clone job"}
+                {zh ? "复制" : "Clone"}
               </button>
-            )
+            )}
+            {job.stopped || job.phase === "Stopped" ? (
+              <button
+                className="secondary-button primary-action"
+                onClick={lifecycleActions.onStart}
+                disabled={lifecycleActions.pending !== null}
+              >
+                {lifecycleActions.pending === "start" ? (
+                  <LoaderCircle className="job-action-loading" size={15} />
+                ) : (
+                  <Play size={15} />
+                )}
+                {zh ? "启动" : "Start"}
+              </button>
+            ) : !["Succeeded", "Failed"].includes(job.phase) ? (
+              <button
+                className="secondary-button"
+                onClick={lifecycleActions.onStop}
+                disabled={lifecycleActions.pending !== null}
+              >
+                {lifecycleActions.pending === "stop" ? (
+                  <LoaderCircle className="job-action-loading" size={15} />
+                ) : (
+                  <Square size={15} />
+                )}
+                {zh ? "停止" : "Stop"}
+              </button>
+            ) : null}
+            <button
+              className="secondary-button"
+              onClick={lifecycleActions.onRestart}
+              disabled={lifecycleActions.pending !== null}
+            >
+              {lifecycleActions.pending === "restart" ? (
+                <LoaderCircle className="job-action-loading" size={15} />
+              ) : (
+                <RotateCcw size={15} />
+              )}
+              {zh ? "重启" : "Restart"}
+            </button>
+            <button
+              className="secondary-button danger"
+              onClick={lifecycleActions.onDelete}
+              disabled={lifecycleActions.pending !== null}
+            >
+              {lifecycleActions.pending === "delete" ? (
+                <LoaderCircle className="job-action-loading" size={15} />
+              ) : (
+                <Trash2 size={15} />
+              )}
+              {zh ? "删除" : "Delete"}
+            </button>
+          </div>
+          {lifecycleActions.error && (
+            <span className="job-detail-action-error">
+              {zh ? "操作失败：" : "Action failed: "}
+              {lifecycleActions.error}
+            </span>
           )}
         </div>
       </div>
@@ -1696,60 +2375,75 @@ function SummaryMetric({
   );
 }
 
-function CopyableCodeBlock({
-  label,
-  value,
-  copy: c,
-}: {
-  label: string;
-  value: string;
-  copy: CopyType;
-}) {
-  const [copied, setCopied] = useState(false);
-  const copyValue = async () => {
-    if (!(await copyText(value))) return;
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
-  };
-  return (
-    <div className="copyable-code-block">
-      <div>
-        <span>{label}</span>
-        <button className="icon-button" onClick={copyValue} title={c.api.copy}>
-          {copied ? <Check size={15} /> : <Copy size={15} />}
-        </button>
-      </div>
-      <code>{value}</code>
-    </div>
-  );
-}
-
 function RoleRuntimeConfig({
   job,
   copy: c,
   roles,
   selectedRole,
   onRoleChange,
+  nodeDeviceModelMap,
 }: {
   job: Job;
   copy: CopyType;
   roles: string[];
   selectedRole: string;
   onRoleChange: (role: string) => void;
+  nodeDeviceModelMap: Record<
+    string,
+    { gpuModel?: string; deviceModel?: string }
+  >;
 }) {
   const zh = c.nav.overview === "总览";
   const [expanded, setExpanded] = useState(false);
   const resource = job.resources.find((item) => item.role === selectedRole);
+  const taskName = resource ? taskResourceName(job.name, resource.role) : "";
+  const taskStatus = job.taskStatuses.find(
+    (status) =>
+      status.name.toLowerCase() === taskName ||
+      status.name.toLowerCase() === selectedRole.toLowerCase(),
+  );
+  const hostnameSelector = resource?.nodeSelector.match(
+    /(?:^|,)kubernetes\.io\/hostname=([^=]+?)(?=,[^,=]+=|$)/,
+  )?.[1];
+  const selectedNodes = hostnameSelector
+    ? hostnameSelector
+        .split(",")
+        .map((node) => node.trim())
+        .filter(Boolean)
+    : [];
+  const resourceNodes =
+    taskStatus?.observedNodes && taskStatus.observedNodes.length > 0
+      ? taskStatus.observedNodes
+      : selectedNodes;
+  const gpuModel = resourceNodes
+    .map((node) => nodeDeviceModelMap[node]?.gpuModel)
+    .find(Boolean);
+  const deviceModel = resourceNodes
+    .map((node) => nodeDeviceModelMap[node]?.deviceModel)
+    .find(Boolean);
+
+  const deviceSummary = resource?.devices.map((device) => {
+    const model = deviceModel || device.name;
+    return zh
+      ? `${model} · ${device.quantity} 个设备`
+      : `${model} · ${device.quantity} devices`;
+  });
+  const gpuSummary =
+    resource && Number(resource.gpu) > 0
+      ? zh
+        ? `${gpuModel || "GPU"} · ${resource.gpu} GPU`
+        : `${gpuModel || "GPU"} · ${resource.gpu} GPU`
+      : "";
 
   const resourceSummary = resource
     ? [
-        `${resource.cpu} CPU`,
+        gpuSummary,
+        ...(deviceSummary ?? []),
+        resource.cpu ? `${resource.cpu} CPU` : "",
         resource.memory,
-        `${resource.gpu} GPU`,
-        ...resource.devices.map(
-          (device) => `${device.name} x ${device.quantity}`,
-        ),
-      ].join(" · ")
+      ]
+        .filter(Boolean)
+        .join(" / ") || (zh ? "未申请设备" : "No device requested")
     : "";
   const nodeSelectors = resource?.nodeSelector
     ? resource.nodeSelector.split(",").map((selector) => {
@@ -2223,6 +2917,230 @@ function TimeSeriesCard({
   );
 }
 
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes < 0) return "0B";
+  const GB = 1024 * 1024 * 1024;
+  const MB = 1024 * 1024;
+  const KB = 1024;
+  if (bytes >= GB) return (bytes / GB).toFixed(1) + "GB";
+  if (bytes >= MB) return (bytes / MB).toFixed(1) + "MB";
+  if (bytes >= KB) return (bytes / KB).toFixed(1) + "KB";
+  return bytes + "B";
+}
+
+// PullProgressInfo renders an "i" icon at the top-right of a task status badge.
+// Hovering (or focusing) it reveals the live image pull progress / speed for
+// the task's images while its pods have not yet reached Running, plus any
+// node-level Warning events (DiskPressure 等) aggregated from
+// Node.status.events / Task.status.events so operators can see why a pod is
+// stuck Pending even when no image pull is in flight.
+//
+// The tooltip uses position: fixed (instead of position: absolute) so it can
+// escape the overflow:auto / overflow:hidden of its ancestor containers
+// (notably .worker-table-scroll, where overflow-x:auto forces overflow-y to
+// compute to auto per the CSS spec, clipping any absolutely-positioned
+// descendant). The icon's viewport position is measured on hover/focus and
+// the tooltip is placed above the icon, or below if there isn't enough room
+// above (e.g. when the icon sits in the first row of the Jobs list table).
+function PullProgressInfo({
+  progress,
+  events = [],
+  zh,
+  emptyMessage,
+}: {
+  progress: PullProgressEntry[];
+  events?: NodeEventEntry[];
+  zh: boolean;
+  emptyMessage?: string;
+}) {
+  const wrapperRef = useRef<HTMLSpanElement | null>(null);
+  const tooltipRef = useRef<HTMLSpanElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{
+    top: number;
+    left: number;
+    above: boolean;
+    arrowLeft: number;
+  } | null>(null);
+
+  const measure = () => {
+    const icon = wrapperRef.current;
+    const tooltip = tooltipRef.current;
+    if (!icon || !tooltip) return;
+    const iconRect = icon.getBoundingClientRect();
+    const tooltipH = tooltip.offsetHeight;
+    const tooltipW = tooltip.offsetWidth;
+    const gap = 10;
+    const margin = 12;
+
+    const spaceAbove = iconRect.top;
+    const spaceBelow = window.innerHeight - iconRect.bottom;
+    const above = spaceAbove >= tooltipH + gap || spaceAbove >= spaceBelow;
+
+    const top = above ? iconRect.top - tooltipH - gap : iconRect.bottom + gap;
+
+    const iconCenter = iconRect.left + iconRect.width / 2;
+    let left = iconCenter - tooltipW / 2;
+    left = Math.max(
+      margin,
+      Math.min(left, window.innerWidth - tooltipW - margin),
+    );
+    const arrowLeft = Math.max(16, Math.min(iconCenter - left, tooltipW - 16));
+
+    setPos((current) => {
+      if (
+        current &&
+        Math.abs(current.top - top) < 0.1 &&
+        Math.abs(current.left - left) < 0.1 &&
+        current.above === above &&
+        Math.abs(current.arrowLeft - arrowLeft) < 0.1
+      ) {
+        return current;
+      }
+      return { top, left, above, arrowLeft };
+    });
+  };
+
+  const show = () => {
+    setPos(null);
+    setOpen(true);
+  };
+  const clear = () => {
+    setOpen(false);
+    setPos(null);
+  };
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    // A portal's child ref can still be unset during the parent's first layout
+    // effect. Start on the next frame, then keep tracking while the tooltip is
+    // open: live worker polling can change table column widths and move the
+    // icon without producing a window scroll or resize event.
+    let frame = 0;
+    const track = () => {
+      measure();
+      frame = window.requestAnimationFrame(track);
+    };
+    frame = window.requestAnimationFrame(track);
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, progress, events, emptyMessage]);
+
+  const tooltipStyle: CSSProperties = pos
+    ? {
+        position: "fixed",
+        top: pos.top,
+        left: pos.left,
+        bottom: "auto",
+        right: "auto",
+      }
+    : {
+        position: "fixed",
+        top: 0,
+        left: 0,
+        visibility: "hidden",
+      };
+
+  return (
+    <>
+      <span
+        className="status-info"
+        tabIndex={0}
+        ref={wrapperRef}
+        onMouseEnter={show}
+        onMouseLeave={clear}
+        onFocus={show}
+        onBlur={clear}
+      >
+        <Info size={13} />
+      </span>
+      {open &&
+        createPortal(
+          <span
+            ref={tooltipRef}
+            className={`status-info-tooltip status-info-tooltip-open${pos && !pos.above ? " status-info-tooltip-below" : ""}`}
+            style={tooltipStyle}
+            role="status"
+          >
+            <i
+              className="status-info-tooltip-arrow"
+              aria-hidden="true"
+              style={{ left: pos ? pos.arrowLeft - 6 : 0 }}
+            />
+            {progress.length === 0 && events.length === 0 && emptyMessage && (
+              <>
+                <strong>{zh ? "Worker 等待中" : "Worker pending"}</strong>
+                <span className="pending-empty-message">{emptyMessage}</span>
+              </>
+            )}
+            {progress.length > 0 && (
+              <>
+                <strong>{zh ? "镜像拉取进度" : "Image Pull Progress"}</strong>
+                {progress.map((p, i) => {
+                  const pct =
+                    p.total > 0
+                      ? Math.min(
+                          100,
+                          Math.round((p.downloaded / p.total) * 100),
+                        )
+                      : 0;
+                  return (
+                    <span key={`p-${i}`} className="pull-entry">
+                      <code>{p.image}</code>
+                      <span className="pull-status">
+                        {p.message || p.status}
+                        {p.status === "pulling" && p.total > 0
+                          ? ` · ${pct}%`
+                          : ""}
+                      </span>
+                      {p.total > 0 && (
+                        <span className="pull-detail">
+                          {formatBytes(p.downloaded)} / {formatBytes(p.total)}
+                        </span>
+                      )}
+                      {p.speed > 0 && (
+                        <span className="pull-detail">
+                          {formatBytes(p.speed)}/s
+                        </span>
+                      )}
+                    </span>
+                  );
+                })}
+              </>
+            )}
+            {events.length > 0 && (
+              <>
+                <strong className="status-info-tooltip-section">
+                  {zh ? "Worker 事件" : "Worker Events"}
+                </strong>
+                {events.map((ev, i) => (
+                  <span key={`e-${i}`} className="pull-entry event-entry">
+                    <span
+                      className={`event-chip event-${ev.type?.toLowerCase() ?? "normal"}`}
+                    >
+                      {ev.reason || ev.type || "Event"}
+                    </span>
+                    {ev.objectName && (
+                      <code className="event-object">{ev.objectName}</code>
+                    )}
+                    {ev.message && (
+                      <span className="event-message">{ev.message}</span>
+                    )}
+                    {ev.lastTime && (
+                      <span className="pull-detail">
+                        {formatChinaDateTime(ev.lastTime)}
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </>
+            )}
+          </span>,
+          document.body,
+        )}
+    </>
+  );
+}
+
 function WorkerTableRow({
   jobName,
   worker,
@@ -2307,7 +3225,30 @@ function WorkerTableRow({
           <span className="table-date">{createdAt}</span>
         </td>
         <td>
-          <StatusBadge phase={worker.phase} copy={c} />
+          <div className="status-with-info">
+            <StatusBadge phase={worker.phase} copy={c} />
+            {worker.phase !== "Running" &&
+              (worker.phase === "Pending" ||
+                (worker.pullProgress && worker.pullProgress.length > 0) ||
+                (worker.events && worker.events.length > 0)) && (
+                <PullProgressInfo
+                  progress={worker.pullProgress ?? []}
+                  events={worker.events ?? []}
+                  zh={zh}
+                  emptyMessage={
+                    worker.phase === "Pending"
+                      ? worker.node && worker.node !== "—"
+                        ? zh
+                          ? `已调度到 ${worker.node}，正在等待容器创建或节点上报镜像拉取状态。`
+                          : `Scheduled to ${worker.node}; waiting for container creation or image-pull status from the node.`
+                        : zh
+                          ? "正在等待节点调度；调度完成后将展示镜像拉取或节点事件。"
+                          : "Waiting for node scheduling. Image-pull progress or node events will appear after placement."
+                      : undefined
+                  }
+                />
+              )}
+          </div>
         </td>
         <td>
           <div className="worker-table-actions">

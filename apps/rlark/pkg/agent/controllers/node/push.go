@@ -263,6 +263,14 @@ func (r *pushNodeReconciler) updateManagementNode(ctx context.Context, logger lo
 		return reconcile.Result{RequeueAfter: HeartbeatInterval}, err
 	}
 
+	// Preserve status fields owned by other node-agent components; the push
+	// controller only refreshes K8s-derived Node fields (Capacity, Addresses,
+	// DiskPressure condition, …) and must not clobber data that other
+	// components are actively writing via the status subresource.
+	//   - pullProgress: owned by the image puller (imagepull.Puller)
+	//   - events: owned by the node events watcher (nodeevents.Watcher)
+	desiredNode.Status.PullProgress = mgmtNode.Status.PullProgress
+	desiredNode.Status.Events = mgmtNode.Status.Events
 	mgmtNode.Status = desiredNode.Status
 	if err := r.c.ManagementClient.Status().Update(ctx, &mgmtNode); err != nil {
 		logger.Error(err, "failed to update management Node status")

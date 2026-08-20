@@ -31,7 +31,7 @@ test: ## Run tests
 generate-manifests: $(CONTROLLER_GEN) ## Generate CRD YAML manifests
 	mkdir -p $(CRD_DIR)
 	$(CONTROLLER_GEN) object paths=./rlark.io/...
-	$(CONTROLLER_GEN) crd paths=./rlark.io/... output:crd:artifacts:config=$(CRD_DIR)
+	$(CONTROLLER_GEN) crd:allowDangerousTypes=true paths=./rlark.io/... output:crd:artifacts:config=$(CRD_DIR)
 
 generate-clients: ## Generate typed clients, informers, listers
 	./hack/generate-clients.sh --with-watch

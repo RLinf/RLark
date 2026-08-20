@@ -37,6 +37,13 @@ type Config struct {
 	EnableSameClusterDirect  bool
 	EnableCrossClusterDirect bool
 	KubeletDir               string
+
+	// Image pre-pull (node-agent): pre-pull task images into the node's
+	// container runtime (containerd for Kubernetes, docker for Docker).
+	ImagePullEnabled    bool
+	ContainerdSocket    string
+	ContainerdNamespace string
+	NodeName            string
 }
 
 // DefaultConfig returns the default config.
@@ -54,6 +61,11 @@ func DefaultConfig() Config {
 		EnableSameClusterDirect:  true,
 		EnableCrossClusterDirect: true,
 		KubeletDir:               "",
+
+		ImagePullEnabled:    true,
+		ContainerdSocket:    "/run/containerd/containerd.sock",
+		ContainerdNamespace: "k8s.io",
+		NodeName:            os.Getenv("NODE_NAME"),
 	}
 }
 
@@ -77,4 +89,10 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&c.EnableSameClusterDirect, "enable-same-cluster-direct", c.EnableSameClusterDirect, "Enable direct access to pods in the same cluster")
 	fs.BoolVar(&c.EnableCrossClusterDirect, "enable-cross-cluster-direct", c.EnableCrossClusterDirect, "Enable direct access to pods in different clusters")
 	fs.StringVar(&c.KubeletDir, "kubelet-dir", c.KubeletDir, "Kubelet directory(optional, used for reading pod UID from kube-api-access projected volume)")
+
+	// Image pre-pull (node-agent).
+	fs.BoolVar(&c.ImagePullEnabled, "image-pull-enabled", c.ImagePullEnabled, "Pre-pull task images into the node container runtime (containerd/docker) when a task is dispatched")
+	fs.StringVar(&c.ContainerdSocket, "containerd-socket", c.ContainerdSocket, "containerd socket address used by ctr for image pulling (Kubernetes agent type)")
+	fs.StringVar(&c.ContainerdNamespace, "containerd-namespace", c.ContainerdNamespace, "containerd namespace used by ctr for image pulling (Kubernetes agent type, default k8s.io)")
+	fs.StringVar(&c.NodeName, "node-name", c.NodeName, "Name of the local node, used for Kubernetes node-selector matching (defaults to $NODE_NAME)")
 }

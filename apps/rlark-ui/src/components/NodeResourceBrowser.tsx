@@ -435,10 +435,32 @@ export function NodeResourceBrowser({
                   <code className="node-row-ip">{address}</code>
                   <span
                     className="node-row-resource"
-                    title={`${resource.primary} ${resource.secondary}`}
+                    title={resource.lines
+                      .map((line) => `${line.secondary} ${line.primary}`)
+                      .join("\n")}
                   >
-                    <strong>{resource.primary}</strong>
-                    <small>{resource.secondary}</small>
+                    {resource.lines.length ? (
+                      resource.lines.map((line) => (
+                        <span
+                          className={`node-row-resource-line ${line.kind}`}
+                          key={line.key}
+                        >
+                          <strong
+                            className={
+                              line.label === (zh ? "未标注" : "Unlabeled")
+                                ? "unlabeled"
+                                : undefined
+                            }
+                          >
+                            {line.label}
+                          </strong>
+                          <i aria-hidden="true">·</i>
+                          <small>{line.amount}</small>
+                        </span>
+                      ))
+                    ) : (
+                      <small>{resource.primary}</small>
+                    )}
                   </span>
                   <span
                     className="node-row-task"

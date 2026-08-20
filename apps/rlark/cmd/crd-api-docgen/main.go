@@ -106,8 +106,8 @@ func main() {
 	})
 
 	var out bytes.Buffer
-	_, _ = fmt.Fprintf(&out, "# API Reference\n\n")
-	_, _ = fmt.Fprintf(&out, "Kubernetes-style API surface generated from the current CRDs.\n\n")
+	_, _ = fmt.Fprintf(&out, "# CRD Schema Reference\n\n")
+	_, _ = fmt.Fprintf(&out, "Kubernetes resource operations and schemas generated from the current CRD manifests. This is not the RLark Gateway HTTP API reference.\n\n")
 	for _, doc := range docs {
 		if doc.Kind != "CustomResourceDefinition" {
 			continue
@@ -122,7 +122,8 @@ func main() {
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		fail(err)
 	}
-	if err := os.WriteFile(outputPath, out.Bytes(), 0o644); err != nil {
+	output := append(bytes.TrimSpace(out.Bytes()), '\n')
+	if err := os.WriteFile(outputPath, output, 0o644); err != nil {
 		fail(err)
 	}
 }
@@ -377,8 +378,9 @@ func trimDescription(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 120 {
-		return s[:117] + "..."
+	runes := []rune(s)
+	if len(runes) > 120 {
+		return string(runes[:117]) + "..."
 	}
 	return s
 }

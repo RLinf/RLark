@@ -77,7 +77,10 @@ func buildClusterInfo(clusterID string, nodes []rlarkv1alpha1.Node) ClusterInfo 
 			info.Region = node.Labels["rlark.io/region"]
 		}
 		if info.Location == "" {
-			info.Location = node.Labels["rlark.io/location"]
+			info.Location = node.Annotations["rlark.io/city"]
+			if info.Location == "" {
+				info.Location = node.Labels["rlark.io/city"]
+			}
 		}
 		if taskName := node.Labels["rlark.io/embodied-task-name"]; taskName != "" {
 			runningJobs[taskName] = struct{}{}

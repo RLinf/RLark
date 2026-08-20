@@ -39,6 +39,72 @@ services:
     networks:
       - rlark-network
 
+  # rlark-server - Agent WebSocket tunnel, cert signing, SSH, K8s API proxy
+  rlark-server:
+    image: ${IMAGE:-rlark/rlark:latest}
+    container_name: rlark-server
+    command:
+      - "/rlark-server"
+      - "--kubeconfig=/etc/rlark/kubeconfig.yaml"
+      - "--https-port=8443"
+      - "--ssh-port=2222"
+      - "--auto-sign-tls-ca-cert"
+      - "--tls-domains=localhost,rlark-server"
+      - "--db-config=/etc/rlark/db-config.yaml"
+    ports:
+      - "8443:8443"
+      - "2222:2222"
+    volumes:
+      - ${KCP_KUBECONFIG:-./kcp-kubeconfig.yaml}:/etc/rlark/kubeconfig.yaml:ro
+      - ${DB_CONFIG:-./db-config.yaml}:/etc/rlark/db-config.yaml:ro
+    depends_on:
+      kcp:
+        condition: service_healthy
+      postgresql:
+        condition: service_healthy
+    networks:
+      - rlark-network
+
+  # rlark-gateway - User-facing REST API
+  rlark-gateway:
+    image: ${IMAGE:-rlark/rlark:latest}
+    container_name: rlark-gateway
+    command:
+      - "/rlark-gateway"
+      - "--kubeconfig=/etc/rlark/kubeconfig.yaml"
+      - "--addr=:8080"
+      - "--server-address=https://rlark-server:8443"
+      - "--db-config=/etc/rlark/db-config.yaml"
+    ports:
+      - "9000:8080"
+    volumes:
+      - ${KCP_KUBECONFIG:-./kcp-kubeconfig.yaml}:/etc/rlark/kubeconfig.yaml:ro
+      - ${DB_CONFIG:-./db-config.yaml}:/etc/rlark/db-config.yaml:ro
+    depends_on:
+      - rlark-server
+    networks:
+      - rlark-network
+
+  # rlark-controller-manager - Job→Task, Domain→DomainPeer, IP allocation
+  rlark-controller-manager:
+    image: ${IMAGE:-rlark/rlark:latest}
+    container_name: rlark-controller-manager
+    command:
+      - "/rlark-controller-manager"
+      - "--kubeconfig=/etc/rlark/kubeconfig.yaml"
+      - "--server-address=https://rlark-server:8443"
+      - "--leader-elect=false"
+      - "--metrics-bind-address=:0"
+      - "--health-probe-bind-address=:0"
+      - "--db-config=/etc/rlark/db-config.yaml"
+    volumes:
+      - ${KCP_KUBECONFIG:-./kcp-kubeconfig.yaml}:/etc/rlark/kubeconfig.yaml:ro
+      - ${DB_CONFIG:-./db-config.yaml}:/etc/rlark/db-config.yaml:ro
+    depends_on:
+      - rlark-server
+    networks:
+      - rlark-network
+
 volumes:
   kcp-data:
   postgres-data:

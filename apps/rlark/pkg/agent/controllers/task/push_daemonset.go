@@ -61,11 +61,11 @@ func (r *pushDaemonSetReconciler) Reconcile(ctx context.Context, req reconcile.R
 	}
 
 	phase, message := daemonSetPhase(&ds)
-	observedNodes, err := collectObservedNode(ctx, r.c.LocalKubeClient, ds.Namespace, ds.Spec.Selector.MatchLabels)
+	pods, err := listTaskPods(ctx, r.c.LocalKubeClient, ds.Namespace, ds.Spec.Selector.MatchLabels)
 	if err != nil {
-		logger.Error(err, "failed to collect observed nodes")
-		observedNodes = nil
+		logger.Error(err, "failed to list pods")
 	}
+	observedNodes := podNodeNames(pods)
 	return updateMgmtTaskStatus(ctx, logger, r.c.ManagementClient, &mgmtTask, phase, message, observedNodes)
 }
 
