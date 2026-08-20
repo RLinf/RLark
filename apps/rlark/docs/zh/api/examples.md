@@ -1,6 +1,6 @@
 # API 调用示例
 
-本页提供 RLark Gateway HTTP API 的端到端调用示例，重点围绕 **Kubernetes 运行时**（`agentType=Kubernetes`）展开。资源操作和字段定义请查看 [API 参考](reference.md)，机器可读的接口契约请查看 [OpenAPI 规范](swagger.yaml)。
+本页提供 RLark Gateway HTTP API 的端到端调用示例，重点围绕 **Kubernetes 运行时**（`agentType=Kubernetes`）展开。资源操作和字段定义请查看 [API 参考](reference.md)，机器可读的接口契约请查看 [OpenAPI 规范](../../api/swagger.yaml)。
 
 !!! warning "认证限制"
     登录接口只校验内置 Web UI 凭据，不会返回可用于后续请求的 Bearer token 或会话 cookie，其他 Gateway API 也不会根据该结果执行授权。以下命令只应在可信网络中运行，或通过强制实施认证和授权的入口访问。
