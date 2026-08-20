@@ -96,6 +96,14 @@ type TaskStatus struct {
 	Message          string             `json:"message,omitempty"`
 	RetryCount       int32              `json:"retryCount,omitempty"`
 	TensorBoardProxy string             `json:"tensorBoardProxy,omitempty"` // 由 gateway 计算填入，指向对应 Pod 6006 端口的代理相对地址
+	// PullProgress 由数据面节点上的 image pull monitor 上报，仅在 Pod 处于
+	// ContainerCreating（尚未 Running）期间由 cluster-agent 聚合写入。Pod 进入
+	// Running 后被清空。供前端展示镜像拉取进度/速度。
+	PullProgress []PullProgress `json:"pullProgress,omitempty"`
+	// Events 在 Task 处于 Pending 期间由控制面 Task reconciler 从各节点
+	// Node.status.events 聚合而来，包含 DiskPressure 等 Warning 事件及镜像
+	// 拉取/调度相关事件。Task 离开 Pending 后被清空。
+	Events []NodeEvent `json:"events,omitempty"`
 }
 
 // +genclient

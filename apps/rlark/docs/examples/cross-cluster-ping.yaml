@@ -1,0 +1,52 @@
+# Cross-cluster ping test Job
+# The controller-manager will create Task resources from this Job.
+# Task names are derived as {jobName}-{taskName}:
+#   cross-cluster-ping-server → cluster-1 (server)
+#   cross-cluster-ping-client → cluster-2 (client)
+# Task namespace is resolved from nodeSelector: rlark.io/cluster-id → node's namespace.
+apiVersion: rlinf.io/v1alpha1
+kind: Job
+metadata:
+  name: cross-cluster-ping
+spec:
+  domain: cross-cluster-net-test
+  tasks:
+  - name: server
+    head: true
+    role: Actor
+    agentType: Kubernetes
+    nodeSelector:
+      rlark.io/cluster-id: rlark-agent-my-cluster-1
+    kubernetes:
+      workload:
+        kind: Deployment
+        replicas: 1
+        template:
+          spec:
+            hostPID: true
+            restartPolicy: Always
+            containers:
+            - name: server
+              image: localhost:5555/busybox:latest
+              imagePullPolicy: IfNotPresent
+              command: ["sh", "-c", "while true; do echo -e 'HTTP/1.1 200 OK\r\nContent-Length: 17\r\nConnection: close\r\n\r\nhello from server' | nc -l -p 8000; done"]
+              ports:
+              - containerPort: 8000
+  - name: client
+    role: Head
+    agentType: Kubernetes
+    nodeSelector:
+      rlark.io/cluster-id: rlark-agent-my-cluster-2
+    kubernetes:
+      workload:
+        kind: Deployment
+        replicas: 1
+        template:
+          spec:
+            hostPID: true
+            restartPolicy: Always
+            containers:
+            - name: client
+              image: localhost:5555/busybox:latest
+              imagePullPolicy: IfNotPresent
+              command: ["sleep", "infinity"]

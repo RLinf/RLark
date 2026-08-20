@@ -2,6 +2,7 @@ package component
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
@@ -591,10 +592,18 @@ var components = []types.Component{
 				"--leader-election=false",
 				"--mode=node",
 				"--rlark-server-ssh-address=client@" + cfg.ControlPlaneAddress + ":" + strconv.Itoa(constants.ServerSSHPort),
+				// Enable node-level image pre-pulling (containerd/docker). The
+				// node-agent mounts the container runtime socket below.
+				"--image-pull-enabled=true",
 			}
 
 			if cfg.Kubernetes != nil {
 				args = append(args, "--in-cluster")
+				// Override the containerd socket path for non-standard runtimes
+				// such as k3s (/run/k3s/containerd/containerd.sock).
+				if cfg.Kubernetes.ContainerdSocket != "" {
+					args = append(args, "--containerd-socket="+cfg.Kubernetes.ContainerdSocket)
+				}
 			}
 
 			if cfg.InsecureSkipTLSVerify {
@@ -617,6 +626,28 @@ var components = []types.Component{
 			mounts = append(mounts, corev1.VolumeMount{
 				Name:      "nodeserver-socket",
 				MountPath: "/var/run/rlark",
+			})
+			// Mount the host containerd socket so the node-agent can invoke
+			// `ctr` to pre-pull images for Kubernetes/containerd nodes.
+			// When a custom socket path is configured (e.g. k3s uses
+			// /run/k3s/containerd/containerd.sock), mount its parent
+			// directory instead of the default /run/containerd.
+			socketHostDir := "/run/containerd"
+			if cfg.Kubernetes != nil && cfg.Kubernetes.ContainerdSocket != "" {
+				socketHostDir = filepath.Dir(cfg.Kubernetes.ContainerdSocket)
+			}
+			vols = append(vols, corev1.Volume{
+				Name: "containerd-socket",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: socketHostDir,
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectoryOrCreate}[0],
+					},
+				},
+			})
+			mounts = append(mounts, corev1.VolumeMount{
+				Name:      "containerd-socket",
+				MountPath: socketHostDir,
 			})
 			return vols, mounts
 		},
@@ -1011,6 +1042,12 @@ func DaemonSet(cfg *types.DeployConfig, c *types.Component) *appsv1.DaemonSet {
 			envs = append(envs, corev1.EnvVar{Name: k, Value: v})
 		}
 		ds.Spec.Template.Spec.Containers[0].Env = envs
+	}
+
+	// K8sEnvFn injects downward-API / FieldRef env vars (e.g. NODE_NAME for the
+	// node-agent image-pull feature). Mirrors the StatefulSet behavior.
+	if c.K8sEnvFn != nil {
+		ds.Spec.Template.Spec.Containers[0].Env = append(ds.Spec.Template.Spec.Containers[0].Env, c.K8sEnvFn(cfg)...)
 	}
 
 	if c.VolumeFn != nil {

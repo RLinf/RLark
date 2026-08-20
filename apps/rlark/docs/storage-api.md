@@ -1,20 +1,20 @@
-# Storage API 文档
+# Storage API Documentation
 
-## 概述
+## Overview
 
-Storage API 提供多集群 StorageClass 管理能力。Gateway 通过 Server 代理向各数据面 Agent 查询 StorageClass 信息，聚合后返回。
+The Storage API provides multi-cluster StorageClass management. The Gateway queries StorageClass information from each data-plane Agent through the Server proxy, aggregates the results, and returns them.
 
-## API 端点
+## API Endpoints
 
-### 1. 获取 StorageClass 列表
+### 1. List StorageClasses
 **GET** `/api/v1/storage/storageclass`
 
-通过 Server 代理，从指定集群的 Agent 查询 StorageClass 列表。过滤掉默认 StorageClass（`default`、`local-path`、`hostpath`），按名称分组聚合。
+Queries the StorageClass list from Agents in the specified clusters through the Server proxy. Default StorageClasses (`default`, `local-path`, and `hostpath`) are filtered out, and the results are grouped by name.
 
-#### 查询参数
-- `clusters` (可选): 逗号分隔的集群 ID 列表，如 `?clusters=agent-beijing,agent-shanghai`。不传则查询所有集群。
+#### Query Parameters
+- `clusters` (optional): A comma-separated list of cluster IDs, for example `?clusters=agent-beijing,agent-shanghai`. If omitted, all clusters are queried.
 
-#### 响应示例
+#### Example Response
 ```json
 {
   "data": {
@@ -34,60 +34,60 @@ Storage API 提供多集群 StorageClass 管理能力。Gateway 通过 Server �
 }
 ```
 
-| 字段 | 类型 | 说明 |
+| Field | Type | Description |
 |------|------|------|
-| `name` | `string` | StorageClass 名称 |
-| `clusters` | `[]string` | 该 StorageClass 可用的集群 ID 列表 |
-| `description` | `string` | 可读描述 |
-| `bucket` | `string` | 存储桶名称 |
-| `provider` | `string` | 存储提供商类型（s3, gcs, azureblob 等） |
-| `endpoint` | `string` | 存储服务端点地址 |
-| `region` | `string` | 存储区域 |
-| `pathStyle` | `bool` | 是否使用 path-style 寻址 |
-| `accessKeyId` | `string` | Access Key ID；不会返回 Access Key Secret |
+| `name` | `string` | StorageClass name |
+| `clusters` | `[]string` | IDs of the clusters where this StorageClass is available |
+| `description` | `string` | Human-readable description |
+| `bucket` | `string` | Bucket name |
+| `provider` | `string` | Storage provider type, such as s3, gcs, or azureblob |
+| `endpoint` | `string` | Storage service endpoint |
+| `region` | `string` | Storage region |
+| `pathStyle` | `bool` | Whether path-style addressing is used |
+| `accessKeyId` | `string` | Access Key ID; the Access Key Secret is never returned |
 
-### 2. 获取存储提供商列表
+### 2. List Storage Providers
 **GET** `/api/v1/storage/storageclass/provider`
 
-列出支持的存储提供商列表（AWS S3、阿里云 OSS、MinIO、Ceph 等共 31 个提供商）。
+Lists the supported storage providers, including 31 providers such as AWS S3, Alibaba Cloud OSS, MinIO, and Ceph.
 
-#### 响应示例
+#### Example Response
 ```json
 {
   "data": [
     { "name": "AWS S3", "value": "AWS" },
-    { "name": "阿里云 OSS", "value": "Alibaba" },
+    { "name": "Alibaba Cloud OSS", "value": "Alibaba" },
     { "name": "MinIO", "value": "MinIO" }
   ],
   "success": true
 }
 ```
 
-### 3. 创建 StorageClass
+### 3. Create a StorageClass
 **POST** `/api/v1/storage/storageclass`
 
-在一个或多个集群中创建新的 rclone CSI StorageClass 资源和配套 Secret。
+Creates a new rclone CSI StorageClass resource and its corresponding Secret in one or more clusters.
 
-### 4. 更新 StorageClass
+### 4. Update a StorageClass
 **PUT** `/api/v1/storage/storageclass/{name}`
 
-更新指定 StorageClass 的对象存储配置和关联集群。请求中的 `clusters` 是期望的最终集群集合；已不在集合内的集群会移除该 StorageClass。更新时 `access_key_secret` 可留空，Gateway 会尽量复用已有 Secret 中的密钥。
+Updates the object storage configuration and associated clusters for the specified StorageClass. The `clusters` field in the request is the desired final set of clusters; the StorageClass is removed from clusters no longer included in that set. During an update, `access_key_secret` may be left empty, and the Gateway will attempt to reuse the key from an existing Secret.
 
-### 5. 删除 StorageClass
+### 5. Delete a StorageClass
 **DELETE** `/api/v1/storage/storageclass/{name}`
 
-从所有已关联集群删除指定 StorageClass 和配套 Secret。可通过查询参数 `clusters=agent-a,agent-b` 限制删除范围。
+Deletes the specified StorageClass and its corresponding Secret from all associated clusters. Use the `clusters=agent-a,agent-b` query parameter to limit the deletion scope.
 
-### 6. 列出存储桶文件
+### 6. List Bucket Files
 **GET** `/api/v1/storage/storageclass/{cluster}/{name}/list`
 
-列出指定集群中 StorageClass 存储桶下的文件列表。
+Lists files in the StorageClass bucket in the specified cluster.
 
-#### 路径参数
-- `cluster`：集群 ID（如 `agent-beijing`）
-- `name`：StorageClass 名称
+#### Path Parameters
+- `cluster`: Cluster ID, such as `agent-beijing`
+- `name`: StorageClass name
 
-#### 响应示例
+#### Example Response
 ```json
 {
   "data": [
@@ -98,19 +98,19 @@ Storage API 提供多集群 StorageClass 管理能力。Gateway 通过 Server �
 }
 ```
 
-### 7. 上传文件
+### 7. Upload a File
 **POST** `/api/v1/storage/storageclass/{cluster}/{name}/upload`
 
-向指定 StorageClass 存储桶上传文件，使用 multipart/form-data 格式。
+Uploads a file to the specified StorageClass bucket using multipart/form-data.
 
-#### 路径参数
-- `cluster`：集群 ID
-- `name`：StorageClass 名称
+#### Path Parameters
+- `cluster`: Cluster ID
+- `name`: StorageClass name
 
-#### 请求体
-multipart/form-data，字段 `file` 为上传的文件。
+#### Request Body
+Use multipart/form-data with the uploaded file in the `file` field.
 
-#### 响应示例
+#### Example Response
 ```json
 {
   "data": {"key": "model-checkpoint.pt", "size": 1048576},
@@ -118,31 +118,31 @@ multipart/form-data，字段 `file` 为上传的文件。
 }
 ```
 
-### 8. 下载文件
+### 8. Download a File
 **GET** `/api/v1/storage/storageclass/{cluster}/{name}/object/*key`
 
-下载指定存储桶中的对象，返回原始文件内容。
+Downloads an object from the specified bucket and returns the raw file content.
 
-#### 路径参数
-- `cluster`：集群 ID
-- `name`：StorageClass 名称
-- `key`：对象路径（如 `model-checkpoint.pt` 或 `logs/training.log`）
+#### Path Parameters
+- `cluster`: Cluster ID
+- `name`: StorageClass name
+- `key`: Object path, such as `model-checkpoint.pt` or `logs/training.log`
 
-#### 响应
-- `200`：文件内容（二进制流）
-- `404`：文件不存在
+#### Response
+- `200`: File content as a binary stream
+- `404`: File not found
 
-### 7. 删除文件
+### 9. Delete a File
 **DELETE** `/api/v1/storage/storageclass/{cluster}/{name}/object/*key`
 
-删除指定存储桶中的对象。
+Deletes an object from the specified bucket.
 
-#### 路径参数
-- `cluster`：集群 ID
-- `name`：StorageClass 名称
-- `key`：对象路径
+#### Path Parameters
+- `cluster`: Cluster ID
+- `name`: StorageClass name
+- `key`: Object path
 
-#### 响应示例
+#### Example Response
 ```json
 {
   "data": {"deleted": true},
@@ -150,26 +150,26 @@ multipart/form-data，字段 `file` 为上传的文件。
 }
 ```
 
-## 实现说明
+## Implementation Notes
 
-### 多集群代理架构
+### Multi-cluster Proxy Architecture
 
 ```
 Gateway ──▶ Server ──▶ Agent (cluster A) ──▶ K8s API (list StorageClasses)
                   ──▶ Agent (cluster B) ──▶ K8s API (list StorageClasses)
 ```
 
-1. Gateway 接收请求后，解析 `clusters` 参数获取目标集群列表
-2. 通过 Server 的代理接口 (`/api/proxy/{agentID}/api/kubernetes/apis/storage.k8s.io/v1/storageclasses`) 向各 Agent 发起查询
-3. Agent 查询本地 K8s 集群的 StorageClass 资源
-4. Gateway 聚合结果：过滤默认 StorageClass，按名称分组，汇总各集群信息
+1. After receiving a request, the Gateway parses the `clusters` parameter to determine the target clusters.
+2. It queries each Agent through the Server proxy endpoint (`/api/proxy/{agentID}/api/kubernetes/apis/storage.k8s.io/v1/storageclasses`).
+3. Each Agent queries StorageClass resources in its local Kubernetes cluster.
+4. The Gateway aggregates the results by filtering out default StorageClasses, grouping entries by name, and combining their cluster information.
 
-### 文件结构
-- **`../pkg/gateway/storage_handler.go`** - 存储 API 处理函数
-- **`../pkg/gateway/clusters_handler.go`** - 集群列表聚合
-- **`../pkg/gateway/router.go`** - 路由注册
+### File Structure
+- **`../pkg/gateway/storage_handler.go`** - Storage API handlers
+- **`../pkg/gateway/clusters_handler.go`** - Cluster list aggregation
+- **`../pkg/gateway/router.go`** - Route registration
 
-### 数据结构
+### Data Structures
 ```go
 type StorageClassData struct {
     Name        string   `json:"name"`
@@ -188,30 +188,30 @@ type Provider struct {
 }
 ```
 
-### Agent RBAC 要求
+### Agent RBAC Requirements
 
-Agent 需要 `storage.k8s.io` API 组的 `storageclasses` 资源读取权限，`rlarkadm` 部署时自动配置。
+The Agent requires read access to the `storageclasses` resource in the `storage.k8s.io` API group. `rlarkadm` configures this permission automatically during deployment.
 
-## 使用示例
+## Usage Examples
 
-### 获取所有集群的 StorageClass
+### List StorageClasses in All Clusters
 ```bash
 curl "http://localhost:8080/api/v1/storage/storageclass"
 ```
 
-### 获取指定集群的 StorageClass
+### List StorageClasses in a Specific Cluster
 ```bash
 curl "http://localhost:8080/api/v1/storage/storageclass?clusters=agent-beijing"
 ```
 
-### 获取存储提供商列表
+### List Storage Providers
 ```bash
 curl "http://localhost:8080/api/v1/storage/storageclass/provider"
 ```
 
-## 与 Task PVC 挂载的集成
+## Integration with Task PVC Mounts
 
-Task 通过 `pvcStorageMap` 声明需要挂载的 PVC：
+A Task declares the PVCs it needs to mount through `pvcStorageMap`:
 
 ```yaml
 kubernetes:
@@ -220,4 +220,4 @@ kubernetes:
       my-data-pvc: "ceph-rbd"
 ```
 
-Agent 的 Pull 控制器在创建 workload 前，调用 `ensurePVCs` 根据 `pvcStorageMap` 创建对应的 PVC。前端通过 Storage API 获取可用 StorageClass 列表供用户选择。
+Before creating a workload, the Agent pull controller calls `ensurePVCs` to create the required PVCs from `pvcStorageMap`. The frontend uses the Storage API to retrieve available StorageClasses for users to select.

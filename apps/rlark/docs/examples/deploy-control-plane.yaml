@@ -24,7 +24,8 @@ kubernetes:
   postgresql-image: postgres:15
   ui-image: rlark-ui:latest
 
-  # 全局默认，所有有状态组件继承（可被组件级覆盖）
+  # 全局副本数会应用到所有组件；维护中的拓扑使用 1。
+  # 多副本不等同于经过验证的 HA，请勿直接用于生产 HA 设计。
   #replicas: 1
   storage:
     type: pvc   # emptyDir | hostPath | pvc
@@ -43,16 +44,16 @@ kubernetes:
   #    node-selector:
   #      kcp-node: "true"
   #etcd:
-  #  # 方式一：使用外部 etcd（如云托管 etcd），不部署内置 etcd
+  #  使用外部托管 etcd 时不部署内置 etcd
   #  address: https://my-etcd.example.com:2379
-  #
-  #  # 方式二：部署内置 etcd 集群（多实例 KCP 时建议奇数节点）
-  #  replicas: 3
+  #  内置 etcd 的维护中配置为单副本，不提供经过验证的生产 HA 拓扑
+  #  replicas: 1
   #  storage:
   #    type: pvc
   #    storage-class: ""
   #    size: 8Gi
   #postgresql:
+  #  rlarkadm 不配置 PostgreSQL 主备复制；生产 HA 请使用外部托管数据库
   #  replicas: 1
   #  storage:
   #    type: pvc

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { type Cluster, clusters, type Job, type JobType } from "../data";
 import type { Copy } from "../i18n";
 import type { RoleResource } from "../types";
@@ -11,19 +11,134 @@ import {
 } from "../utils/job";
 import { toYaml } from "../utils/yaml";
 import { useNodeLabels } from "../utils/nodes";
-import { NodeSelectorPicker, RoleNameInput } from "../components/create";
+import { imageReferenceHasWhitespace } from "../utils/imageReference";
+import { RoleNameInput } from "../components/create";
 import { CodeEditorField } from "../components/CodeEditor";
+import { ResourcePlacementPicker } from "../components/ResourcePlacementPicker";
+
+function ClusterSelect({
+  clusters,
+  value,
+  zh,
+  onChange,
+}: {
+  clusters: Cluster[];
+  value: string;
+  zh: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = clusters.find(
+    (cluster) => cluster.id === value || cluster.name === value,
+  );
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, []);
+
+  const typeLabel = (cluster: Cluster) =>
+    cluster.type === "Embodied"
+      ? zh
+        ? "具身设备集群"
+        : "Embodied"
+      : zh
+        ? "云算力集群"
+        : "Cloud compute";
+  const statusLabel = (cluster: Cluster) =>
+    cluster.phase === "Online"
+      ? zh
+        ? "运行正常"
+        : "Online"
+      : cluster.phase === "Offline"
+        ? zh
+          ? "离线"
+          : "Offline"
+        : zh
+          ? "部分异常"
+          : "Degraded";
+
+  const optionContent = (cluster: Cluster) => (
+    <>
+      <strong>{cluster.name}</strong>
+      <span className="worker-cluster-type">{typeLabel(cluster)}</span>
+      <span className={`worker-cluster-state ${cluster.phase.toLowerCase()}`}>
+        <i aria-hidden="true" />
+        {statusLabel(cluster)}
+      </span>
+    </>
+  );
+
+  return (
+    <div
+      className="worker-cluster-select"
+      ref={rootRef}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && open) {
+          event.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className="worker-cluster-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {selected ? (
+          optionContent(selected)
+        ) : (
+          <span className="worker-cluster-placeholder">
+            {zh ? "请选择集群" : "Select a cluster"}
+          </span>
+        )}
+        <ChevronDown size={15} className={open ? "open" : undefined} />
+      </button>
+      {open && (
+        <div className="worker-cluster-options" role="listbox">
+          {clusters.map((cluster) => {
+            const active = cluster.id === value || cluster.name === value;
+            return (
+              <button
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={active ? "active" : undefined}
+                key={cluster.id}
+                onClick={() => {
+                  onChange(cluster.id);
+                  setOpen(false);
+                }}
+              >
+                {optionContent(cluster)}
+                {active && <Check size={15} className="worker-cluster-check" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function CreateJobModal({
   onClose,
   copy: c,
   cloneJob,
   editJob,
+  restartAfterSave = false,
 }: {
   onClose: () => void;
   copy: Copy;
   cloneJob?: Job | null;
   editJob?: Job | null;
+  restartAfterSave?: boolean;
 }) {
   const zh = c.nav.overview === "总览";
   const isEdit = !!editJob;
@@ -258,7 +373,6 @@ export function CreateJobModal({
   const [roleResources, setRoleResources] = useState<
     Record<string, RoleResource>
   >(sourceJob ? cloneRR : defaultRoleResources);
-  const [roleMaxGPU, setRoleMaxGPU] = useState<Record<string, number>>({});
   const [activeRoleTab, setActiveRoleTab] = useState<string>(roles[0] ?? "");
 
   useEffect(() => {
@@ -551,6 +665,10 @@ export function CreateJobModal({
             : `Select a cluster for ${role}.`;
         if (!resource.image.trim())
           return zh ? `请为 ${role} 输入镜像。` : `Enter an image for ${role}.`;
+        if (imageReferenceHasWhitespace(resource.image))
+          return zh
+            ? `${role} 的镜像地址不能包含空格或其他空白字符。`
+            : `The image reference for ${role} cannot contain spaces or other whitespace.`;
         if (
           !Number.isFinite(Number(resource.replicas)) ||
           resource.replicas < 1
@@ -558,12 +676,44 @@ export function CreateJobModal({
           return zh
             ? `${role} 当前没有匹配到可用节点，请调整集群或节点选择条件。`
             : `${role} has no matched nodes. Adjust its cluster or node selector.`;
-        const maxGpu = roleMaxGPU[role] ?? 0;
-        const curGpu = parseInt(resource.gpu, 10);
-        if (maxGpu > 0 && !isNaN(curGpu) && curGpu > maxGpu)
-          return zh
-            ? `${role} 的 GPU 数量超过最大可用值（${maxGpu}）。`
-            : `${role} GPU exceeds max available (${maxGpu}).`;
+        const selector = parseNodeSelectorStr(resource.nodeSelector);
+        const selectedNames = (selector["kubernetes.io/hostname"] ?? "")
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean);
+        const selectedNodes = allNodes.filter(
+          (node) =>
+            node.metadata.namespace === resource.cluster &&
+            selectedNames.includes(node.metadata.name),
+        );
+        const resourceRequest =
+          resource.gpu && resource.gpu !== "0"
+            ? { key: "nvidia.com/gpu", amount: Number(resource.gpu) }
+            : resource.devices[0]
+              ? {
+                  key: resource.devices[0].name,
+                  amount: Number(resource.devices[0].quantity),
+                }
+              : null;
+        if (resourceRequest && selectedNodes.length > 0) {
+          const freeByNode = selectedNodes.map((node) => {
+            const allocatable = Number(
+              node.status?.allocatable?.[resourceRequest.key] ?? 0,
+            );
+            const used = Number(node.status?.used?.[resourceRequest.key] ?? 0);
+            return Math.max(0, allocatable - used);
+          });
+          const available = freeByNode.reduce((sum, value) => sum + value, 0);
+          const requested = resource.replicas * resourceRequest.amount;
+          if (requested > available)
+            return zh
+              ? `${role} 申请 ${requested} 个资源，但所选资源池当前仅可用 ${available} 个。`
+              : `${role} requests ${requested} resources, but only ${available} are free.`;
+          if (freeByNode.every((free) => free < resourceRequest.amount))
+            return zh
+              ? `${role} 每个 Worker 申请 ${resourceRequest.amount} 个资源，但没有单个节点能够满足。`
+              : `No node can satisfy ${role}'s per-worker request of ${resourceRequest.amount}.`;
+        }
         for (const mount of resource.mounts) {
           if (!mount.mountPath.trim())
             return zh
@@ -622,10 +772,23 @@ export function CreateJobModal({
         ? `/api/v1/rlinf.io/v1alpha1/jobs/${editJob!.name}`
         : "/api/v1/rlinf.io/v1alpha1/jobs";
       const method = isEdit ? "PUT" : "POST";
+      const requestBody =
+        isEdit && restartAfterSave
+          ? {
+              ...crd,
+              metadata: {
+                ...crd.metadata,
+                annotations: {
+                  "rlark.io/restarted-at": new Date().toISOString(),
+                },
+              },
+              spec: { ...crd.spec, stopped: false },
+            }
+          : crd;
       const resp = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(crd),
+        body: JSON.stringify(requestBody),
       });
       if (!resp.ok) {
         const body = await resp.text();
@@ -651,10 +814,26 @@ export function CreateJobModal({
         <div className="modal-head">
           <div>
             <span className="eyebrow">
-              {isEdit ? (zh ? "编辑任务" : "EDIT JOB") : "NEW JOB"}
+              {isEdit
+                ? restartAfterSave
+                  ? zh
+                    ? "编辑后重启"
+                    : "EDIT & RESTART"
+                  : zh
+                    ? "编辑任务"
+                    : "EDIT JOB"
+                : "NEW JOB"}
             </span>
             <h2>
-              {isEdit ? (zh ? "编辑任务" : "Edit Job") : c.jobs.createTitle}
+              {isEdit
+                ? restartAfterSave
+                  ? zh
+                    ? "编辑并重启任务"
+                    : "Edit and restart job"
+                  : zh
+                    ? "编辑任务"
+                    : "Edit Job"
+                : c.jobs.createTitle}
             </h2>
           </div>
           <button
@@ -797,6 +976,13 @@ export function CreateJobModal({
                   if (!role) return null;
                   const rr = roleResources[role];
                   if (!rr) return null;
+                  const imageHasWhitespace = imageReferenceHasWhitespace(
+                    rr.image,
+                  );
+                  const imageErrorId = `image-error-${role.replace(
+                    /[^a-zA-Z0-9_-]/g,
+                    "-",
+                  )}`;
                   return (
                     <div className="role-resource-card" key={role}>
                       <div className="form-section-head">
@@ -813,436 +999,306 @@ export function CreateJobModal({
                           </span>
                         )}
                       </div>
-                      <div className="form-row">
-                        <label>
-                          {zh ? "集群" : "Cluster"}
-                          <select
+                      <section className="worker-config-section worker-placement-section">
+                        <header className="worker-config-section-head">
+                          <span className="worker-config-section-index">1</span>
+                          <div>
+                            <strong>
+                              {zh ? "部署位置与资源" : "Placement & resources"}
+                            </strong>
+                            <small>
+                              {zh
+                                ? "选择设备规格和单 Worker 用量，再设置调度方式"
+                                : "Choose a device specification and per-Worker request, then set scheduling"}
+                            </small>
+                          </div>
+                        </header>
+                        <div className="worker-cluster-field">
+                          <span>{zh ? "目标集群" : "Target cluster"}</span>
+                          <ClusterSelect
+                            clusters={availableClusters}
                             value={rr.cluster}
-                            onChange={(e) => {
-                              const newCluster = e.target.value;
+                            zh={zh}
+                            onChange={(newCluster) => {
                               updateRR(role, "cluster", newCluster);
                               if (rr.mounts.some((m) => m.type === "storage")) {
                                 fetchStorageClasses(newCluster);
                               }
                             }}
-                          >
-                            <option value="" disabled>
-                              {zh ? "请选择集群" : "Select a cluster"}
-                            </option>
-                            {availableClusters.map((cl) => (
-                              <option key={cl.id} value={cl.id}>
-                                {cl.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
-                      <div className="form-section" style={{ marginTop: 12 }}>
-                        <div className="form-section-head">
-                          <small>{zh ? "节点选择" : "Node Selector"}</small>
+                          />
                         </div>
-                        <NodeSelectorPicker
-                          value={rr.nodeSelector}
-                          onChange={(v) => updateRR(role, "nodeSelector", v)}
+                        <ResourcePlacementPicker
                           zh={zh}
                           cluster={rr.cluster}
                           nodes={allNodes}
                           loading={nodesLoading}
-                          onMatchedCount={(n) => updateRR(role, "replicas", n)}
-                          onMaxGPU={(gpu) => {
-                            setRoleMaxGPU((prev) => {
-                              if (prev[role] === gpu) return prev;
-                              return { ...prev, [role]: gpu };
-                            });
-                            setRoleResources((prev) => {
-                              const cur = prev[role];
-                              if (!cur) return prev;
-                              const curGPU = parseInt(cur.gpu, 10);
-                              if (
-                                isNaN(curGPU) ||
-                                curGPU === 0 ||
-                                curGPU > gpu
-                              ) {
-                                if (gpu > 0) {
-                                  return {
-                                    ...prev,
-                                    [role]: { ...cur, gpu: String(gpu) },
-                                  };
-                                }
-                              }
-                              return prev;
-                            });
-                          }}
-                        />
-                      </div>
-                      <div
-                        className="resource-input-row"
-                        style={{ gridTemplateColumns: "1fr 1fr" }}
-                      >
-                        <label>
-                          {zh ? "已选节点数" : "Number of selected nodes"}
-                          <input
-                            type="number"
-                            value={rr.replicas}
-                            readOnly
-                            style={{ opacity: 0.6 }}
-                          />
-                        </label>
-                        <label>
-                          <span className="label-row">
-                            GPU
-                            {(() => {
-                              const maxGpu = roleMaxGPU[role] ?? 0;
-                              const curGpu = parseInt(rr.gpu, 10);
-                              if (
-                                maxGpu > 0 &&
-                                !isNaN(curGpu) &&
-                                curGpu > maxGpu
-                              ) {
-                                return (
-                                  <small
-                                    className="label-hint"
-                                    style={{ color: "var(--red, #cf3f61)" }}
-                                  >
-                                    {zh
-                                      ? `（超过最大 ${maxGpu}）`
-                                      : ` (exceeds max ${maxGpu})`}
-                                  </small>
-                                );
-                              }
-                              if (maxGpu > 0)
-                                return (
-                                  <small className="label-hint">
-                                    {zh
-                                      ? `（最大 ${maxGpu}）`
-                                      : ` (max ${maxGpu})`}
-                                  </small>
-                                );
-                              return null;
-                            })()}
-                          </span>
-                          <input
-                            type="number"
-                            value={rr.gpu}
-                            onChange={(e) =>
-                              updateRR(role, "gpu", e.target.value)
-                            }
-                            placeholder="0"
-                          />
-                        </label>
-                      </div>
-                      {(() => {
-                        const clusterNodes = allNodes.filter((n) => {
-                          const ns = n.metadata.namespace ?? "";
-                          return ns === rr.cluster;
-                        });
-                        const deviceSet = new Set<string>();
-                        for (const n of clusterNodes) {
-                          const alloc = n.status?.allocatable ?? {};
-                          for (const k of Object.keys(alloc)) {
-                            if (k.startsWith("rlinf.io/")) deviceSet.add(k);
+                          replicas={rr.replicas}
+                          gpu={rr.gpu}
+                          devices={rr.devices ?? []}
+                          onChange={(placement) =>
+                            setRoleResources((previous) => ({
+                              ...previous,
+                              [role]: { ...previous[role], ...placement },
+                            }))
                           }
-                        }
-                        const availableDevices = Array.from(deviceSet).sort();
-                        return (rr.devices ?? []).length > 0 ||
-                          availableDevices.length > 0 ? (
-                          <div
-                            className="form-section"
-                            style={{ marginTop: 12 }}
-                          >
-                            <div className="form-section-head">
-                              <small>
-                                {zh ? "设备资源" : "Device Resources"}
-                              </small>
-                              {availableDevices.length > 0 && (
-                                <button
-                                  type="button"
-                                  className="secondary-button"
-                                  style={{ padding: "2px 10px", fontSize: 12 }}
-                                  onClick={() => {
-                                    const next = [
-                                      ...(rr.devices ?? []),
-                                      {
-                                        name: availableDevices[0] ?? "",
-                                        quantity: "1",
-                                      },
-                                    ];
-                                    updateRR(role, "devices", next);
-                                  }}
-                                >
-                                  <Plus size={13} />
-                                  {zh ? "添加" : "Add"}
-                                </button>
-                              )}
-                            </div>
-                            {(rr.devices ?? []).map((dev, di) => (
-                              <div key={di} className="device-row">
-                                <select
-                                  value={dev.name}
-                                  onChange={(e) => {
-                                    const next = [...(rr.devices ?? [])];
-                                    next[di] = {
-                                      ...next[di],
-                                      name: e.target.value,
-                                    };
-                                    updateRR(role, "devices", next);
-                                  }}
-                                >
-                                  <option value="">
-                                    {zh ? "选择设备" : "Select device"}
-                                  </option>
-                                  {availableDevices.map((d) => (
-                                    <option key={d} value={d}>
-                                      {d}
-                                    </option>
-                                  ))}
-                                  {dev.name &&
-                                    !availableDevices.includes(dev.name) && (
-                                      <option value={dev.name}>
-                                        {dev.name}
-                                      </option>
-                                    )}
-                                </select>
-                                <input
-                                  value={dev.quantity}
-                                  onChange={(e) => {
-                                    const next = [...(rr.devices ?? [])];
-                                    next[di] = {
-                                      ...next[di],
-                                      quantity: e.target.value,
-                                    };
-                                    updateRR(role, "devices", next);
-                                  }}
-                                  placeholder="1"
-                                />
-                                <button
-                                  type="button"
-                                  className="icon-button danger"
-                                  onClick={() => {
-                                    const next = (rr.devices ?? []).filter(
-                                      (_, j) => j !== di,
-                                    );
-                                    updateRR(role, "devices", next);
-                                  }}
-                                >
-                                  <X size={14} />
-                                </button>
-                              </div>
-                            ))}
+                        />
+                      </section>
+                      <section className="worker-config-section worker-runtime-section">
+                        <header className="worker-config-section-head">
+                          <span className="worker-config-section-index">2</span>
+                          <div>
+                            <strong>
+                              {zh ? "容器运行配置" : "Container runtime"}
+                            </strong>
+                            <small>
+                              {zh
+                                ? "配置镜像、启动前脚本、环境变量和存储挂载"
+                                : "Configure image, prepare script, environment and storage"}
+                            </small>
                           </div>
-                        ) : null;
-                      })()}
-                      <div className="form-section" style={{ marginTop: 12 }}>
-                        <div className="form-section-head">
-                          <small>{zh ? "镜像" : "Image"}</small>
-                        </div>
-                        <input
-                          value={rr.image}
-                          onChange={(e) =>
-                            updateRR(role, "image", e.target.value)
-                          }
-                          placeholder={
-                            zh
-                              ? "请填写集群可访问的镜像地址"
-                              : "Enter an image address accessible from the cluster"
-                          }
-                        />
-                      </div>
-                      <div className="form-section" style={{ marginTop: 12 }}>
-                        <div className="form-section-head">
-                          <small>
-                            {zh
-                              ? "准备脚本 (Ray 启动前)"
-                              : "Prepare Script (before Ray starts)"}
-                          </small>
-                        </div>
-                        <CodeEditorField
-                          value={rr.prepareScript}
-                          onChange={(e) =>
-                            updateRR(role, "prepareScript", e.target.value)
-                          }
-                          minHeight={92}
-                          label={`${role}/prepare.sh`}
-                          placeholder={
-                            zh
-                              ? "pip install ray[default] or other setup commands"
-                              : "pip install ray[default] or other setup commands"
-                          }
-                        />
-                      </div>
-                      <div className="form-section" style={{ marginTop: 12 }}>
-                        <div className="form-section-head">
-                          <small>
-                            {zh ? "环境变量" : "Environment Variables"}
-                          </small>
-                          <button
-                            className="secondary-button"
-                            onClick={() => addRREnv(role)}
-                          >
-                            <Plus size={14} />
-                            {zh ? "添加" : "Add"}
-                          </button>
-                        </div>
-                        {rr.envs.map((env, index) => (
-                          <div className="env-row" key={index}>
-                            <input
-                              value={env.key}
-                              onChange={(e) =>
-                                updateRREnv(role, index, "key", e.target.value)
-                              }
-                              placeholder="KEY"
-                            />
-                            <input
-                              value={env.value}
-                              onChange={(e) =>
-                                updateRREnv(
-                                  role,
-                                  index,
-                                  "value",
-                                  e.target.value,
-                                )
-                              }
-                              placeholder="value"
-                            />
-                            <button
-                              className="icon-button danger"
-                              onClick={() => removeRREnv(role, index)}
+                        </header>
+                        <div className="form-section" style={{ marginTop: 12 }}>
+                          <div className="form-section-head">
+                            <small>{zh ? "镜像" : "Image"}</small>
+                          </div>
+                          <input
+                            value={rr.image}
+                            onChange={(e) =>
+                              updateRR(role, "image", e.target.value)
+                            }
+                            className={
+                              imageHasWhitespace ? "input-invalid" : undefined
+                            }
+                            aria-invalid={imageHasWhitespace}
+                            aria-describedby={
+                              imageHasWhitespace ? imageErrorId : undefined
+                            }
+                            placeholder={
+                              zh
+                                ? "例如：docker.io/library/ubuntu:22.04（需确保集群可访问）"
+                                : "Example: docker.io/library/ubuntu:22.04 (must be cluster-accessible)"
+                            }
+                          />
+                          {imageHasWhitespace && (
+                            <small
+                              className="field-validation-error"
+                              id={imageErrorId}
+                              role="alert"
                             >
-                              <X size={14} />
+                              {zh
+                                ? "镜像地址不能包含空格或其他空白字符。"
+                                : "Image references cannot contain spaces or other whitespace."}
+                            </small>
+                          )}
+                        </div>
+                        <div className="form-section" style={{ marginTop: 12 }}>
+                          <div className="form-section-head">
+                            <small>
+                              {zh
+                                ? "准备脚本 (Ray 启动前)"
+                                : "Prepare Script (before Ray starts)"}
+                            </small>
+                          </div>
+                          <CodeEditorField
+                            value={rr.prepareScript}
+                            onChange={(e) =>
+                              updateRR(role, "prepareScript", e.target.value)
+                            }
+                            minHeight={92}
+                            label={`${role}/prepare.sh`}
+                            placeholder={
+                              zh
+                                ? "pip install ray[default] or other setup commands"
+                                : "pip install ray[default] or other setup commands"
+                            }
+                          />
+                        </div>
+                        <div className="form-section" style={{ marginTop: 12 }}>
+                          <div className="form-section-head">
+                            <small>
+                              {zh ? "环境变量" : "Environment Variables"}
+                            </small>
+                            <button
+                              className="secondary-button"
+                              onClick={() => addRREnv(role)}
+                            >
+                              <Plus size={14} />
+                              {zh ? "添加" : "Add"}
                             </button>
                           </div>
-                        ))}
-                      </div>
-                      <div className="form-section" style={{ marginTop: 12 }}>
-                        <div className="form-section-head">
-                          <small>{zh ? "存储挂载" : "Volume Mounts"}</small>
-                          <button
-                            className="secondary-button"
-                            onClick={() => addRRMount(role)}
-                          >
-                            <Plus size={14} />
-                            {zh ? "添加" : "Add"}
-                          </button>
-                        </div>
-                        {rr.mounts.map((mount, index) => (
-                          <div className="mount-row" key={index}>
-                            <div
-                              className="mount-type-toggle"
-                              onClick={(e) => {
-                                const next =
-                                  mount.type === "storage" ? "host" : "storage";
-                                updateRRMount(role, index, "type", next);
-                                if (next === "storage") {
-                                  fetchStorageClasses(rr.cluster);
-                                }
-                              }}
-                            >
-                              <button
-                                type="button"
-                                className={
-                                  mount.type === "host" ? "active" : ""
-                                }
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  updateRRMount(role, index, "type", "host");
-                                }}
-                              >
-                                {zh ? "主机目录" : "Host directory"}
-                              </button>
-                              <button
-                                type="button"
-                                className={
-                                  mount.type === "storage" ? "active" : ""
-                                }
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  updateRRMount(role, index, "type", "storage");
-                                  fetchStorageClasses(rr.cluster);
-                                }}
-                              >
-                                {zh ? "对象存储" : "Object storage"}
-                              </button>
-                            </div>
-                            <label className="mount-field-box">
-                              <span>
-                                {mount.type === "storage"
-                                  ? zh
-                                    ? "对象存储"
-                                    : "Object storage"
-                                  : zh
-                                    ? "主机目录"
-                                    : "Host directory"}
-                              </span>
-                              {mount.type === "storage" ? (
-                                <select
-                                  value={mount.objectStorage}
-                                  onChange={(e) =>
-                                    updateRRMount(
-                                      role,
-                                      index,
-                                      "objectStorage",
-                                      e.target.value,
-                                    )
-                                  }
-                                >
-                                  <option value="">
-                                    {storageClassFetched &&
-                                    storageClasses.length === 0
-                                      ? zh
-                                        ? "无可用存储类"
-                                        : "No storage classes"
-                                      : zh
-                                        ? "选择存储类"
-                                        : "Select storage class"}
-                                  </option>
-                                  {storageClasses.map((sc) => (
-                                    <option key={sc.name} value={sc.name}>
-                                      {sc.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <input
-                                  value={mount.hostPath}
-                                  onChange={(e) =>
-                                    updateRRMount(
-                                      role,
-                                      index,
-                                      "hostPath",
-                                      e.target.value,
-                                    )
-                                  }
-                                  placeholder="/host/path"
-                                />
-                              )}
-                            </label>
-                            <label className="mount-field-box">
-                              <span>
-                                {zh ? "挂载到 Worker" : "Mount in worker"}
-                              </span>
+                          {rr.envs.map((env, index) => (
+                            <div className="env-row" key={index}>
                               <input
-                                value={mount.mountPath}
+                                value={env.key}
                                 onChange={(e) =>
-                                  updateRRMount(
+                                  updateRREnv(
                                     role,
                                     index,
-                                    "mountPath",
+                                    "key",
                                     e.target.value,
                                   )
                                 }
-                                placeholder="/mnt/data"
+                                placeholder="KEY"
                               />
-                            </label>
+                              <input
+                                value={env.value}
+                                onChange={(e) =>
+                                  updateRREnv(
+                                    role,
+                                    index,
+                                    "value",
+                                    e.target.value,
+                                  )
+                                }
+                                placeholder="value"
+                              />
+                              <button
+                                className="icon-button danger"
+                                onClick={() => removeRREnv(role, index)}
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="form-section" style={{ marginTop: 12 }}>
+                          <div className="form-section-head">
+                            <small>{zh ? "存储挂载" : "Volume Mounts"}</small>
                             <button
-                              className="icon-button danger"
-                              onClick={() => removeRRMount(role, index)}
-                              title={zh ? "删除" : "Delete"}
+                              className="secondary-button"
+                              onClick={() => addRRMount(role)}
                             >
-                              <Trash2 size={14} />
+                              <Plus size={14} />
+                              {zh ? "添加" : "Add"}
                             </button>
                           </div>
-                        ))}
-                      </div>
+                          {rr.mounts.map((mount, index) => (
+                            <div className="mount-row" key={index}>
+                              <div
+                                className="mount-type-toggle"
+                                onClick={(e) => {
+                                  const next =
+                                    mount.type === "storage"
+                                      ? "host"
+                                      : "storage";
+                                  updateRRMount(role, index, "type", next);
+                                  if (next === "storage") {
+                                    fetchStorageClasses(rr.cluster);
+                                  }
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  className={
+                                    mount.type === "host" ? "active" : ""
+                                  }
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    updateRRMount(role, index, "type", "host");
+                                  }}
+                                >
+                                  {zh ? "主机目录" : "Host directory"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className={
+                                    mount.type === "storage" ? "active" : ""
+                                  }
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    updateRRMount(
+                                      role,
+                                      index,
+                                      "type",
+                                      "storage",
+                                    );
+                                    fetchStorageClasses(rr.cluster);
+                                  }}
+                                >
+                                  {zh ? "对象存储" : "Object storage"}
+                                </button>
+                              </div>
+                              <label className="mount-field-box">
+                                <span>
+                                  {mount.type === "storage"
+                                    ? zh
+                                      ? "对象存储"
+                                      : "Object storage"
+                                    : zh
+                                      ? "主机目录"
+                                      : "Host directory"}
+                                </span>
+                                {mount.type === "storage" ? (
+                                  <select
+                                    value={mount.objectStorage}
+                                    onChange={(e) =>
+                                      updateRRMount(
+                                        role,
+                                        index,
+                                        "objectStorage",
+                                        e.target.value,
+                                      )
+                                    }
+                                  >
+                                    <option value="">
+                                      {storageClassFetched &&
+                                      storageClasses.length === 0
+                                        ? zh
+                                          ? "无可用存储类"
+                                          : "No storage classes"
+                                        : zh
+                                          ? "选择存储类"
+                                          : "Select storage class"}
+                                    </option>
+                                    {storageClasses.map((sc) => (
+                                      <option key={sc.name} value={sc.name}>
+                                        {sc.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    value={mount.hostPath}
+                                    onChange={(e) =>
+                                      updateRRMount(
+                                        role,
+                                        index,
+                                        "hostPath",
+                                        e.target.value,
+                                      )
+                                    }
+                                    placeholder="/host/path"
+                                  />
+                                )}
+                              </label>
+                              <label className="mount-field-box">
+                                <span>
+                                  {zh ? "挂载到 Worker" : "Mount in worker"}
+                                </span>
+                                <input
+                                  value={mount.mountPath}
+                                  onChange={(e) =>
+                                    updateRRMount(
+                                      role,
+                                      index,
+                                      "mountPath",
+                                      e.target.value,
+                                    )
+                                  }
+                                  placeholder="/mnt/data"
+                                />
+                              </label>
+                              <button
+                                className="icon-button danger"
+                                onClick={() => removeRRMount(role, index)}
+                                title={zh ? "删除" : "Delete"}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
                     </div>
                   );
                 })()}
@@ -1419,10 +1475,14 @@ export function CreateJobModal({
                     : "Submitting…"
                   : zh
                     ? isEdit
-                      ? "保存修改"
+                      ? restartAfterSave
+                        ? "保存并重启"
+                        : "保存修改"
                       : "提交任务"
                     : isEdit
-                      ? "Save Changes"
+                      ? restartAfterSave
+                        ? "Save & Restart"
+                        : "Save Changes"
                       : "Submit Job"}
               </button>
             )}

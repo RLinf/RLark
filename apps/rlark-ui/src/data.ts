@@ -1,4 +1,4 @@
-import type { CRDWorkflow } from "./types";
+import type { CRDWorkflow, NodeEventEntry } from "./types";
 
 export type Phase =
   | "Running"
@@ -51,6 +51,15 @@ export interface NodeItem {
   tasks: number;
 }
 
+export interface PullProgressEntry {
+  image: string;
+  downloaded: number;
+  total: number;
+  speed: number;
+  status: string;
+  message?: string;
+}
+
 export interface Worker {
   id: string;
   name: string;
@@ -63,6 +72,11 @@ export interface Worker {
   gpu?: string;
   webTerminalUrl?: string;
   logs: string[];
+  pullProgress?: PullProgressEntry[];
+  // 节点级 Warning 事件（DiskPressure 等），来源于 Node.status.events 或
+  // Task.status.events 聚合，仅在 worker 处于 Pending 时填充，供状态
+  // 徽标 "i" tooltip 展示。
+  events?: NodeEventEntry[];
 }
 
 export interface Job {

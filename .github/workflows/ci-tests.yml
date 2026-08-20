@@ -47,6 +47,8 @@ jobs:
             lint_filter:
               - '**/*.go'
               - 'apps/rlark-ui/**'
+              - 'apps/rlark/docs/**'
+              - 'apps/rlark/mkdocs.yml'
               - '**/go.mod'
               - '**/go.sum'
               - '.github/workflows/lint.yml'

@@ -1,8 +1,24 @@
 openapi: 3.0.3
 info:
-  title: Rlinf API
-  description: Kubernetes-style API for rlinf.io resources
+  title: RLark Gateway CRD API
+  description: >-
+    Kubernetes-style API for rlinf.io resources. The Gateway login endpoint
+    does not issue a token or establish a session, and these routes currently
+    do not enforce the UI login result. Deploy the Gateway only on a trusted
+    network or behind an authenticated access-control layer. Domain resources
+    group virtual addresses and scope cross-cluster forwarding; they do not
+    isolate underlying infrastructure or ordinary Kubernetes networking. The
+    registered Gateway certificate-revocation route is not implemented and is
+    intentionally omitted from this specification.
   version: v1alpha1
+
+servers:
+  - url: http://localhost:8080
+    description: Standalone Gateway default
+
+externalDocs:
+  description: API Reference and usage examples
+  url: ./reference/
 
 tags:
   - name: Job
@@ -35,8 +51,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/JobList'
-        '401':
-          description: Unauthorized
 
     post:
       tags: [Job]
@@ -67,29 +81,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
-        '401':
-          description: Unauthorized
-
-    delete:
-      tags: [Job]
-      summary: Delete collection of jobs
-      description: Delete a collection of jobs resources.
-      operationId: deleteCollectionJob
-      parameters:
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/continue'
-        - $ref: '#/components/parameters/limit'
-        - $ref: '#/components/parameters/fieldSelector'
-        - $ref: '#/components/parameters/labelSelector'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-        '401':
-          description: Unauthorized
 
   # ─── Job Named ────────────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/jobs/{name}:
@@ -108,8 +99,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -136,8 +125,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -174,8 +161,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -200,108 +185,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-  # ─── Job Status Subresource ──────────────────────────────────────
-  /api/v1/rlinf.io/v1alpha1/jobs/{name}/status:
-    get:
-      tags: [Job]
-      summary: Get Job status
-      description: Get the status subresource for Job.
-      operationId: readJobStatus
-      parameters:
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Job'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-    put:
-      tags: [Job]
-      summary: Replace Job status
-      description: Replace the status subresource for Job.
-      operationId: replaceJobStatus
-      parameters:
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/fieldManager'
-        - $ref: '#/components/parameters/fieldValidation'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Job'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Job'
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Job'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-    patch:
-      tags: [Job]
-      summary: Patch Job status
-      description: Patch the status subresource for Job.
-      operationId: patchJobStatus
-      parameters:
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/fieldManager'
-        - $ref: '#/components/parameters/fieldValidation'
-        - $ref: '#/components/parameters/force'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Job'
-          application/strategic-merge-patch+json:
-            schema:
-              $ref: '#/components/schemas/Job'
-          application/merge-patch+json:
-            schema:
-              $ref: '#/components/schemas/Job'
-          application/json-patch+json:
-            schema:
-              $ref: '#/components/schemas/JSONPatch'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Job'
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Job'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -318,8 +201,6 @@ paths:
       responses:
         '200':
           description: OK
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
         '501':
@@ -338,8 +219,6 @@ paths:
       responses:
         '200':
           description: OK
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
         '501':
@@ -366,8 +245,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/NodeList'
-        '401':
-          description: Unauthorized
 
     post:
       tags: [Node]
@@ -399,30 +276,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Node'
-        '401':
-          description: Unauthorized
-
-    delete:
-      tags: [Node]
-      summary: Delete collection of nodes
-      description: Delete a collection of nodes resources.
-      operationId: deleteCollectionNode
-      parameters:
-        - $ref: '#/components/parameters/namespace'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/continue'
-        - $ref: '#/components/parameters/limit'
-        - $ref: '#/components/parameters/fieldSelector'
-        - $ref: '#/components/parameters/labelSelector'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-        '401':
-          description: Unauthorized
 
   # ─── Node Named ──────────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/nodes/{name}:
@@ -442,8 +295,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Node'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -471,8 +322,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Node'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -510,8 +359,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Node'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -537,111 +384,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-  # ─── Node Status Subresource ─────────────────────────────────────
-  /api/v1/rlinf.io/v1alpha1/nodes/{name}/status:
-    get:
-      tags: [Node]
-      summary: Get Node status
-      description: Get the status subresource for Node.
-      operationId: readNodeStatus
-      parameters:
-        - $ref: '#/components/parameters/namespace'
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Node'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-    put:
-      tags: [Node]
-      summary: Replace Node status
-      description: Replace the status subresource for Node.
-      operationId: replaceNodeStatus
-      parameters:
-        - $ref: '#/components/parameters/namespace'
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/fieldManager'
-        - $ref: '#/components/parameters/fieldValidation'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Node'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Node'
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Node'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-    patch:
-      tags: [Node]
-      summary: Patch Node status
-      description: Patch the status subresource for Node.
-      operationId: patchNodeStatus
-      parameters:
-        - $ref: '#/components/parameters/namespace'
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/fieldManager'
-        - $ref: '#/components/parameters/fieldValidation'
-        - $ref: '#/components/parameters/force'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Node'
-          application/strategic-merge-patch+json:
-            schema:
-              $ref: '#/components/schemas/Node'
-          application/merge-patch+json:
-            schema:
-              $ref: '#/components/schemas/Node'
-          application/json-patch+json:
-            schema:
-              $ref: '#/components/schemas/JSONPatch'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Node'
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Node'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -666,8 +408,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TaskList'
-        '401':
-          description: Unauthorized
 
     post:
       tags: [Task]
@@ -699,30 +439,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Task'
-        '401':
-          description: Unauthorized
-
-    delete:
-      tags: [Task]
-      summary: Delete collection of tasks
-      description: Delete a collection of tasks resources.
-      operationId: deleteCollectionTask
-      parameters:
-        - $ref: '#/components/parameters/namespace'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/continue'
-        - $ref: '#/components/parameters/limit'
-        - $ref: '#/components/parameters/fieldSelector'
-        - $ref: '#/components/parameters/labelSelector'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-        '401':
-          description: Unauthorized
 
   # ─── Task Named ──────────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/tasks/{name}:
@@ -742,8 +458,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Task'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -771,8 +485,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Task'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -810,8 +522,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Task'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -837,111 +547,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-  # ─── Task Status Subresource ─────────────────────────────────────
-  /api/v1/rlinf.io/v1alpha1/tasks/{name}/status:
-    get:
-      tags: [Task]
-      summary: Get Task status
-      description: Get the status subresource for Task.
-      operationId: readTaskStatus
-      parameters:
-        - $ref: '#/components/parameters/namespace'
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Task'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-    put:
-      tags: [Task]
-      summary: Replace Task status
-      description: Replace the status subresource for Task.
-      operationId: replaceTaskStatus
-      parameters:
-        - $ref: '#/components/parameters/namespace'
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/fieldManager'
-        - $ref: '#/components/parameters/fieldValidation'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Task'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Task'
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Task'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-    patch:
-      tags: [Task]
-      summary: Patch Task status
-      description: Patch the status subresource for Task.
-      operationId: patchTaskStatus
-      parameters:
-        - $ref: '#/components/parameters/namespace'
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/fieldManager'
-        - $ref: '#/components/parameters/fieldValidation'
-        - $ref: '#/components/parameters/force'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Task'
-          application/strategic-merge-patch+json:
-            schema:
-              $ref: '#/components/schemas/Task'
-          application/merge-patch+json:
-            schema:
-              $ref: '#/components/schemas/Task'
-          application/json-patch+json:
-            schema:
-              $ref: '#/components/schemas/JSONPatch'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Task'
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Task'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -965,8 +570,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkflowList'
-        '401':
-          description: Unauthorized
 
     post:
       tags: [Workflow]
@@ -997,29 +600,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Workflow'
-        '401':
-          description: Unauthorized
-
-    delete:
-      tags: [Workflow]
-      summary: Delete collection of workflows
-      description: Delete a collection of workflows resources.
-      operationId: deleteCollectionWorkflow
-      parameters:
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/continue'
-        - $ref: '#/components/parameters/limit'
-        - $ref: '#/components/parameters/fieldSelector'
-        - $ref: '#/components/parameters/labelSelector'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-        '401':
-          description: Unauthorized
 
   # ─── Workflow Named ──────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/workflows/{name}:
@@ -1038,8 +618,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Workflow'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -1066,8 +644,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Workflow'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -1104,8 +680,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Workflow'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 
@@ -1130,108 +704,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-  # ─── Workflow Status Subresource ─────────────────────────────────
-  /api/v1/rlinf.io/v1alpha1/workflows/{name}/status:
-    get:
-      tags: [Workflow]
-      summary: Get Workflow status
-      description: Get the status subresource for Workflow.
-      operationId: readWorkflowStatus
-      parameters:
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workflow'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-    put:
-      tags: [Workflow]
-      summary: Replace Workflow status
-      description: Replace the status subresource for Workflow.
-      operationId: replaceWorkflowStatus
-      parameters:
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/fieldManager'
-        - $ref: '#/components/parameters/fieldValidation'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Workflow'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workflow'
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workflow'
-        '401':
-          description: Unauthorized
-        '404':
-          description: Not Found
-
-    patch:
-      tags: [Workflow]
-      summary: Patch Workflow status
-      description: Patch the status subresource for Workflow.
-      operationId: patchWorkflowStatus
-      parameters:
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/fieldManager'
-        - $ref: '#/components/parameters/fieldValidation'
-        - $ref: '#/components/parameters/force'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Workflow'
-          application/strategic-merge-patch+json:
-            schema:
-              $ref: '#/components/schemas/Workflow'
-          application/merge-patch+json:
-            schema:
-              $ref: '#/components/schemas/Workflow'
-          application/json-patch+json:
-            schema:
-              $ref: '#/components/schemas/JSONPatch'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workflow'
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workflow'
-        '401':
-          description: Unauthorized
         '404':
           description: Not Found
 

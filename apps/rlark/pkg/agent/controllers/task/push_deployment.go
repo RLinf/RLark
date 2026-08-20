@@ -66,11 +66,14 @@ func (r *pushDeploymentReconciler) Reconcile(ctx context.Context, req reconcile.
 	}
 
 	phase, message := deploymentPhase(&deploy)
-	observedNodes, err := collectObservedNode(ctx, r.c.LocalKubeClient, deploy.Namespace, deploy.Spec.Selector.MatchLabels)
+	pods, err := listTaskPods(ctx, r.c.LocalKubeClient, deploy.Namespace, deploy.Spec.Selector.MatchLabels)
 	if err != nil {
-		logger.Error(err, "failed to collect observed nodes")
-		observedNodes = nil
+		logger.Error(err, "failed to list pods")
 	}
+	observedNodes := podNodeNames(pods)
+	// pullProgress aggregation is now performed by the control-plane Task
+	// reconciler from Node.status.pullProgress, so the cluster-agent no
+	// longer reads back Node.status.pullProgress here.
 	return updateMgmtTaskStatus(ctx, logger, r.c.ManagementClient, &mgmtTask, phase, message, observedNodes)
 }
 
@@ -95,7 +98,8 @@ func deploymentPhase(deploy *appsv1.Deployment) (rlarkv1alpha1.TaskPhase, string
 
 // --- shared helper functions for push reconcilers ---
 
-func collectObservedNode(ctx context.Context, localClient client.Client, namespace string, labels map[string]string) ([]string, error) {
+// listTaskPods lists the local pods backing a workload via its selector labels.
+func listTaskPods(ctx context.Context, localClient client.Client, namespace string, labels map[string]string) ([]corev1.Pod, error) {
 	var podList corev1.PodList
 	labelSelector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: labels})
 	if err != nil {
@@ -105,29 +109,44 @@ func collectObservedNode(ctx context.Context, localClient client.Client, namespa
 	if err := localClient.List(ctx, &podList, client.InNamespace(namespace), client.MatchingLabelsSelector{Selector: labelSelector}); err != nil {
 		return nil, fmt.Errorf("failed to list Pods: %w", err)
 	}
+	return podList.Items, nil
+}
 
-	nodes := make([]string, 0, len(podList.Items))
-	for _, pod := range podList.Items {
+// podNodeNames returns the node names where the given pods are scheduled.
+func podNodeNames(pods []corev1.Pod) []string {
+	nodes := make([]string, 0, len(pods))
+	for _, pod := range pods {
 		if pod.Spec.NodeName != "" {
 			nodes = append(nodes, pod.Spec.NodeName)
 		}
 	}
-	return nodes, nil
+	return nodes
 }
 
+// updateMgmtTaskStatus reports the workload phase/message/observedNodes to the
+// management Task status. It does not touch pullProgress: that field is now
+// aggregated by the control-plane Task reconciler from Node.status.pullProgress.
+//
+// A strategic merge patch (client.MergeFrom) is used instead of Update so we
+// only send the fields we own (phase, message, observedNodes). Concurrent
+// writes to Task.status.pullProgress by the control-plane reconciler are
+// preserved.
 func updateMgmtTaskStatus(ctx context.Context, logger logr.Logger, mgmtClient client.Client, mgmtTask *rlarkv1alpha1.Task, phase rlarkv1alpha1.TaskPhase, message string, observedNodes []string) (reconcile.Result, error) {
-	if mgmtTask.Status.Phase == phase && mgmtTask.Status.Message == message {
+	unchanged := mgmtTask.Status.Phase == phase && mgmtTask.Status.Message == message
+
+	if unchanged {
 		logger.V(1).Info("management Task status unchanged, skipping")
 		return reconcile.Result{}, nil
 	}
 
+	original := mgmtTask.DeepCopy()
 	mgmtTask.Status.Phase = phase
 	mgmtTask.Status.Message = message
 	if len(observedNodes) > 0 {
 		mgmtTask.Status.ObservedNodes = observedNodes
 	}
 
-	if err := mgmtClient.Status().Update(ctx, mgmtTask); err != nil {
+	if err := mgmtClient.Status().Patch(ctx, mgmtTask, client.MergeFrom(original)); err != nil {
 		logger.Error(err, "failed to report Task status to management cluster")
 		return reconcile.Result{}, err
 	}

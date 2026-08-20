@@ -21,3 +21,6 @@ coverage.out
 # Dependencies
 **/node_modules/
 .glab/
+
+# MkDocs build output
+**/site/

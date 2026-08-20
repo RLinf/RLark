@@ -1,290 +1,316 @@
 # Quick Start
 
-This guide walks you through setting up rlark locally and running your first training job.
+!!! warning "Development version"
+    RLark does not currently have a stable release. These instructions target the latest `main` branch, which is a development snapshot and may change without backward-compatibility guarantees. Clone or update `main` and build all components from the same commit.
 
-## Prerequisites
+Choose one of two approaches to complete the minimum RLark lifecycle:
+
+| Approach | Description | Best for |
+|----------|-------------|----------|
+| [**A: One-Click Deployment (CLI)**](#a-one-click-deployment-cli) | One script deploys everything: control plane, data plane, cross-cluster test | Quick evaluation, CI/CD |
+| [**B: UI-based (Interactive)**](#b-ui-based-interactive) | Start control plane + UI, then use the admin console to onboard clusters and create jobs | Understanding the workflow, demos |
+
+---
+
+## Environment Requirements
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Go | >= 1.26.5 | Compile Go code |
-| Docker | >= 24.0 | Run kcp and kind clusters |
-| kind | >= 0.20 | Run local k8s data plane cluster |
+| Docker | >= 24.0 | Run containers |
+| kind | >= 0.20 | Run local k8s data plane |
 | kubectl | >= 1.28 | Interact with clusters |
-| jq | >= 1.6 | Parse JSON responses |
+| jq | >= 1.6 | Parse JSON |
+| python3 | >= 3.8 | Process kubeconfig |
+| node + npm | >= 18 | UI dev server (Method B only) |
 
-## 1. Build
-
-```bash
-git clone https://github.com/RLinf/RLark
-cd RLark
-# Linux: make build
-# macOS: GOOS=darwin make build
-make build
-```
-
-After building, the `apps/rlark/bin/` directory contains:
-
-```
-apps/rlark/bin/
-├── server                # Control plane Server
-├── gateway               # API Gateway
-├── controller-manager    # Control plane controllers
-├── agent                 # Data plane Agent
-├── network-sidecar       # Pod network Sidecar
-└── rlarkadm              # Deployment CLI
-```
-
-## 2. Local Development Environment
-
-rlark supports quick local development environment setup via Docker Compose, including kcp cluster, database, and necessary runtime components.
-
-### 2.1 Create runtime directory
+Root access is not required. Your user must be able to access the Docker daemon (for example, through membership in the platform's Docker group or Docker Desktop). Verify access before starting:
 
 ```bash
-mkdir -p ~/.rlark/certs
+docker info
 ```
 
-### 2.2 Start Control Plane
+If this fails with a permission error, fix Docker access according to your operating system's guidance rather than running the entire quick start with `sudo`.
+
+### Recover from a Failed Run
+
+The scripts clean resources left by a previous run when started again. After fixing the reported problem, rerun the same script. If automatic cleanup cannot proceed, clean the local environment first:
 
 ```bash
-# Start kcp and PostgreSQL via Docker Compose
-docker compose -f apps/rlark/docs/examples/docker-compose.yml up -d
-
-# Wait for services to be ready (~30 seconds)
-# Check status
-docker compose -f apps/rlark/docs/examples/docker-compose.yml ps
-
-# Extract admin kubeconfig from kcp container
-docker cp kcp:/.kcp/admin.kubeconfig ~/.rlark/admin.kubeconfig
-
-# Replace Docker internal IP with localhost and skip TLS verification
-# (kcp's TLS certificate is for the Docker IP, not localhost)
-python3 -c "
-import yaml, re
-with open('$HOME/.rlark/admin.kubeconfig') as f:
-    config = yaml.safe_load(f)
-for cluster in config.get('clusters', []):
-    cluster['cluster']['server'] = re.sub(
-        r'https://[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:',
-        'https://localhost:', cluster['cluster']['server'])
-    cluster['cluster']['insecure-skip-tls-verify'] = True
-    cluster['cluster'].pop('certificate-authority-data', None)
-with open('$HOME/.rlark/admin.kubeconfig', 'w') as f:
-    yaml.dump(config, f)
-"
-
-# Install CRDs into kcp (required before starting components)
-kubectl --kubeconfig ~/.rlark/admin.kubeconfig apply -f api/config/crd/bases/
+docker compose -f apps/rlark/docs/examples/docker-compose.yml down -v
+kind delete cluster --name rlark-data-1
+kind delete cluster --name rlark-data-2
+docker rm -f local-registry
+rm -rf /tmp/rlark /tmp/kind-kubeconfig-*
 ```
 
-Components include:
-- **kcp**: API Server (control plane cluster)
-- **postgresql**: rlark operational database
+Cleanup commands can report that absent resources were not found; that is safe to ignore. These commands remove Quick Start state, including the local PostgreSQL volume, so do not use them for an environment whose data you need to retain.
 
-### 2.3 Create Data Plane Kind Cluster
+---
+
+## A: One-Click Deployment (CLI)
+
+One script builds images, starts the control plane, creates kind clusters, deploys agents, and runs a cross-cluster connectivity test.
+
+### 1. Run the Script
 
 ```bash
-# Create kind cluster (if not already created)
-kind create cluster --name rlark-data
-
-# Export kubeconfig
-kind get kubeconfig --name rlark-data > ~/.rlark/kind-kubeconfig
+bash apps/rlark/docs/examples/quickstart.sh
 ```
 
-### 2.4 Start Control Plane Components
+The script completes these steps:
 
-Open three terminals and start Server, Controller-Manager, and Gateway:
+| Step | Description |
+|------|-------------|
+| 0 | Check prerequisites |
+| 1 | Create runtime directory `/tmp/rlark` |
+| 2 | Start local Docker registry |
+| 3 | Build 5 binaries, create Docker image, push to local registry |
+| 4 | Ensure kind node image |
+| 5 | Start kcp and PostgreSQL |
+| 6 | Configure kubeconfig, install CRDs, create UI credentials |
+| 7 | Start control plane (server, gateway, controller-manager) |
+| 8 | Create kind clusters (`rlark-data-1`, `rlark-data-2`) |
+| 9 | Deploy agents (certificates, RBAC, agent deployment) |
+| 10 | Verify node registration |
+| 11 | Create cross-cluster test resources (Workspace, Domain, Job) |
+| 12 | Verify cross-cluster network connectivity |
+
+### 2. Sign in to the UI
+
+After the script completes, start the UI locally:
 
 ```bash
-# Terminal 1: Start Server
-./apps/rlark/bin/server \
-  --kubeconfig ~/.rlark/admin.kubeconfig \
-  --https-port 8443 \
-  --ssh-port 2222 \
-  --auto-sign-tls-ca-cert \
-  --db-config apps/rlark/docs/examples/db-config.yaml
-
-# Terminal 2: Start Controller-Manager
-./apps/rlark/bin/controller-manager \
-  --kubeconfig ~/.rlark/admin.kubeconfig \
-  --server-address https://localhost:8443 \
-  --leader-elect=false \
-  --metrics-bind-address :0 \
-  --db-config apps/rlark/docs/examples/db-config.yaml
-
-# Terminal 3: Start Gateway
-./apps/rlark/bin/gateway \
-  --kubeconfig ~/.rlark/admin.kubeconfig \
-  --addr :8080 \
-  --server-address https://localhost:8443 \
-  --db-config apps/rlark/docs/examples/db-config.yaml
+cd apps/rlark-ui
+npm install
+VITE_DATA_MODE=backend npm run dev
 ```
 
-### 2.5 Generate Agent Certificate
+Open `http://localhost:5173/admin`. Use the credentials from the script output:
 
-The Agent requires a client certificate to authenticate with the control plane. Request one via the Gateway API:
+| Service | URL | Purpose |
+|---------|-----|---------|
+| Admin Console | `http://localhost:5173/admin` | Cluster onboarding, nodes, certificates |
+| Platform | `http://localhost:5173` | Jobs, Workers, Workflows, storage |
+| Gateway API | `http://localhost:9000` | Automation |
+
+### 3. Clean Up
 
 ```bash
-# Generate agent certificate (replace "my-cluster" with your cluster name)
-RESP=$(curl -s -X POST "http://localhost:8080/api/v1/certificates/agent" \
-  -H "Content-Type: application/json" \
-  -d '{"cluster_id": "my-cluster"}')
-echo "$RESP" | jq -r .ca_cert > ~/.rlark/certs/ca-cert.pem
-echo "$RESP" | jq -r .agent_cert > ~/.rlark/certs/cert.pem
-echo "$RESP" | jq -r .agent_key > ~/.rlark/certs/key.pem
+docker compose -f apps/rlark/docs/examples/docker-compose.yml down
+kind delete cluster --name rlark-data-1
+kind delete cluster --name rlark-data-2
+docker rm -f local-registry
+rm -rf /tmp/rlark /tmp/kind-kubeconfig-*
 ```
 
-This writes three files to `~/.rlark/certs/`:
-- `ca-cert.pem` — CA certificate for verifying the Server
-- `cert.pem` — Agent client certificate (X.509, signed by the control plane CA)
-- `key.pem` — Agent private key
+---
 
-### 2.6 Start Data Plane Agent
+## B: UI-based (Interactive)
+
+This approach separates the control plane and data plane, letting you use the admin console to create clusters and the platform to submit jobs.
+
+### 1. Start the Control Plane and UI
 
 ```bash
-./apps/rlark/bin/agent \
-  --kubeconfig ~/.rlark/kind-kubeconfig \
-  --server-address https://localhost:8443 \
-  --client-cert ~/.rlark/certs/cert.pem \
-  --client-key ~/.rlark/certs/key.pem \
-  --ca-cert ~/.rlark/certs/ca-cert.pem \
-  --mode both \
-  --rlark-server-ssh-address localhost:2222
+bash apps/rlark/docs/examples/quickstart-cp.sh
 ```
 
-## 3. Verify Environment
+This script:
+- Builds and pushes Docker images
+- Starts kcp, PostgreSQL, and the control plane (server, gateway, controller-manager)
+- Starts the UI dev server at `http://localhost:5173`
+- Prints admin credentials
 
-### 3.1 Check Agent Registration
+!!! tip "Keep the terminal open"
+    The UI dev server runs in the foreground. Keep this terminal open while you use the UI. Press `Ctrl+C` to stop the UI when done.
 
-After Agent starts, it will automatically register nodes in the control plane:
+The output shows:
 
-```bash
-# View registered Nodes
-curl "http://localhost:8080/api/v1/rlinf.io/v1alpha1/nodes?namespace=default" | jq .
+```
+Control plane:
+  kcp:                      localhost:6443
+  rlark-server:             localhost:8443
+  rlark-gateway (REST API): localhost:9000
+  UI (admin console):       http://localhost:5173/admin
+  UI (platform):            http://localhost:5173
+
+Credentials:
+  admin / <random-password>
+  user  / <random-password>
+
+Next steps:
+  1. Open http://localhost:5173/admin and sign in as admin
+  2. Go to Cluster Management → Create Cluster
+  3. Enter a cluster name (e.g. my-cluster) and create it
+  4. Copy the cluster name and run: bash quickstart-dp.sh --cluster-id=my-cluster
+  5. Return to the UI to create domains and submit jobs
 ```
 
-### 3.2 Check Control Plane
+### 2. Create a Cluster in the Admin Console
+
+1. Open `http://localhost:5173/admin` and sign in as `admin`
+2. Navigate to **Cluster Management** → **Create Cluster**
+3. Enter a cluster name (e.g. `my-cluster`)
+4. Click **Sign Certificate** — the UI shows the Server address and complete `DeployConfig` YAML
+5. Keep the entered cluster name for the next step (e.g. `my-cluster`)
+
+### 3. Deploy the Data Plane
+
+Run the data plane script with the cluster name from step 2:
 
 ```bash
-# Verify the API is working (should return nodes list)
-curl "http://localhost:8080/api/v1/rlinf.io/v1alpha1/nodes"
+bash apps/rlark/docs/examples/quickstart-dp.sh --cluster-id my-cluster
 ```
 
-## 4. Create Your First Training Job
+This script:
+- Creates a kind cluster
+- Requests an agent certificate from the Gateway for the given cluster-id (no need for the `deploy-conf.yaml` from the UI)
+- Deploys the agent with the certificate
+- Verifies node registration
 
-### 4.1 Create a Domain
+!!! note "About deploy-conf.yaml"
+    The `deploy-conf.yaml` shown in the UI after creating a cluster is for **manual deployment** (e.g., on a real cluster). The script automatically requests certificates from the Gateway API, so this file is not needed.
+
+To deploy multiple data plane clusters, create them in the UI first, then pass all cluster-ids to a single script invocation:
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/rlinf.io/v1alpha1/domains" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "apiVersion": "rlinf.io/v1alpha1",
-    "kind": "Domain",
-    "metadata": { "name": "my-first-domain" },
-    "spec": { "cidr": "10.0.1.0/24" }
-  }'
+# Create cluster-1 and cluster-2 in the UI, then:
+bash apps/rlark/docs/examples/quickstart-dp.sh \
+  --cluster-id my-cluster-1 \
+  --cluster-id my-cluster-2
 ```
 
-### 4.2 Create a Job
+### 4. Verify the Cluster and Nodes
+
+**Using the UI:** Admin Console → Clusters and Nodes. Verify both clusters are online and their nodes are synchronized.
+
+**Using the API:**
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/rlinf.io/v1alpha1/jobs" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "apiVersion": "rlinf.io/v1alpha1",
-    "kind": "Job",
-    "metadata": { "name": "hello-world" },
-    "spec": {
-      "domain": "my-first-domain",
-      "tasks": [
-        {
-          "name": "trainer",
-          "head": true,
-          "role": "Actor",
-          "agentType": "Kubernetes",
-          "nodeSelector": { "rlark.io/cluster-id": "my-cluster" },
-          "kubernetes": {
-            "workload": {
-              "kind": "Deployment",
-              "replicas": 1,
-              "template": {
-                "spec": {
-                  "restartPolicy": "Always",
-                  "containers": [
-                    {
-                      "name": "trainer",
-                      "image": "busybox:latest",
-                      "command": ["sh", "-c", "echo Hello from rlark! && sleep 3600"],
-                      "resources": {
-                        "limits": { "cpu": "100m", "memory": "128Mi" }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        }
-      ]
-    }
-  }'
+curl -s "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
+  jq '.items[] | {name: .metadata.name, cluster: .metadata.labels["rlark.io/cluster-id"]}'
 ```
 
-### 4.3 Check Job Status
+### 5. Create a Job via the UI
+
+1. Open `http://localhost:5173` and sign in as `user`
+2. Navigate to **Jobs** → **Create Job**
+3. Select **Custom Task** as the job type
+4. Add a role named `worker`, set it as **Header**
+5. Configure the Worker:
+   - **Cluster**: select your cluster
+   - **Node count**: 1
+   - **Image**: `rayproject/ray:2.9.0-py310`
+   - **Run Script**: `echo hello from RLark; sleep 3600`
+
+![Configure the Job worker and placement](images/ui/create-job-worker-configuration.png)
+
+6. Review the YAML preview and click **Submit**
+
+For a detailed walkthrough, see [RL Training Best Practices](user-guide/best-practices.md).
+
+### 6. Create and Verify Cross-Cluster Networking
+
+With two data plane clusters deployed, complete the UI flow by creating a Domain and verifying cross-cluster Pod communication
+by creating a Domain and a multi-cluster Job.
+
+#### 6.1 Create a Domain
+
+1. Sign in to the Admin Console (`http://localhost:5173/admin`)
+2. Navigate to **Domain Management** → **Create Domain**
+
+![Open Domain Management and create a Domain](images/ui/domain-ui.png)
+
+3. Enter a name and CIDR (e.g. `cross-cluster-net`, `10.200.0.0/24`)
+
+#### 6.2 Create a Cross-Cluster Job
+
+1. Open `http://localhost:5173` and sign in as `user`
+2. Navigate to **Jobs** → **Create Job**
+3. Select **Custom Task** as the job type
+4. Add two roles:
+   - **server**: header role, cluster `rlark-my-cluster-1`, image `rayproject/ray:2.9.0-py310`, run script:
+     ```bash
+     python -u -m http.server 8000 --bind 0.0.0.0
+     ```
+   - **client**: cluster `rlark-my-cluster-2`, image `rayproject/ray:2.9.0-py310`, run script: `sleep infinity`
+5. In the **Common Config** step, select the Domain you created
+6. Review and submit. On the job details page, confirm that Workers are running on the selected nodes.
+
+![Verify running Workers and Pod details](images/ui/job-details-worker-and-pod.png)
+
+#### 6.3 Verify Cross-Cluster Connectivity
+
+After the job is running, check the client pod logs to verify it can reach the server:
 
 ```bash
-# Check Job status
-curl "http://localhost:8080/api/v1/rlinf.io/v1alpha1/jobs/hello-world" | jq '.status'
+# Find the client pod
+kubectl --kubeconfig /tmp/kind-kubeconfig-2 get pods -n rlark-system
 
-# Check Task status
-curl "http://localhost:8080/api/v1/rlinf.io/v1alpha1/tasks?namespace=default&labelSelector=rlinf.io/job=hello-world" | jq '.items[].status'
-
-# Check Pod logs
-curl "http://localhost:8080/api/v1/rlinf.io/v1alpha1/jobs/hello-world/logs" | jq .
+# Test connectivity from the client pod
+kubectl --kubeconfig /tmp/kind-kubeconfig-2 exec -n rlark-system \
+  <client-pod-name> -c main -- \
+  python -c "import urllib.request; print(urllib.request.urlopen('http://<server-pod-name>.rlark-domain:8000').status)"
 ```
 
-### 4.4 Verify in Kind Cluster
+Expected output: `200`
+
+See [Networking and Security](admin-guide/network-security.md) for details.
+
+### 7. Clean Up
 
 ```bash
-# Data plane should show the Deployment
-kubectl --kubeconfig ~/.rlark/kind-kubeconfig get deployment -A
-
-# View Pods
-kubectl --kubeconfig ~/.rlark/kind-kubeconfig get pods -A
-```
-
-## 5. Use Web UI
-
-```bash
-# Start frontend dev server
-cd apps/rlark-ui && npm install && npm run dev
-```
-
-Open `http://localhost:5173` in your browser to see:
-- Dashboard: System overview
-- Nodes: Node list and resource usage
-- Jobs: Create and manage training jobs
-- Workflows: DAG workflow orchestration
-
-## 6. Cleanup
-
-```bash
-# Stop all components
+# Stop control plane and UI
 docker compose -f apps/rlark/docs/examples/docker-compose.yml down
 
-# Delete kind cluster
-kind delete cluster --name rlark-data
+# Kill the UI dev server (if running in background)
+kill $(lsof -ti:5173) 2>/dev/null || true
 
-# Clean up kcp data
-docker compose -f apps/rlark/docs/examples/docker-compose.yml down -v
+# Delete kind clusters
+kind delete cluster --name rlark-data-1
+kind delete cluster --name rlark-data-2
 
-# Remove runtime files
-rm -rf ~/.rlark
+# Remove local registry
+docker rm -f local-registry
+
+# Clean up runtime files
+rm -rf /tmp/rlark /tmp/kind-kubeconfig-*
 ```
 
-## 7. Next Steps
+---
 
-- Read [Core Concepts](concepts.md) to understand the resource model
-- Read [Architecture](architecture.md) to understand implementation principles
-- Read [API Examples](../api/examples.md) for complete API usage
-- Read [Deployment Guide](deployment.md) for production deployment
+## Cross-Cluster Networking
+
+For cross-cluster network communication between data plane clusters:
+
+### Agent Configuration
+
+```yaml
+spec:
+  hostNetwork: true
+  hostPID: true
+  dnsPolicy: ClusterFirstWithHostNet
+  containers:
+  - args:
+    - "--server-address=https://rlark-server:8443"
+    - "--rlark-server-ssh-address=client@rlark-server:2222"
+    - "--network-sidecar-image=<image>"
+```
+
+### Data Flow
+
+```
+Client Pod (cluster-2)                    Server Pod (cluster-1)
+  ├── HTTP → Domain IP (10.200.0.x)        ├── Python HTTP server :8000
+  ├── gVisor netstack intercepts           │
+  ├── TUN device → NodeServer socket       │
+  └── NodeServer → SSH tunnel → ──────────→ Proxy → localhost:8000
+```
+
+## Next Steps
+
+- Read the [Platform User Guide](user-guide/index.md) for resource and Job operations
+- Read the [Administrator Guide](admin-guide/index.md) for production deployment and operations
+- Read [Core Concepts](concepts.md) for the resource model and naming conventions
+- Read [Deployment Guide](deployment.md) for production deployment and real device onboarding
+- Read [RL Training Best Practices](user-guide/best-practices.md) for an end-to-end walkthrough

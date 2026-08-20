@@ -34,6 +34,8 @@ type TaskStatusApplyConfiguration struct {
 	Message          *string                          `json:"message,omitempty"`
 	RetryCount       *int32                           `json:"retryCount,omitempty"`
 	TensorBoardProxy *string                          `json:"tensorBoardProxy,omitempty"`
+	PullProgress     []PullProgressApplyConfiguration `json:"pullProgress,omitempty"`
+	Events           []NodeEventApplyConfiguration    `json:"events,omitempty"`
 }
 
 // TaskStatusApplyConfiguration constructs a declarative configuration of the TaskStatus type for use with
@@ -110,5 +112,31 @@ func (b *TaskStatusApplyConfiguration) WithRetryCount(value int32) *TaskStatusAp
 // If called multiple times, the TensorBoardProxy field is set to the value of the last call.
 func (b *TaskStatusApplyConfiguration) WithTensorBoardProxy(value string) *TaskStatusApplyConfiguration {
 	b.TensorBoardProxy = &value
+	return b
+}
+
+// WithPullProgress adds the given value to the PullProgress field in the declarative configuration
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the PullProgress field.
+func (b *TaskStatusApplyConfiguration) WithPullProgress(values ...*PullProgressApplyConfiguration) *TaskStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithPullProgress")
+		}
+		b.PullProgress = append(b.PullProgress, *values[i])
+	}
+	return b
+}
+
+// WithEvents adds the given value to the Events field in the declarative configuration
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Events field.
+func (b *TaskStatusApplyConfiguration) WithEvents(values ...*NodeEventApplyConfiguration) *TaskStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithEvents")
+		}
+		b.Events = append(b.Events, *values[i])
+	}
 	return b
 }

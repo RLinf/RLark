@@ -45,6 +45,7 @@ export default function App() {
   const [storageRefreshKey, setStorageRefreshKey] = useState(0);
   const [cloneJob, setCloneJob] = useState<Job | null>(null);
   const [editJob, setEditJob] = useState<Job | null>(null);
+  const [restartAfterEdit, setRestartAfterEdit] = useState(false);
   const [lang, setLang] = usePersistentState<Lang>("rlark-language", "zh");
   const [theme, setTheme] = usePersistentState<Theme>("rlark-theme", "light");
   const [userLoggedIn, setUserLoggedIn] = useState(
@@ -286,16 +287,19 @@ export default function App() {
             onCreate={() => {
               setCloneJob(null);
               setEditJob(null);
+              setRestartAfterEdit(false);
               setCreateOpen(true);
             }}
             onClone={(job) => {
               setCloneJob(job);
               setEditJob(null);
+              setRestartAfterEdit(false);
               setCreateOpen(true);
             }}
-            onEdit={(job) => {
+            onEditAndRestart={(job) => {
               setEditJob(job);
               setCloneJob(null);
+              setRestartAfterEdit(true);
               setCreateOpen(true);
             }}
           />
@@ -340,10 +344,12 @@ export default function App() {
             setCreateOpen(false);
             setCloneJob(null);
             setEditJob(null);
+            setRestartAfterEdit(false);
           }}
           copy={c}
           cloneJob={cloneJob}
           editJob={editJob}
+          restartAfterSave={restartAfterEdit}
         />
       )}
       {createWfOpen && (

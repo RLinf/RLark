@@ -23,6 +23,7 @@ import {
   getNodeGPUModel,
   getNodeLocation,
 } from "../utils/nodes";
+import { updateNodeModelMetadata } from "../utils/nodeBatchMetadata";
 import { useAutoRefresh } from "../hooks";
 import { MetricCard, StatusBadge } from "../components/shared";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
@@ -898,6 +899,9 @@ export function AdminPage({
         annotations[key] = labels[key]?.trim() ?? "";
         delete labels[key];
       });
+      delete annotations["rlark.io/ip-location"];
+      delete annotations["rlark.io/location"];
+      delete labels["rlark.io/location"];
       const labelPatch: Record<string, string | null> = { ...labels };
       NODE_FREE_TEXT_KEYS.forEach((key) => {
         labelPatch[key] = null;
@@ -1008,22 +1012,24 @@ export function AdminPage({
     try {
       await Promise.all(
         selectedNodes.map(async (node) => {
-          const labels = { ...(node.metadata.labels ?? {}) };
-          const annotations = { ...(node.metadata.annotations ?? {}) };
-          const removedLabelKeys = new Set<string>();
+          const modelMetadata = updateNodeModelMetadata(node, {
+            gpuModel: batchFields.has("gpu") ? batchGPUModel : undefined,
+            deviceModel: batchFields.has("device")
+              ? batchDeviceModel
+              : undefined,
+          });
+          const { labels, annotations, removedLabelKeys } = modelMetadata;
           if (batchFields.has("location")) {
             const value = batchLocation.trim();
             if (value) annotations["rlark.io/city"] = value;
             else delete annotations["rlark.io/city"];
+            delete annotations["rlark.io/ip-location"];
+            delete annotations["rlark.io/location"];
             delete labels["rlark.io/city"];
+            delete labels["rlark.io/location"];
             removedLabelKeys.add("rlark.io/city");
+            removedLabelKeys.add("rlark.io/location");
           }
-          const categories = batchFields.has("categories")
-            ? batchCategories
-            : getNodeCategories(node);
-          const appliesGPU = categories.includes("cloud");
-          const appliesDevice =
-            categories.includes("edge") || categories.includes("robot");
           if (batchFields.has("categories")) {
             delete labels["rlark.io/node-category"];
             removedLabelKeys.add("rlark.io/node-category");
@@ -1032,20 +1038,6 @@ export function AdminPage({
               if (batchCategories.includes(category)) labels[key] = "true";
               else delete labels[key];
             });
-          }
-          if (batchFields.has("gpu") && appliesGPU) {
-            const value = batchGPUModel.trim();
-            if (value) annotations["rlark.io/gpu-model"] = value;
-            else delete annotations["rlark.io/gpu-model"];
-            delete labels["rlark.io/gpu-model"];
-            removedLabelKeys.add("rlark.io/gpu-model");
-          }
-          if (batchFields.has("device") && appliesDevice) {
-            const value = batchDeviceModel.trim();
-            if (value) annotations["rlark.io/device-model"] = value;
-            else delete annotations["rlark.io/device-model"];
-            delete labels["rlark.io/device-model"];
-            removedLabelKeys.add("rlark.io/device-model");
           }
           const labelPatch: Record<string, string | null> = { ...labels };
           removedLabelKeys.forEach((key) => {
@@ -1056,14 +1048,9 @@ export function AdminPage({
           };
           if (batchFields.has("location") && !batchLocation.trim())
             annotationPatch["rlark.io/city"] = null;
-          if (batchFields.has("gpu") && appliesGPU && !batchGPUModel.trim())
-            annotationPatch["rlark.io/gpu-model"] = null;
-          if (
-            batchFields.has("device") &&
-            appliesDevice &&
-            !batchDeviceModel.trim()
-          )
-            annotationPatch["rlark.io/device-model"] = null;
+          modelMetadata.removedAnnotationKeys.forEach((key) => {
+            annotationPatch[key] = null;
+          });
           const resp = await fetch(
             `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node.metadata.name)}?namespace=${encodeURIComponent(node.metadata.namespace ?? "")}`,
             {
@@ -1102,6 +1089,7 @@ export function AdminPage({
           }),
         );
       });
+      await fetchNodes(false);
       setSelectedNodeKeys(new Set());
       setBatchOpen(false);
       setBatchLocation("");

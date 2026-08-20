@@ -116,7 +116,7 @@ func (s *Server) registerAgent(ctx context.Context, agentID string) error {
 			return fmt.Errorf("get ClusterRole %s: %w", clusterRoleName, err)
 		}
 		_, err = s.kubeClient.RbacV1().ClusterRoles().Create(ctx, clusterRole, metav1.CreateOptions{})
-		if err != nil {
+		if err != nil && !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("create ClusterRole %s: %w", clusterRoleName, err)
 		}
 	} else {
@@ -125,7 +125,7 @@ func (s *Server) registerAgent(ctx context.Context, agentID string) error {
 		}
 	}
 
-	clusterRbName := clusterRoleName + "-binding"
+	clusterRbName := fmt.Sprintf("%s-binding-%s", clusterRoleName, agentID)
 	clusterRb := &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRbName},
 		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: saName, Namespace: namespace}},
@@ -137,7 +137,7 @@ func (s *Server) registerAgent(ctx context.Context, agentID string) error {
 			return fmt.Errorf("get ClusterRoleBinding %s: %w", clusterRbName, err)
 		}
 		_, err = s.kubeClient.RbacV1().ClusterRoleBindings().Create(ctx, clusterRb, metav1.CreateOptions{})
-		if err != nil {
+		if err != nil && !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("create ClusterRoleBinding %s: %w", clusterRbName, err)
 		}
 	} else {

@@ -49,6 +49,36 @@ type NodeStatus struct {
 	Allocatable  corev1.ResourceList  `json:"allocatable,omitempty"` // 需要预留系统组件 agent
 	Capacity     corev1.ResourceList  `json:"capacity,omitempty"`
 	Used         corev1.ResourceList  `json:"used,omitempty"`
+	PullProgress []PullProgress       `json:"pullProgress,omitempty"`
+	// Events 由数据面 node-agent 上报节点相关 Kubernetes Event（如 DiskPressure
+	// 等 Warning 事件及镜像拉取/调度相关事件）。控制面 Task reconciler 在 Task
+	// 处于 Pending 期间聚合各节点事件到 Task.status.events，供前端展示。
+	Events []NodeEvent `json:"events,omitempty"`
+}
+
+// PullProgress captures the progress of an in-flight image pull on a node.
+type PullProgress struct {
+	Image      string  `json:"image"`
+	Downloaded int64   `json:"downloaded"`
+	Total      int64   `json:"total"`
+	Speed      float64 `json:"speed"`
+	Status     string  `json:"status"`
+	Message    string  `json:"message,omitempty"`
+}
+
+// NodeEvent represents a Kubernetes Event observed on a node that is relevant
+// for surfacing to operators (e.g. DiskPressure warnings, FailedScheduling,
+// image pull failures). The node-agent collects Warning events plus a small
+// set of Normal scheduling/pulling events and writes them to Node.status.events.
+type NodeEvent struct {
+	Type       string      `json:"type"`   // Warning / Normal
+	Reason     string      `json:"reason"` // DiskPressure, FailedScheduling, Pulling, etc.
+	Message    string      `json:"message,omitempty"`
+	LastTime   metav1.Time `json:"lastTime,omitempty"` // 最近一次发生时间
+	Count      int32       `json:"count,omitempty"`
+	Source     string      `json:"source,omitempty"`     // 事件来源组件，如 kubelet
+	ObjectKind string      `json:"objectKind,omitempty"` // 涉及对象类型：Node / Pod
+	ObjectName string      `json:"objectName,omitempty"` // 涉及对象名称
 }
 
 type NodeInfo struct {

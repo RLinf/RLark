@@ -124,7 +124,12 @@ func (s *Server) runPeerTunnel(ctx context.Context) error {
 			return
 		}
 		ip, peerID, peerToken := fields[0], fields[1], fields[2]
+		// Defensive: skip peers whose lease identity has empty IP (caused by
+		// older server pods missing the POD_IP downward-API env). Connecting
+		// to "ws://127.0.0.1:8888/api/peer/" 404s and floods logs with
+		// "websocket: bad handshake" every 5s.
 		if ip == "" {
+			logger.V(1).Info("Skipping peer with empty IP", "lease", name)
 			return
 		}
 		url := fmt.Sprintf("ws://127.0.0.1:%d/api/peer/%s", s.config.UnsafeHTTPPort, ip)

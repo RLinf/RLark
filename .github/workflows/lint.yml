@@ -51,3 +51,27 @@ jobs:
       - name: Run prettier
         working-directory: apps/rlark-ui
         run: npx prettier --check 'src/' 'index.html' 'package.json' 'vite.config.ts' 'tsconfig*.json'
+
+  lint-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: apps/rlark/docs/requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install --requirement apps/rlark/docs/requirements.txt
+
+      - name: Build documentation
+        run: mkdocs build --strict --config-file apps/rlark/mkdocs.yml
+
+      - name: Check Markdown internal links
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
+        with:
+          args: --offline --no-progress --root-dir "${{ github.workspace }}" 'apps/rlark/docs/**/*.md'
+          lycheeVersion: v0.24.2

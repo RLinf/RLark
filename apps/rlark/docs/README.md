@@ -1,29 +1,12 @@
 # Documentation
 
-RLark documentation is available in English and Chinese.
+RLark maintains English and Chinese documentation with the same audience-oriented structure:
 
-## English Documentation
+1. **Overview** — product capabilities, concepts, and architecture.
+2. **Quick Start** — deploy the control plane, onboard a Kubernetes data plane, and run the first Job.
+3. **Platform User Guide** — day-to-day use of resources, Jobs, Workers, Workflows, storage, and SSH keys.
+4. **Administrator Guide** — production deployment, cluster onboarding, security, devices, and operations.
+5. **Developer Guide** — source development, architecture, debugging, device integration, and contribution.
+6. **Reference** — CLI, API, CRD, configuration, and release information.
 
-| Document | Description |
-|----------|-------------|
-| [Architecture](architecture.md) | Complete technical architecture, component interactions, data flows |
-| [Core Concepts](concepts.md) | Domain, Job, Task, Workflow, and other concepts |
-| [Quick Start](quickstart.md) | Local development environment setup and first training job |
-| [Deployment Guide](deployment.md) | Production deployment and configuration |
-| [Web Console Behavior](ui-behavior.md) | Data modes, navigation, preferences, and dialog behavior |
-| [API Reference](api/reference.md) | Complete REST API reference |
-| [API Examples](api/examples.md) | End-to-end API usage examples |
-
-## 中文文档
-
-| 文档 | 说明 |
-|------|------|
-| [架构设计](cn/architecture.md) | 完整技术架构、组件交互、数据流 |
-| [核心概念](cn/concepts.md) | Domain、Job、Task、Workflow 等概念解释 |
-| [快速开始](cn/quickstart.md) | 本地开发环境搭建与第一个训练任务 |
-| [部署指南](cn/deployment.md) | 生产环境部署、配置说明 |
-| [Web 控制台交互约定](cn/ui-behavior.md) | 数据模式、导航、偏好设置和弹窗行为 |
-| [API 参考](api/reference.md) | 完整的 REST API 参考 |
-| [API 示例](api/examples.md) | 端到端 API 调用示例 |
-
-> [English README](../../../README.md) | [中文 README](../../../README.zh-CN.md)
+Open the [English home](index.md) or [中文首页](zh/index.md). The published site navigation is defined in `apps/rlark/mkdocs.yml`.

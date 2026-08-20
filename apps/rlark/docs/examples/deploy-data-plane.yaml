@@ -30,6 +30,7 @@ kubernetes:
   kubeconfig: ~/.kube/config # 往 k8s 集群部署平台，访问集群的 kubeconfig
   agent-image: rlark:latest
   image: rlark:latest # 可选，启用跨集群 Pod 网络互通和 SSH server
+  # containerd-socket: /run/k3s/containerd/containerd.sock # 可选，k3s 等非标准 containerd 路径，启用 node-agent 镜像拉取进度监控
 
 #docker:
 #  agent-image: rlark-agent:latest

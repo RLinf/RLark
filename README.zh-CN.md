@@ -14,7 +14,7 @@
   <sub>RLark 具身智能云原生纳管平台</sub>
 </h1>
 
-以 Kubernetes 原生方式管理跨集群具身智能工作负载，从云端 GPU 训练到端侧设备部署。通过统一的任务调度、跨集群 Pod 网络互通和多运行时支持（k8s 生产就绪，Docker/Raw 实验性），实现 GPU 集群、机械臂、传感器等异构设备间的无缝协同。
+以云原生方式统一纳管跨集群具身智能工作负载，覆盖云端 GPU 训练、跨集群协同与端侧设备部署，连接 GPU 集群、机械臂、传感器和摄像头等异构资源。
 
 ## 最新动态
 
@@ -23,11 +23,11 @@
 ## 核心能力
 
 - **具身智能工作负载编排**：从云端 GPU 训练（RL/LLM）到端侧部署（机械臂、传感器、摄像头），统一的声明式 Job/Workflow/Task 抽象覆盖全链路
-- **多运行时数据面**：原生支持 Kubernetes 运行时（生产就绪），Docker 和 Raw 运行时处于实验性/规划阶段 — GPU 集群运行 k8s 承载大规模训练，端侧设备运行 k8s 或 Docker 实现轻量级具身部署
-- **跨集群资源抽象**：通过 Domain（安全域）和 Node（计算节点）CRD 统一管理多地 GPU 集群和端侧设备，控制面运行在 kcp 之上
+- **多运行时数据面**：基于 Kubernetes 统一纳管云端 GPU 集群与端侧设备，覆盖训练到具身设备部署的完整链路；面向不适合部署 Kubernetes 的轻量端侧场景，后续将扩展 Docker 和 Raw 运行时支持
+- **跨集群资源抽象**：通过 Domain（虚拟网络域）和 Node（计算节点）CRD 统一管理多地 GPU 集群和端侧设备，控制面运行在 kcp 之上
 - **声明式训练任务**：Job/Workflow/Task 多层抽象，支持 DAG 编排的训练流水线，声明式定义 Ray 集群
 - **跨集群 Pod 网络**：基于 TUN 设备 + gVisor 协议栈 + SSH 隧道的虚拟网络，Pod 跨集群通信无需 NAT 穿透 — 云端 GPU 与端侧机器人直接通信
-- **证书体系**：X.509 + SSH 双层证书，支持 Agent 接入、Domain 隔离、用户 SSH 登录鉴权
+- **证书体系**：X.509 + SSH 双层证书，支持 Agent 接入、Domain 范围的跨集群转发鉴权、用户 SSH 登录鉴权
 - **可观测性**：Prometheus 指标暴露、Pod 日志实时查询、Web 管理界面
 
 ## 架构概览
@@ -36,7 +36,7 @@
 
 ## 快速开始
 
-请参阅 [快速开始指南](apps/rlark/docs/cn/quickstart.md) 了解如何在本地搭建开发环境并运行第一个训练任务。
+请参阅 [快速开始指南](apps/rlark/docs/zh/quickstart.md) 了解如何在本地搭建开发环境并运行第一个训练任务。
 
 ```bash
 # 1. 编译
@@ -56,10 +56,10 @@ kind create cluster --name rlark-data
 
 | 文档 | 说明 |
 |------|------|
-| [架构设计](apps/rlark/docs/cn/architecture.md) | RLark 核心：完整技术架构、组件交互、数据流 |
-| [核心概念](apps/rlark/docs/cn/concepts.md) | Domain、Job、Task、Workflow 等概念解释 |
-| [快速开始](apps/rlark/docs/cn/quickstart.md) | 本地开发环境搭建与第一个训练任务 |
-| [部署指南](apps/rlark/docs/cn/deployment.md) | 生产环境部署、配置说明 |
+| [架构设计](apps/rlark/docs/zh/architecture.md) | RLark 核心：完整技术架构、组件交互、数据流 |
+| [核心概念](apps/rlark/docs/zh/concepts.md) | Domain、Job、Task、Workflow 等概念解释 |
+| [快速开始](apps/rlark/docs/zh/quickstart.md) | 本地开发环境搭建与第一个训练任务 |
+| [部署指南](apps/rlark/docs/zh/deployment.md) | 生产环境部署、配置说明 |
 | [API 参考](apps/rlark/docs/api/reference.md) | 完整的 REST API 参考 |
 | [API 示例](apps/rlark/docs/api/examples.md) | 端到端 API 调用示例 |
 | [Embodied Runtime](apps/embodied-runtime/README.md) | 端侧机器人/摄像头运行时管理 |

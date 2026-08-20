@@ -1,5 +1,5 @@
 import type { Activity, LayoutDashboard } from "lucide-react";
-import type { JobType } from "./data";
+import type { JobType, PullProgressEntry } from "./data";
 
 export type Page =
   | "overview"
@@ -196,10 +196,16 @@ export interface CRDNodeLite {
     name: string;
     namespace?: string;
     labels?: Record<string, string>;
+    annotations?: Record<string, string>;
+  };
+  spec?: {
+    unschedulable?: boolean;
   };
   status?: {
     phase?: string;
+    capacity?: Record<string, string>;
     allocatable?: Record<string, string>;
+    used?: Record<string, string>;
   };
 }
 
@@ -218,6 +224,21 @@ export interface AgentCertListItem {
 }
 
 export type NodeCategory = "cloud" | "edge" | "robot" | "unknown";
+
+// NodeEventEntry 对应后端 api/rlark.io/v1alpha1 NodeEvent（参见
+// node_types.go 中 NodeEvent 结构）：数据面 node-agent 采集的节点级
+// Kubernetes Event，目前仅包含 Warning 类型（DiskPressure 等）。控制面
+// Task reconciler 会聚合各节点 events 写入 Task.status.events。
+export interface NodeEventEntry {
+  type: string; // Warning / Normal
+  reason: string; // DiskPressure, FailedScheduling, Pulling, ...
+  message?: string;
+  lastTime?: string; // RFC3339
+  count?: number;
+  source?: string; // 事件来源组件，如 kubelet
+  objectKind?: string; // 涉及对象类型：Node / Pod
+  objectName?: string; // 涉及对象名称
+}
 
 export interface CRDNode {
   apiVersion: string;
@@ -247,6 +268,13 @@ export interface CRDNode {
     allocatable?: Record<string, string>;
     capacity?: Record<string, string>;
     used?: Record<string, string>;
+    // PullProgress 由数据面 node-agent 上报，cluster-agent 仅在 Pod 处于
+    // ContainerCreating 期间聚合写入 Task.status.pullProgress；此处保留
+    // node 原始上报值，前端用于在任务 Pending 时展示镜像拉取进度。
+    pullProgress?: PullProgressEntry[];
+    // Events 由数据面 node-agent 上报节点级 Warning 事件（DiskPressure 等）。
+    // 前端在任务 Pending 期间聚合展示，以便定位 Pod 为何卡在 Pending。
+    events?: NodeEventEntry[];
   };
 }
 
