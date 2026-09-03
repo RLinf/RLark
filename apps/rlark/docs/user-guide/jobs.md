@@ -12,7 +12,11 @@ Platform Console → Jobs → Create Job. Enter a name and define the Worker rol
 2. Choose one GPU or embodied-device specification from the list, which shows available/total devices and nodes, then set the shared per-Worker resource request. Set the request to `0` for debugging workloads that should keep the placement constraint without requesting the selected device.
 3. Choose one scheduling mode:
    - **Automatic selection**: enter the desired Worker count. The console validates the total request against schedulable capacity and selects eligible nodes.
-   - **Select nodes**: click eligible nodes or drag across node cards. Each selected node creates one Worker; click or drag across selected nodes again to remove them.
+- **Select nodes**: click eligible nodes or drag across node cards. Each selected node creates one Worker; click or drag across selected nodes again to remove them.
+
+When cloning a Job, the scheduling mode is preserved. A role that did not pin
+specific nodes remains in automatic-selection mode instead of being converted
+to manual node selection.
 4. Review the shared placement summary, then configure the image, prepare script, environment variables, and storage mounts.
 
 Submit the Job, then open Job details to verify the running state and inspect Workers.
@@ -50,9 +54,9 @@ For each worker role, configure the following:
 
 - **Init Scripts** — Commands that run before the main entrypoint. Useful for environment setup, dependency installation, or data preparation.
 
-- **Storage Mounts** — Attach persistent storage to worker containers. Two types are supported:
-  - **hostPath**: Mount a directory from the host node's filesystem. Data persists on the node after the job is deleted.
-  - **PVC** (PersistentVolumeClaim): Mount a Kubernetes persistent volume. PVCs are automatically cleaned up when the job is deleted.
+- **Storage Mounts** — Attach storage to worker containers. Two types are supported:
+  - **hostPath**: Mount a directory from the host node's filesystem. Its data is not deleted by Job lifecycle actions.
+  - **PVC** (PersistentVolumeClaim): Mount a Kubernetes persistent volume. Stopping, restarting, or deleting the Job deletes its task PVCs; starting or restarting creates empty PVCs.
 
 ![Worker configuration](../images/ui/create-job-worker-configuration.png)
 
@@ -90,6 +94,8 @@ Below the overview, the worker list shows every worker instance with:
 - **Instance Name** — Auto-generated name (e.g., `myjob-actor-0`)
 - **Role** — The role this worker belongs to
 - **Node** — The physical node hosting this worker
+- **Cluster** — The data-plane cluster that owns the Worker; the node name is a
+  link to that node's detail page
 - **IP** — The Pod IP address
 - **Status** — Per-worker status (Pending, ContainerCreating, Running, Terminated)
 
@@ -150,6 +156,8 @@ nvidia-smi              # Check GPU status (if GPU is allocated)
 
 ### File Transfer
 
+The key button in the Worker list copies the SSH connection command. It requires an administrator-configured SSH jump host; when that setting is missing, the button is disabled and explains why instead of copying empty content.
+
 The WebTerminal supports file upload and download:
 
 - **Upload** — Upload files from your local machine to the container's default working directory. File names must match the pattern `[A-Za-z0-9._-]+`.
@@ -165,25 +173,30 @@ The detail-page action bar supports the full Job lifecycle:
 
 - **Stop** pauses a running Job and preserves its configuration.
 - **Start** resumes a stopped Job.
-- **Restart** opens a choice: restart immediately with the current configuration, or edit the Job and restart after the updated configuration is saved.
+- **Restart** opens a choice: restart immediately with the current configuration, or edit the Job and restart after the updated configuration is saved. During edit-and-restart, available capacity includes resources that the current Job will release.
 - **Delete** opens a danger confirmation that identifies the target Job and warns that the operation cannot be undone before permanently removing it.
 
-Lifecycle actions require confirmation. While an action is in progress, the other action buttons are disabled; failures are shown in the same action area. A Job is removed from the page only after the delete request succeeds.
+Lifecycle actions require confirmation. While an action is in progress, the
+other action buttons are disabled; failures are shown in the same action area.
+After a successful action, the console returns to the Jobs list and shows a
+completion notice.
 
-The Jobs table provides a Start/Stop shortcut in each row. Open the adjacent actions menu to clone, restart, or delete the Job; Restart uses the same immediate-restart or edit-and-restart choice as the detail page.
+Deletion is synchronous from the console's perspective: RLark first stops the
+Job, waits until all child Tasks and Workers reach a terminal state, deletes the
+Job, and then waits until the Job and child Tasks are gone before updating the
+list.
+
+Each Jobs table row directly exposes Clone, Restart, and Start/Stop text buttons, while Delete remains in the adjacent more-actions menu. Restart uses the same immediate-restart or edit-and-restart choice as the detail page. Expanded Worker details focus on cluster, role, node, and GPU information without CPU or memory request cards.
 
 ### Stop a Running Job
 
-Stopping a job gracefully terminates all worker Pods while preserving:
+Stopping a Job terminates all Worker Pods and deletes its task PVCs. Job configuration, logs, metadata, and hostPath data are preserved.
 
-- PVC data (persistent volumes remain intact)
-- Job logs and metadata
-
-You can resume a stopped job later without losing state.
+The time at which a manually stopped Job enters `Stopped` is recorded and shown in the Jobs table.
 
 ### Resume a Stopped Job
 
-Resuming a job recreates the worker Pods from the same configuration. PVCs are reattached, so data stored on persistent volumes is available immediately.
+Starting a stopped Job recreates the Worker Pods and empty task PVCs from the same configuration. Previous PVC data is not restored; hostPath data remains available.
 
 ### Delete a Job
 

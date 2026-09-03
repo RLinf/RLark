@@ -133,8 +133,8 @@ export function SSHKeysPage({ copy: c }: { copy: Copy }) {
       .catch(() => {});
   }, []);
   const sshCommand = sshConfig?.sshJumpHost
-    ? `ssh -J ${newUser}@${sshConfig.sshJumpHost}${sshConfig.sshJumpPort ? ":" + sshConfig.sshJumpPort : ""} root@<pod-name>`
-    : `ssh -J ${newUser}@<server>:2222 root@<pod-name>`;
+    ? `ssh -J ${sshConfig.sshJumpHost}${sshConfig.sshJumpPort ? ":" + sshConfig.sshJumpPort : ""} root@<pod-name>`
+    : `ssh -J <server>:<port> root@<pod-name>`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(sshCommand);
@@ -259,7 +259,7 @@ export function SSHKeysPage({ copy: c }: { copy: Copy }) {
               <strong>{zh ? "公钥信息" : "Key Info"}</strong>
               <div className="form-grid" style={{ gridTemplateColumns: "1fr" }}>
                 <label>
-                  {zh ? "用户名" : "Username"}
+                  {zh ? "公钥名称" : "Public Key Name"}
                   <input
                     value={newUser}
                     onChange={(e) => setNewUser(e.target.value)}
@@ -385,7 +385,7 @@ export function SSHKeysPage({ copy: c }: { copy: Copy }) {
               <tr>
                 <th>
                   <SortButton
-                    label={zh ? "用户" : "User"}
+                    label={zh ? "公钥名称" : "Public Key Name"}
                     active={sort.key === "user"}
                     direction={sort.direction}
                     onClick={() => toggleSort("user")}

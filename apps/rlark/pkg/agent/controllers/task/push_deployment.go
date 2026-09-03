@@ -65,11 +65,7 @@ func (r *pushDeploymentReconciler) Reconcile(ctx context.Context, req reconcile.
 		return reconcile.Result{}, nil
 	}
 
-	phase, message := deploymentPhase(&deploy)
-	pods, err := listTaskPods(ctx, r.c.LocalKubeClient, deploy.Namespace, deploy.Spec.Selector.MatchLabels)
-	if err != nil {
-		logger.Error(err, "failed to list pods")
-	}
+	phase, message, pods := deploymentPhase(ctx, logger, r.c.LocalKubeClient, &deploy)
 	observedNodes := podNodeNames(pods)
 	// pullProgress aggregation is now performed by the control-plane Task
 	// reconciler from Node.status.pullProgress, so the cluster-agent no
@@ -77,7 +73,23 @@ func (r *pushDeploymentReconciler) Reconcile(ctx context.Context, req reconcile.
 	return updateMgmtTaskStatus(ctx, logger, r.c.ManagementClient, &mgmtTask, phase, message, observedNodes)
 }
 
-func deploymentPhase(deploy *appsv1.Deployment) (rlarkv1alpha1.TaskPhase, string) {
+func deploymentPhase(ctx context.Context, logger logr.Logger, localClient client.Client, deploy *appsv1.Deployment) (rlarkv1alpha1.TaskPhase, string, []corev1.Pod) {
+	phase, message := deploymentStatusPhase(deploy)
+	pods, err := listTaskPods(ctx, localClient, deploy.Namespace, deploy.Spec.Selector.MatchLabels)
+	if err != nil {
+		logger.Error(err, "failed to list pods")
+	}
+	// Override to Failed when any pod container is in an abnormal state
+	// (CrashLoopBackOff, ImagePullBackOff, OOMKilled, etc.) so operators
+	// see the failure immediately instead of a misleading Running/Pending.
+	if podMsg, found := podFailureMessage(pods); found && phase != rlarkv1alpha1.TaskPhaseSucceeded {
+		phase = rlarkv1alpha1.TaskPhaseFailed
+		message = podMsg
+	}
+	return phase, message, pods
+}
+
+func deploymentStatusPhase(deploy *appsv1.Deployment) (rlarkv1alpha1.TaskPhase, string) {
 	desired := computeDesiredReplicas(deploy.Spec.Replicas)
 	if desired == 0 {
 		return rlarkv1alpha1.TaskPhaseStopped, ""
@@ -94,6 +106,57 @@ func deploymentPhase(deploy *appsv1.Deployment) (rlarkv1alpha1.TaskPhase, string
 		return rlarkv1alpha1.TaskPhaseFailed, fmt.Sprintf("deployment replicas unavailable %d", deploy.Status.UnavailableReplicas)
 	}
 	return rlarkv1alpha1.TaskPhasePending, ""
+}
+
+// abnormalContainerReasons lists Pod container waiting/terminated reasons that
+// indicate the workload will not reach Running on its own. When any container
+// of any pod backing a Task is in one of these states, the Task is marked Failed
+// so operators see the problem immediately instead of an indefinite Pending or
+// a misleading Running (a Pod can be phase=Running while a container is in
+// CrashLoopBackOff).
+var abnormalContainerReasons = map[string]struct{}{
+	// Waiting states — container cannot start or is stuck in a restart loop.
+	"ImagePullBackOff":           {},
+	"ErrImagePull":               {},
+	"InvalidImageName":           {},
+	"CreateContainerConfigError": {},
+	"CreateContainerError":       {},
+	"CrashLoopBackOff":           {},
+	// Terminated states — container exited abnormally.
+	"OOMKilled":          {},
+	"ContainerCannotRun": {},
+	"DeadlineExceeded":   {},
+}
+
+// podFailureMessage inspects pods backing a Task for container states that
+// indicate a terminal failure (CrashLoopBackOff, ImagePullBackOff, OOMKilled,
+// etc.). If any such state is found it returns a human-readable message and
+// true; otherwise it returns "", false.
+func podFailureMessage(pods []corev1.Pod) (string, bool) {
+	for i := range pods {
+		pod := &pods[i]
+		for _, cs := range pod.Status.ContainerStatuses {
+			if waiting := cs.State.Waiting; waiting != nil {
+				if _, ok := abnormalContainerReasons[waiting.Reason]; ok {
+					detail := waiting.Message
+					if detail == "" {
+						detail = waiting.Reason
+					}
+					return fmt.Sprintf("pod %s container %s: %s", pod.Name, cs.Name, detail), true
+				}
+			}
+			if terminated := cs.State.Terminated; terminated != nil {
+				if _, ok := abnormalContainerReasons[terminated.Reason]; ok {
+					detail := terminated.Message
+					if detail == "" {
+						detail = terminated.Reason
+					}
+					return fmt.Sprintf("pod %s container %s: %s", pod.Name, cs.Name, detail), true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 // --- shared helper functions for push reconcilers ---

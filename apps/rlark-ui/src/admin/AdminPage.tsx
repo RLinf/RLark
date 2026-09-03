@@ -23,7 +23,12 @@ import {
   getNodeGPUModel,
   getNodeLocation,
 } from "../utils/nodes";
-import { updateNodeModelMetadata } from "../utils/nodeBatchMetadata";
+import {
+  getRemovedLabelKeys,
+  NODE_CATEGORY_KEYS,
+  updateNodeCategoryLabels,
+  updateNodeModelMetadata,
+} from "../utils/nodeBatchMetadata";
 import { useAutoRefresh } from "../hooks";
 import { MetricCard, StatusBadge } from "../components/shared";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
@@ -34,6 +39,10 @@ const NODE_FREE_TEXT_KEYS = [
   "rlark.io/gpu-model",
   "rlark.io/device-model",
 ] as const;
+const NODE_MANAGED_LABEL_KEYS = new Set<string>([
+  ...NODE_FREE_TEXT_KEYS,
+  ...NODE_CATEGORY_KEYS,
+]);
 type BatchMetadataField = "location" | "categories" | "gpu" | "device";
 
 export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
@@ -458,21 +467,84 @@ export function NodeDetailPanel({
         </div>
         {isEditing ? (
           <div className="label-editor admin-label-editor">
-            <div className="label-edit-row city-label-row">
-              <code>rlark.io/city</code>
-              <input
-                value={ctx.labelDraft["rlark.io/city"] ?? ""}
-                onChange={(event) =>
-                  ctx.onUpdateLabel("rlark.io/city", event.target.value)
-                }
-                placeholder={
-                  zh ? "所在城市，例如：上海市" : "City, e.g. Shanghai"
-                }
-              />
-              <MapPin size={15} />
+            <div className="admin-node-managed-fields">
+              <div className="admin-node-managed-field admin-node-managed-categories">
+                <label>{zh ? "节点分类" : "Node categories"}</label>
+                <div className="admin-node-category-chips">
+                  {(["cloud", "edge", "robot"] as NodeCategory[]).map(
+                    (category) => {
+                      const key = `rlark.io/node-category-${category}`;
+                      const selected = ctx.labelDraft[key] === "true";
+                      return (
+                        <button
+                          type="button"
+                          key={category}
+                          className={selected ? "selected" : ""}
+                          aria-pressed={selected}
+                          onClick={() =>
+                            selected
+                              ? ctx.onRemoveLabel(key)
+                              : ctx.onUpdateLabel(key, "true")
+                          }
+                        >
+                          {zh
+                            ? category === "robot"
+                              ? "端真机"
+                              : categoryLabels[category].zh
+                            : categoryLabels[category].en}
+                        </button>
+                      );
+                    },
+                  )}
+                </div>
+              </div>
+              {NODE_FREE_TEXT_KEYS.map((key) => (
+                <div className="admin-node-managed-field" key={key}>
+                  <label>
+                    {key === "rlark.io/city"
+                      ? zh
+                        ? "物理位置"
+                        : "Location"
+                      : key === "rlark.io/gpu-model"
+                        ? zh
+                          ? "GPU 型号"
+                          : "GPU model"
+                        : zh
+                          ? "端侧设备型号"
+                          : "Device model"}
+                  </label>
+                  <input
+                    value={ctx.labelDraft[key] ?? ""}
+                    onChange={(event) =>
+                      ctx.onUpdateLabel(key, event.target.value)
+                    }
+                    placeholder={
+                      key === "rlark.io/city"
+                        ? zh
+                          ? "例如：上海市"
+                          : "e.g. Shanghai"
+                        : zh
+                          ? "留空可移除"
+                          : "Leave blank to remove"
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="admin-node-extension-head">
+              <div>
+                <strong>
+                  {zh ? "扩展调度标签" : "Extended scheduling labels"}
+                </strong>
+                <small>
+                  {zh
+                    ? "用于自定义亲和性、拓扑与业务调度约束"
+                    : "Custom affinity, topology, and workload constraints"}
+                </small>
+              </div>
             </div>
             {Object.entries(ctx.labelDraft)
-              .filter(([key]) => key !== "rlark.io/city")
+              .filter(([key]) => !NODE_MANAGED_LABEL_KEYS.has(key))
               .map(([key, value]) => (
                 <div className="label-edit-row" key={key}>
                   <code>{key}</code>
@@ -484,6 +556,7 @@ export function NodeDetailPanel({
                     placeholder="value"
                   />
                   <button
+                    type="button"
                     className="icon-button danger"
                     onClick={() => ctx.onRemoveLabel(key)}
                     aria-label={`${zh ? "删除标签" : "Remove label"} ${key}`}
@@ -861,9 +934,16 @@ export function AdminPage({
   useAutoRefresh(fetchNodes, 10000);
 
   const startEdit = (node: CRDNode) => {
+    const editableLabels = { ...(node.metadata.labels ?? {}) };
+    NODE_CATEGORY_KEYS.forEach((key) => delete editableLabels[key]);
+    getNodeCategories(node)
+      .filter((category) => category !== "unknown")
+      .forEach((category) => {
+        editableLabels[`rlark.io/node-category-${category}`] = "true";
+      });
     setEditingNode(node.metadata.name);
     setLabelDraft({
-      ...(node.metadata.labels ?? {}),
+      ...editableLabels,
       ...Object.fromEntries(
         NODE_FREE_TEXT_KEYS.map((key) => [
           key,
@@ -891,22 +971,42 @@ export function AdminPage({
     setError("");
     try {
       const labels = { ...labelDraft };
+      const originalLabels =
+        nodes.find((node) => node.metadata.name === nodeName)?.metadata
+          .labels ?? {};
       const annotations = {
         ...(nodes.find((node) => node.metadata.name === nodeName)?.metadata
           .annotations ?? {}),
       };
+      const removedAnnotationKeys = new Set<string>();
       NODE_FREE_TEXT_KEYS.forEach((key) => {
-        annotations[key] = labels[key]?.trim() ?? "";
+        const value = labels[key]?.trim() ?? "";
+        if (value) annotations[key] = value;
+        else {
+          delete annotations[key];
+          removedAnnotationKeys.add(key);
+        }
         delete labels[key];
       });
       delete annotations["rlark.io/ip-location"];
       delete annotations["rlark.io/location"];
       delete labels["rlark.io/location"];
       const labelPatch: Record<string, string | null> = { ...labels };
+      getRemovedLabelKeys(originalLabels, labels).forEach((key) => {
+        labelPatch[key] = null;
+      });
       NODE_FREE_TEXT_KEYS.forEach((key) => {
         labelPatch[key] = null;
       });
-      const patch = { metadata: { labels: labelPatch, annotations } };
+      const annotationPatch: Record<string, string | null> = {
+        ...annotations,
+      };
+      removedAnnotationKeys.forEach((key) => {
+        annotationPatch[key] = null;
+      });
+      const patch = {
+        metadata: { labels: labelPatch, annotations: annotationPatch },
+      };
       const resp = await fetch(
         `/api/v1/rlinf.io/v1alpha1/nodes/${nodeName}?namespace=${encodeURIComponent(namespace)}`,
         {
@@ -1031,13 +1131,15 @@ export function AdminPage({
             removedLabelKeys.add("rlark.io/location");
           }
           if (batchFields.has("categories")) {
-            delete labels["rlark.io/node-category"];
-            removedLabelKeys.add("rlark.io/node-category");
-            (["cloud", "edge", "robot"] as const).forEach((category) => {
-              const key = `rlark.io/node-category-${category}`;
-              if (batchCategories.includes(category)) labels[key] = "true";
-              else delete labels[key];
-            });
+            const categoryUpdate = updateNodeCategoryLabels(
+              labels,
+              batchCategories,
+            );
+            Object.keys(labels).forEach((key) => delete labels[key]);
+            Object.assign(labels, categoryUpdate.labels);
+            categoryUpdate.removedKeys.forEach((key) =>
+              removedLabelKeys.add(key),
+            );
           }
           const labelPatch: Record<string, string | null> = { ...labels };
           removedLabelKeys.forEach((key) => {
@@ -1227,6 +1329,12 @@ export function AdminPage({
 
   const selectedNodeObj =
     nodes.find((n) => n.metadata.name === selectedNode) ?? null;
+  const nodeOverview = {
+    online: nodes.filter((node) => node.status?.phase === "Online").length,
+    schedulable: nodes.filter((node) => !node.spec.unschedulable).length,
+    clusters: new Set(nodes.map((node) => node.metadata.namespace ?? "default"))
+      .size,
+  };
 
   if (selectedNodeObj) {
     return (
@@ -1251,8 +1359,8 @@ export function AdminPage({
   }
 
   return (
-    <div className="page-content resource-page">
-      <div className="section-heading">
+    <div className="page-content resource-page admin-node-management-page">
+      <div className="section-heading admin-node-page-heading">
         <div>
           <span className="eyebrow">
             <Settings size={13} />
@@ -1265,7 +1373,10 @@ export function AdminPage({
               : "Browse every node type in one list, then manage scheduling and labels in details."}
           </p>
         </div>
-        <div className="admin-node-list-actions">
+        <div
+          className="admin-node-list-actions"
+          aria-label={zh ? "节点批量操作" : "Node batch actions"}
+        >
           <button
             className="secondary-button danger"
             disabled={selectedNodeKeys.size === 0 || batchScheduling}
@@ -1295,6 +1406,40 @@ export function AdminPage({
             <RefreshCw size={16} />
             {c.common.refresh}
           </button>
+        </div>
+      </div>
+
+      <div
+        className="admin-node-overview"
+        aria-label={zh ? "节点概况" : "Node overview"}
+      >
+        <div>
+          <span className="admin-node-overview-icon total">
+            <Server size={16} />
+          </span>
+          <small>{zh ? "全部节点" : "Total nodes"}</small>
+          <strong>{nodes.length}</strong>
+        </div>
+        <div>
+          <span className="admin-node-overview-icon online">
+            <Activity size={16} />
+          </span>
+          <small>{zh ? "在线节点" : "Online"}</small>
+          <strong>{nodeOverview.online}</strong>
+        </div>
+        <div>
+          <span className="admin-node-overview-icon ready">
+            <CloudCog size={16} />
+          </span>
+          <small>{zh ? "允许调度" : "Schedulable"}</small>
+          <strong>{nodeOverview.schedulable}</strong>
+        </div>
+        <div>
+          <span className="admin-node-overview-icon clusters">
+            <Network size={16} />
+          </span>
+          <small>{zh ? "所属集群" : "Clusters"}</small>
+          <strong>{nodeOverview.clusters}</strong>
         </div>
       </div>
 

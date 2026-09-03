@@ -14,6 +14,26 @@ function resourceNumber(value?: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+export function selectDeviceResourceKey(
+  capacity: Record<string, string>,
+  allocatable: Record<string, string>,
+): string | undefined {
+  return Array.from(
+    new Set([...Object.keys(capacity), ...Object.keys(allocatable)]),
+  )
+    .filter(
+      (key) =>
+        (key === "rlinf.io/device" || key.startsWith("rlinf.io/device-")) &&
+        resourceNumber(capacity[key] ?? allocatable[key]) > 0,
+    )
+    .sort((left, right) => {
+      const leftGeneric = left === "rlinf.io/device";
+      const rightGeneric = right === "rlinf.io/device";
+      if (leftGeneric !== rightGeneric) return leftGeneric ? 1 : -1;
+      return left.localeCompare(right);
+    })[0];
+}
+
 function formatResourceNumber(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }

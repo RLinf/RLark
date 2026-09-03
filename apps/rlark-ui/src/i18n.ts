@@ -45,6 +45,7 @@ export const copy = {
     status: {
       Running: "运行中",
       Pending: "等待中",
+      Stopping: "停止中",
       Succeeded: "成功",
       Failed: "失败",
       Stopped: "已停止",
@@ -237,6 +238,7 @@ export const copy = {
     status: {
       Running: "Running",
       Pending: "Pending",
+      Stopping: "Stopping",
       Succeeded: "Succeeded",
       Failed: "Failed",
       Stopped: "Stopped",

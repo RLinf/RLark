@@ -31,18 +31,23 @@ type Config struct {
 
 	// HostsFile 是需要更新的 hosts 文件路径。
 	HostsFile string
+
+	// MetricsListenAddress 是 metrics/pprof HTTP server 的监听地址。
+	// 空值表示不启用。
+	MetricsListenAddress string
 }
 
 // DefaultConfig returns the default config.
 func DefaultConfig() Config {
 	return Config{
-		UnixSocketAddress:  "/var/run/rlark/nodeserver.sock",
-		TunName:            "gnet0",
-		TunMTU:             1500,
-		ProxyListenAddress: ":5700",
-		HostsSyncEnabled:   true,
-		HostsSyncInterval:  30 * time.Second,
-		HostsFile:          "/etc/hosts",
+		UnixSocketAddress:    "/var/run/rlark/nodeserver.sock",
+		TunName:              "gnet0",
+		TunMTU:               1500,
+		ProxyListenAddress:   ":5700",
+		HostsSyncEnabled:     true,
+		HostsSyncInterval:    30 * time.Second,
+		HostsFile:            "/etc/hosts",
+		MetricsListenAddress: ":5790",
 	}
 }
 
@@ -55,4 +60,5 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&c.HostsSyncEnabled, "sidecar-hosts-sync-enabled", c.HostsSyncEnabled, "Enable periodic hosts file sync from NodeServer")
 	fs.DurationVar(&c.HostsSyncInterval, "sidecar-hosts-sync-interval", c.HostsSyncInterval, "Interval between hosts sync attempts")
 	fs.StringVar(&c.HostsFile, "sidecar-hosts-file", c.HostsFile, "Path to the hosts file to update")
+	fs.StringVar(&c.MetricsListenAddress, "sidecar-metrics-listen", c.MetricsListenAddress, "Metrics/pprof HTTP listen address (empty=disabled)")
 }

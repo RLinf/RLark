@@ -5,6 +5,8 @@
 <div align="center">
   <a href="README.md"><img src="https://img.shields.io/badge/lang-English-blue.svg" /></a>
   <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/语言-简体中文-red.svg" /></a>
+  <a href="https://rlark-ci-test.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/Documentation-Read%20the%20Docs-8A2BE2?logo=readthedocs&logoColor=white" alt="Documentation" /></a>
+  <a href="https://rlark-ci-test.readthedocs.io/zh-cn/latest/"><img src="https://img.shields.io/badge/中文文档-Read%20the%20Docs-red?logo=readthedocs&logoColor=white" alt="中文文档" /></a>
   <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&style=flat-square" alt="Go Version" />
   <img src="https://img.shields.io/badge/TypeScript-React-3178C6?logo=typescript&style=flat-square" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Kubernetes-kcp-326CE5?logo=kubernetes&style=flat-square" alt="Kubernetes" />
@@ -15,6 +17,8 @@
 </h1>
 
 Manage cross-cluster embodied intelligence workloads through a unified cloud-native platform spanning cloud GPU training, cross-cluster collaboration, and edge device deployment across heterogeneous resources such as GPU clusters, robot arms, sensors, and cameras.
+
+> **Explore the complete documentation on [Read the Docs](https://rlark-ci-test.readthedocs.io/en/latest/)** — start with the [Quick Start](https://rlark-ci-test.readthedocs.io/en/latest/quickstart/), then continue with the [platform user guide](https://rlark-ci-test.readthedocs.io/en/latest/user-guide/) or [administrator guide](https://rlark-ci-test.readthedocs.io/en/latest/admin-guide/).
 
 ## What's NEW!
 
@@ -36,39 +40,36 @@ Manage cross-cluster embodied intelligence workloads through a unified cloud-nat
 
 ## Quick Start
 
-See the [Quick Start Guide](apps/rlark/docs/quickstart.md) for a step-by-step guide to set up a local development environment and run your first training job.
+Follow the [Quick Start Guide on Read the Docs](https://rlark-ci-test.readthedocs.io/en/latest/quickstart/) to choose one of the verified flows:
 
-```bash
-# 1. Build
-git clone https://github.com/RLinf/RLark
-cd RLark && make build
-
-# 2. Start control plane (Docker Compose)
-docker compose -f apps/rlark/docs/examples/docker-compose.yml up -d
-
-# 3. Start data plane (kind cluster)
-kind create cluster --name rlark-data
-
-# Then follow the quickstart guide to start components and create a job
-```
+- **One-click CLI**: deploy the control plane and two kind data-plane clusters, then verify cross-cluster Pod networking.
+- **UI-based flow**: create clusters and a Domain in the web console, deploy two kind data planes, schedule a Job across them, and verify connectivity.
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [Architecture](apps/rlark/docs/architecture.md) | RLark core: technical architecture, component interactions, data flows |
-| [Core Concepts](apps/rlark/docs/concepts.md) | Domain, Job, Task, Workflow, and other concepts |
-| [Quick Start](apps/rlark/docs/quickstart.md) | Local development environment setup and first training job |
-| [Deployment Guide](apps/rlark/docs/deployment.md) | Production deployment and configuration |
-| [API Reference](apps/rlark/docs/api/reference.md) | Complete REST API reference |
-| [API Examples](apps/rlark/docs/api/examples.md) | End-to-end API usage examples |
+The complete, searchable, and versioned documentation is published on **[Read the Docs](https://rlark-ci-test.readthedocs.io/en/latest/)**. Use these rendered guides as the primary entry points:
+
+| Guide | Description |
+|-------|-------------|
+| [Quick Start](https://rlark-ci-test.readthedocs.io/en/latest/quickstart/) | Verified one-click and UI-based local deployment flows |
+| [Core Concepts](https://rlark-ci-test.readthedocs.io/en/latest/concepts/) | Domain, Job, Task, Workflow, and other concepts |
+| [Platform User Guide](https://rlark-ci-test.readthedocs.io/en/latest/user-guide/) | Web console, clusters, jobs, workflows, storage, and SSH keys |
+| [Administrator Guide](https://rlark-ci-test.readthedocs.io/en/latest/admin-guide/) | Control plane, data plane, networking, security, and operations |
+| [Developer Guide](https://rlark-ci-test.readthedocs.io/en/latest/developer-guide/) | Local development, project layout, debugging, and extensions |
+| [API Reference](https://rlark-ci-test.readthedocs.io/en/latest/api/reference/) | Gateway REST API routes and behavior |
+| [Architecture](https://rlark-ci-test.readthedocs.io/en/latest/architecture/) | Components, interactions, and data flows |
+
+Repository-specific references remain available alongside the code:
+
+| Reference | Description |
+|-----------|-------------|
 | [Embodied Runtime](apps/embodied-runtime/README.md) | Robot (ROS) and camera hardware management on edge nodes |
 | [Web UI](apps/rlark-ui/README.md) | Frontend management console |
 | [Python SDK](sdks/embodied-runtime-python/README.md) | Python client for robot/camera gRPC services |
 | [Go SDK](sdks/embodied-runtime-go/README.md) | Go client for embodied-runtime gRPC stubs |
 | [Proto Definitions](proto/embodied-runtime/README.md) | gRPC service definitions for embodied-runtime |
 
-> [中文文档](apps/rlark/docs/zh/README.md)
+> Prefer Chinese? Visit the **[中文 Read the Docs 站点](https://rlark-ci-test.readthedocs.io/zh-cn/latest/)**.
 
 ## Tech Stack
 

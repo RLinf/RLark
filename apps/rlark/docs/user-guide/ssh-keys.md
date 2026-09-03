@@ -28,7 +28,7 @@ This selection writes one public key into the Job configuration for workload inj
 After an administrator configures the Server SSH endpoint, use the command displayed by the console or copy the Worker-specific command from Job or Node details. A typical Worker command is:
 
 ```bash
-ssh -J <ssh-user>@<bastion-host>:<port> root@<worker-name>
+ssh -J <bastion-host>:<port> root@<worker-name>
 ```
 
 The outer SSH username must match the username attached to the registered key. The target container must provide its SSH service and accept the selected key.

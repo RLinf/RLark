@@ -77,6 +77,12 @@ func buildRayAnnotations(job *rlarkv1alpha1.Job, t rlarkv1alpha1.JobTaskTemplate
 		rlarkv1alpha1.RayTotalNodesAnnotation:    strconv.Itoa(totalNodeCount(job.Spec.Tasks)),
 		rlarkv1alpha1.RayNodeRankStartAnnotation: strconv.Itoa(rankStartForTask(job, t.Name)),
 	}
+	if restartedAt := job.Annotations[RestartedAtAnnotation]; restartedAt != "" {
+		annotations[RestartedAtAnnotation] = restartedAt
+	}
+	if job.Spec.Stopped {
+		annotations[StoppedAnnotation] = "true"
+	}
 	if t.Head {
 		annotations[rlarkv1alpha1.RayRoleAnnotation] = rlarkv1alpha1.RayRoleHead
 	} else {

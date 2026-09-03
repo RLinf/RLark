@@ -59,6 +59,8 @@ type NodeWorker = {
   job: string;
   role: string;
   node: string;
+  cluster: string;
+  domain: string;
   ip: string;
   phase: string;
   requests: Record<string, string>;
@@ -234,7 +236,7 @@ export function ClustersPage({
   }
 
   const selectedNodeObj =
-    workerNodes.find((n) => n.metadata.name === selectedNodeName) ?? null;
+    realNodes.find((n) => n.metadata.name === selectedNodeName) ?? null;
 
   if (selectedNodeName && selectedNodeObj) {
     return (
@@ -553,7 +555,7 @@ export function NodeDetailReal({
         .map(
           (pod: {
             metadata?: { name?: string; namespace?: string };
-            spec?: { taskName?: string; podName?: string };
+            spec?: { taskName?: string; podName?: string; domain?: string };
             status?: { phase?: string; ip?: string };
           }) => {
             const task = tasks.get(pod.spec?.taskName ?? "") as
@@ -586,6 +588,8 @@ export function NodeDetailReal({
               job,
               role: task?.spec?.role ?? "—",
               node: node.metadata.name,
+              cluster: pod.metadata?.namespace ?? "default",
+              domain: pod.spec?.domain ?? "",
               ip: pod.status?.ip ?? "—",
               phase: pod.status?.phase ?? "Pending",
               requests:
@@ -1203,7 +1207,6 @@ function NodeWorkerTable({
       </div>
     );
   }
-  const sshUser = sessionStorage.getItem("rlark-user-name") || "<ssh-user>";
   return (
     <div
       ref={tableRef}
@@ -1242,7 +1245,7 @@ function NodeWorkerTable({
           {sortedWorkers.map((worker) => {
             const requestText = requestTextFor(worker);
             const sshJump = sshConfig.sshJumpHost
-              ? `${sshUser}@${sshConfig.sshJumpHost}${sshConfig.sshJumpPort ? `:${sshConfig.sshJumpPort}` : ""}`
+              ? `${sshConfig.sshJumpHost}${sshConfig.sshJumpPort ? `:${sshConfig.sshJumpPort}` : ""}`
               : "";
             const sshCommand = sshJump
               ? `ssh -J ${sshJump} root@${worker.name}`
@@ -1369,6 +1372,10 @@ function NodeWorkerTable({
                         </div>
                         <div className="worker-detail-grid">
                           <div>
+                            <span>{zh ? "集群" : "Cluster"}</span>
+                            <strong>{worker.cluster}</strong>
+                          </div>
+                          <div>
                             <span>{zh ? "角色" : "Role"}</span>
                             <strong>{worker.role}</strong>
                           </div>
@@ -1377,23 +1384,7 @@ function NodeWorkerTable({
                             <strong>{worker.node}</strong>
                           </div>
                           <div>
-                            <span>{zh ? "申请 CPU" : "CPU request"}</span>
-                            <strong>
-                              {worker.requests.cpu ||
-                                (zh ? "未申请" : "Not requested")}
-                            </strong>
-                          </div>
-                          <div>
-                            <span>{zh ? "申请内存" : "Memory request"}</span>
-                            <strong>
-                              {worker.requests.memory ||
-                                (zh ? "未申请" : "Not requested")}
-                            </strong>
-                          </div>
-                          <div>
-                            <span>
-                              {zh ? "GPU / 端设备" : "GPU / edge devices"}
-                            </span>
+                            <span>{zh ? "申请 GPU" : "GPU request"}</span>
                             <strong>
                               {requestText || (zh ? "未使用" : "Not used")}
                             </strong>
@@ -1406,6 +1397,7 @@ function NodeWorkerTable({
                                 <th>{zh ? "实例名称" : "Worker name"}</th>
                                 <th>Job</th>
                                 <th>{zh ? "实例 IP" : "Worker IP"}</th>
+                                <th>{zh ? "网络域" : "Domain"}</th>
                                 <th>{zh ? "状态" : "Status"}</th>
                               </tr>
                             </thead>
@@ -1418,6 +1410,19 @@ function NodeWorkerTable({
                                 </td>
                                 <td>{worker.job}</td>
                                 <td>{worker.ip}</td>
+                                <td>
+                                  {worker.domain ? (
+                                    <>
+                                      <Network
+                                        size={13}
+                                        style={{ marginRight: 4 }}
+                                      />
+                                      {worker.domain}
+                                    </>
+                                  ) : (
+                                    "—"
+                                  )}
+                                </td>
                                 <td>
                                   <StatusBadge
                                     phase={worker.phase as Phase}

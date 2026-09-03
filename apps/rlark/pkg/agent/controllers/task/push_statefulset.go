@@ -5,11 +5,13 @@ import (
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/go-logr/logr"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 )
 
@@ -60,22 +62,34 @@ func (r *pushStatefulSetReconciler) Reconcile(ctx context.Context, req reconcile
 		return reconcile.Result{}, nil
 	}
 
-	phase, message := statefulSetPhase(&sts)
-	pods, err := listTaskPods(ctx, r.c.LocalKubeClient, sts.Namespace, sts.Spec.Selector.MatchLabels)
-	if err != nil {
-		logger.Error(err, "failed to list pods")
-	}
+	phase, message, pods := statefulSetPhase(ctx, logger, r.c.LocalKubeClient, &sts)
 	observedNodes := podNodeNames(pods)
 	return updateMgmtTaskStatus(ctx, logger, r.c.ManagementClient, &mgmtTask, phase, message, observedNodes)
 }
 
-func statefulSetPhase(sts *appsv1.StatefulSet) (rlarkv1alpha1.TaskPhase, string) {
+func statefulSetPhase(ctx context.Context, logger logr.Logger, localClient client.Client, sts *appsv1.StatefulSet) (rlarkv1alpha1.TaskPhase, string, []corev1.Pod) {
 	desired := computeDesiredReplicas(sts.Spec.Replicas)
-	if desired == 0 {
-		return rlarkv1alpha1.TaskPhaseStopped, ""
+	var phase rlarkv1alpha1.TaskPhase
+	switch {
+	case desired == 0:
+		phase = rlarkv1alpha1.TaskPhaseStopped
+	case sts.Status.ReadyReplicas >= desired:
+		phase = rlarkv1alpha1.TaskPhaseRunning
+	default:
+		phase = rlarkv1alpha1.TaskPhasePending
 	}
-	if sts.Status.ReadyReplicas >= desired {
-		return rlarkv1alpha1.TaskPhaseRunning, ""
+
+	pods, err := listTaskPods(ctx, localClient, sts.Namespace, sts.Spec.Selector.MatchLabels)
+	if err != nil {
+		logger.Error(err, "failed to list pods")
 	}
-	return rlarkv1alpha1.TaskPhasePending, ""
+	// Override to Failed when any pod container is in an abnormal state
+	// (CrashLoopBackOff, ImagePullBackOff, OOMKilled, etc.) so operators
+	// see the failure immediately instead of a misleading Running/Pending.
+	var message string
+	if podMsg, found := podFailureMessage(pods); found && phase != rlarkv1alpha1.TaskPhaseSucceeded {
+		phase = rlarkv1alpha1.TaskPhaseFailed
+		message = podMsg
+	}
+	return phase, message, pods
 }

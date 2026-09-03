@@ -28,7 +28,7 @@ RLark 会校验公钥格式并拒绝重复密钥。当 Server SSH 地址可用�
 管理员配置 Server SSH 入口后，使用控制台显示的命令，或从 Job/节点详情复制指定 Worker 的命令。典型命令如下：
 
 ```bash
-ssh -J <ssh-user>@<bastion-host>:<port> root@<worker-name>
+ssh -J <bastion-host>:<port> root@<worker-name>
 ```
 
 外层 SSH 用户名必须与公钥登记的用户名一致。目标容器必须提供 SSH 服务，并接受所选公钥。

@@ -135,9 +135,15 @@ func (s *Server) sshPublicKeyAuth() ssh.PublicKeyHandler {
 			if keyID == "" {
 				return nil, fmt.Errorf("public key not found for user %s", conn.User())
 			}
+
+			realUser := conn.User()
+			if parts := strings.SplitN(keyID, "-", 2); len(parts) > 0 && parts[0] != "" {
+				realUser = parts[0]
+			}
+
 			_, meta, _ := s.parseSignRequest(&SignRequest{
 				Role:     "ssh-guest",
-				ClientID: conn.User(),
+				ClientID: realUser,
 				KeyID:    keyID,
 			})
 			sshCert := &gossh.Certificate{}
@@ -261,20 +267,17 @@ func (s *Server) authenticateUserKeyFromSecret(username string, key gossh.Public
 		return "", err
 	}
 
-	raw, ok := secret.Data[username]
-	if !ok {
-		return "", nil
-	}
+	for name, raw := range secret.Data {
+		for i, line := range strings.Split(string(raw), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
 
-	for i, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
-		if err == nil && ssh.KeysEqual(key, pubKey) {
-			return fmt.Sprintf("%s-%d", username, i), nil
+			pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
+			if err == nil && ssh.KeysEqual(key, pubKey) {
+				return fmt.Sprintf("%s-%d", name, i), nil
+			}
 		}
 	}
 

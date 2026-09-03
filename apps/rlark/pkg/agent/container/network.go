@@ -18,6 +18,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	nodeservermetrics "github.com/rlinf/rlark/apps/rlark/pkg/network/nodeserver"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
@@ -99,6 +100,7 @@ func NewContainerNetworkAdapter(
 		sshAddr:             sshAddr,
 		sshDialer: NewSSHDialer(SSHDialerConfig{
 			HostKeyCallback: hostKeyCallback,
+			OnReconnect:     nodeservermetrics.OnReconnect(),
 		}),
 		enableSameClusterDirect:  enableSameClusterDirect,
 		enableCrossClusterDirect: enableCrossClusterDirect,
@@ -214,7 +216,13 @@ func (a *containerNetworkAdapter) GetContainerNetworkDial(ctx context.Context, c
 		return func(ctx context.Context) (net.Conn, error) {
 			var dialer net.Dialer
 			// 直接通过目标 Pod 的 LocalIP 访问其 5700 端口（proxy 端口）
-			return dialer.DialContext(ctx, "tcp", net.JoinHostPort(targetPod.LocalIP, "5700"))
+			conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(targetPod.LocalIP, "5700"))
+			status := "success"
+			if err != nil {
+				status = "error"
+			}
+			nodeservermetrics.Metrics().IncDial("direct", status)
+			return conn, err
 		}, nil
 	}
 
@@ -228,7 +236,13 @@ func (a *containerNetworkAdapter) GetContainerNetworkDial(ctx context.Context, c
 		target := fmt.Sprintf("%s.%s.%s.agent-node:5700", targetPod.LocalIP, targetPod.Node, agentID)
 		logger.V(1).Info("Target pod is in a different cluster, using control plane proxy", "targetPod", target)
 		return func(ctx context.Context) (net.Conn, error) {
-			return a.sshDialer.DialContext(ctx, cred.DomainID, a.sshAddr, dpeer.Spec.Cert, dpeer.Spec.Key, target)
+			conn, err := a.sshDialer.DialContext(ctx, cred.DomainID, a.sshAddr, dpeer.Spec.Cert, dpeer.Spec.Key, target)
+			status := "success"
+			if err != nil {
+				status = "error"
+			}
+			nodeservermetrics.Metrics().IncDial("ssh", status)
+			return conn, err
 		}, nil
 	}
 

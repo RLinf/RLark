@@ -18,8 +18,8 @@ import {
   LoaderCircle,
   X,
 } from "lucide-react";
-import type { Phase } from "../data";
 import type { Copy, Lang, Theme } from "../i18n";
+import type { JobDisplayPhase } from "../utils/jobPhase";
 import type { ResourceRow } from "../types";
 
 export function PlatformFooter() {
@@ -128,9 +128,15 @@ export function Logo({ lang }: { lang: Lang }) {
   );
 }
 
-export function StatusBadge({ phase, copy: c }: { phase: Phase; copy: Copy }) {
+export function StatusBadge({
+  phase,
+  copy: c,
+}: {
+  phase: JobDisplayPhase;
+  copy: Copy;
+}) {
   const Icon =
-    phase === "Running"
+    phase === "Running" || phase === "Stopping"
       ? LoaderCircle
       : phase === "Succeeded" || phase === "Online"
         ? Check

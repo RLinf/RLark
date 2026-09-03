@@ -29,10 +29,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 }
 
 // IsTerminal reports whether terminal.
-func (r *Reconciler) IsTerminal(obj client.Object) bool {
-	job := obj.(*rlarkv1alpha1.Job)
-	return job.Status.Phase == rlarkv1alpha1.JobPhaseSucceeded ||
-		job.Status.Phase == rlarkv1alpha1.JobPhaseFailed
+func (r *Reconciler) IsTerminal(client.Object) bool {
+	return false
 }
 
 // ReconcileStateMachine reconciles the resource.

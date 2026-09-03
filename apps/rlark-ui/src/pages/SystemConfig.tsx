@@ -62,7 +62,7 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
   };
 
   const sshCommand = config.sshJumpHost
-    ? `ssh -J <ssh-user>@${config.sshJumpHost}${config.sshJumpPort ? ":" + config.sshJumpPort : ""} root@<pod-name>`
+    ? `ssh -J ${config.sshJumpHost}${config.sshJumpPort ? ":" + config.sshJumpPort : ""} root@<pod-name>`
     : "";
 
   const copySSHCommand = async () => {

@@ -10,9 +10,11 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
+	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -28,17 +30,20 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	defaultIdleTimeout      = 10 * time.Minute
-	defaultCleanupInterval  = 1 * time.Minute
-	defaultSSHUser          = "root"
-	defaultSSHTimeout       = 10 * time.Second
-	maxReconnectBackoff     = 30 * time.Second
-	initialReconnectBackoff = 1 * time.Second
+	defaultIdleTimeout       = 24 * time.Hour
+	defaultCleanupInterval   = 1 * time.Minute
+	defaultSSHUser           = "root"
+	defaultSSHTimeout        = 10 * time.Second
+	defaultKeepaliveInterval = 30 * time.Second
+	maxReconnectBackoff      = 30 * time.Second
+	initialReconnectBackoff  = 1 * time.Second
 )
+
+const keepaliveRequest = "keepalive@openssh.com"
 
 // SSHDialerConfig 配置全局 SSH 连接管理器。
 type SSHDialerConfig struct {
-	// IdleTimeout 关闭空闲超过此时长的 SSH 连接。零值使用默认值（10 分钟）。
+	// IdleTimeout 关闭空闲超过此时长的 SSH 连接。零值使用默认值（24 小时）。
 	IdleTimeout time.Duration `json:"idleTimeout,omitempty" yaml:"idleTimeout,omitempty"`
 	// CleanupInterval 垃圾回收周期。零值使用默认值（1 分钟）。
 	CleanupInterval time.Duration `json:"cleanupInterval,omitempty" yaml:"cleanupInterval,omitempty"`
@@ -50,6 +55,10 @@ type SSHDialerConfig struct {
 	InitialReconnectBackoff time.Duration `json:"initialReconnectBackoff,omitempty" yaml:"initialReconnectBackoff,omitempty"`
 	// MaxReconnectBackoff 重连等待时间的上限。零值使用默认值（30 秒）。
 	MaxReconnectBackoff time.Duration `json:"maxReconnectBackoff,omitempty" yaml:"maxReconnectBackoff,omitempty"`
+	// KeepaliveInterval 应用层 SSH 保活间隔。零值使用默认值（30 秒）。
+	KeepaliveInterval time.Duration `json:"keepaliveInterval,omitempty" yaml:"keepaliveInterval,omitempty"`
+	// OnReconnect 重连成功后的回调（用于 metrics 埋点）。可为 nil。
+	OnReconnect func(domainID string) `json:"-" yaml:"-"`
 	// HostKeyCallback SSH 主机密钥验证回调。nil 时使用 InsecureIgnoreHostKey（仅开发环境）。
 	HostKeyCallback ssh.HostKeyCallback `json:"-" yaml:"-"`
 }
@@ -73,6 +82,9 @@ func (c *SSHDialerConfig) setDefaults() {
 	if c.MaxReconnectBackoff <= 0 {
 		c.MaxReconnectBackoff = maxReconnectBackoff
 	}
+	if c.KeepaliveInterval <= 0 {
+		c.KeepaliveInterval = defaultKeepaliveInterval
+	}
 	if c.HostKeyCallback == nil {
 		c.HostKeyCallback = ssh.InsecureIgnoreHostKey()
 	}
@@ -94,6 +106,10 @@ type domainEntry struct {
 	lastReconnectAt  time.Time
 	reconnectBackoff time.Duration
 	maxBackoff       time.Duration
+
+	// keepaliveDone 关闭时通知当前 keepalive goroutine 退出。
+	// 每次 finishReconnect 成功时重建,markBroken/close 时关闭。
+	keepaliveDone chan struct{}
 }
 
 // SSHDialer 提供按 domain 分组的全局 SSH 连接池。
@@ -124,6 +140,35 @@ func NewSSHDialer(cfg SSHDialerConfig) *SSHDialer {
 	return d
 }
 
+// touch 刷新 lastUsed,表示该 domain 上有真实的业务数据流动。
+// 线程安全,用于 activityConn 在 Read/Write 成功时调用。
+func (entry *domainEntry) touch() {
+	entry.mu.Lock()
+	entry.lastUsed = time.Now()
+	entry.mu.Unlock()
+}
+
+type activityConn struct {
+	net.Conn
+	onActivity func()
+}
+
+func (c *activityConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 {
+		c.onActivity()
+	}
+	return n, err
+}
+
+func (c *activityConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	if n > 0 {
+		c.onActivity()
+	}
+	return n, err
+}
+
 // DialContext 通过 SSH 隧道连接到目标 addr。
 func (d *SSHDialer) DialContext(ctx context.Context, domainID, sshAddr, cert, key, addr string) (net.Conn, error) {
 	if d.closed.Load() {
@@ -139,11 +184,21 @@ func (d *SSHDialer) DialContext(ctx context.Context, domainID, sshAddr, cert, ke
 	conn, err := client.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		if isSSHTransportError(err) {
-			entry.markBroken()
+			log.GetLogger().Info("SSH channel dial failed with transport error, marking broken",
+				"domain", domainID,
+				"target", addr,
+				"err", err,
+				"errType", fmt.Sprintf("%T", err),
+			)
+			entry.markBroken("channel-dial-error")
 		}
 		return nil, fmt.Errorf("ssh proxy to %s: %w", addr, err)
 	}
-	return conn, nil
+
+	return &activityConn{
+		Conn:       conn,
+		onActivity: entry.touch,
+	}, nil
 }
 
 // Close 关闭所有 SSH 连接并停止后台 GC。
@@ -205,7 +260,6 @@ func (d *SSHDialer) getOrCreate(domainID string) *domainEntry {
 // 连接借用
 // ===========================================================================
 
-// borrow 返回可用的 SSH client。
 func (entry *domainEntry) borrow(ctx context.Context, d *SSHDialer, sshAddr, cert, key string) (*ssh.Client, error) {
 	entry.mu.RLock()
 	if !entry.broken && entry.client != nil {
@@ -261,10 +315,10 @@ func (entry *domainEntry) reconnect(ctx context.Context, d *SSHDialer, sshAddr, 
 		case <-time.After(wait):
 			// 退避结束，继续拨号
 		case <-ctx.Done():
-			entry.finishReconnect(nil, ctx.Err(), d.closed.Load())
+			entry.finishReconnect(nil, ctx.Err(), d.closed.Load(), d)
 			return nil, ctx.Err()
 		case <-d.ctx.Done():
-			entry.finishReconnect(nil, fmt.Errorf("ssh dialer closed"), true)
+			entry.finishReconnect(nil, fmt.Errorf("ssh dialer closed"), true, d)
 			return nil, fmt.Errorf("ssh dialer: closed")
 		}
 	}
@@ -272,7 +326,7 @@ func (entry *domainEntry) reconnect(ctx context.Context, d *SSHDialer, sshAddr, 
 	// ---- 执行拨号 ----
 	// 合并 caller ctx 和 dialer ctx：dialer 关闭时立即取消拨号
 	client, err := d.dialSSHWithMergedCtx(ctx, sshAddr, cert, key)
-	entry.finishReconnect(client, err, d.closed.Load())
+	entry.finishReconnect(client, err, d.closed.Load(), d)
 	if err != nil {
 		return nil, fmt.Errorf("ssh reconnect: %w", err)
 	}
@@ -281,7 +335,7 @@ func (entry *domainEntry) reconnect(ctx context.Context, d *SSHDialer, sshAddr, 
 
 // finishReconnect 在拨号完成后更新状态并通知等待者。
 // dialerClosed 为 true 时，即使拨号成功也丢弃新连接，防止泄漏。
-func (entry *domainEntry) finishReconnect(client *ssh.Client, err error, dialerClosed bool) {
+func (entry *domainEntry) finishReconnect(client *ssh.Client, err error, dialerClosed bool, d *SSHDialer) {
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 
@@ -296,6 +350,15 @@ func (entry *domainEntry) finishReconnect(client *ssh.Client, err error, dialerC
 		entry.client = client
 		entry.broken = false
 		entry.reconnectBackoff = 0
+		// 关闭上一个 keepalive goroutine(如果有),避免泄漏
+		if entry.keepaliveDone != nil {
+			close(entry.keepaliveDone)
+		}
+		entry.keepaliveDone = make(chan struct{})
+		go entry.keepaliveLoop(client, d.cfg.KeepaliveInterval, entry.keepaliveDone)
+		if d.cfg.OnReconnect != nil {
+			d.cfg.OnReconnect(entry.domainID)
+		}
 	} else {
 		// 失败或 dialer 已关闭 → 丢弃新连接
 		if client != nil {
@@ -322,13 +385,70 @@ func nextBackoff(current time.Duration, max time.Duration) time.Duration {
 }
 
 // markBroken 标记连接为损坏，下次 borrow 触发重连。
-func (entry *domainEntry) markBroken() {
+func (entry *domainEntry) markBroken(reason string) {
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
-	if entry.client != nil {
-		entry.broken = true
-		_ = entry.client.Close()
-		entry.client = nil
+	entry.markBrokenLocked(reason)
+}
+
+// markBrokenLocked 在持有 entry.mu 的情况下标记连接损坏。
+// reason 记录触发关闭的路径(cleanup/keepalive/dial-error/close),便于定位断连根因。
+func (entry *domainEntry) markBrokenLocked(reason string) {
+	if entry.client == nil {
+		return
+	}
+	log.GetLogger().Info("SSH connection marked broken",
+		"domain", entry.domainID,
+		"reason", reason,
+		"lastUsed", entry.lastUsed,
+		"idleFor", time.Since(entry.lastUsed).Round(time.Second),
+	)
+	if entry.keepaliveDone != nil {
+		close(entry.keepaliveDone)
+		entry.keepaliveDone = nil
+	}
+	entry.broken = true
+	_ = entry.client.Close()
+	entry.client = nil
+}
+
+// markBrokenIfCurrent 仅当 client 仍是当前连接时才标记损坏。
+// keepalive goroutine 检测失败时，entry 可能已被重连成新 client，
+// 防止误标新连接。
+func (entry *domainEntry) markBrokenIfCurrent(client *ssh.Client, reason string) {
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.client == client && client != nil {
+		entry.markBrokenLocked(reason)
+	}
+}
+
+// keepaliveLoop 按 KeepaliveInterval 发送 SSH 应用层保活请求。
+// 任一失败（SendRequest 报错或底层连接断开）即标记 broken 并退出。
+// 通过 done channel 在连接被替换/关闭时退出,避免 goroutine 泄漏。
+func (entry *domainEntry) keepaliveLoop(client *ssh.Client, interval time.Duration, done chan struct{}) {
+	logger := log.GetLogger()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if _, _, err := client.SendRequest(keepaliveRequest, true, nil); err != nil {
+				// 记录具体错误类型,便于定位断连根因:
+				// - i/o timeout: 对端无响应,像会话被中间设备静默丢
+				// - connection reset by peer: 被主动 RST,像有设备踢连接
+				// - EOF: 对端正常关闭
+				logger.Info("SSH keepalive failed, marking connection broken",
+					"domain", entry.domainID,
+					"err", err,
+					"errType", fmt.Sprintf("%T", err),
+				)
+				entry.markBrokenIfCurrent(client, "keepalive-failed")
+				return
+			}
+		case <-done:
+			return
+		}
 	}
 }
 
@@ -336,11 +456,7 @@ func (entry *domainEntry) markBroken() {
 func (entry *domainEntry) close() {
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
-	if entry.client != nil {
-		entry.broken = true
-		_ = entry.client.Close()
-		entry.client = nil
-	}
+	entry.markBrokenLocked("dialer-close")
 }
 
 // ===========================================================================
@@ -373,9 +489,8 @@ func (d *SSHDialer) cleanup() {
 	for _, entry := range entries {
 		entry.mu.Lock()
 		if entry.client != nil && !entry.broken && entry.lastUsed.Before(cutoff) {
-			entry.broken = true
-			_ = entry.client.Close()
-			entry.client = nil
+			// 走统一关闭逻辑,确保 keepalive goroutine 被通知退出
+			entry.markBrokenLocked("idle-cleanup")
 		}
 		entry.mu.Unlock()
 	}
@@ -417,7 +532,10 @@ func dialSSH(ctx context.Context, sshAddr, certPEM, keyPEM string, cfg SSHDialer
 		Timeout:         cfg.SSHTimeout,
 	}
 
-	dialer := &net.Dialer{Timeout: cfg.SSHTimeout}
+	dialer := &net.Dialer{
+		Timeout:   cfg.SSHTimeout,
+		KeepAlive: 30 * time.Second,
+	}
 	conn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return nil, fmt.Errorf("dial ssh server %s: %w", address, err)
@@ -444,14 +562,31 @@ func parseSSHAddr(addr string, defaultUser string) (string, string) {
 
 // isSSHTransportError 返回 true 当错误指示 SSH 传输层连接本身已断开，
 // 而非远端目标连接失败（如 target unreachable）。
+// 调用方主动取消（context.Canceled/DeadlineExceeded）不算传输错误，
+// 避免误标健康连接。
 func isSSHTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// 调用方主动取消不应标 broken
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
 	// SSH 底层 TCP 断开会返回 net.OpError
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
 		return true
 	}
-	// 优雅关闭返回 io.EOF
-	if errors.Is(err, io.EOF) {
+	// 优雅关闭/对端中途断开
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	// 内核层 TCP 错误
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	// x/crypto/ssh 内部传输错误（无导出 sentinel）
+	if strings.Contains(err.Error(), "ssh: tcp transport closed") {
 		return true
 	}
 	return false

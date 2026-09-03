@@ -84,6 +84,21 @@ export interface CRDJobTask {
   };
 }
 
+export interface CRDTask {
+  metadata: {
+    name: string;
+    namespace?: string;
+  };
+  spec?: {
+    kubernetes?: {
+      workload?: CRDWorkload;
+    };
+  };
+  status?: {
+    observedNodes?: string[];
+  };
+}
+
 export interface CRDJob {
   apiVersion: string;
   kind: string;

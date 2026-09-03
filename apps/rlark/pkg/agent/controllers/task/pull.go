@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -36,6 +37,9 @@ const (
 	PVCTaskLabel                            = "rlark.io/task"
 	PVCOwnerAnnotation                      = "rlark.io/pvc-owner"
 	PVCOwnerTaskAnnotation                  = "rlark.io/pvc-owner-task"
+	RestartedAtAnnotation                   = "rlark.io/restarted-at"
+	StoppedAnnotation                       = "rlark.io/stopped"
+	CleanupRequeueInterval                  = 2 * time.Second
 )
 
 // pullReconciler watches management Tasks and creates workloads on local cluster.
@@ -51,8 +55,13 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 	if err := r.c.ManagementClient.Get(ctx, req.NamespacedName, &mgmtTask); err != nil {
 		if client.IgnoreNotFound(err) == nil {
 			logger.Info("management Task deleted, cleaning up local workload")
-			if cleanupErr := r.cleanupWorkload(ctx, req.Name, req.Namespace); cleanupErr != nil {
+			pending, cleanupErr := r.cleanupWorkload(ctx, req.Name, "rlark-system")
+			if cleanupErr != nil {
 				logger.Error(cleanupErr, "failed to clean up workload")
+				return reconcile.Result{}, cleanupErr
+			}
+			if pending {
+				return reconcile.Result{RequeueAfter: CleanupRequeueInterval}, nil
 			}
 			return reconcile.Result{}, nil
 		}
@@ -63,9 +72,13 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 	if mgmtTask.DeletionTimestamp != nil {
 		logger.Info("management Task being deleted, cleaning up local workload")
 		workloadNs := getWorkloadNamespace(&mgmtTask)
-		if err := r.cleanupWorkload(ctx, mgmtTask.Name, workloadNs); err != nil {
+		pending, err := r.cleanupWorkload(ctx, mgmtTask.Name, workloadNs)
+		if err != nil {
 			logger.Error(err, "failed to clean up workload")
 			return reconcile.Result{}, err
+		}
+		if pending {
+			return reconcile.Result{RequeueAfter: CleanupRequeueInterval}, nil
 		}
 		mgmtTask.Finalizers = slices.DeleteFunc(mgmtTask.Finalizers, func(s string) bool {
 			return s == ManagementTaskFinalizer
@@ -99,11 +112,33 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 	}
 
 	workloadSpec := mgmtTask.Spec.Kubernetes.Workload
+	workloadNamespace := getWorkloadNamespace(&mgmtTask)
+	restarting, err := r.restartCleanupRequired(ctx, &mgmtTask, workloadNamespace)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	if mgmtTask.Annotations[StoppedAnnotation] != "true" &&
+		(restarting || mgmtTask.Status.Phase == rlarkv1alpha1.TaskPhaseStopped) &&
+		mgmtTask.Status.Phase != rlarkv1alpha1.TaskPhasePending {
+		return updateMgmtTaskStatus(ctx, logger, r.c.ManagementClient, &mgmtTask, rlarkv1alpha1.TaskPhasePending, "", nil)
+	}
+	if mgmtTask.Annotations[StoppedAnnotation] == "true" || restarting {
+		pending, err := r.cleanupWorkload(ctx, mgmtTask.Name, workloadNamespace)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		if pending {
+			return reconcile.Result{RequeueAfter: CleanupRequeueInterval}, nil
+		}
+		if mgmtTask.Annotations[StoppedAnnotation] == "true" {
+			return updateMgmtTaskStatus(ctx, logger, r.c.ManagementClient, &mgmtTask, rlarkv1alpha1.TaskPhaseStopped, "", nil)
+		}
+	}
+
 	applyTemplateMutations(&workloadSpec.Template, &mgmtTask, r.c.Image)
 
-	workloadNamespace := getWorkloadNamespace(&mgmtTask)
 	if err := r.ensureImagePullSecrets(ctx, &workloadSpec.Template, workloadNamespace); err != nil {
-		logger.Error(err, "failed to ensure image pull secrets")
+		return reconcile.Result{}, fmt.Errorf("ensure image pull secrets: %w", err)
 	}
 
 	if err := r.ensurePVCs(ctx, &mgmtTask, workloadSpec); err != nil {
@@ -170,15 +205,36 @@ func (r *pullReconciler) createOrUpdateWorkload(
 	return reconcile.Result{}, nil
 }
 
+func (r *pullReconciler) restartCleanupRequired(ctx context.Context, mgmtTask *rlarkv1alpha1.Task, namespace string) (bool, error) {
+	restartedAt := mgmtTask.Annotations[RestartedAtAnnotation]
+	if restartedAt == "" {
+		return false, nil
+	}
+	key := types.NamespacedName{Name: mgmtTask.Name, Namespace: namespace}
+	for _, obj := range []client.Object{&appsv1.Deployment{}, &appsv1.DaemonSet{}, &appsv1.StatefulSet{}} {
+		err := r.c.LocalKubeClient.Get(ctx, key, obj)
+		if err == nil {
+			return obj.GetAnnotations()[RestartedAtAnnotation] != restartedAt, nil
+		}
+		if !errors.IsNotFound(err) {
+			return false, err
+		}
+	}
+
+	var pvcs corev1.PersistentVolumeClaimList
+	if err := r.c.LocalKubeClient.List(ctx, &pvcs, client.InNamespace(namespace), client.MatchingLabels{PVCTaskLabel: mgmtTask.Name}); err != nil {
+		return false, err
+	}
+	return len(pvcs.Items) > 0, nil
+}
+
 func (r *pullReconciler) createOrUpdateDeployment(ctx context.Context, mgmtTask *rlarkv1alpha1.Task, spec *rlarkv1alpha1.KubernetesWorkloadSpec) (reconcile.Result, error) {
 	return r.createOrUpdateWorkload(ctx, mgmtTask, "Deployment",
 		&appsv1.Deployment{},
 		buildDeployment(mgmtTask, spec),
 		func(obj client.Object) {
 			deploy := obj.(*appsv1.Deployment)
-			if deploy.Annotations == nil {
-				deploy.Annotations = make(map[string]string)
-			}
+			deploy.Annotations = workloadAnnotations(mgmtTask)
 			deploy.Annotations[ManagementTaskResourceVersionAnnotation] = mgmtTask.ResourceVersion
 			deploy.Spec.Replicas = spec.Replicas
 			deploy.Spec.Template = spec.Template
@@ -191,9 +247,7 @@ func (r *pullReconciler) createOrUpdateDaemonSet(ctx context.Context, mgmtTask *
 		buildDaemonSet(mgmtTask, spec),
 		func(obj client.Object) {
 			ds := obj.(*appsv1.DaemonSet)
-			if ds.Annotations == nil {
-				ds.Annotations = make(map[string]string)
-			}
+			ds.Annotations = workloadAnnotations(mgmtTask)
 			ds.Annotations[ManagementTaskResourceVersionAnnotation] = mgmtTask.ResourceVersion
 			ds.Spec.Template = spec.Template
 		})
@@ -205,42 +259,50 @@ func (r *pullReconciler) createOrUpdateStatefulSet(ctx context.Context, mgmtTask
 		buildStatefulSet(mgmtTask, spec),
 		func(obj client.Object) {
 			sts := obj.(*appsv1.StatefulSet)
-			if sts.Annotations == nil {
-				sts.Annotations = make(map[string]string)
-			}
+			sts.Annotations = workloadAnnotations(mgmtTask)
 			sts.Annotations[ManagementTaskResourceVersionAnnotation] = mgmtTask.ResourceVersion
 			sts.Spec.Replicas = spec.Replicas
 			sts.Spec.Template = spec.Template
 		})
 }
 
-func (r *pullReconciler) cleanupWorkload(ctx context.Context, name string, namespace string) error {
+func (r *pullReconciler) cleanupWorkload(ctx context.Context, name string, namespace string) (bool, error) {
 	if r.c.LocalKubeClient == nil {
-		return nil
+		return false, nil
 	}
+	pending := false
 	workloadKey := types.NamespacedName{Name: name, Namespace: namespace}
 
 	for _, obj := range []client.Object{&appsv1.Deployment{}, &appsv1.DaemonSet{}, &appsv1.StatefulSet{}} {
-		if err := r.c.LocalKubeClient.Get(ctx, workloadKey, obj); err == nil {
-			if err := r.c.LocalKubeClient.Delete(ctx, obj); err != nil {
-				return err
+		err := r.c.LocalKubeClient.Get(ctx, workloadKey, obj)
+		if err != nil && !errors.IsNotFound(err) {
+			return false, err
+		}
+		if err == nil {
+			pending = true
+			if obj.GetDeletionTimestamp().IsZero() {
+				if err := r.c.LocalKubeClient.Delete(ctx, obj); err != nil && !errors.IsNotFound(err) {
+					return false, err
+				}
 			}
 		}
 	}
 
 	svcKey := types.NamespacedName{Name: rayHeadServiceName(name), Namespace: namespace}
 	var svc corev1.Service
-	if err := r.c.LocalKubeClient.Get(ctx, svcKey, &svc); err == nil {
-		if err := r.c.LocalKubeClient.Delete(ctx, &svc); err != nil {
-			return err
+	if err := r.c.LocalKubeClient.Get(ctx, svcKey, &svc); err == nil && svc.DeletionTimestamp.IsZero() {
+		if err := r.c.LocalKubeClient.Delete(ctx, &svc); err != nil && !errors.IsNotFound(err) {
+			return false, err
 		}
+	} else if err != nil && !errors.IsNotFound(err) {
+		return false, err
 	}
 
-	if err := r.cleanupPVCs(ctx, name, namespace); err != nil {
-		return err
+	pvcsPending, err := r.cleanupPVCs(ctx, name, namespace)
+	if err != nil {
+		return false, err
 	}
-
-	return nil
+	return pending || pvcsPending, nil
 }
 
 func (r *pullReconciler) ensureRayResources(ctx context.Context, mgmtTask *rlarkv1alpha1.Task, owner client.Object) error {
@@ -374,9 +436,9 @@ func (r *pullReconciler) ensurePVCs(ctx context.Context, mgmtTask *rlarkv1alpha1
 	return nil
 }
 
-func (r *pullReconciler) cleanupPVCs(ctx context.Context, taskName string, namespace string) error {
+func (r *pullReconciler) cleanupPVCs(ctx context.Context, taskName string, namespace string) (bool, error) {
 	if r.c.LocalKubeClient == nil {
-		return nil
+		return false, nil
 	}
 
 	pvcList := &corev1.PersistentVolumeClaimList{}
@@ -384,18 +446,18 @@ func (r *pullReconciler) cleanupPVCs(ctx context.Context, taskName string, names
 		PVCTaskLabel: taskName,
 	}); err != nil {
 		if errors.IsNotFound(err) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("list PVCs for task %s: %w", taskName, err)
+		return false, fmt.Errorf("list PVCs for task %s: %w", taskName, err)
 	}
 
 	if len(pvcList.Items) == 0 {
 		var allPVCs corev1.PersistentVolumeClaimList
 		if err := r.c.LocalKubeClient.List(ctx, &allPVCs, client.InNamespace(namespace)); err != nil {
 			if errors.IsNotFound(err) {
-				return nil
+				return false, nil
 			}
-			return fmt.Errorf("list all PVCs in namespace %s: %w", namespace, err)
+			return false, fmt.Errorf("list all PVCs in namespace %s: %w", namespace, err)
 		}
 		for _, pvc := range allPVCs.Items {
 			if pvc.Annotations != nil && pvc.Annotations[PVCOwnerTaskAnnotation] == taskName {
@@ -407,14 +469,14 @@ func (r *pullReconciler) cleanupPVCs(ctx context.Context, taskName string, names
 	for i := range pvcList.Items {
 		logger := log.FromContext(ctx).WithValues("pvc", pvcList.Items[i].Name)
 		logger.Info("Deleting PVC owned by task", "pvc", pvcList.Items[i].Name, "task", taskName)
-		if err := r.c.LocalKubeClient.Delete(ctx, &pvcList.Items[i]); err != nil {
-			if !errors.IsNotFound(err) {
-				return fmt.Errorf("delete PVC %s: %w", pvcList.Items[i].Name, err)
+		if pvcList.Items[i].DeletionTimestamp.IsZero() {
+			if err := r.c.LocalKubeClient.Delete(ctx, &pvcList.Items[i]); err != nil && !errors.IsNotFound(err) {
+				return false, fmt.Errorf("delete PVC %s: %w", pvcList.Items[i].Name, err)
 			}
 		}
 	}
 
-	return nil
+	return len(pvcList.Items) > 0, nil
 }
 
 func pvcNameForVolume(taskName, volumeName string) string {
@@ -427,6 +489,19 @@ func getWorkloadNamespace(mgmtTask *rlarkv1alpha1.Task) string {
 }
 
 // --- workload builder functions ---
+
+func workloadAnnotations(mgmtTask *rlarkv1alpha1.Task) map[string]string {
+	annotations := map[string]string{
+		ManagementTaskNameAnnotation:            mgmtTask.Name,
+		ManagementTaskNamespaceAnnotation:       mgmtTask.Namespace,
+		ManagementTaskUIDAnnotation:             string(mgmtTask.UID),
+		ManagementTaskResourceVersionAnnotation: mgmtTask.ResourceVersion,
+	}
+	if restartedAt := mgmtTask.Annotations[RestartedAtAnnotation]; restartedAt != "" {
+		annotations[RestartedAtAnnotation] = restartedAt
+	}
+	return annotations
+}
 
 // ensureLabels ensures the pod template has labels, adding a default if none are set.
 func ensureLabels(template *corev1.PodTemplateSpec, name string) {
@@ -534,7 +609,7 @@ func (r *pullReconciler) ensureImagePullSecrets(ctx context.Context, template *c
 	// Build a map of registry prefix -> secret name
 	registryToSecret := make(map[string]string, len(secretList.Items))
 	for _, secret := range secretList.Items {
-		registry := secret.Annotations[common.ImageRegistryAnnotationRegistry]
+		registry := common.NormalizeRegistry(secret.Annotations[common.ImageRegistryAnnotationRegistry])
 		if registry == "" {
 			continue
 		}
@@ -544,6 +619,7 @@ func (r *pullReconciler) ensureImagePullSecrets(ctx context.Context, template *c
 	// Find matching registries for our images
 	matchedSecrets := make(map[string]bool)
 	for _, image := range imageRefs {
+		image = common.NormalizeRegistry(image)
 		for registry, secretName := range registryToSecret {
 			if strings.HasPrefix(image, registry+"/") || image == registry {
 				matchedSecrets[secretName] = true
@@ -560,7 +636,7 @@ func (r *pullReconciler) ensureImagePullSecrets(ctx context.Context, template *c
 	for secretName := range matchedSecrets {
 		if err := r.syncImagePullSecret(ctx, secretName, workloadNamespace); err != nil {
 			logger.Error(err, "failed to sync image pull secret", "secret", secretName, "namespace", workloadNamespace)
-			continue
+			return fmt.Errorf("sync image pull secret %q: %w", secretName, err)
 		}
 	}
 
@@ -618,14 +694,9 @@ func (r *pullReconciler) syncImagePullSecret(ctx context.Context, secretName, de
 func buildDeployment(mgmtTask *rlarkv1alpha1.Task, spec *rlarkv1alpha1.KubernetesWorkloadSpec) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      mgmtTask.Name,
-			Namespace: getWorkloadNamespace(mgmtTask),
-			Annotations: map[string]string{
-				ManagementTaskNameAnnotation:            mgmtTask.Name,
-				ManagementTaskNamespaceAnnotation:       mgmtTask.Namespace,
-				ManagementTaskUIDAnnotation:             string(mgmtTask.UID),
-				ManagementTaskResourceVersionAnnotation: mgmtTask.ResourceVersion,
-			},
+			Name:        mgmtTask.Name,
+			Namespace:   getWorkloadNamespace(mgmtTask),
+			Annotations: workloadAnnotations(mgmtTask),
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: spec.Replicas,
@@ -640,14 +711,9 @@ func buildDeployment(mgmtTask *rlarkv1alpha1.Task, spec *rlarkv1alpha1.Kubernete
 func buildDaemonSet(mgmtTask *rlarkv1alpha1.Task, spec *rlarkv1alpha1.KubernetesWorkloadSpec) *appsv1.DaemonSet {
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      mgmtTask.Name,
-			Namespace: getWorkloadNamespace(mgmtTask),
-			Annotations: map[string]string{
-				ManagementTaskNameAnnotation:            mgmtTask.Name,
-				ManagementTaskNamespaceAnnotation:       mgmtTask.Namespace,
-				ManagementTaskUIDAnnotation:             string(mgmtTask.UID),
-				ManagementTaskResourceVersionAnnotation: mgmtTask.ResourceVersion,
-			},
+			Name:        mgmtTask.Name,
+			Namespace:   getWorkloadNamespace(mgmtTask),
+			Annotations: workloadAnnotations(mgmtTask),
 		},
 		Spec: appsv1.DaemonSetSpec{
 			Selector: &metav1.LabelSelector{
@@ -661,14 +727,9 @@ func buildDaemonSet(mgmtTask *rlarkv1alpha1.Task, spec *rlarkv1alpha1.Kubernetes
 func buildStatefulSet(mgmtTask *rlarkv1alpha1.Task, spec *rlarkv1alpha1.KubernetesWorkloadSpec) *appsv1.StatefulSet {
 	return &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      mgmtTask.Name,
-			Namespace: getWorkloadNamespace(mgmtTask),
-			Annotations: map[string]string{
-				ManagementTaskNameAnnotation:            mgmtTask.Name,
-				ManagementTaskNamespaceAnnotation:       mgmtTask.Namespace,
-				ManagementTaskUIDAnnotation:             string(mgmtTask.UID),
-				ManagementTaskResourceVersionAnnotation: mgmtTask.ResourceVersion,
-			},
+			Name:        mgmtTask.Name,
+			Namespace:   getWorkloadNamespace(mgmtTask),
+			Annotations: workloadAnnotations(mgmtTask),
 		},
 		Spec: appsv1.StatefulSetSpec{
 			Replicas: spec.Replicas,

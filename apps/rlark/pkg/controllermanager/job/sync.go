@@ -80,7 +80,7 @@ func (r *Reconciler) reconcileTask(
 	var task rlarkv1alpha1.Task
 	err := r.Get(ctx, types.NamespacedName{Name: taskName, Namespace: taskNamespace}, &task)
 	if err == nil {
-		if !taskSpecEqual(&task, job, t) {
+		if !taskEqual(&task, job, t) {
 			desired := buildTask(job, t, taskName, taskNamespace)
 			task.Spec = desired.Spec
 			task.Annotations = desired.Annotations
@@ -108,9 +108,11 @@ func (r *Reconciler) reconcileTask(
 	return newTask, nil
 }
 
-func taskSpecEqual(existing *rlarkv1alpha1.Task, job *rlarkv1alpha1.Job, t rlarkv1alpha1.JobTaskTemplate) bool {
+func taskEqual(existing *rlarkv1alpha1.Task, job *rlarkv1alpha1.Job, t rlarkv1alpha1.JobTaskTemplate) bool {
 	desired := buildTask(job, t, existing.Name, existing.Namespace)
-	return reflect.DeepEqual(existing.Spec, desired.Spec)
+	return reflect.DeepEqual(existing.Spec, desired.Spec) &&
+		existing.Annotations[RestartedAtAnnotation] == desired.Annotations[RestartedAtAnnotation] &&
+		existing.Annotations[StoppedAnnotation] == desired.Annotations[StoppedAnnotation]
 }
 
 func (r *Reconciler) reconcileWithStateMachine(
@@ -158,14 +160,6 @@ func (r *Reconciler) reconcileWithStateMachine(
 }
 
 func (r *Reconciler) evaluateJobEvent(job *rlarkv1alpha1.Job) string {
-	if job.Spec.Stopped {
-		return EventJobStopped
-	}
-
-	if job.Status.Phase == rlarkv1alpha1.JobPhaseStopped {
-		return EventJobResumed
-	}
-
 	phases := make([]string, len(job.Status.Tasks))
 	for i, ts := range job.Status.Tasks {
 		phases[i] = string(ts.Phase)
@@ -177,6 +171,29 @@ func (r *Reconciler) evaluateJobEvent(job *rlarkv1alpha1.Job) string {
 		string(rlarkv1alpha1.TaskPhaseStopped),
 	)
 
+	if job.Spec.Stopped {
+		if s.AllStopped && s.HasItems {
+			return EventJobStopped
+		}
+		if s.HasItems && job.Status.Phase != rlarkv1alpha1.JobPhasePending {
+			return EventTasksPending
+		}
+		return ""
+	}
+
+	switch job.Status.Phase {
+	case rlarkv1alpha1.JobPhaseStopped:
+		return EventTasksPending
+	case rlarkv1alpha1.JobPhaseSucceeded:
+		if !s.AllSucceeded {
+			return EventTasksPending
+		}
+	case rlarkv1alpha1.JobPhaseFailed:
+		if !s.AnyFailed {
+			return EventTasksPending
+		}
+	}
+
 	if s.AnyFailed {
 		return EventAnyTaskFailed
 	}
@@ -185,9 +202,25 @@ func (r *Reconciler) evaluateJobEvent(job *rlarkv1alpha1.Job) string {
 		return EventAllTasksDone
 	}
 
-	if s.AnyRunning {
+	if allTasksInPhase(phases, string(rlarkv1alpha1.TaskPhaseRunning)) {
 		return EventTasksRunning
 	}
 
+	if s.HasItems && job.Status.Phase != rlarkv1alpha1.JobPhasePending {
+		return EventTasksPending
+	}
+
 	return ""
+}
+
+func allTasksInPhase(phases []string, phase string) bool {
+	if len(phases) == 0 {
+		return false
+	}
+	for _, current := range phases {
+		if current != phase {
+			return false
+		}
+	}
+	return true
 }

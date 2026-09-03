@@ -4,10 +4,10 @@
 
 RLark supports two storage types for training jobs:
 
-| Type | Use Case | Persistence |
-|------|----------|-------------|
-| Host Directory | Data already on the node, high I/O | Survives pod restarts |
-| Object Storage (PVC) | Shared data, checkpoint persistence | Survives pod deletion |
+| Type | Use Case | Lifecycle |
+|------|----------|-----------|
+| Host Directory | Data already on the node, high I/O | Job lifecycle actions do not delete data |
+| Object Storage (PVC) | Shared data within a Job run | Stop/restart/delete removes task PVCs; start/restart creates empty PVCs |
 
 ## Host Directory
 
@@ -39,12 +39,13 @@ Verify the storage chain:
 2. Container mount is correct
 3. Application can read input data
 4. Application can write output data
-5. Output persists after job stops
+5. Copy required PVC output elsewhere before stopping or restarting the Job
 
-## Cleanup
+## Lifecycle
 
-- Stopping a job: PVCs are preserved, hostPath data is preserved
-- Deleting a job: PVCs are cleaned up, hostPath data is NOT cleaned up
+- Stop or restart: task PVCs are deleted; hostPath data is preserved
+- Start or restart: new empty task PVCs are created
+- Delete: task PVCs are deleted; hostPath data is preserved
 
 ## API Equivalent
 

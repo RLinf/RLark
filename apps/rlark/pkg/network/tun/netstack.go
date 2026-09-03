@@ -180,6 +180,7 @@ func (ns *netstack) handleRecv(tunnelConn net.Conn, ep *channel.Endpoint, wg *sy
 				Payload: buffer.MakeWithData(data),
 			})
 			ep.InjectInbound(ipv4.ProtocolNumber, pkt)
+			tunMetrics.IncPackets("rx")
 		default:
 			// ignore unsupported versions
 		}
@@ -212,6 +213,7 @@ func (ns *netstack) handleSend(ep *channel.Endpoint, tunnelConn net.Conn, wg *sy
 			logger.Error(nil, "Failed to send packet to tunnel", "err", err)
 			return
 		}
+		tunMetrics.IncPackets("tx")
 	}
 }
 

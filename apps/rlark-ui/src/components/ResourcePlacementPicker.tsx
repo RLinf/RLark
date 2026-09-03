@@ -13,8 +13,13 @@ import {
   getNodeDeviceModel,
   getNodeGPUModel,
   getNodeLocation,
+  selectDeviceResourceKey,
 } from "../utils/nodes";
-import { selectorToStr } from "../utils/job";
+import { parseNodeSelectorStr, selectorToStr } from "../utils/job";
+import {
+  availableResource,
+  type ReclaimableResources,
+} from "../utils/resourceAvailability";
 
 type Mode = "model" | "manual";
 type ResourceKind = "gpu" | "device" | "compute";
@@ -26,6 +31,7 @@ type NodeResource = {
   resourceKey: string;
   total: number;
   free: number;
+  configured: boolean;
 };
 
 type ResourceOption = {
@@ -53,53 +59,68 @@ const requestedResourceAmount = (gpu: string, device?: string) => {
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 1;
 };
 
-function nodeResource(node: CRDNodeLite): NodeResource | null {
+function nodeResources(
+  node: CRDNodeLite,
+  reclaimableResources: ReclaimableResources,
+): NodeResource[] {
   const fullNode = node as Parameters<typeof getGPUResourceKey>[0];
   const capacity = node.status?.capacity ?? node.status?.allocatable ?? {};
   const allocatable = node.status?.allocatable ?? capacity;
   const used = node.status?.used ?? {};
+  const nodeKey = `${node.metadata.namespace ?? ""}/${node.metadata.name}`;
+  const reclaimable = reclaimableResources[nodeKey] ?? {};
   const gpuKey = getGPUResourceKey(fullNode);
   const gpuTotal = quantity(capacity[gpuKey] ?? allocatable[gpuKey]);
+  const resources: NodeResource[] = [];
   if (gpuTotal > 0) {
-    return {
+    resources.push({
       node,
       kind: "gpu",
       model: getNodeGPUModel(fullNode) || "未标注 GPU",
       resourceKey: gpuKey,
       total: gpuTotal,
-      free: Math.max(0, quantity(allocatable[gpuKey]) - quantity(used[gpuKey])),
-    };
+      free: availableResource(
+        allocatable[gpuKey],
+        used[gpuKey],
+        reclaimable[gpuKey],
+      ),
+      configured: true,
+    });
   }
 
-  const deviceKey = Array.from(
-    new Set([...Object.keys(capacity), ...Object.keys(allocatable)]),
-  ).find(
-    (key) => key === "rlinf.io/device" || key.startsWith("rlinf.io/device-"),
-  );
-  if (!deviceKey) {
-    return {
+  const deviceKey = selectDeviceResourceKey(capacity, allocatable);
+  const deviceTotal = deviceKey
+    ? quantity(capacity[deviceKey] ?? allocatable[deviceKey])
+    : 0;
+  if (deviceKey && deviceTotal > 0) {
+    const deviceModel = getNodeDeviceModel(fullNode);
+    resources.push({
       node,
-      kind: "compute",
-      model: "CPU",
+      kind: "device",
+      model: deviceModel || "__unset_device_model__",
+      resourceKey: deviceModel ? deviceKey : "",
+      total: deviceModel ? deviceTotal : 0,
+      free: deviceModel
+        ? availableResource(
+            allocatable[deviceKey],
+            used[deviceKey],
+            reclaimable[deviceKey],
+          )
+        : 0,
+      configured: Boolean(deviceModel),
+    });
+  } else if (resources.length === 0) {
+    resources.push({
+      node,
+      kind: "device",
+      model: "__undiscovered_device__",
       resourceKey: "",
-      total: 1,
-      free:
-        node.status?.phase !== "Offline" && !node.spec?.unschedulable ? 1 : 0,
-    };
+      total: 0,
+      free: 0,
+      configured: false,
+    });
   }
-  const deviceTotal = quantity(capacity[deviceKey] ?? allocatable[deviceKey]);
-  if (deviceTotal <= 0) return null;
-  return {
-    node,
-    kind: "device",
-    model: getNodeDeviceModel(fullNode) || deviceKey,
-    resourceKey: deviceKey,
-    total: deviceTotal,
-    free: Math.max(
-      0,
-      quantity(allocatable[deviceKey]) - quantity(used[deviceKey]),
-    ),
-  };
+  return resources;
 }
 
 export function ResourcePlacementPicker({
@@ -107,15 +128,22 @@ export function ResourcePlacementPicker({
   cluster,
   nodes,
   loading,
+  reclaimableResources = {},
+  nodeSelector,
+  placementMode,
   replicas,
   gpu,
   devices,
   onChange,
+  onPlacementModeChange,
 }: {
   zh: boolean;
   cluster: string;
   nodes: CRDNodeLite[];
   loading: boolean;
+  reclaimableResources?: ReclaimableResources;
+  nodeSelector: string;
+  placementMode?: Mode;
   replicas: number;
   gpu: string;
   devices: Array<{ name: string; quantity: string }>;
@@ -125,14 +153,18 @@ export function ResourcePlacementPicker({
     gpu: string;
     devices: Array<{ name: string; quantity: string }>;
   }) => void;
+  onPlacementModeChange?: (mode: Mode) => void;
 }) {
   const pickerId = useId();
-  const [mode, setMode] = useState<Mode>("model");
+  const [mode, setMode] = useState<Mode>(placementMode ?? "manual");
   const [selectedOptionId, setSelectedOptionId] = useState("");
   const [resourceAmount, setResourceAmount] = useState(() =>
     requestedResourceAmount(gpu, devices[0]?.quantity),
   );
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const initializedRef = useRef(false);
+  const skipInitialCommitRef = useRef(false);
+  const previousClusterRef = useRef(cluster);
   const gridRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<{
     x: number;
@@ -158,9 +190,8 @@ export function ResourcePlacementPicker({
     () =>
       nodes
         .filter((node) => node.metadata.namespace === cluster)
-        .map(nodeResource)
-        .filter((item): item is NodeResource => item !== null),
-    [cluster, nodes],
+        .flatMap((node) => nodeResources(node, reclaimableResources)),
+    [cluster, nodes, reclaimableResources],
   );
   const resourceOptions = useMemo<ResourceOption[]>(() => {
     const groups = new Map<string, NodeResource[]>();
@@ -184,7 +215,9 @@ export function ResourcePlacementPicker({
         .reduce((sum, resource) => sum + resource.free, 0),
       totalNodes: groupedResources.length,
       availableNodes: groupedResources.filter(
-        (resource) => isSchedulable(resource) && resource.free > 0,
+        (resource) =>
+          isSchedulable(resource) &&
+          (!resource.configured || resource.free > 0),
       ).length,
     })).sort((left, right) => {
       const order: Record<ResourceKind, number> = {
@@ -198,16 +231,97 @@ export function ResourcePlacementPicker({
   }, [resources]);
 
   useEffect(() => {
-    if (!resourceOptions.some((option) => option.id === selectedOptionId)) {
-      setSelectedOptionId(resourceOptions[0]?.id ?? "");
+    if (previousClusterRef.current === cluster) return;
+    previousClusterRef.current = cluster;
+    initializedRef.current = false;
+    setSelectedOptionId("");
+    setSelected(new Set());
+  }, [cluster]);
+
+  useEffect(() => {
+    if (initializedRef.current || resourceOptions.length === 0) return;
+
+    const selector = parseNodeSelectorStr(nodeSelector);
+    const selectedNames = new Set(
+      (selector["kubernetes.io/hostname"] ?? "")
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean),
+    );
+    const requestedDevice = devices[0]?.name;
+    const requestedGpu = quantity(gpu) > 0;
+    const matchingOption =
+      resourceOptions.find(
+        (option) =>
+          requestedDevice &&
+          option.kind === "device" &&
+          option.resources.some(
+            (resource) => resource.resourceKey === requestedDevice,
+          ),
+      ) ??
+      resourceOptions.find((option) => requestedGpu && option.kind === "gpu") ??
+      resourceOptions.find((option) =>
+        option.resources.some((resource) =>
+          selectedNames.has(resource.node.metadata.name),
+        ),
+      ) ??
+      resourceOptions[0];
+
+    setSelectedOptionId(matchingOption.id);
+    if (selectedNames.size > 0) {
+      const matchingNames = matchingOption.resources
+        .filter(
+          (resource) =>
+            isSchedulable(resource) &&
+            (!resource.configured || resource.free >= resourceAmount),
+        )
+        .map((resource) => resource.node.metadata.name);
+      const restoresAutomaticMode =
+        matchingNames.length > 0 &&
+        matchingNames.every((name) => selectedNames.has(name)) &&
+        selectedNames.size === matchingNames.length;
+      const restoredMode =
+        placementMode ?? (restoresAutomaticMode ? "model" : "manual");
+      setMode(restoredMode);
+      onPlacementModeChange?.(restoredMode);
+      if (restoredMode === "manual") {
+        setSelected(
+          new Set(matchingNames.filter((name) => selectedNames.has(name))),
+        );
+      }
     }
-  }, [resourceOptions, selectedOptionId]);
+    if (matchingOption.resources.every((resource) => !resource.configured)) {
+      setResourceAmount(0);
+    }
+    skipInitialCommitRef.current = true;
+    initializedRef.current = true;
+  }, [
+    devices,
+    gpu,
+    nodeSelector,
+    placementMode,
+    resourceAmount,
+    resourceOptions,
+  ]);
 
   const selectedOption = resourceOptions.find(
     (option) => option.id === selectedOptionId,
   );
   const kind = selectedOption?.kind ?? "compute";
   const model = selectedOption?.model ?? "";
+  const displayModel =
+    model === "__unset_device_model__"
+      ? zh
+        ? "未设置设备型号"
+        : "Device model not set"
+      : model === "__undiscovered_device__"
+        ? zh
+          ? "未发现设备"
+          : "No device discovered"
+        : model;
+  const isUnconfiguredDevice =
+    kind === "device" &&
+    selectedOption?.resources.every((resource) => !resource.configured);
   const resourceUnit =
     kind === "gpu"
       ? zh
@@ -231,14 +345,18 @@ export function ResourcePlacementPicker({
   const requested = replicas * resourceAmount;
   const eligibleNames = candidates
     .filter(
-      (resource) => resource.free >= resourceAmount && isSchedulable(resource),
+      (resource) =>
+        isSchedulable(resource) &&
+        (!resource.configured || resource.free >= resourceAmount),
     )
     .map((resource) => resource.node.metadata.name);
 
   const commitModel = (nextReplicas: number, nextPerWorker: number) => {
     const names = candidates
       .filter(
-        (resource) => resource.free >= nextPerWorker && isSchedulable(resource),
+        (resource) =>
+          isSchedulable(resource) &&
+          (!resource.configured || resource.free >= nextPerWorker),
       )
       .map((resource) => resource.node.metadata.name);
     onChange({
@@ -248,7 +366,7 @@ export function ResourcePlacementPicker({
       replicas: nextReplicas,
       gpu: kind === "gpu" ? String(nextPerWorker) : "0",
       devices:
-        kind === "device" && candidates[0]
+        kind === "device" && candidates[0]?.resourceKey
           ? [
               {
                 name: candidates[0].resourceKey,
@@ -260,7 +378,11 @@ export function ResourcePlacementPicker({
   };
 
   useEffect(() => {
-    if (!model) return;
+    if (!initializedRef.current || !model) return;
+    if (skipInitialCommitRef.current) {
+      skipInitialCommitRef.current = false;
+      return;
+    }
     if (mode === "model") {
       commitModel(Math.max(1, replicas), resourceAmount);
     } else {
@@ -269,7 +391,7 @@ export function ResourcePlacementPicker({
         replicas: 0,
         gpu: kind === "gpu" ? String(resourceAmount) : "0",
         devices:
-          kind === "device" && candidates[0]
+          kind === "device" && candidates[0]?.resourceKey
             ? [
                 {
                   name: candidates[0].resourceKey,
@@ -283,11 +405,14 @@ export function ResourcePlacementPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cluster, selectedOptionId]);
 
-  useEffect(() => {
-    setSelected(new Set());
-  }, [cluster, selectedOptionId]);
-
   const chooseResourceOption = (optionId: string) => {
+    const option = resourceOptions.find((item) => item.id === optionId);
+    const nextAmount = option?.resources.every(
+      (resource) => !resource.configured,
+    )
+      ? 0
+      : Math.max(1, resourceAmount);
+    setResourceAmount(nextAmount);
     setSelectedOptionId(optionId);
     setSelected(new Set());
   };
@@ -448,17 +573,31 @@ export function ResourcePlacementPicker({
                   />
                   <span className="placement-resource-option-name">
                     <small>
-                      {option.kind === "gpu"
-                        ? "GPU"
-                        : option.kind === "device"
-                          ? zh
-                            ? "端侧设备"
-                            : "Edge device"
-                          : zh
-                            ? "通用计算"
-                            : "General compute"}
+                      {option.model === "__undiscovered_device__"
+                        ? zh
+                          ? "未分类"
+                          : "Unclassified"
+                        : option.kind === "gpu"
+                          ? "GPU"
+                          : option.kind === "device"
+                            ? zh
+                              ? "端侧设备"
+                              : "Edge device"
+                            : zh
+                              ? "通用计算"
+                              : "General compute"}
                     </small>
-                    <strong>{option.model}</strong>
+                    <strong>
+                      {option.model === "__undiscovered_device__"
+                        ? zh
+                          ? "未发现设备"
+                          : "No device discovered"
+                        : option.model === "__unset_device_model__"
+                          ? zh
+                            ? "未设置设备型号"
+                            : "Device model not set"
+                          : option.model}
+                    </strong>
                   </span>
                   <span className="placement-resource-option-stat">
                     <strong>{option.freeDevices}</strong>
@@ -485,6 +624,7 @@ export function ResourcePlacementPicker({
                   type="number"
                   min={0}
                   value={resourceAmount}
+                  disabled={isUnconfiguredDevice}
                   onChange={(event) => {
                     const nextAmount = Math.max(0, Number(event.target.value));
                     setResourceAmount(nextAmount);
@@ -497,7 +637,7 @@ export function ResourcePlacementPicker({
                         replicas: 0,
                         gpu: kind === "gpu" ? String(nextAmount) : "0",
                         devices:
-                          kind === "device" && candidates[0]
+                          kind === "device" && candidates[0]?.resourceKey
                             ? [
                                 {
                                   name: candidates[0].resourceKey,
@@ -527,6 +667,7 @@ export function ResourcePlacementPicker({
                     checked={mode === "model"}
                     onChange={() => {
                       setMode("model");
+                      onPlacementModeChange?.("model");
                       commitModel(
                         Math.max(1, replicas || selected.size),
                         resourceAmount,
@@ -542,13 +683,14 @@ export function ResourcePlacementPicker({
                     checked={mode === "manual"}
                     onChange={() => {
                       setMode("manual");
+                      onPlacementModeChange?.("manual");
                       setSelected(new Set());
                       onChange({
                         nodeSelector: "",
                         replicas: 0,
                         gpu: kind === "gpu" ? String(resourceAmount) : "0",
                         devices:
-                          kind === "device" && candidates[0]
+                          kind === "device" && candidates[0]?.resourceKey
                             ? [
                                 {
                                   name: candidates[0].resourceKey,
@@ -613,8 +755,16 @@ export function ResourcePlacementPicker({
             <div>
               <p className="placement-manual-hint">
                 {zh
-                  ? `仅显示空闲数量不少于 ${resourceAmount} ${resourceUnit}${kind === "gpu" ? " " : ""}的节点。点击单选，拖拽可批量选择或取消。`
-                  : `Showing nodes with at least ${resourceAmount} ${resourceUnit} available. Click or drag to select and deselect.`}
+                  ? isUnconfiguredDevice
+                    ? model === "__unset_device_model__"
+                      ? "显示有设备资源但未设置设备型号的节点，不申请设备资源。点击单选，拖拽可批量选择或取消。"
+                      : "显示尚未发现 GPU 或端侧设备资源的未分类节点。点击单选，拖拽可批量选择或取消。"
+                    : `仅显示空闲数量不少于 ${resourceAmount} ${resourceUnit}${kind === "gpu" ? " " : ""}的节点。点击单选，拖拽可批量选择或取消。`
+                  : isUnconfiguredDevice
+                    ? model === "__unset_device_model__"
+                      ? "Showing nodes with device resources but no configured device model; no device resource is requested. Click or drag to select."
+                      : "Showing unclassified nodes without discovered GPU or edge-device resources. Click or drag to select."
+                    : `Showing nodes with at least ${resourceAmount} ${resourceUnit} available. Click or drag to select and deselect.`}
               </p>
               <div
                 className="placement-node-grid"
@@ -632,7 +782,10 @@ export function ResourcePlacementPicker({
                   />
                 )}
                 {candidates
-                  .filter((resource) => resource.free >= resourceAmount)
+                  .filter(
+                    (resource) =>
+                      !resource.configured || resource.free >= resourceAmount,
+                  )
                   .map((resource) => {
                     const name = resource.node.metadata.name;
                     const offline = resource.node.status?.phase === "Offline";
@@ -661,30 +814,40 @@ export function ResourcePlacementPicker({
                         data-node-name={name}
                         disabled={disabled}
                         className={`placement-node-card${active ? " active" : ""}${disabled ? " unavailable" : ""}`}
+                        title={name}
                       >
                         <div className="placement-node-head">
                           <strong>{name}</strong>
-                          <em>{statusText}</em>
                         </div>
-                        <span className="placement-node-location">
-                          <MapPin size={12} /> {location}
-                        </span>
+                        <div className="placement-node-meta">
+                          <span className="placement-node-location">
+                            <MapPin size={12} /> {location}
+                          </span>
+                          <span className="placement-node-state">
+                            <em>{statusText}</em>
+                            {disabled && <CircleAlert size={13} />}
+                            <span className="placement-node-check">
+                              {active && <Check size={14} />}
+                            </span>
+                          </span>
+                        </div>
                         <div className="placement-node-specs">
-                          <span>{resource.model}</span>
+                          <span>
+                            {resource.model === "__unset_device_model__"
+                              ? zh
+                                ? "未设置设备型号"
+                                : "Device model not set"
+                              : resource.configured
+                                ? resource.model
+                                : zh
+                                  ? "未分类 · 未发现设备"
+                                  : "Unclassified · No device discovered"}
+                          </span>
                           <span>
                             <b>{resource.free}</b> / {resource.total}
                             {zh ? " 空闲" : " free"}
                           </span>
                         </div>
-                        <span className="placement-node-check">
-                          {active && <Check size={14} />}
-                        </span>
-                        {disabled && (
-                          <CircleAlert
-                            className="placement-node-alert"
-                            size={15}
-                          />
-                        )}
                       </button>
                     );
                   })}
@@ -694,28 +857,44 @@ export function ResourcePlacementPicker({
           <div className="placement-selection-summary">
             <div>
               <strong>
-                {kind === "compute"
+                {isUnconfiguredDevice
                   ? mode === "model"
                     ? zh
-                      ? `已配置 ${Math.max(1, replicas)} 个 Worker`
-                      : `${Math.max(1, replicas)} workers configured`
+                      ? `已配置 ${Math.max(1, replicas)} 个 Worker，调度到${model === "__unset_device_model__" ? "未设置设备型号" : "未发现设备"}的节点`
+                      : `${Math.max(1, replicas)} workers configured for nodes ${model === "__unset_device_model__" ? "without a configured device model" : "without discovered devices"}`
                     : zh
-                      ? `已选择 ${selected.size} 个节点，将创建 ${selected.size} 个 Worker`
-                      : `${selected.size} nodes selected, ${selected.size} workers`
-                  : mode === "model"
-                    ? zh
-                      ? `已配置 ${Math.max(1, replicas)} 个 Worker，共申请 ${requested} 个${kind === "gpu" ? " GPU" : "设备"}`
-                      : `${Math.max(1, replicas)} workers configured, ${requested} resources requested`
-                    : zh
-                      ? `已选择 ${selected.size} 个节点，将创建 ${selected.size} 个 Worker，共申请 ${selected.size * resourceAmount} 个${kind === "gpu" ? " GPU" : "设备"}`
-                      : `${selected.size} nodes selected, ${selected.size} workers, ${selected.size * resourceAmount} resources requested`}
+                      ? `已选择 ${selected.size} 个${model === "__unset_device_model__" ? "未设置设备型号" : "未发现设备"}节点，将创建 ${selected.size} 个 Worker`
+                      : `${selected.size} nodes ${model === "__unset_device_model__" ? "without a configured device model" : "without discovered devices"} selected, ${selected.size} workers`
+                  : kind === "compute"
+                    ? mode === "model"
+                      ? zh
+                        ? `已配置 ${Math.max(1, replicas)} 个 Worker`
+                        : `${Math.max(1, replicas)} workers configured`
+                      : zh
+                        ? `已选择 ${selected.size} 个节点，将创建 ${selected.size} 个 Worker`
+                        : `${selected.size} nodes selected, ${selected.size} workers`
+                    : mode === "model"
+                      ? zh
+                        ? `已配置 ${Math.max(1, replicas)} 个 Worker，共申请 ${requested} 个${kind === "gpu" ? " GPU" : "设备"}`
+                        : `${Math.max(1, replicas)} workers configured, ${requested} resources requested`
+                      : zh
+                        ? `已选择 ${selected.size} 个节点，将创建 ${selected.size} 个 Worker，共申请 ${selected.size * resourceAmount} 个${kind === "gpu" ? " GPU" : "设备"}`
+                        : `${selected.size} nodes selected, ${selected.size} workers, ${selected.size * resourceAmount} resources requested`}
               </strong>
               <small>
-                {kind === "compute"
+                {isUnconfiguredDevice
                   ? zh
-                    ? `通用计算 · ${model}`
-                    : `General compute · ${model}`
-                  : `${zh ? "单 Worker" : "Per worker"}：${resourceAmount} × ${model}`}
+                    ? model === "__unset_device_model__"
+                      ? "仅按未设置设备型号的节点调度，不申请设备资源"
+                      : "仅按未分类节点调度，不申请未发现的设备资源"
+                    : model === "__unset_device_model__"
+                      ? "Schedules nodes without a configured device model and does not request device resources"
+                      : "Schedules unclassified nodes without requesting undiscovered device resources"
+                  : kind === "compute"
+                    ? zh
+                      ? `通用计算 · ${model}`
+                      : `General compute · ${model}`
+                    : `${zh ? "单 Worker" : "Per worker"}：${resourceAmount} × ${displayModel}`}
               </small>
             </div>
             {mode === "model" ? (

@@ -94,6 +94,7 @@ func (g *Gateway) handleGetImageRegistry(c *gin.Context) {
 }
 
 func buildDockerConfigJSON(registry, username, password string) ([]byte, error) {
+	registry = common.NormalizeRegistry(registry)
 	dockerConfig := map[string]map[string]map[string]string{
 		"auths": {
 			registry: {
@@ -113,6 +114,7 @@ func (g *Gateway) handleCreateImageRegistry(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+	req.Registry = common.NormalizeRegistry(req.Registry)
 
 	configJSON, err := buildDockerConfigJSON(req.Registry, req.Username, req.Password)
 	if err != nil {
@@ -161,6 +163,7 @@ func (g *Gateway) handleUpdateImageRegistry(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+	req.Registry = common.NormalizeRegistry(req.Registry)
 
 	secret, err := g.rawClient.CoreV1().Secrets(common.SecretNamespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {

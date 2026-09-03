@@ -2,8 +2,12 @@ package container
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -137,7 +141,7 @@ func TestDomainEntry_MarkBroken(t *testing.T) {
 	client := newSSHClient(t)
 	entry.client = client
 
-	entry.markBroken()
+	entry.markBroken("test")
 	if !entry.broken {
 		t.Fatal("expected broken=true")
 	}
@@ -180,7 +184,7 @@ func TestSSHDialer_ConcurrentReconnect(t *testing.T) {
 	entry := d.getOrCreate("test-domain")
 
 	// 模拟连接断开
-	entry.markBroken()
+	entry.markBroken("test")
 
 	// 50 个并发请求，全部尝试重连（预期失败，但无惊群）
 	var wg sync.WaitGroup
@@ -327,7 +331,7 @@ func TestSSHDialer_Stats(t *testing.T) {
 		t.Fatalf("expected 2 open, got %d", stats)
 	}
 
-	entry1.markBroken()
+	entry1.markBroken("test")
 	if stats := d.Stats(); stats != 1 {
 		t.Fatalf("expected 1 open after broken, got %d", stats)
 	}
@@ -462,12 +466,13 @@ func waitCh() <-chan struct{} {
 
 // TestSSHDialer_BackoffReset 测试重连成功后退避重置。
 func TestSSHDialer_BackoffReset(t *testing.T) {
+	d := testDialer(t)
 	entry := &domainEntry{domainID: "test", maxBackoff: maxReconnectBackoff}
 	entry.reconnectCh = make(chan struct{})
 	entry.reconnectBackoff = 10 * time.Second
 
 	// 模拟成功
-	entry.finishReconnect(newSSHClient(t), nil, false)
+	entry.finishReconnect(newSSHClient(t), nil, false, d)
 	if entry.reconnectBackoff != 0 {
 		t.Fatalf("expected backoff reset to 0, got %v", entry.reconnectBackoff)
 	}
@@ -475,7 +480,7 @@ func TestSSHDialer_BackoffReset(t *testing.T) {
 	entry.reconnectCh = make(chan struct{})
 
 	// 模拟失败
-	entry.finishReconnect(nil, assertAnError("fail"), false)
+	entry.finishReconnect(nil, assertAnError("fail"), false, d)
 	if entry.reconnectBackoff != initialReconnectBackoff {
 		t.Fatalf("expected backoff %v, got %v", initialReconnectBackoff, entry.reconnectBackoff)
 	}
@@ -483,7 +488,7 @@ func TestSSHDialer_BackoffReset(t *testing.T) {
 	entry.reconnectCh = make(chan struct{})
 
 	// 模拟再次失败
-	entry.finishReconnect(nil, assertAnError("fail again"), false)
+	entry.finishReconnect(nil, assertAnError("fail again"), false, d)
 	expected := initialReconnectBackoff * 2
 	if entry.reconnectBackoff != expected {
 		t.Fatalf("expected backoff %v, got %v", expected, entry.reconnectBackoff)
@@ -517,6 +522,68 @@ func TestNextBackoff(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("nextBackoff(%v, %v) = %v, want %v", tt.current, tt.max, got, tt.expected)
 		}
+	}
+}
+
+// TestIsSSHTransportError 覆盖各类传输错误与误判场景。
+func TestIsSSHTransportError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"io.EOF", io.EOF, true},
+		{"io.ErrUnexpectedEOF", io.ErrUnexpectedEOF, true},
+		{"ECONNRESET", syscall.ECONNRESET, true},
+		{"EPIPE", syscall.EPIPE, true},
+		{"ETIMEDOUT", syscall.ETIMEDOUT, true},
+		{"wrapped ECONNRESET", fmt.Errorf("dial: %w", syscall.ECONNRESET), true},
+		{"net.OpError", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, true},
+		{"wrapped net.OpError", fmt.Errorf("proxy: %w", &net.OpError{Op: "read", Err: syscall.ECONNRESET}), true},
+		{"ssh transport closed", errors.New("ssh: tcp transport closed"), true},
+		{"context.Canceled", context.Canceled, false},
+		{"context.DeadlineExceeded", context.DeadlineExceeded, false},
+		{"wrapped context.Canceled", fmt.Errorf("dial: %w", context.Canceled), false},
+		{"generic error", errors.New("connection refused"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isSSHTransportError(tt.err); got != tt.want {
+				t.Errorf("isSSHTransportError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDomainEntry_MarkBrokenIfCurrent 防止 keepalive goroutine 误标新连接。
+func TestDomainEntry_MarkBrokenIfCurrent(t *testing.T) {
+	entry := &domainEntry{domainID: "test"}
+
+	old := newSSHClient(t)
+	entry.client = old
+	entry.broken = false
+
+	// 换一个"新"client 进来（模拟重连成功）
+	newClient := newSSHClient(t)
+	entry.client = newClient
+
+	// keepalive 拿旧 client 来标 broken,不应影响新连接
+	entry.markBrokenIfCurrent(old, "test")
+	if entry.broken {
+		t.Fatal("should not mark broken when client has been replaced")
+	}
+	if entry.client != newClient {
+		t.Fatal("current client should remain untouched")
+	}
+
+	// 用当前 client 标 broken,应生效
+	entry.markBrokenIfCurrent(newClient, "test")
+	if !entry.broken {
+		t.Fatal("expected broken=true when marking current client")
+	}
+	if entry.client != nil {
+		t.Fatal("expected client to be nil after markBrokenIfCurrent")
 	}
 }
 

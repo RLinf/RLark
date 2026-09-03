@@ -106,6 +106,7 @@ func (s *NodeServer[C]) Run(ctx context.Context) error {
 				_ = conn.Close()
 				continue
 			}
+			metrics.IncConnections()
 			go s.handleConnection(ctx, utils.NewWrapConn(conn), cred)
 		}
 	}
@@ -116,6 +117,9 @@ func (s *NodeServer[C]) handleConnection(ctx context.Context, conn *utils.WrapCo
 	logger := log.FromContext(ctx)
 	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
 	defer cancel()
+
+	metrics.IncActive()
+	defer metrics.DecActive()
 
 	defer func() { _ = conn.Close() }()
 
@@ -169,10 +173,28 @@ func (s *NodeServer[C]) handleConnection(ctx context.Context, conn *utils.WrapCo
 		}
 	}
 
+	// 记录结束方向和原因,用于定位"谁在断连接"。
+	type copyResult struct {
+		direction string
+		err       error
+	}
+	resultCh := make(chan copyResult, 2)
 	go func() {
-		_, _ = io.Copy(conn2, conn)
+		_, err := io.Copy(conn2, conn) // sidecar → 上游
+		resultCh <- copyResult{direction: "sidecar->upstream", err: err}
 	}()
-	_, _ = io.Copy(conn, conn2)
+	go func() {
+		_, err := io.Copy(conn, conn2) // 上游 → sidecar
+		resultCh <- copyResult{direction: "upstream->sidecar", err: err}
+	}()
+
+	first := <-resultCh
+	logger.Info("Forwarding connection closing",
+		"host", host, "port", port,
+		"closedBy", first.direction,
+		"err", first.err,
+		"errType", fmt.Sprintf("%T", first.err),
+	)
 }
 
 func (s *NodeServer[C]) handleGetIP(ctx *gin.Context) {

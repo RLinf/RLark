@@ -66,12 +66,17 @@ export interface Worker {
   jobId: string;
   role: string;
   node: string;
+  cluster?: string;
   phase: Phase;
   cpu: string;
   memory: string;
   gpu?: string;
   webTerminalUrl?: string;
   logs: string[];
+  // 任务状态消息（如 CrashLoopBackOff / ImagePullBackOff 等异常原因），
+  // 来源于 Task.status.message 或 Pod.status.message，仅在 worker 处于
+  // Failed 等异常状态时填充，供状态徽标 "i" tooltip 展示。
+  statusMessage?: string;
   pullProgress?: PullProgressEntry[];
   // 节点级 Warning 事件（DiskPressure 等），来源于 Node.status.events 或
   // Task.status.events 聚合，仅在 worker 处于 Pending 时填充，供状态

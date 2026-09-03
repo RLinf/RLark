@@ -35,6 +35,7 @@ import type { Copy as CopyType } from "../i18n";
 import type { CRDJob, CRDNode, NodeEventEntry } from "../types";
 import { useAutoRefresh } from "../hooks";
 import { crdToJob } from "../utils/crd";
+import { effectiveJobPhase, type JobDisplayPhase } from "../utils/jobPhase";
 import { formatChinaDateTime } from "../utils/time";
 import {
   compareSortValues,
@@ -51,19 +52,9 @@ function taskResourceName(jobName: string, taskName: string) {
     .replace(/\s+/g, "-");
 }
 
-function effectiveJobPhase(job: Job, workerPhases?: string[]): Phase {
-  if (job.stopped || job.phase === "Stopped") return "Stopped";
-  const phases = (
-    workerPhases ?? job.taskStatuses.map((task) => task.phase)
-  ).filter(Boolean);
-  if (phases.length === 0 || job.phase !== "Running") return job.phase;
-  if (phases.some((phase) => phase === "Failed")) return "Failed";
-  if (phases.every((phase) => phase === "Succeeded")) return "Succeeded";
-  if (!phases.some((phase) => phase === "Running")) return "Pending";
-  return "Running";
-}
-
 async function copyText(value: string) {
+  if (!value) return false;
+
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(value);
@@ -170,6 +161,8 @@ export function JobsPage({
   isMockMode,
   selectedName,
   onSelect,
+  onSelectNode,
+  onSelectCluster,
   onCreate,
   onClone,
   onEditAndRestart,
@@ -179,6 +172,8 @@ export function JobsPage({
   isMockMode: boolean;
   selectedName: string;
   onSelect: (name?: string) => void;
+  onSelectNode?: (name: string) => void;
+  onSelectCluster?: (id: string) => void;
   onCreate?: () => void;
   onClone?: (job: Job) => void;
   onEditAndRestart?: (job: Job) => void;
@@ -190,11 +185,16 @@ export function JobsPage({
   const [realJobs, setRealJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [actionNotice, setActionNotice] = useState("");
   const [jobAction, setJobAction] = useState<
     "start" | "stop" | "restart" | "delete" | null
   >(null);
   const [restartTarget, setRestartTarget] = useState<Job | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Job | null>(null);
+  const [lifecycleConfirm, setLifecycleConfirm] = useState<{
+    job: Job;
+    action: "start" | "stop" | "clean-start" | "restart";
+  } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [sort, setSort] = useState<{
@@ -285,11 +285,23 @@ export function JobsPage({
     setJobAction("delete");
     setError("");
     try {
+      const stopResp = await fetch(
+        `/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/merge-patch+json" },
+          body: JSON.stringify({ spec: { stopped: true } }),
+        },
+      );
+      if (!stopResp.ok) throw new Error(`HTTP ${stopResp.status}`);
+      await waitForJobWorkersStopped(job);
+
       const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`, {
         method: "DELETE",
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       setRealJobs((prev) => prev.filter((j) => j.id !== job.id));
+      setActionNotice(zh ? "任务已删除" : "Job deleted");
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -299,19 +311,36 @@ export function JobsPage({
     }
   };
 
+  const waitForJobWorkersStopped = async (job: Job) => {
+    const deadline = Date.now() + 60_000;
+    const selector = encodeURIComponent(`rlinf.io/job=${job.name}`);
+    while (Date.now() < deadline) {
+      const [jobResp, tasksResp] = await Promise.all([
+        fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`),
+        fetch(`/api/v1/rlinf.io/v1alpha1/tasks?labelSelector=${selector}`),
+      ]);
+      if (!jobResp.ok) throw new Error(`HTTP ${jobResp.status}`);
+      if (!tasksResp.ok) throw new Error(`HTTP ${tasksResp.status}`);
+      const current = crdToJob((await jobResp.json()) as CRDJob);
+      const tasks = (await tasksResp.json()) as {
+        items?: Array<{ status?: { phase?: string } }>;
+      };
+      const workersStopped = (tasks.items ?? []).every(
+        (task) => task.status?.phase === "Stopped",
+      );
+      if (current.phase === "Stopped" && workersStopped) {
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    throw new Error(
+      zh
+        ? "等待 Worker 停止超时，任务未删除。"
+        : "Timed out waiting for workers to stop; the job was not deleted.",
+    );
+  };
+
   const handleSetStopped = async (job: Job, stopped: boolean) => {
-    if (
-      !confirm(
-        stopped
-          ? zh
-            ? `确定停止任务 "${job.name}" 吗？`
-            : `Stop job "${job.name}"?`
-          : zh
-            ? `确定启动任务 "${job.name}" 吗？`
-            : `Start job "${job.name}"?`,
-      )
-    )
-      return false;
     setJobAction(stopped ? "stop" : "start");
     setError("");
     try {
@@ -321,16 +350,26 @@ export function JobsPage({
         body: JSON.stringify({ spec: { stopped } }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      if (stopped) await waitForJobWorkersStopped(job);
       setRealJobs((prev) =>
         prev.map((j) =>
           j.id === job.id
             ? {
                 ...j,
                 stopped,
-                phase: stopped ? ("Stopped" as Phase) : ("Pending" as Phase),
+                phase: (stopped ? "Stopped" : "Pending") as Phase,
               }
             : j,
         ),
+      );
+      setActionNotice(
+        stopped
+          ? zh
+            ? "任务已停止，Worker 和 PVC 已清理"
+            : "Job stopped; workers and PVCs cleaned up"
+          : zh
+            ? "任务已提交启动"
+            : "Job start submitted",
       );
       return true;
     } catch (e) {
@@ -363,12 +402,89 @@ export function JobsPage({
             : item,
         ),
       );
+      setActionNotice(zh ? "任务已提交重启" : "Job restart submitted");
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       return false;
     } finally {
       setJobAction(null);
+    }
+  };
+
+  const waitForFailedJobCleanup = async (job: Job) => {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const current = crdToJob((await resp.json()) as CRDJob);
+      if (current.phase === "Stopped" && current.runningWorkers === 0) return;
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    throw new Error(
+      zh
+        ? "等待残留 Worker 清理超时，任务未启动。"
+        : "Timed out waiting for residual workers to stop; the job was not started.",
+    );
+  };
+
+  const handleCleanStart = async (job: Job) => {
+    setJobAction("restart");
+    setError("");
+    try {
+      const stopResp = await fetch(
+        `/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/merge-patch+json" },
+          body: JSON.stringify({ spec: { stopped: true } }),
+        },
+      );
+      if (!stopResp.ok) throw new Error(`HTTP ${stopResp.status}`);
+      await waitForFailedJobCleanup(job);
+
+      const startResp = await fetch(
+        `/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/merge-patch+json" },
+          body: JSON.stringify({ spec: { stopped: false } }),
+        },
+      );
+      if (!startResp.ok) throw new Error(`HTTP ${startResp.status}`);
+      setRealJobs((prev) =>
+        prev.map((item) =>
+          item.id === job.id
+            ? { ...item, stopped: false, phase: "Pending" as Phase }
+            : item,
+        ),
+      );
+      setActionNotice(
+        zh ? "任务已清理并提交启动" : "Job cleaned and submitted",
+      );
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
+    } finally {
+      setJobAction(null);
+    }
+  };
+
+  const confirmLifecycleAction = async () => {
+    if (!lifecycleConfirm) return;
+    const { job, action } = lifecycleConfirm;
+    const succeeded =
+      action === "stop"
+        ? await handleSetStopped(job, true)
+        : action === "start"
+          ? await handleSetStopped(job, false)
+          : action === "clean-start"
+            ? await handleCleanStart(job)
+            : await handleRestart(job);
+    if (succeeded) {
+      setLifecycleConfirm(null);
+      if (selectedName) onSelect(undefined);
     }
   };
 
@@ -409,6 +525,11 @@ export function JobsPage({
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
+  useEffect(() => {
+    if (!actionNotice) return;
+    const timer = window.setTimeout(() => setActionNotice(""), 4000);
+    return () => window.clearTimeout(timer);
+  }, [actionNotice]);
 
   const selected =
     selectedName && allJobs.length > 0
@@ -427,11 +548,18 @@ export function JobsPage({
           lifecycleActions={{
             pending: jobAction,
             error,
-            onStart: () => handleSetStopped(selected, false),
-            onStop: () => handleSetStopped(selected, true),
+            onStart: () =>
+              setLifecycleConfirm({
+                job: selected,
+                action: selected.phase === "Failed" ? "clean-start" : "start",
+              }),
+            onStop: () =>
+              setLifecycleConfirm({ job: selected, action: "stop" }),
             onRestart: () => setRestartTarget(selected),
             onDelete: () => setDeleteTarget(selected),
           }}
+          onSelectNode={onSelectNode}
+          onSelectCluster={onSelectCluster}
           nodePullProgressMap={nodePullProgressMap}
           nodeEventsMap={nodeEventsMap}
           nodeDeviceModelMap={nodeDeviceModelMap}
@@ -444,7 +572,9 @@ export function JobsPage({
             onRestart={() => {
               const job = restartTarget;
               setRestartTarget(null);
-              void handleRestart(job);
+              void handleRestart(job).then((succeeded) => {
+                if (succeeded) onSelect(undefined);
+              });
             }}
             onEditRestart={
               adminMode || !onEditAndRestart
@@ -472,12 +602,36 @@ export function JobsPage({
             }}
           />
         )}
+        {lifecycleConfirm && (
+          <JobLifecycleConfirmDialog
+            job={lifecycleConfirm.job}
+            action={lifecycleConfirm.action}
+            zh={zh}
+            pending={jobAction !== null}
+            error={error}
+            onClose={() => setLifecycleConfirm(null)}
+            onConfirm={confirmLifecycleAction}
+          />
+        )}
       </>
     );
   }
 
   return (
     <div className="page-content resource-page jobs-list-page">
+      {actionNotice && (
+        <div className="job-action-notice" role="status">
+          <Check size={16} />
+          <span>{actionNotice}</span>
+          <button
+            type="button"
+            onClick={() => setActionNotice("")}
+            aria-label={zh ? "关闭提示" : "Dismiss notification"}
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div className="section-heading">
         <div>
           <span className="eyebrow">
@@ -624,11 +778,19 @@ export function JobsPage({
                 job.phase === "Pending"
                   ? aggregateJobEvents(job, nodeEventsMap)
                   : [];
+              const jobFailedMessage =
+                effectiveJobPhase(job) === "Failed"
+                  ? job.taskStatuses
+                      .filter((ts) => ts.phase === "Failed" && ts.message)
+                      .map((ts) => ts.message)
+                      .join("\n")
+                  : undefined;
               return (
                 <tr key={job.id}>
                   <td>
                     <button
-                      className="link-cell"
+                      className={`link-cell job-id-cell${job.id.length > 28 ? " is-long" : ""}`}
+                      title={job.id}
                       onClick={() => onSelect(job.id)}
                     >
                       <strong>{job.id}</strong>
@@ -643,11 +805,14 @@ export function JobsPage({
                   <td>
                     <div className="status-with-info">
                       <StatusBadge phase={effectiveJobPhase(job)} copy={c} />
-                      {(jobPullProgress.length > 0 || jobEvents.length > 0) && (
+                      {(jobPullProgress.length > 0 ||
+                        jobEvents.length > 0 ||
+                        jobFailedMessage) && (
                         <PullProgressInfo
                           progress={jobPullProgress}
                           events={jobEvents}
                           zh={zh}
+                          statusMessage={jobFailedMessage}
                         />
                       )}
                     </div>
@@ -668,18 +833,12 @@ export function JobsPage({
                       <AdminJobActions
                         job={job}
                         zh={zh}
-                        onStop={() => handleSetStopped(job, true)}
-                        onRestart={() => {
-                          if (
-                            confirm(
-                              zh
-                                ? `确定重新启动任务 "${job.name}" 吗？`
-                                : `Restart job "${job.name}"?`,
-                            )
-                          ) {
-                            void handleRestart(job);
-                          }
-                        }}
+                        onStop={() =>
+                          setLifecycleConfirm({ job, action: "stop" })
+                        }
+                        onRestart={() =>
+                          setLifecycleConfirm({ job, action: "restart" })
+                        }
                         onDelete={() => setDeleteTarget(job)}
                       />
                     ) : (
@@ -689,7 +848,16 @@ export function JobsPage({
                         pending={jobAction !== null}
                         onClone={() => onClone?.(job)}
                         onDelete={() => setDeleteTarget(job)}
-                        onToggleStop={() => handleSetStopped(job, !job.stopped)}
+                        onStart={() =>
+                          setLifecycleConfirm({
+                            job,
+                            action:
+                              job.phase === "Failed" ? "clean-start" : "start",
+                          })
+                        }
+                        onStop={() =>
+                          setLifecycleConfirm({ job, action: "stop" })
+                        }
                         onRestart={() => setRestartTarget(job)}
                       />
                     )}
@@ -741,6 +909,17 @@ export function JobsPage({
           }}
         />
       )}
+      {lifecycleConfirm && (
+        <JobLifecycleConfirmDialog
+          job={lifecycleConfirm.job}
+          action={lifecycleConfirm.action}
+          zh={zh}
+          pending={jobAction !== null}
+          error={error}
+          onClose={() => setLifecycleConfirm(null)}
+          onConfirm={confirmLifecycleAction}
+        />
+      )}
     </div>
   );
 }
@@ -751,7 +930,8 @@ function JobActionMenu({
   pending,
   onClone,
   onDelete,
-  onToggleStop,
+  onStart,
+  onStop,
   onRestart,
 }: {
   job: Job;
@@ -759,7 +939,8 @@ function JobActionMenu({
   pending: boolean;
   onClone: () => void;
   onDelete: () => void;
-  onToggleStop: () => void;
+  onStart: () => void;
+  onStop: () => void;
   onRestart: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -823,8 +1004,24 @@ function JobActionMenu({
     };
   }, [open]);
 
-  const isStopped = job.stopped || job.phase === "Stopped";
-  const isTerminal = ["Succeeded", "Failed"].includes(job.phase);
+  const isStartable =
+    job.stopped || job.phase === "Stopped" || job.phase === "Failed";
+  const isSucceeded = job.phase === "Succeeded";
+  const lifecycleLabel = isSucceeded
+    ? zh
+      ? "已成功完成的任务不能再次启动"
+      : "Succeeded jobs cannot be started again"
+    : job.phase === "Failed"
+      ? zh
+        ? "清理残留 Worker 后启动"
+        : "Clean residual workers, then start"
+      : isStartable
+        ? zh
+          ? "启动任务"
+          : "Start job"
+        : zh
+          ? "停止任务"
+          : "Stop job";
 
   const handleToggle = () => {
     setOpen((v) => !v);
@@ -832,68 +1029,41 @@ function JobActionMenu({
 
   return (
     <div className="row-actions" ref={ref} style={{ position: "relative" }}>
-      <button
-        className={`icon-button job-quick-lifecycle${isStopped ? " start" : " stop"}`}
-        onClick={onToggleStop}
-        disabled={pending || isTerminal}
-        title={
-          isTerminal
-            ? zh
-              ? "终态任务无法启动或停止"
-              : "Terminal jobs cannot be started or stopped"
-            : isStopped
-              ? zh
-                ? "启动任务"
-                : "Start job"
-              : zh
-                ? "停止任务"
-                : "Stop job"
-        }
-        aria-label={
-          isStopped
-            ? zh
-              ? `启动任务 ${job.name}`
-              : `Start ${job.name}`
-            : zh
-              ? `停止任务 ${job.name}`
-              : `Stop ${job.name}`
-        }
-      >
-        {isStopped ? <Play size={15} /> : <Square size={14} />}
+      <button className="job-row-action" onClick={onClone} disabled={pending}>
+        <Copy size={14} />
+        {zh ? "复制" : "Clone"}
+      </button>
+      <button className="job-row-action" onClick={onRestart} disabled={pending}>
+        <RotateCcw size={14} />
+        {zh ? "重启" : "Restart"}
       </button>
       <button
-        ref={btnRef}
-        className="icon-button"
-        onClick={handleToggle}
-        title={zh ? "操作" : "Actions"}
-        aria-expanded={open}
-        disabled={pending}
+        className={`job-row-action job-quick-lifecycle${isStartable ? " start" : " stop"}`}
+        onClick={isStartable ? onStart : onStop}
+        disabled={pending || isSucceeded}
+        title={lifecycleLabel}
       >
-        <MoreVertical size={16} />
+        {isStartable ? <Play size={14} /> : <Square size={13} />}
+        {isStartable ? (zh ? "启动" : "Start") : zh ? "停止" : "Stop"}
       </button>
+      <span
+        className="action-tooltip"
+        data-tooltip={zh ? "更多操作" : "More actions"}
+      >
+        <button
+          ref={btnRef}
+          className="icon-button"
+          onClick={handleToggle}
+          aria-label={zh ? `更多操作 ${job.name}` : `More actions ${job.name}`}
+          aria-expanded={open}
+          disabled={pending}
+        >
+          <MoreVertical size={16} />
+        </button>
+      </span>
       {open && (
         <>
           <div className="action-dropdown" style={menuStyle}>
-            <button
-              className="action-dropdown-item"
-              onClick={() => {
-                setOpen(false);
-                onClone();
-              }}
-            >
-              <Copy size={14} />
-              {zh ? "复制" : "Clone"}
-            </button>
-            <button
-              className="action-dropdown-item"
-              onClick={() => {
-                setOpen(false);
-                onRestart();
-              }}
-            >
-              <RotateCcw size={14} />
-              {zh ? "重启" : "Restart"}
-            </button>
             <button
               className="action-dropdown-item danger"
               onClick={() => {
@@ -956,6 +1126,140 @@ function AdminJobActions({
       >
         <Trash2 size={15} />
       </button>
+    </div>
+  );
+}
+
+function JobLifecycleConfirmDialog({
+  job,
+  action,
+  zh,
+  pending,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  job: Job;
+  action: "start" | "stop" | "clean-start" | "restart";
+  zh: boolean;
+  pending: boolean;
+  error: string;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !pending) onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose, pending]);
+
+  const content = {
+    start: {
+      eyebrow: zh ? "任务启动" : "Start job",
+      title: zh ? "确认启动任务？" : "Start this job?",
+      description: zh
+        ? "任务将按当前配置重新进入调度队列。"
+        : "The job will re-enter the scheduling queue with its current configuration.",
+      confirm: zh ? "确认启动" : "Start job",
+      pending: zh ? "启动中…" : "Starting…",
+      icon: <Play size={19} />,
+    },
+    stop: {
+      eyebrow: zh ? "任务停止" : "Stop job",
+      title: zh ? "确认停止任务？" : "Stop this job?",
+      description: zh
+        ? "平台将停止该任务的 Worker，当前运行连接会中断。"
+        : "The platform will stop this job's workers and interrupt active connections.",
+      confirm: zh ? "确认停止" : "Stop job",
+      pending: zh ? "停止中…" : "Stopping…",
+      icon: <Square size={18} />,
+    },
+    "clean-start": {
+      eyebrow: zh ? "安全启动" : "Clean start",
+      title: zh ? "清理后启动任务？" : "Clean up and start?",
+      description: zh
+        ? "平台会先停止并清理失败任务残留的 Worker，确认清理完成后再启动。"
+        : "Residual workers will be stopped and cleaned up before the job starts.",
+      confirm: zh ? "清理后启动" : "Clean and start",
+      pending: zh ? "清理并启动中…" : "Cleaning and starting…",
+      icon: <RotateCcw size={19} />,
+    },
+    restart: {
+      eyebrow: zh ? "任务重启" : "Restart job",
+      title: zh ? "确认重启任务？" : "Restart this job?",
+      description: zh
+        ? "任务将使用当前配置重新启动，现有运行连接会中断。"
+        : "The job will restart with its current configuration and interrupt active connections.",
+      confirm: zh ? "确认重启" : "Restart job",
+      pending: zh ? "重启中…" : "Restarting…",
+      icon: <RotateCcw size={19} />,
+    },
+  }[action];
+
+  return (
+    <div
+      className="modal-backdrop job-lifecycle-backdrop"
+      onMouseDown={(event) =>
+        event.target === event.currentTarget && !pending && onClose()
+      }
+    >
+      <section
+        className={`modal job-lifecycle-modal ${action}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="job-lifecycle-title"
+      >
+        <div className="job-lifecycle-head">
+          <span className="job-lifecycle-icon">{content.icon}</span>
+          <div>
+            <span className="eyebrow">{content.eyebrow}</span>
+            <h2 id="job-lifecycle-title">{content.title}</h2>
+          </div>
+          <button
+            className="icon-button"
+            onClick={onClose}
+            disabled={pending}
+            aria-label={zh ? "关闭" : "Close"}
+          >
+            ×
+          </button>
+        </div>
+        <div className="job-lifecycle-body">
+          <p>{content.description}</p>
+          <div className="delete-job-target">
+            <span>{zh ? "目标任务" : "Target job"}</span>
+            <strong>{job.name}</strong>
+          </div>
+          {error && (
+            <div className="delete-job-error" role="alert">
+              {error}
+            </div>
+          )}
+        </div>
+        <div className="job-lifecycle-actions">
+          <button
+            className="secondary-button"
+            onClick={onClose}
+            disabled={pending}
+          >
+            {zh ? "取消" : "Cancel"}
+          </button>
+          <button
+            className="primary-button"
+            onClick={() => void onConfirm()}
+            disabled={pending}
+          >
+            {pending ? (
+              <LoaderCircle className="job-action-loading" size={15} />
+            ) : (
+              content.icon
+            )}
+            {pending ? content.pending : content.confirm}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -1060,8 +1364,8 @@ function DeleteJobDialog({
             )}
             {pending
               ? zh
-                ? "删除中…"
-                : "Deleting…"
+                ? "正在停止并清理…"
+                : "Stopping and cleaning up…"
               : zh
                 ? "确认删除"
                 : "Delete job"}
@@ -1175,6 +1479,8 @@ export function JobDetailPage({
   onBack,
   onClone,
   lifecycleActions,
+  onSelectNode,
+  onSelectCluster,
   nodePullProgressMap = {},
   nodeEventsMap = {},
   nodeDeviceModelMap = {},
@@ -1185,6 +1491,8 @@ export function JobDetailPage({
   onBack: () => void;
   onClone?: () => void;
   lifecycleActions: JobLifecycleActions;
+  onSelectNode?: (name: string) => void;
+  onSelectCluster?: (id: string) => void;
   // Per-node pullProgress cache shared from JobsPage; used by the top
   // StatusBadge hover to surface image pull progress while the job is Pending.
   nodePullProgressMap?: Record<string, PullProgressEntry[]>;
@@ -1201,6 +1509,7 @@ export function JobDetailPage({
     "workers",
   );
   const [taskNodes, setTaskNodes] = useState<Record<string, string>>({});
+  const [taskClusters, setTaskClusters] = useState<Record<string, string>>({});
   const [tensorBoardProxy, setTensorBoardProxy] = useState<string>("");
   const [pullProgressMap, setPullProgressMap] = useState<
     Record<string, PullProgressEntry[]>
@@ -1229,7 +1538,15 @@ export function JobDetailPage({
   const [workerRoleFilter, setWorkerRoleFilter] = useState("All");
   const [workerPage, setWorkerPage] = useState(1);
   const [workerSort, setWorkerSort] = useState<{
-    key: "name" | "role" | "node" | "kind" | "ip" | "createdAt" | "phase";
+    key:
+      | "name"
+      | "role"
+      | "cluster"
+      | "node"
+      | "kind"
+      | "ip"
+      | "createdAt"
+      | "phase";
     direction: SortDirection;
   }>({ key: "name", direction: "asc" });
   const workerTableRef = useRef<HTMLDivElement>(null);
@@ -1266,6 +1583,7 @@ export function JobDetailPage({
       const data = await resp.json();
       const items = data.items ?? [];
       const nodeMap: Record<string, string> = {};
+      const clusterMap: Record<string, string> = {};
       const progressMap: Record<string, PullProgressEntry[]> = {};
       const taskEventsMap: Record<string, NodeEventEntry[]> = {};
       let tbProxy = "";
@@ -1273,6 +1591,7 @@ export function JobDetailPage({
         const taskName = item.metadata?.name ?? "";
         const observedNodes = item.status?.observedNodes ?? [];
         nodeMap[taskName] = observedNodes.join(", ") || "—";
+        clusterMap[taskName] = item.metadata?.namespace ?? "—";
         if (item.status?.tensorBoardProxy) {
           tbProxy = item.status.tensorBoardProxy;
         }
@@ -1291,6 +1610,7 @@ export function JobDetailPage({
         }
       }
       setTaskNodes(nodeMap);
+      setTaskClusters(clusterMap);
       setTensorBoardProxy(tbProxy);
       setPullProgressMap(progressMap);
       setTaskEventsMap(taskEventsMap);
@@ -1456,6 +1776,7 @@ export function JobDetailPage({
               taskNodes[ts.name] ??
               ts.observedNodes?.join(", ") ??
               "—",
+            cluster: taskClusters[jobChildName] ?? taskClusters[ts.name] ?? "—",
             phase: (ts.phase || "Pending") as Phase,
             cpu: job.resources.find((item) => item.role === ts.name)?.cpu ?? "",
             memory:
@@ -1467,6 +1788,7 @@ export function JobDetailPage({
                   `${ts.name}: worker state synced`,
                   `${ts.name}: waiting for runtime heartbeat`,
                 ],
+            statusMessage: ts.message || undefined,
             pullProgress:
               pullProgressMap[jobChildName] ??
               pullProgressMap[ts.name.toLowerCase()] ??
@@ -1512,6 +1834,7 @@ export function JobDetailPage({
             jobId: job.id,
             role,
             node: pod.node || "—",
+            cluster: pod.taskNamespace || pod.namespace || "—",
             phase: (pod.phase || "Pending") as Phase,
             cpu: resource?.cpu ?? "",
             memory: resource?.memory ?? "",
@@ -1522,6 +1845,7 @@ export function JobDetailPage({
                   `${role}: worker state synced`,
                   `${role}: waiting for runtime heartbeat`,
                 ],
+            statusMessage: pod.message || undefined,
             pullProgress: nodePullProgress,
             events: workerEvents,
           };
@@ -1567,6 +1891,8 @@ export function JobDetailPage({
             return worker.name;
           case "role":
             return worker.role;
+          case "cluster":
+            return worker.cluster ?? "";
           case "node":
             return worker.node;
           case "kind":
@@ -1667,6 +1993,13 @@ export function JobDetailPage({
     { id: "logs", label: c.common.logs },
     { id: "metrics", label: zh ? "监控" : "Metrics" },
   ];
+  const jobFailedMessage =
+    displayPhase === "Failed"
+      ? job.taskStatuses
+          .filter((ts) => ts.phase === "Failed" && ts.message)
+          .map((ts) => ts.message)
+          .join("\n")
+      : undefined;
   return (
     <div className="page-content resource-page job-detail-page">
       <JobPublicOverview
@@ -1681,6 +2014,7 @@ export function JobDetailPage({
         lifecycleActions={lifecycleActions}
         jobPullProgress={jobPullProgress}
         jobEvents={jobEvents}
+        jobFailedMessage={jobFailedMessage}
       />
       <div className="sub-tabs">
         {tabs.map((tab) => (
@@ -1749,6 +2083,7 @@ export function JobDetailPage({
                     [
                       ["name", zh ? "实例名称" : "Worker name"],
                       ["role", zh ? "角色" : "Role"],
+                      ["cluster", zh ? "集群" : "Cluster"],
                       ["node", zh ? "节点" : "Node"],
                       ["kind", zh ? "节点类型" : "Node type"],
                       ["ip", zh ? "实例 IP" : "Worker IP"],
@@ -1782,6 +2117,12 @@ export function JobDetailPage({
                       worker.name === job.headerWorker
                     }
                     createdAt={formatWorkerCreatedAt(job.startedAt, index)}
+                    onSelectNode={onSelectNode}
+                    onSelectCluster={onSelectCluster}
+                    podEventsMap={podEventsMap}
+                    nodeEventsMap={nodeEventsMap}
+                    nodePullProgressMap={nodePullProgressMap}
+                    taskEventsMap={taskEventsMap}
                   />
                 ))}
               </tbody>
@@ -1986,13 +2327,14 @@ function JobPublicOverview({
   lifecycleActions,
   jobPullProgress = [],
   jobEvents = [],
+  jobFailedMessage,
 }: {
   job: Job;
   copy: CopyType;
   onBack: () => void;
   runningWorkerCount: number;
   totalWorkers: number;
-  displayPhase: Phase;
+  displayPhase: JobDisplayPhase;
   tensorBoardProxy?: string;
   onClone?: () => void;
   lifecycleActions: JobLifecycleActions;
@@ -2001,6 +2343,9 @@ function JobPublicOverview({
   jobPullProgress?: PullProgressEntry[];
   // 节点级 Warning 事件聚合，在 Pending 时与 pullProgress 一并展示。
   jobEvents?: NodeEventEntry[];
+  // Failed 状态下聚合的异常原因（CrashLoopBackOff / ImagePullBackOff 等），
+  // 供状态徽标 "i" tooltip 展示。
+  jobFailedMessage?: string;
 }) {
   const zh = c.nav.overview === "总览";
   const baseConfigRows = [
@@ -2029,11 +2374,14 @@ function JobPublicOverview({
         <div className="job-detail-summary-status">
           <div className="status-with-info">
             <StatusBadge phase={displayPhase} copy={c} />
-            {(jobPullProgress.length > 0 || jobEvents.length > 0) && (
+            {(jobPullProgress.length > 0 ||
+              jobEvents.length > 0 ||
+              jobFailedMessage) && (
               <PullProgressInfo
                 progress={jobPullProgress}
                 events={jobEvents}
                 zh={zh}
+                statusMessage={jobFailedMessage}
               />
             )}
           </div>
@@ -2947,11 +3295,13 @@ function PullProgressInfo({
   events = [],
   zh,
   emptyMessage,
+  statusMessage,
 }: {
   progress: PullProgressEntry[];
   events?: NodeEventEntry[];
   zh: boolean;
   emptyMessage?: string;
+  statusMessage?: string;
 }) {
   const wrapperRef = useRef<HTMLSpanElement | null>(null);
   const tooltipRef = useRef<HTMLSpanElement | null>(null);
@@ -2962,6 +3312,13 @@ function PullProgressInfo({
     above: boolean;
     arrowLeft: number;
   } | null>(null);
+  const recentEvents = [...events]
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.lastTime ?? "") || 0;
+      const rightTime = Date.parse(right.lastTime ?? "") || 0;
+      return rightTime - leftTime;
+    })
+    .slice(0, 4);
 
   const measure = () => {
     const icon = wrapperRef.current;
@@ -3023,7 +3380,7 @@ function PullProgressInfo({
     };
     frame = window.requestAnimationFrame(track);
     return () => window.cancelAnimationFrame(frame);
-  }, [open, progress, events, emptyMessage]);
+  }, [open, progress, events, emptyMessage, statusMessage]);
 
   const tooltipStyle: CSSProperties = pos
     ? {
@@ -3066,10 +3423,21 @@ function PullProgressInfo({
               aria-hidden="true"
               style={{ left: pos ? pos.arrowLeft - 6 : 0 }}
             />
-            {progress.length === 0 && events.length === 0 && emptyMessage && (
+            {progress.length === 0 &&
+              events.length === 0 &&
+              !statusMessage &&
+              emptyMessage && (
+                <>
+                  <strong>{zh ? "Worker 等待中" : "Worker pending"}</strong>
+                  <span className="pending-empty-message">{emptyMessage}</span>
+                </>
+              )}
+            {statusMessage && (
               <>
-                <strong>{zh ? "Worker 等待中" : "Worker pending"}</strong>
-                <span className="pending-empty-message">{emptyMessage}</span>
+                <strong>{zh ? "异常原因" : "Failure Reason"}</strong>
+                <span className="pull-entry status-message-entry">
+                  {statusMessage}
+                </span>
               </>
             )}
             {progress.length > 0 && (
@@ -3107,12 +3475,19 @@ function PullProgressInfo({
                 })}
               </>
             )}
-            {events.length > 0 && (
+            {recentEvents.length > 0 && (
               <>
                 <strong className="status-info-tooltip-section">
                   {zh ? "Worker 事件" : "Worker Events"}
+                  {events.length > recentEvents.length && (
+                    <small>
+                      {zh
+                        ? `最近 ${recentEvents.length} 条`
+                        : `Latest ${recentEvents.length}`}
+                    </small>
+                  )}
                 </strong>
-                {events.map((ev, i) => (
+                {recentEvents.map((ev, i) => (
                   <span key={`e-${i}`} className="pull-entry event-entry">
                     <span
                       className={`event-chip event-${ev.type?.toLowerCase() ?? "normal"}`}
@@ -3149,6 +3524,12 @@ function WorkerTableRow({
   domainIPMap,
   isHeader,
   createdAt,
+  onSelectNode,
+  onSelectCluster,
+  podEventsMap,
+  nodeEventsMap,
+  nodePullProgressMap,
+  taskEventsMap,
 }: {
   jobName: string;
   worker: WorkerItem;
@@ -3157,6 +3538,12 @@ function WorkerTableRow({
   domainIPMap: Record<string, string>;
   isHeader?: boolean;
   createdAt: string;
+  onSelectNode?: (name: string) => void;
+  onSelectCluster?: (id: string) => void;
+  podEventsMap: Record<string, NodeEventEntry[]>;
+  nodeEventsMap: Record<string, NodeEventEntry[]>;
+  nodePullProgressMap: Record<string, PullProgressEntry[]>;
+  taskEventsMap: Record<string, NodeEventEntry[]>;
 }) {
   const zh = c.nav.overview === "总览";
   const [copied, setCopied] = useState(false);
@@ -3173,9 +3560,8 @@ function WorkerTableRow({
       })
       .catch(() => {});
   }, []);
-  const sshUser = sessionStorage.getItem("rlark-user-name") || "<ssh-user>";
   const sshJump = sshConfig?.sshJumpHost
-    ? `${sshUser}@${sshConfig.sshJumpHost}${sshConfig.sshJumpPort ? ":" + sshConfig.sshJumpPort : ""}`
+    ? `${sshConfig.sshJumpHost}${sshConfig.sshJumpPort ? ":" + sshConfig.sshJumpPort : ""}`
     : "";
   const sshCommand = sshJump ? `ssh -J ${sshJump} root@${worker.name}` : "";
   const handleCopy = async () => {
@@ -3192,8 +3578,10 @@ function WorkerTableRow({
             <span className="row-icon">
               <Zap size={16} />
             </span>
-            <span>
-              <strong>{worker.name}</strong>
+            <span className="worker-name-block">
+              <strong className="worker-name" title={worker.name}>
+                {worker.name}
+              </strong>
               <small>
                 {isHeader
                   ? "Header Worker"
@@ -3213,7 +3601,13 @@ function WorkerTableRow({
           <span className="role-chip">{worker.role}</span>
         </td>
         <td>
-          <strong className="table-node-name">{worker.node}</strong>
+          <WorkerClusterLink
+            cluster={worker.cluster}
+            onSelectCluster={onSelectCluster}
+          />
+        </td>
+        <td>
+          <WorkerNodeLink node={worker.node} onSelectNode={onSelectNode} />
         </td>
         <td>
           <span className="node-kind-chip">{getNodeKindLabel(worker)}</span>
@@ -3229,12 +3623,16 @@ function WorkerTableRow({
             <StatusBadge phase={worker.phase} copy={c} />
             {worker.phase !== "Running" &&
               (worker.phase === "Pending" ||
+                worker.phase === "Failed" ||
                 (worker.pullProgress && worker.pullProgress.length > 0) ||
                 (worker.events && worker.events.length > 0)) && (
                 <PullProgressInfo
                   progress={worker.pullProgress ?? []}
                   events={worker.events ?? []}
                   zh={zh}
+                  statusMessage={
+                    worker.phase === "Failed" ? worker.statusMessage : undefined
+                  }
                   emptyMessage={
                     worker.phase === "Pending"
                       ? worker.node && worker.node !== "—"
@@ -3255,22 +3653,31 @@ function WorkerTableRow({
             <span
               className="action-tooltip"
               data-tooltip={
-                copied
-                  ? c.jobs.sshCopied
-                  : zh
-                    ? "复制 SSH 命令"
-                    : "Copy SSH command"
+                !sshCommand
+                  ? zh
+                    ? "未配置 SSH 跳板地址"
+                    : "SSH jump host is not configured"
+                  : copied
+                    ? c.jobs.sshCopied
+                    : zh
+                      ? "复制 SSH 命令"
+                      : "Copy SSH command"
               }
             >
               <button
                 className="icon-button worker-copy-ssh-icon"
                 onClick={handleCopy}
+                disabled={!sshCommand}
                 aria-label={
-                  copied
-                    ? c.jobs.sshCopied
-                    : zh
-                      ? "复制 SSH 命令"
-                      : "Copy SSH command"
+                  !sshCommand
+                    ? zh
+                      ? "未配置 SSH 跳板地址"
+                      : "SSH jump host is not configured"
+                    : copied
+                      ? c.jobs.sshCopied
+                      : zh
+                        ? "复制 SSH 命令"
+                        : "Copy SSH command"
                 }
               >
                 {copied ? <Check size={16} /> : <KeyRound size={16} />}
@@ -3340,7 +3747,7 @@ function WorkerTableRow({
       </tr>
       {expanded && (
         <tr className="worker-expanded-row">
-          <td colSpan={8}>
+          <td colSpan={9}>
             <div className="worker-detail-drawer">
               <div className="worker-detail-head">
                 <div>
@@ -3349,38 +3756,38 @@ function WorkerTableRow({
                   </span>
                   <strong>{worker.name}</strong>
                 </div>
-                <div className="worker-ssh-inline">
-                  <KeyRound size={15} />
-                  <code title={sshCommand}>{sshCommand}</code>
-                  <button
-                    className="icon-button"
-                    onClick={handleCopy}
-                    aria-label={zh ? "复制 SSH 地址" : "Copy SSH address"}
-                  >
-                    {copied ? <Check size={15} /> : <Copy size={15} />}
-                  </button>
-                </div>
+                {sshCommand && (
+                  <div className="worker-ssh-inline">
+                    <KeyRound size={15} />
+                    <code title={sshCommand}>{sshCommand}</code>
+                    <button
+                      className="icon-button"
+                      onClick={handleCopy}
+                      aria-label={zh ? "复制 SSH 地址" : "Copy SSH address"}
+                    >
+                      {copied ? <Check size={15} /> : <Copy size={15} />}
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="worker-detail-grid">
+                <div>
+                  <span>{zh ? "集群" : "Cluster"}</span>
+                  <WorkerClusterLink
+                    cluster={worker.cluster}
+                    onSelectCluster={onSelectCluster}
+                  />
+                </div>
                 <div>
                   <span>{zh ? "角色" : "Role"}</span>
                   <strong>{worker.role}</strong>
                 </div>
                 <div>
                   <span>{zh ? "节点" : "Node"}</span>
-                  <strong>{worker.node}</strong>
-                </div>
-                <div>
-                  <span>{zh ? "申请 CPU" : "CPU request"}</span>
-                  <strong>
-                    {worker.cpu || (zh ? "未申请" : "Not requested")}
-                  </strong>
-                </div>
-                <div>
-                  <span>{zh ? "申请内存" : "Memory request"}</span>
-                  <strong>
-                    {worker.memory || (zh ? "未申请" : "Not requested")}
-                  </strong>
+                  <WorkerNodeLink
+                    node={worker.node}
+                    onSelectNode={onSelectNode}
+                  />
                 </div>
                 <div>
                   <span>{zh ? "申请 GPU" : "GPU request"}</span>
@@ -3411,12 +3818,36 @@ function WorkerTableRow({
                           domainIPMap[
                             `${pod.namespace}/${pod.podNamespace}/${pod.podName}`
                           ] ?? "";
+                        const podPhase = (pod.phase || "Pending") as Phase;
+                        // Mirror the worker-row tooltip aggregation so the pod
+                        // subtable surfaces the same failure reason / image-pull
+                        // progress / node events as the top-right status badge.
+                        const podPullProgress =
+                          podPhase === "Pending" && pod.node
+                            ? (nodePullProgressMap[pod.node] ?? [])
+                            : [];
+                        const podEvents =
+                          podPhase === "Pending"
+                            ? (podEventsMap[pod.name] ?? []).length > 0
+                              ? (podEventsMap[pod.name] ?? [])
+                              : pod.node &&
+                                  (nodeEventsMap[pod.node] ?? []).length > 0
+                                ? (nodeEventsMap[pod.node] ?? [])
+                                : (taskEventsMap[
+                                    pod.taskName?.toLowerCase() ?? ""
+                                  ] ?? [])
+                            : [];
                         return (
                           <tr key={pod.name}>
                             <td>
                               <code className="inline-code">{pod.podName}</code>
                             </td>
-                            <td>{pod.node || "—"}</td>
+                            <td>
+                              <WorkerNodeLink
+                                node={pod.node || "—"}
+                                onSelectNode={onSelectNode}
+                              />
+                            </td>
                             <td>{pod.ip || "—"}</td>
                             <td>
                               {pod.domain ? (
@@ -3440,10 +3871,36 @@ function WorkerTableRow({
                               )}
                             </td>
                             <td>
-                              <StatusBadge
-                                phase={pod.phase as Phase}
-                                copy={c}
-                              />
+                              <div className="status-with-info">
+                                <StatusBadge phase={podPhase} copy={c} />
+                                {podPhase !== "Running" &&
+                                  (podPhase === "Pending" ||
+                                    podPhase === "Failed" ||
+                                    podPullProgress.length > 0 ||
+                                    podEvents.length > 0) && (
+                                    <PullProgressInfo
+                                      progress={podPullProgress}
+                                      events={podEvents}
+                                      zh={zh}
+                                      statusMessage={
+                                        podPhase === "Failed"
+                                          ? pod.message || undefined
+                                          : undefined
+                                      }
+                                      emptyMessage={
+                                        podPhase === "Pending"
+                                          ? pod.node && pod.node !== "—"
+                                            ? zh
+                                              ? `已调度到 ${pod.node}，正在等待容器创建或节点上报镜像拉取状态。`
+                                              : `Scheduled to ${pod.node}; waiting for container creation or image-pull status from the node.`
+                                            : zh
+                                              ? "正在等待节点调度；调度完成后将展示镜像拉取或节点事件。"
+                                              : "Waiting for node scheduling. Image-pull progress or node events will appear after placement."
+                                          : undefined
+                                      }
+                                    />
+                                  )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -3461,5 +3918,57 @@ function WorkerTableRow({
         </tr>
       )}
     </>
+  );
+}
+
+function WorkerClusterLink({
+  cluster,
+  onSelectCluster,
+}: {
+  cluster?: string;
+  onSelectCluster?: (id: string) => void;
+}) {
+  if (!onSelectCluster || !cluster || cluster === "—") {
+    return (
+      <span className="worker-chip" title={cluster || "—"}>
+        <span className="worker-link-label">{cluster || "—"}</span>
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="worker-chip worker-chip-link"
+      onClick={() => onSelectCluster(cluster)}
+      title={cluster}
+    >
+      <span className="worker-link-label">{cluster}</span>
+    </button>
+  );
+}
+
+function WorkerNodeLink({
+  node,
+  onSelectNode,
+}: {
+  node: string;
+  onSelectNode?: (name: string) => void;
+}) {
+  if (!onSelectNode || !node || node === "—" || node.includes(",")) {
+    return (
+      <span className="worker-chip" title={node || "—"}>
+        <span className="worker-link-label">{node || "—"}</span>
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="worker-chip worker-chip-link"
+      onClick={() => onSelectNode(node)}
+      title={node}
+    >
+      <span className="worker-link-label">{node}</span>
+    </button>
   );
 }

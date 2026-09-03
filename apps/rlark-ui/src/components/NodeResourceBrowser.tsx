@@ -372,16 +372,6 @@ export function NodeResourceBrowser({
                 <div
                   className={`node-resource-row${onToggleScheduling ? " has-admin-actions" : ""}${selectable ? " has-selection" : ""}${checked ? " selected" : ""}`}
                   key={key}
-                  onClick={() => onSelectNode(node.metadata.name)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      onSelectNode(node.metadata.name);
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`${zh ? "查看节点" : "View node"} ${node.metadata.name}`}
                 >
                   {selectable && (
                     <span className="node-batch-checkbox">
@@ -400,14 +390,19 @@ export function NodeResourceBrowser({
                       />
                     </span>
                   )}
-                  <span className="node-row-primary">
+                  <button
+                    type="button"
+                    className="node-row-primary node-detail-link"
+                    onClick={() => onSelectNode(node.metadata.name)}
+                    aria-label={`${zh ? "查看节点" : "View node"} ${node.metadata.name}`}
+                  >
                     <span
                       className={`node-status-ring ${phase.toLowerCase()}`}
                     />
                     <strong className="node-row-name">
                       {node.metadata.name}
                     </strong>
-                  </span>
+                  </button>
                   <span className="node-type-list">
                     {nodeCategories.map((item) => {
                       const info = categoryLabels[item];

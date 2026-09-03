@@ -21,6 +21,7 @@ export {
   getGPUResourceKey,
   getNodeResourceSummary,
   parseResourceQuantity,
+  selectDeviceResourceKey,
 } from "./nodeResources";
 
 export function getNodeLocation(node: CRDNode): string {

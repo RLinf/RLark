@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
+  AlertCircle,
   ArrowRight,
   CircleDot,
   CloudCog,
-  Languages,
-  Moon,
+  Eye,
+  EyeOff,
   Settings,
-  Shield,
 } from "lucide-react";
 import { type Copy, type Lang, type Theme, copy } from "../i18n";
 import { adminNavItems } from "../constants";
@@ -29,11 +29,8 @@ import { SystemConfigPage } from "../pages/SystemConfig";
 import { JobsPage } from "../pages/Jobs";
 
 export function AdminLogin({
-  copy: c,
   lang,
-  onLangChange,
   theme,
-  onThemeChange,
   onLogin,
 }: {
   copy: Copy;
@@ -46,8 +43,15 @@ export function AdminLogin({
   const zh = lang === "zh";
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!error) return;
+    const timer = window.setTimeout(() => setError(""), 4000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -88,107 +92,108 @@ export function AdminLogin({
 
   return (
     <div className={"admin-login-page theme-" + theme}>
-      <div className="admin-login-topbar">
-        <div className="admin-brand">
-          <img
-            src={`/rlark-logo-${lang}-light.png`}
-            alt="RLark"
-            className="brand-logo brand-logo-light"
-          />
-          <img
-            src={`/rlark-logo-${lang}-dark.png`}
-            alt="RLark"
-            className="brand-logo brand-logo-dark"
-          />
-          <div className="admin-brand-text">
-            <strong>RLark</strong>
-            <small>ADMIN</small>
-          </div>
-        </div>
-        <div className="topbar-actions">
-          <div className="segmented-control">
-            <button
-              className={lang === "zh" ? "active" : ""}
-              onClick={() => onLangChange("zh")}
-            >
-              <Languages size={14} />中
-            </button>
-            <button
-              className={lang === "en" ? "active" : ""}
-              onClick={() => onLangChange("en")}
-            >
-              EN
-            </button>
-          </div>
-          <div className="segmented-control theme-control">
-            <button
-              className={theme === "light" ? "active" : ""}
-              onClick={() => onThemeChange("light")}
-            >
-              {c.common.light}
-            </button>
-            <button
-              className={theme === "dark" ? "active" : ""}
-              onClick={() => onThemeChange("dark")}
-            >
-              <Moon size={14} />
-              {c.common.dark}
-            </button>
-          </div>
-        </div>
-      </div>
       <div className="admin-login-body">
-        <form className="admin-login-card" onSubmit={handleSubmit}>
-          <div className="admin-login-logo">
-            <Shield size={32} />
-          </div>
-          <h2>{zh ? "管理后台登录" : "Admin Login"}</h2>
-          <p className="muted">
-            {zh ? "请输入管理员账号和密码" : "Enter your admin credentials"}
-          </p>
-          <div className="admin-login-field">
-            <label>{zh ? "账号" : "Username"}</label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="admin"
-              autoComplete="username"
-            />
-          </div>
-          <div className="admin-login-field">
-            <label>{zh ? "密码" : "Password"}</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              autoComplete="current-password"
-            />
-          </div>
-          {error && (
-            <div className="cert-error" style={{ marginBottom: 12 }}>
-              {error}
-            </div>
-          )}
-          <button
-            type="submit"
-            className="primary-button admin-login-btn"
-            disabled={loading}
+        <div className="admin-login-panel">
+          <form
+            className="admin-login-card admin-login-card-management"
+            onSubmit={handleSubmit}
           >
-            {loading
-              ? zh
-                ? "登录中…"
-                : "Signing in…"
-              : zh
-                ? "登录"
-                : "Sign In"}
-          </button>
-          <a className="admin-login-back" href="/">
-            <ArrowRight size={13} />
-            {zh ? "返回前台" : "Back to Console"}
-          </a>
-        </form>
+            <div className="user-login-brand admin-login-card-brand">
+              <img
+                src={`/rlark-logo-${lang}-light.png`}
+                alt="RLark"
+                className="user-login-brand-logo brand-logo-light"
+              />
+              <img
+                src={`/rlark-logo-${lang}-dark.png`}
+                alt="RLark"
+                className="user-login-brand-logo brand-logo-dark"
+              />
+              <span className="admin-login-badge">ADMIN</span>
+            </div>
+            <div className="user-login-heading">
+              <h2>{zh ? "管理后台登录" : "Admin Login"}</h2>
+              <p className="muted">
+                {zh ? "请输入管理员账号和密码" : "Enter your admin credentials"}
+              </p>
+            </div>
+            <div className="admin-login-field">
+              <label>{zh ? "账号" : "Username"}</label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  setError("");
+                }}
+                placeholder="admin"
+                autoComplete="username"
+              />
+            </div>
+            <div className="admin-login-field">
+              <label>{zh ? "密码" : "Password"}</label>
+              <div className="admin-login-password">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setError("");
+                  }}
+                  placeholder={zh ? "请输入密码" : "Enter password"}
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  className="admin-login-password-toggle"
+                  aria-label={
+                    showPassword
+                      ? zh
+                        ? "隐藏密码"
+                        : "Hide password"
+                      : zh
+                        ? "显示密码"
+                        : "Show password"
+                  }
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword((visible) => !visible)}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+            </div>
+            {error && (
+              <div
+                className="login-inline-error"
+                role="alert"
+                aria-live="assertive"
+              >
+                <AlertCircle size={14} />
+                <span>{error}</span>
+              </div>
+            )}
+            <button
+              type="submit"
+              className="primary-button admin-login-btn"
+              disabled={loading}
+            >
+              <span>
+                {loading
+                  ? zh
+                    ? "登录中…"
+                    : "Signing in…"
+                  : zh
+                    ? "登录"
+                    : "Sign In"}
+              </span>
+              {!loading && <ArrowRight size={16} />}
+            </button>
+            <a className="admin-login-back" href="/">
+              <ArrowRight size={13} />
+              {zh ? "返回前台" : "Back to Console"}
+            </a>
+          </form>
+        </div>
       </div>
     </div>
   );

@@ -58,12 +58,21 @@ func (p *Proxy) handleConnection(conn *utils.WrapConn) {
 	switch network {
 	case "tcp", "tcp4", "tcp6":
 		logger.V(1).Info("Handling TCP proxy connection", "host", host, "port", port)
+		tunMetrics.IncProxyConnections("tcp")
+		tunMetrics.IncProxyActive()
+		defer tunMetrics.DecProxyActive()
 		p.handleTCP(conn, host, port)
 	case "udp", "udp4", "udp6":
 		logger.V(1).Info("Handling UDP proxy connection", "host", host, "port", port)
+		tunMetrics.IncProxyConnections("udp")
+		tunMetrics.IncProxyActive()
+		defer tunMetrics.DecProxyActive()
 		p.handleUDP(conn, host, port)
 	case "icmp", "icmp4":
 		logger.V(1).Info("Handling ICMP proxy connection", "host", host)
+		tunMetrics.IncProxyConnections("icmp")
+		tunMetrics.IncProxyActive()
+		defer tunMetrics.DecProxyActive()
 		p.handleICMP(conn, host)
 	default:
 		logger.Error(nil, "Handling proxy: unsupported network protocol", "network", network)

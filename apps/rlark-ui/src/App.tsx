@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CircleDot, CloudCog } from "lucide-react";
+import { Check, CircleDot, CloudCog } from "lucide-react";
 import type { Job } from "./data";
 import { copy, type Lang, type Theme } from "./i18n";
 import { navItems } from "./constants";
@@ -46,6 +46,7 @@ export default function App() {
   const [cloneJob, setCloneJob] = useState<Job | null>(null);
   const [editJob, setEditJob] = useState<Job | null>(null);
   const [restartAfterEdit, setRestartAfterEdit] = useState(false);
+  const [jobSubmitNotice, setJobSubmitNotice] = useState("");
   const [lang, setLang] = usePersistentState<Lang>("rlark-language", "zh");
   const [theme, setTheme] = usePersistentState<Theme>("rlark-theme", "light");
   const [userLoggedIn, setUserLoggedIn] = useState(
@@ -108,6 +109,12 @@ export default function App() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  useEffect(() => {
+    if (!jobSubmitNotice) return;
+    const timer = window.setTimeout(() => setJobSubmitNotice(""), 4000);
+    return () => window.clearTimeout(timer);
+  }, [jobSubmitNotice]);
 
   if (isAdmin) return <AdminApp />;
   if (!userLoggedIn) {
@@ -251,6 +258,22 @@ export default function App() {
             setUserLoggedIn(false);
           }}
         />
+        {jobSubmitNotice && (
+          <div
+            className="job-action-notice app-job-submit-notice"
+            role="status"
+          >
+            <Check size={16} />
+            <span>{jobSubmitNotice}</span>
+            <button
+              type="button"
+              onClick={() => setJobSubmitNotice("")}
+              aria-label={lang === "zh" ? "关闭提示" : "Dismiss notification"}
+            >
+              ×
+            </button>
+          </div>
+        )}
         {page === "overview" && (
           <Overview navigate={navigate} copy={c} isMockMode={isMockMode} />
         )}{" "}
@@ -283,6 +306,10 @@ export default function App() {
             selectedName={sub}
             onSelect={(name?: string) =>
               navigate("jobs", name, { replace: !name })
+            }
+            onSelectNode={(name: string) => navigate("clusters-nodes", name)}
+            onSelectCluster={(id: string) =>
+              navigate("clusters-management", id)
             }
             onCreate={() => {
               setCloneJob(null);
@@ -345,6 +372,14 @@ export default function App() {
             setCloneJob(null);
             setEditJob(null);
             setRestartAfterEdit(false);
+          }}
+          onSuccess={(message) => {
+            setCreateOpen(false);
+            setCloneJob(null);
+            setEditJob(null);
+            setRestartAfterEdit(false);
+            setJobSubmitNotice(message);
+            navigate("jobs", undefined, { replace: true });
           }}
           copy={c}
           cloneJob={cloneJob}

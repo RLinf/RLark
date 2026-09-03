@@ -19,7 +19,7 @@ lint: install ## Lint TypeScript/React (eslint)
 	npx eslint src/
 
 fmt: ## Format code (prettier)
-	npx prettier@3.9.6 --write 'src/' 'index.html' 'package.json' 'vite.config.ts' 'tsconfig*.json'
+	./node_modules/.bin/prettier --write 'src/' 'index.html' 'package.json' 'vite.config.ts' 'tsconfig*.json'
 
 ##@ Docker
 

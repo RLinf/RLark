@@ -1,6 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getNodeResourceSummary } from "../dist/test/utils/nodeResources.js";
+import {
+  getNodeResourceSummary,
+  selectDeviceResourceKey,
+} from "../dist/test/utils/nodeResources.js";
+
+test("prefers a positive modeled device resource over zero-capacity keys", () => {
+  const capacity = {
+    "rlinf.io/device": "0",
+    "rlinf.io/device-franka": "1",
+    "rlinf.io/device-macvlan": "0",
+  };
+  assert.equal(
+    selectDeviceResourceKey(capacity, capacity),
+    "rlinf.io/device-franka",
+  );
+});
+
+test("uses the positive generic device resource only as a fallback", () => {
+  assert.equal(
+    selectDeviceResourceKey(
+      { "rlinf.io/device": "1", "rlinf.io/device-franka": "0" },
+      { "rlinf.io/device": "1", "rlinf.io/device-franka": "0" },
+    ),
+    "rlinf.io/device",
+  );
+});
 
 test("shows GPU and embodied device resources together on an edge node", () => {
   const summary = getNodeResourceSummary(

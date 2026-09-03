@@ -7,7 +7,10 @@ import (
 	"math"
 	"net"
 	"net/http"
+	_ "net/http/pprof" // 注册 /debug/pprof 到 DefaultServeMux
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/network/nodeserver"
@@ -140,6 +143,24 @@ func (s *Sidecar) Run(ctx context.Context) error {
 			tunErr <- fmt.Errorf("tun client: %w", err)
 		}
 	}()
+
+	// ─── 3.5 启动 metrics/pprof HTTP server ───
+	if s.config.MetricsListenAddress != "" {
+		mux := http.DefaultServeMux
+		mux.Handle("/metrics", promhttp.Handler())
+		metricsServer := &http.Server{Addr: s.config.MetricsListenAddress, Handler: mux}
+		go func() {
+			logger.Info("Metrics/pprof listening", "address", s.config.MetricsListenAddress)
+			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error(nil, "Metrics server stopped", "err", err)
+			}
+		}()
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer shutdownCancel()
+			_ = metricsServer.Shutdown(shutdownCtx)
+		}()
+	}
 
 	// ─── 4. 启动 Hosts 同步（定期从 NodeServer 获取 hosts 并更新本地 hosts 文件） ───
 	if s.config.HostsSyncEnabled {

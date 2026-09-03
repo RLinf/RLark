@@ -69,13 +69,16 @@ func (h *hostsSyncer) syncOnce(ctx context.Context) error {
 
 	hosts, err := h.fetchHosts(ctx)
 	if err != nil {
+		metrics.IncHostsSync("error")
 		return fmt.Errorf("fetch hosts: %w", err)
 	}
 
 	if err := h.updateHostsFile(hosts); err != nil {
+		metrics.IncHostsSync("error")
 		return fmt.Errorf("update hosts file: %w", err)
 	}
 
+	metrics.IncHostsSync("success")
 	logger.V(1).Info("Hosts file synced", "entries", len(hosts))
 	return nil
 }

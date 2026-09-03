@@ -3,8 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	_ "net/http/pprof" // 注册 /debug/pprof 到 DefaultServeMux
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -179,6 +182,23 @@ func (n *nodeAgent) Run(ctx context.Context) error {
 	var eg errgroup.Group
 	eg.Go(func() error {
 		return nodeserver.Run(ctx)
+	})
+	// metrics/pprof HTTP server,复用 --metrics-bind-address(默认 :8081)
+	eg.Go(func() error {
+		mux := http.DefaultServeMux
+		mux.Handle("/metrics", promhttp.Handler())
+		srv := &http.Server{Addr: n.a.config.MetricsBindAddress, Handler: mux}
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(shutdownCtx)
+		}()
+		logger.Info("Node agent metrics/pprof listening", "address", n.a.config.MetricsBindAddress)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			return err
+		}
+		return nil
 	})
 	if imgPuller != nil {
 		eg.Go(func() error {

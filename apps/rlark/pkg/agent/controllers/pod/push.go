@@ -50,6 +50,16 @@ func (r *pushPodReconciler) Reconcile(ctx context.Context, req reconcile.Request
 
 func (r *pushPodReconciler) buildRLarkPodFromK8sPod(k8sPod *corev1.Pod, taskName, taskNamespace string) *rlarkv1alpha1.Pod {
 	phase := convertK8sPodPhase(k8sPod.Status.Phase)
+	message := k8sPod.Status.Message
+	// A K8s Pod can be phase=Running while its main container (the container
+	// named "main") is stuck in CrashLoopBackOff. Surface that as Failed on
+	// the management Pod CR so operators see the failure immediately instead
+	// of a misleading Running/Pending, and the UI tooltip can show the
+	// waiting message. Only override when the pod has not already Succeeded.
+	if clMsg, crashed := mainContainerCrashLoopMessage(k8sPod); crashed && phase != rlarkv1alpha1.PodPhaseSucceeded {
+		phase = rlarkv1alpha1.PodPhaseFailed
+		message = clMsg
+	}
 
 	podSpec := rlarkv1alpha1.PodSpec{
 		TaskNamespace: taskNamespace,
@@ -66,7 +76,7 @@ func (r *pushPodReconciler) buildRLarkPodFromK8sPod(k8sPod *corev1.Pod, taskName
 		Phase:   phase,
 		Node:    k8sPod.Spec.NodeName,
 		IP:      k8sPod.Status.PodIP,
-		Message: k8sPod.Status.Message,
+		Message: message,
 	}
 
 	// Labels enable lookup by k8s pod name/namespace (e.g. for deletion when only the
@@ -168,4 +178,26 @@ func convertK8sPodPhase(phase corev1.PodPhase) rlarkv1alpha1.PodPhase {
 	default:
 		return rlarkv1alpha1.PodPhasePending
 	}
+}
+
+// mainContainerCrashLoopMessage inspects the workload's main container (the
+// container named "main") of a K8s Pod. When it is in the CrashLoopBackOff
+// waiting state, it returns the waiting message (falling back to the reason)
+// and true so the management Pod CR can be surfaced as Failed. This augments
+// the raw pod phase: a Pod can be phase=Running while its main container is
+// stuck in CrashLoopBackOff.
+func mainContainerCrashLoopMessage(k8sPod *corev1.Pod) (string, bool) {
+	for _, cs := range k8sPod.Status.ContainerStatuses {
+		if cs.Name != "main" {
+			continue
+		}
+		if waiting := cs.State.Waiting; waiting != nil && waiting.Reason == "CrashLoopBackOff" {
+			msg := waiting.Message
+			if msg == "" {
+				msg = waiting.Reason
+			}
+			return msg, true
+		}
+	}
+	return "", false
 }

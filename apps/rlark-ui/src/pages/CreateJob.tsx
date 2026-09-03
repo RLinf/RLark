@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { type Cluster, clusters, type Job, type JobType } from "../data";
 import type { Copy } from "../i18n";
-import type { RoleResource } from "../types";
+import type { CRDTask, RoleResource } from "../types";
 import {
   ROLE_TEMPLATES,
   computePvcStorageMap,
@@ -15,6 +15,11 @@ import { imageReferenceHasWhitespace } from "../utils/imageReference";
 import { RoleNameInput } from "../components/create";
 import { CodeEditorField } from "../components/CodeEditor";
 import { ResourcePlacementPicker } from "../components/ResourcePlacementPicker";
+import {
+  availableResource,
+  reclaimableResourcesForTasks,
+  type ReclaimableResources,
+} from "../utils/resourceAvailability";
 
 function ClusterSelect({
   clusters,
@@ -129,12 +134,14 @@ function ClusterSelect({
 
 export function CreateJobModal({
   onClose,
+  onSuccess,
   copy: c,
   cloneJob,
   editJob,
   restartAfterSave = false,
 }: {
   onClose: () => void;
+  onSuccess: (message: string) => void;
   copy: Copy;
   cloneJob?: Job | null;
   editJob?: Job | null;
@@ -198,6 +205,8 @@ export function CreateJobModal({
   >([]);
   const [sshKeysLoaded, setSShKeysLoaded] = useState(false);
   const [domains, setDomains] = useState<{ name: string; cidr: string }[]>([]);
+  const [reclaimableResources, setReclaimableResources] =
+    useState<ReclaimableResources>({});
   const {
     clusterDisplayNames,
     nodes: allNodes,
@@ -230,6 +239,21 @@ export function CreateJobModal({
       )
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!editJob || !restartAfterSave) return;
+    const selector = encodeURIComponent(`rlinf.io/job=${editJob.name}`);
+    fetch(`/api/v1/rlinf.io/v1alpha1/tasks?labelSelector=${selector}`)
+      .then((r) =>
+        r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)),
+      )
+      .then((data) =>
+        setReclaimableResources(
+          reclaimableResourcesForTasks((data.items ?? []) as CRDTask[]),
+        ),
+      )
+      .catch(() => setReclaimableResources({}));
+  }, [editJob, restartAfterSave]);
 
   useEffect(() => {
     fetch("/api/v1/ssh-user-keys")
@@ -373,6 +397,21 @@ export function CreateJobModal({
   const [roleResources, setRoleResources] = useState<
     Record<string, RoleResource>
   >(sourceJob ? cloneRR : defaultRoleResources);
+  const [placementModes, setPlacementModes] = useState<
+    Record<string, "model" | "manual">
+  >(() =>
+    sourceJob
+      ? Object.fromEntries(
+          sourceJob.resources
+            .filter(
+              (resource) =>
+                Object.keys(parseNodeSelectorStr(resource.nodeSelector))
+                  .length === 0,
+            )
+            .map((resource) => [resource.role, "model" as const]),
+        )
+      : {},
+  );
   const [activeRoleTab, setActiveRoleTab] = useState<string>(roles[0] ?? "");
 
   useEffect(() => {
@@ -700,8 +739,13 @@ export function CreateJobModal({
             const allocatable = Number(
               node.status?.allocatable?.[resourceRequest.key] ?? 0,
             );
-            const used = Number(node.status?.used?.[resourceRequest.key] ?? 0);
-            return Math.max(0, allocatable - used);
+            const used = node.status?.used?.[resourceRequest.key];
+            const nodeKey = `${node.metadata.namespace ?? ""}/${node.metadata.name}`;
+            return availableResource(
+              String(allocatable),
+              used,
+              reclaimableResources[nodeKey]?.[resourceRequest.key],
+            );
           });
           const available = freeByNode.reduce((sum, value) => sum + value, 0);
           const requested = resource.replicas * resourceRequest.amount;
@@ -794,7 +838,19 @@ export function CreateJobModal({
         const body = await resp.text();
         throw new Error(`HTTP ${resp.status}: ${body}`);
       }
-      onClose();
+      onSuccess(
+        isEdit
+          ? restartAfterSave
+            ? zh
+              ? "任务已保存并提交重启"
+              : "Job saved and restart submitted"
+            : zh
+              ? "任务修改成功"
+              : "Job updated successfully"
+          : zh
+            ? "任务提交成功"
+            : "Job submitted successfully",
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setErrorNonce((n) => n + 1);
@@ -1032,6 +1088,9 @@ export function CreateJobModal({
                           cluster={rr.cluster}
                           nodes={allNodes}
                           loading={nodesLoading}
+                          reclaimableResources={reclaimableResources}
+                          nodeSelector={rr.nodeSelector}
+                          placementMode={placementModes[role]}
                           replicas={rr.replicas}
                           gpu={rr.gpu}
                           devices={rr.devices ?? []}
@@ -1039,6 +1098,12 @@ export function CreateJobModal({
                             setRoleResources((previous) => ({
                               ...previous,
                               [role]: { ...previous[role], ...placement },
+                            }))
+                          }
+                          onPlacementModeChange={(placementMode) =>
+                            setPlacementModes((previous) => ({
+                              ...previous,
+                              [role]: placementMode,
                             }))
                           }
                         />
@@ -1449,20 +1514,34 @@ export function CreateJobModal({
               </button>
             )}
             {step < 4 ? (
-              <button
-                className="primary-button"
-                onClick={() => goToStep(step + 1)}
-              >
-                {step === 2 &&
-                roles.length > 1 &&
-                (activeRoleTab || roles[0]) !== roles[roles.length - 1]
-                  ? zh
-                    ? "下一个角色"
-                    : "Next Role"
-                  : zh
-                    ? "下一步"
-                    : "Next"}
-              </button>
+              (() => {
+                const currentRole = activeRoleTab || roles[0];
+                const isLastRole = currentRole === roles[roles.length - 1];
+                const showNextRole =
+                  step === 2 && roles.length > 1 && !isLastRole;
+                return (
+                  <button
+                    className="primary-button"
+                    onClick={() => {
+                      if (showNextRole) {
+                        const idx = roles.indexOf(currentRole);
+                        setActiveRoleTab(roles[idx + 1]);
+                        setError("");
+                      } else {
+                        goToStep(step + 1);
+                      }
+                    }}
+                  >
+                    {showNextRole
+                      ? zh
+                        ? "下一个角色"
+                        : "Next Role"
+                      : zh
+                        ? "下一步"
+                        : "Next"}
+                  </button>
+                );
+              })()
             ) : (
               <button
                 className="primary-button"
