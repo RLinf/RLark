@@ -40,7 +40,7 @@ export function useAutoRefresh(
   fetcher: (isInitial: boolean) => Promise<void>,
   interval = 10000,
   deps: unknown[] = [],
-): { refresh: () => void } {
+): { refresh: () => Promise<void> } {
   const fetcherRef = useRef(fetcher);
   const timerRef = useRef<number | undefined>(undefined);
   const mountedRef = useRef(true);

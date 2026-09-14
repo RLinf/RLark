@@ -3,6 +3,7 @@ package deviceplugin
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
 	admissionv1 "k8s.io/api/admission/v1"
@@ -109,8 +110,8 @@ func TestBuildDevinitContainer(t *testing.T) {
 	if c.Image != "rlinf/device-plugin:v1" {
 		t.Errorf("Image = %q", c.Image)
 	}
-	if len(c.Command) != 2 || c.Command[0] != devinitBinaryPath || c.Command[1] != "setup" {
-		t.Errorf("Command = %v, want [%q setup]", c.Command, devinitBinaryPath)
+	if len(c.Command) != 2 || c.Command[0] != BinDir+"/devinit" || c.Command[1] != "setup" {
+		t.Errorf("Command = %v, want [%s setup]", c.Command, BinDir+"/devinit")
 	}
 	got := c.Resources.Requests[corev1.ResourceName(testResource)]
 	if got.Value() != 1 {
@@ -369,14 +370,24 @@ func TestNewWebhookServer_NoConfigName(t *testing.T) {
 }
 
 func TestNewWebhookServer_NoImage(t *testing.T) {
+	devinitBinaryExists = func() bool { return true }
+	t.Cleanup(func() { devinitBinaryExists = func() bool { _, err := os.Stat(devinitBinaryPath); return err == nil } })
+
 	wh := WebhookConfig{Enabled: true, MutatingWebhookConfigName: "wh", ServiceName: "svc", Namespace: "ns"}
 	p := pluginForWebhookTest(t, wh, true) // no DevinitImage, no discovered initImage
-	if _, err := newWebhookServer(p); err == nil {
-		t.Fatal("expected error when no devinit image, got nil")
+	s, err := newWebhookServer(p)
+	if err != nil {
+		t.Fatalf("expected no error when no devinit image (falls back to busybox), got %v", err)
+	}
+	if s == nil {
+		t.Fatal("expected non-nil server when no devinit image (falls back to busybox)")
 	}
 }
 
 func TestNewWebhookServer_OK(t *testing.T) {
+	devinitBinaryExists = func() bool { return true }
+	t.Cleanup(func() { devinitBinaryExists = func() bool { _, err := os.Stat(devinitBinaryPath); return err == nil } })
+
 	wh := WebhookConfig{
 		Enabled:                   true,
 		MutatingWebhookConfigName: "wh.example.com",
@@ -397,6 +408,9 @@ func TestNewWebhookServer_OK(t *testing.T) {
 // TestNewWebhookServer_AutoDiscoversImage confirms that when DevinitImage is
 // empty, the discovered device-plugin image is used as the devinit image.
 func TestNewWebhookServer_AutoDiscoversImage(t *testing.T) {
+	devinitBinaryExists = func() bool { return true }
+	t.Cleanup(func() { devinitBinaryExists = func() bool { _, err := os.Stat(devinitBinaryPath); return err == nil } })
+
 	wh := WebhookConfig{
 		Enabled:                   true,
 		MutatingWebhookConfigName: "wh.example.com",

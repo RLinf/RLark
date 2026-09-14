@@ -104,6 +104,7 @@ export function ClustersPage({
     Record<string, { jobs: string[]; workers: number }>
   >({});
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const resourceView = initialView ?? "clusters";
   const [selectedClusterNs, setSelectedClusterNs] = useState<string | null>(
@@ -175,6 +176,16 @@ export function ClustersPage({
 
   useAutoRefresh(fetchNodes, 10000);
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await fetchNodes(false);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const workerNodes = useMemo(
     () => realNodes.filter(isBusinessWorkerNode),
     [realNodes],
@@ -223,9 +234,21 @@ export function ClustersPage({
             <h2>{c.clusters.title}</h2>
             <p>{c.clusters.desc}</p>
           </div>
-          <button className="secondary-button" onClick={() => fetchNodes()}>
-            <RefreshCw size={16} />
-            {c.common.refresh}
+          <button
+            className="secondary-button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-busy={refreshing}
+          >
+            <RefreshCw
+              size={16}
+              className={refreshing ? "job-action-loading" : ""}
+            />
+            {refreshing
+              ? zh
+                ? "刷新中..."
+                : "Refreshing..."
+              : c.common.refresh}
           </button>
         </div>
         <div className="cert-error" style={{ marginBottom: 12 }}>
@@ -289,9 +312,21 @@ export function ClustersPage({
           </p>
         </div>
         {resourceView === "clusters" && (
-          <button className="secondary-button" onClick={() => fetchNodes()}>
-            <RefreshCw size={16} />
-            {c.common.refresh}
+          <button
+            className="secondary-button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-busy={refreshing}
+          >
+            <RefreshCw
+              size={16}
+              className={refreshing ? "job-action-loading" : ""}
+            />
+            {refreshing
+              ? zh
+                ? "刷新中..."
+                : "Refreshing..."
+              : c.common.refresh}
           </button>
         )}
       </div>
@@ -365,7 +400,8 @@ export function ClustersPage({
             copy={c}
             initialCategory={initialCategory}
             initialQuery={initialQuery}
-            onRefresh={() => fetchNodes()}
+            onRefresh={handleRefresh}
+            refreshing={refreshing}
             onSelectNode={(name) => onNavigate?.(name)}
           />
         </section>

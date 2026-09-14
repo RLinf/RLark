@@ -1,0 +1,101 @@
+name: fluent-bit
+displayName: Fluent Bit 日志采集
+category: logging
+version: v0.1.0
+description: |
+  部署 Fluent Bit DaemonSet，采集集群内 Pod 的 stdout/stderr 日志并写入外部日志后端。
+  日志会自动带上 cluster_id / job / task / pod / namespace 等标签，便于在 rlark 平台或后端控制台查询。
+  目前支持阿里云 SLS，后续会扩展到 Loki / Elasticsearch 等后端。
+icon: file-text
+
+parameters:
+  - name: backend
+    displayName: 日志后端
+    description: 日志写入的后端类型。目前仅支持 sls（阿里云日志服务），后续会支持 loki / es。
+    type: enum
+    options: ["sls"]
+    default: sls
+    required: true
+
+  # ---- 通用日志后端配置 ----
+  - name: endpoint
+    displayName: 接入地址 (Endpoint/Brokers)
+    description: |
+      日志后端的连接地址。
+      - SLS: Kafka 接入地址，格式：<project>.<endpoint>:<port>（公网 10012，私网 10011）。
+      - Loki/ES: HTTP Endpoint（如 http://loki:3100 或 https://es:9200）。
+    type: string
+    default: ""
+    required: true
+
+  - name: project
+    displayName: 项目/组织名 (Project/Tenant)
+    description: |
+      资源所属域或租户标识。
+      - SLS: Project 名称（作为 Kafka SASL 认证的 username）。
+      - Loki: Tenant ID。
+      - ES: 组织/命名空间前缀（可选）。
+    type: string
+    default: ""
+    required: false
+
+  - name: logstore
+    displayName: 日志库/索引名 (Logstore/Index)
+    description: |
+      具体存放日志的库、表或索引。
+      - SLS: Logstore 名称（作为 Kafka topic）。
+      - Loki/ES: Index 名称。
+    type: string
+    default: ""
+    required: true
+
+  - name: accessKeyId
+    displayName: 认证 ID (Access Key ID / Username)
+    description: |
+      认证用户名或 Access Key ID。
+      - SLS: 阿里云 AK（需有 SLS 写入权限）。
+      - Loki/ES: Basic Auth Username 或 API Key ID。
+    type: string
+    default: ""
+    required: false
+
+  - name: accessKeySecret
+    displayName: 认证 Secret (Access Key Secret / Password)
+    description: |
+      认证密码或 Access Key Secret。
+      - SLS: 阿里云 SK（需有 SLS 写入权限）。
+      - Loki/ES: Basic Auth Password 或 API Key Secret。
+    type: string
+    default: ""
+    required: false
+
+  # ---- 公共配置 ----
+  - name: clusterId
+    displayName: 集群 ID
+    description: |
+      写入日志的 cluster_id 标签值，用于多集群日志区分。
+      通常填集群在 rlark 平台上的唯一标识。
+    type: string
+    default: ""
+    required: true
+
+  - name: image
+    displayName: Fluent Bit 镜像
+    description: Fluent Bit 镜像地址。官方 fluent/fluent-bit 镜像自带 out_kafka 插件即可。
+    type: string
+    default: fluent/fluent-bit:3.1.8
+    required: true
+
+  - name: cpuLimit
+    displayName: CPU 限额
+    description: Fluent Bit 容器 CPU 限额
+    type: string
+    default: 200m
+    required: false
+
+  - name: memoryLimit
+    displayName: 内存限额
+    description: Fluent Bit 容器内存限额
+    type: string
+    default: 256Mi
+    required: false

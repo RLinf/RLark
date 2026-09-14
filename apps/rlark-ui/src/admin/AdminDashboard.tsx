@@ -256,9 +256,10 @@ export function AdminDashboard({
             className="secondary-button"
             onClick={() => fetchDashboard()}
             disabled={loading}
+            aria-busy={loading}
           >
             <RefreshCw size={15} className={loading ? "spin" : ""} />
-            {c.common.refresh}
+            {loading ? (zh ? "刷新中..." : "Refreshing...") : c.common.refresh}
           </button>
         </div>
       </section>

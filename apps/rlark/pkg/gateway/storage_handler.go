@@ -306,9 +306,7 @@ func (g *Gateway) createStorageClass(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server-address is not configured, cannot proxy to cluster agents"})
 		return
 	}
-	if req.Namespace == "" {
-		req.Namespace = "default"
-	}
+	req.Namespace = metav1.NamespaceSystem
 
 	if strings.EqualFold(req.Provider, "Alibaba") {
 		req.Endpoint = fmt.Sprintf("%s.oss-%s.aliyuncs.com", req.Bucket, req.Region)
@@ -357,9 +355,7 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server-address is not configured, cannot proxy to cluster agents"})
 		return
 	}
-	if req.Namespace == "" {
-		req.Namespace = "default"
-	}
+	req.Namespace = metav1.NamespaceSystem
 	if strings.EqualFold(req.Provider, "Alibaba") {
 		req.Endpoint = fmt.Sprintf("%s.oss-%s.aliyuncs.com", req.Bucket, req.Region)
 	}
@@ -417,7 +413,7 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 // where it exists, or from the comma-separated clusters query parameter.
 func (g *Gateway) deleteStorageClass(c *gin.Context) {
 	name := c.Param("name")
-	namespace := c.DefaultQuery("namespace", "default")
+	namespace := metav1.NamespaceSystem
 	if name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
 		return

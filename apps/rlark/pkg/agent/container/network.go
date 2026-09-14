@@ -183,6 +183,7 @@ func (a *containerNetworkAdapter) GetContainerNetworkCred(ctx context.Context, p
 
 // getPodDomainByPodUID 通过 Pod UID（即 Pod 在控制面的名称）查询其所属的 Domain 名称。
 func (a *containerNetworkAdapter) getPodDomainByPodUID(ctx context.Context, podUID string) (string, error) {
+	_ = ctx
 	pod, err := a.managementPodLister.Pods(a.globalNamespace).Get(podUID) // pod UID 即为 pod 在控制面的名称
 	if err != nil {
 		return "", err

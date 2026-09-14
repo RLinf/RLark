@@ -42,6 +42,7 @@ func NewAgent(config Config) *Agent {
 }
 
 func (a *Agent) init(ctx context.Context) error {
+	_ = ctx
 	var err error
 
 	// Initialize server client

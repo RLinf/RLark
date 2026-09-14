@@ -86,6 +86,7 @@ func (s *Server) GetDial(ctx context.Context, dialType, address string, certMeta
 // getAgentDialer returns a remotedialer.Dialer for the specified agentID and nodeName.
 // If nodeName is provided, it will prioritize the dialer for that specific node.
 func (s *Server) getAgentDialer(ctx context.Context, agentID, nodeName string) remotedialer.Dialer {
+	_ = ctx
 	candidateClientKeys := []string{}
 	if nodeName != "" {
 		candidateClientKeys = append(candidateClientKeys, agentID+":node-agent:"+nodeName)
@@ -124,6 +125,7 @@ func (s *Server) checkHostInDomain(ctx context.Context, host string, domainID, a
 
 // getTargetFromDomainHost 解析 domain host，返回对应的 targetAgent、targetNode 和 targetHost。
 func (s *Server) getTargetFromDomainHost(ctx context.Context, host string) (string, string, string, error) {
+	_ = ctx
 	fields := strings.Split(host, ".")
 	if len(fields) < 3 {
 		return "", "", "", fmt.Errorf("invalid host format: %s", host)
@@ -149,6 +151,8 @@ func (s *Server) getTargetFromDomainHost(ctx context.Context, host string) (stri
 // getPodInfoByUser 根据 podName 和 userName 获取对应的 Pod 信息，
 // 返回 agentID、nodeName、podIP，如果 Pod 不存在或不属于该用户，则返回错误。
 func (s *Server) getPodDialInfoByUser(ctx context.Context, podName, userName string) (string, string, string, error) {
+	_ = ctx
+	_ = userName
 	pod, ok := s.podCache.GetPodByName(podName)
 	if !ok {
 		return "", "", "", fmt.Errorf("pod %s not found", podName)

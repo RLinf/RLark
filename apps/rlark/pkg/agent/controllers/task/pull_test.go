@@ -52,6 +52,36 @@ func TestCleanupWorkloadWaitsForStatefulSetAndPVC(t *testing.T) {
 	}
 }
 
+func TestEnsurePVCsUsesConfiguredSize(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	localClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	r := &pullReconciler{c: NewTaskController(base.Controller{LocalKubeClient: localClient})}
+	mgmtTask := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "default"}}
+	workload := &rlarkv1alpha1.KubernetesWorkloadSpec{
+		PvcSizeGbMap: map[string]int32{"data": 20},
+		Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{
+			Name: "data",
+			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: "data",
+			}},
+		}}}},
+	}
+
+	if err := r.ensurePVCs(context.Background(), mgmtTask, workload); err != nil {
+		t.Fatal(err)
+	}
+	var pvc corev1.PersistentVolumeClaim
+	if err := localClient.Get(context.Background(), types.NamespacedName{Name: "data", Namespace: "rlark-system"}, &pvc); err != nil {
+		t.Fatal(err)
+	}
+	if got := pvc.Spec.Resources.Requests.Storage().String(); got != "20Gi" {
+		t.Fatalf("PVC storage request = %q, want 20Gi", got)
+	}
+}
+
 func TestRestartCleanupRequiredAndAnnotationPropagation(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := appsv1.AddToScheme(scheme); err != nil {

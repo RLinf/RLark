@@ -18,6 +18,8 @@ Path parameters are written as `{name}` below; Gin uses the equivalent `:name` s
 | `pods` | Namespaced | `GET /api/v1/rlinf.io/v1alpha1/pods`; `GET, PATCH /api/v1/rlinf.io/v1alpha1/pods/{name}`; `GET /api/v1/rlinf.io/v1alpha1/pods/{name}/events`; `GET /api/v1/rlinf.io/v1alpha1/pods/{name}/terminal` |
 | `domains` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/domains`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/domains/{name}` |
 
+When creating a Job, the Gateway stores the submitted `metadata.name` as its display name and returns a generated `jo-<16 hexadecimal characters>` resource ID in `metadata.name`. Use the returned ID for subsequent Job API requests.
+
 The Gateway router does not expose CRD status subresource routes. Status is returned as part of the normal resource representation.
 
 ## Clusters and certificates

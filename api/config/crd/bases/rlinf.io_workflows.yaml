@@ -118,6 +118,11 @@ spec:
                                     properties:
                                       kind:
                                         type: string
+                                      pvcSizeGbMap:
+                                        additionalProperties:
+                                          format: int32
+                                          type: integer
+                                        type: object
                                       pvcStorageMap:
                                         additionalProperties:
                                           type: string

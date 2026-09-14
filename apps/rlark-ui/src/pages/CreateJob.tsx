@@ -1,12 +1,45 @@
 import { useEffect, useRef, useState } from "react";
+
+type ImageUsage = {
+  image: string;
+  useCount: number;
+  lastUsedAt: string;
+};
+
+function formatImageUsage(usedAt: string, useCount: number, zh: boolean) {
+  const seconds = Math.max(
+    0,
+    Math.floor((Date.now() - Date.parse(usedAt)) / 1000),
+  );
+  const relative =
+    seconds < 60
+      ? zh
+        ? "刚刚"
+        : "just now"
+      : seconds < 3600
+        ? zh
+          ? `${Math.floor(seconds / 60)} 分钟前`
+          : `${Math.floor(seconds / 60)}m ago`
+        : seconds < 86400
+          ? zh
+            ? `${Math.floor(seconds / 3600)} 小时前`
+            : `${Math.floor(seconds / 3600)}h ago`
+          : zh
+            ? `${Math.floor(seconds / 86400)} 天前`
+            : `${Math.floor(seconds / 86400)}d ago`;
+  return zh
+    ? `${relative}使用 · ${useCount} 次`
+    : `${relative} · used ${useCount} times`;
+}
 import { Check, ChevronDown, Plus, Trash2, X } from "lucide-react";
 import { type Cluster, clusters, type Job, type JobType } from "../data";
 import type { Copy } from "../i18n";
 import type { CRDTask, RoleResource } from "../types";
 import {
   ROLE_TEMPLATES,
-  computePvcStorageMap,
+  automaticNetworkDomain,
   generateJobCRD,
+  generateJobResourceName,
   parseNodeSelectorStr,
 } from "../utils/job";
 import { toYaml } from "../utils/yaml";
@@ -141,7 +174,7 @@ export function CreateJobModal({
   restartAfterSave = false,
 }: {
   onClose: () => void;
-  onSuccess: (message: string) => void;
+  onSuccess: (message: string, jobName: string) => void;
   copy: Copy;
   cloneJob?: Job | null;
   editJob?: Job | null;
@@ -180,9 +213,12 @@ export function CreateJobModal({
   const [jobName, setJobName] = useState(
     sourceJob
       ? editJob
-        ? sourceJob.name
-        : sourceJob.name + "-copy"
+        ? sourceJob.displayName
+        : sourceJob.displayName + "-copy"
       : "robot-policy-training",
+  );
+  const [jobResourceName] = useState(() =>
+    editJob ? editJob.name : generateJobResourceName(),
   );
   const [headerRole, setHeaderRole] = useState(
     sourceJob?.headerRole ?? roles[0],
@@ -193,13 +229,15 @@ export function CreateJobModal({
     sourceJob?.command ??
       "python train.py --config /mnt/config/train.yaml --dataset /mnt/dataset --output /mnt/checkpoints",
   );
-  const [domain, setDomain] = useState(sourceJob?.domain ?? "");
   const [tensorBoardDir, setTensorBoardDir] = useState(
     sourceJob?.tensorBoardDir ?? "",
   );
-  const [sshPublicKey, setSSHPublicKey] = useState(
-    sourceJob?.sshPublicKey ?? "",
+  const [sshPublicKeys, setSSHPublicKeys] = useState(() =>
+    sourceJob?.sshPublicKey
+      ? sourceJob.sshPublicKey.split("\n").filter(Boolean)
+      : [],
   );
+  const sshPublicKey = sshPublicKeys.join("\n");
   const [sshKeys, setSShKeys] = useState<
     { index: number; user: string; public_key: string; added_at: string }[]
   >([]);
@@ -221,8 +259,19 @@ export function CreateJobModal({
   const [storageClassLoading, setStorageClassLoading] = useState(false);
   const [storageClassFetched, setStorageClassFetched] = useState(false);
   const [clustersLoaded, setClustersLoaded] = useState(false);
+  const [recentImages, setRecentImages] = useState<ImageUsage[]>([]);
+  const [imagePickerRole, setImagePickerRole] = useState<string | null>(null);
   const lastFetchedStorageClusterRef = useRef<string>("");
   const inferenceDoneRef = useRef(false);
+
+  useEffect(() => {
+    fetch("/api/v1/images")
+      .then((r) =>
+        r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)),
+      )
+      .then((data) => setRecentImages(data.items ?? []))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch("/api/v1/rlinf.io/v1alpha1/domains")
@@ -371,6 +420,7 @@ export function CreateJobModal({
           objectStorage: m.objectStorage ?? "",
           mountPath: m.mountPath ?? "",
           hostPath: m.hostPath ?? m.objectStorage ?? "",
+          pvcSizeGb: m.pvcSizeGb ?? 10,
         })),
       };
     });
@@ -413,6 +463,18 @@ export function CreateJobModal({
       : {},
   );
   const [activeRoleTab, setActiveRoleTab] = useState<string>(roles[0] ?? "");
+  const roleConfigTopRef = useRef<HTMLDivElement>(null);
+
+  const selectRole = (role: string, scrollToTop = false) => {
+    setActiveRoleTab(role);
+    if (scrollToTop) {
+      window.requestAnimationFrame(() => {
+        const modalBody =
+          roleConfigTopRef.current?.closest<HTMLElement>(".modal-body");
+        if (modalBody) modalBody.scrollTop = 0;
+      });
+    }
+  };
 
   useEffect(() => {
     if (availableClusters.length === 0) return;
@@ -561,8 +623,9 @@ export function CreateJobModal({
   };
   const renameRole = (oldName: string, newName: string) => {
     newName = newName.trim();
-    if (!newName || oldName === newName) return;
-    if (roles.includes(newName)) return;
+    if (!newName || newName.length > 50 || oldName === newName) return;
+    if (roles.some((role) => role.toLowerCase() === newName.toLowerCase()))
+      return;
     setRoles((prev) => prev.map((r) => (r === oldName ? newName : r)));
     setRoleResources((prev) => {
       const rr = prev[oldName];
@@ -621,15 +684,14 @@ export function CreateJobModal({
   const updateRRMount = (
     role: string,
     i: number,
-    field: "objectStorage" | "mountPath" | "type" | "hostPath",
-    v: string,
+    field: "objectStorage" | "mountPath" | "type" | "hostPath" | "pvcSizeGb",
+    v: string | number,
   ) => {
     setRoleResources((prev) => {
       const rr = prev[role];
       const next = [...rr.mounts];
       next[i] = { ...next[i], [field]: v };
-      const pvcStorageMap = computePvcStorageMap(role, next, jobName);
-      return { ...prev, [role]: { ...rr, mounts: next, pvcStorageMap } };
+      return { ...prev, [role]: { ...rr, mounts: next } };
     });
   };
   const addRRMount = (role: string) => {
@@ -642,29 +704,30 @@ export function CreateJobModal({
           objectStorage: "",
           mountPath: "",
           hostPath: "",
+          pvcSizeGb: 10,
         },
       ];
-      const pvcStorageMap = computePvcStorageMap(role, newMounts, jobName);
-      return { ...prev, [role]: { ...rr, mounts: newMounts, pvcStorageMap } };
+      return { ...prev, [role]: { ...rr, mounts: newMounts } };
     });
   };
   const removeRRMount = (role: string, i: number) => {
     setRoleResources((prev) => {
       const rr = prev[role];
       const newMounts = rr.mounts.filter((_, idx) => idx !== i);
-      const pvcStorageMap = computePvcStorageMap(role, newMounts, jobName);
-      return { ...prev, [role]: { ...rr, mounts: newMounts, pvcStorageMap } };
+      return { ...prev, [role]: { ...rr, mounts: newMounts } };
     });
   };
 
+  const automaticDomain = automaticNetworkDomain(domains);
   const crd = generateJobCRD({
-    name: jobName,
+    name: jobResourceName,
+    displayName: jobName.trim(),
     type,
     headerRole: effectiveHeader,
     roles,
     roleResources,
     runScript,
-    domain,
+    domain: automaticDomain,
     tensorBoardDir,
     sshPublicKey,
   });
@@ -677,18 +740,19 @@ export function CreateJobModal({
     if (targetStep === 1) {
       const trimmedName = jobName.trim();
       if (!trimmedName) return zh ? "请输入任务名称。" : "Enter a job name.";
-      if (
-        trimmedName.length > 63 ||
-        !/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(trimmedName)
-      )
+      if (trimmedName.length > 50)
         return zh
-          ? "任务名称需为 1-63 位小写字母、数字或连字符，且不能以连字符开头或结尾。"
-          : "Use 1-63 lowercase letters, numbers, or hyphens; do not start or end with a hyphen.";
+          ? "任务名称不能超过 50 个字符。"
+          : "Job name cannot exceed 50 characters.";
       if (roles.length === 0)
         return zh ? "至少添加一个角色。" : "Add at least one role.";
       const normalizedRoles = roles.map((role) => role.trim().toLowerCase());
       if (normalizedRoles.some((role) => !role))
         return zh ? "角色名称不能为空。" : "Role names cannot be empty.";
+      if (roles.some((role) => role.trim().length > 50))
+        return zh
+          ? "角色名称不能超过 50 个字符。"
+          : "Role names cannot exceed 50 characters.";
       if (new Set(normalizedRoles).size !== normalizedRoles.length)
         return zh ? "角色名称不能重复。" : "Role names must be unique.";
       if (!effectiveHeader || !roles.includes(effectiveHeader))
@@ -816,19 +880,37 @@ export function CreateJobModal({
         ? `/api/v1/rlinf.io/v1alpha1/jobs/${editJob!.name}`
         : "/api/v1/rlinf.io/v1alpha1/jobs";
       const method = isEdit ? "PUT" : "POST";
-      const requestBody =
+      let requestBody =
         isEdit && restartAfterSave
           ? {
               ...crd,
               metadata: {
                 ...crd.metadata,
                 annotations: {
+                  ...crd.metadata.annotations,
                   "rlark.io/restarted-at": new Date().toISOString(),
                 },
               },
               spec: { ...crd.spec, stopped: false },
             }
           : crd;
+      if (isEdit) {
+        const currentResp = await fetch(url);
+        if (!currentResp.ok) throw new Error(`HTTP ${currentResp.status}`);
+        const current = await currentResp.json();
+        requestBody = {
+          ...requestBody,
+          metadata: {
+            ...current.metadata,
+            ...requestBody.metadata,
+            name: editJob!.name,
+            annotations: {
+              ...current.metadata?.annotations,
+              ...requestBody.metadata.annotations,
+            },
+          },
+        };
+      }
       const resp = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
@@ -838,6 +920,7 @@ export function CreateJobModal({
         const body = await resp.text();
         throw new Error(`HTTP ${resp.status}: ${body}`);
       }
+      const savedJob = await resp.json();
       onSuccess(
         isEdit
           ? restartAfterSave
@@ -850,6 +933,7 @@ export function CreateJobModal({
           : zh
             ? "任务提交成功"
             : "Job submitted successfully",
+        savedJob.metadata?.name ?? (isEdit ? editJob!.name : jobResourceName),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -930,8 +1014,8 @@ export function CreateJobModal({
                   {zh ? "任务名称" : "Job Name"}
                   <input
                     value={jobName}
+                    maxLength={50}
                     onChange={(e) => setJobName(e.target.value)}
-                    disabled={isEdit}
                   />
                 </label>
                 <label>
@@ -1008,12 +1092,12 @@ export function CreateJobModal({
               </div>
             ) : (
               <>
-                <div className="role-config-tabs">
+                <div className="role-config-tabs" ref={roleConfigTopRef}>
                   {roles.map((role) => (
                     <button
                       key={role}
                       className={activeRoleTab === role ? "active" : ""}
-                      onClick={() => setActiveRoleTab(role)}
+                      onClick={() => selectRole(role, true)}
                     >
                       {role}
                       {effectiveHeader === role && (
@@ -1126,24 +1210,71 @@ export function CreateJobModal({
                           <div className="form-section-head">
                             <small>{zh ? "镜像" : "Image"}</small>
                           </div>
-                          <input
-                            value={rr.image}
-                            onChange={(e) =>
-                              updateRR(role, "image", e.target.value)
-                            }
-                            className={
-                              imageHasWhitespace ? "input-invalid" : undefined
-                            }
-                            aria-invalid={imageHasWhitespace}
-                            aria-describedby={
-                              imageHasWhitespace ? imageErrorId : undefined
-                            }
-                            placeholder={
-                              zh
-                                ? "例如：docker.io/library/ubuntu:22.04（需确保集群可访问）"
-                                : "Example: docker.io/library/ubuntu:22.04 (must be cluster-accessible)"
-                            }
-                          />
+                          <div className="image-picker">
+                            <input
+                              value={rr.image}
+                              onFocus={() => setImagePickerRole(role)}
+                              onChange={(e) => {
+                                updateRR(role, "image", e.target.value);
+                                setImagePickerRole(role);
+                              }}
+                              onBlur={() =>
+                                window.setTimeout(
+                                  () => setImagePickerRole(null),
+                                  150,
+                                )
+                              }
+                              className={
+                                imageHasWhitespace ? "input-invalid" : undefined
+                              }
+                              aria-invalid={imageHasWhitespace}
+                              aria-describedby={
+                                imageHasWhitespace ? imageErrorId : undefined
+                              }
+                              placeholder={
+                                zh
+                                  ? "例如：docker.io/library/ubuntu:22.04（需确保集群可访问）"
+                                  : "Example: docker.io/library/ubuntu:22.04 (must be cluster-accessible)"
+                              }
+                            />
+                            {imagePickerRole === role &&
+                              recentImages.length > 0 && (
+                                <div
+                                  className="image-picker-list"
+                                  role="listbox"
+                                >
+                                  {recentImages
+                                    .filter((item) =>
+                                      item.image
+                                        .toLowerCase()
+                                        .includes(
+                                          rr.image.trim().toLowerCase(),
+                                        ),
+                                    )
+                                    .map((item) => (
+                                      <button
+                                        type="button"
+                                        className="image-picker-option"
+                                        key={item.image}
+                                        onMouseDown={(event) => {
+                                          event.preventDefault();
+                                          updateRR(role, "image", item.image);
+                                          setImagePickerRole(null);
+                                        }}
+                                      >
+                                        <strong>{item.image}</strong>
+                                        <small>
+                                          {formatImageUsage(
+                                            item.lastUsedAt,
+                                            item.useCount,
+                                            zh,
+                                          )}
+                                        </small>
+                                      </button>
+                                    ))}
+                                </div>
+                              )}
+                          </div>
                           {imageHasWhitespace && (
                             <small
                               className="field-validation-error"
@@ -1353,6 +1484,33 @@ export function CreateJobModal({
                                   placeholder="/mnt/data"
                                 />
                               </label>
+                              {mount.type === "storage" && (
+                                <label className="mount-field-box mount-size-field">
+                                  <span>
+                                    {zh ? "存储大小 (Gi)" : "PVC size (Gi)"}
+                                  </span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="200"
+                                    value={mount.pvcSizeGb}
+                                    onChange={(e) =>
+                                      updateRRMount(
+                                        role,
+                                        index,
+                                        "pvcSizeGb",
+                                        Math.min(
+                                          200,
+                                          Math.max(
+                                            1,
+                                            Number(e.target.value) || 1,
+                                          ),
+                                        ),
+                                      )
+                                    }
+                                  />
+                                </label>
+                              )}
                               <button
                                 className="icon-button danger"
                                 onClick={() => removeRRMount(role, index)}
@@ -1398,25 +1556,17 @@ export function CreateJobModal({
               </div>
               <div className="form-section">
                 <div className="form-section-head">
-                  <small>
-                    {zh
-                      ? "跨集群网络域 (可选)"
-                      : "Cross-cluster Network Domain (optional)"}
-                  </small>
+                  <small>{zh ? "跨集群网络" : "Cross-cluster Network"}</small>
                 </div>
-                <select
-                  value={domain}
-                  onChange={(e) => setDomain(e.target.value)}
-                >
-                  <option value="">
-                    {zh ? "不使用跨集群网络" : "No cross-cluster network"}
-                  </option>
-                  {domains.map((d) => (
-                    <option key={d.name} value={d.name}>
-                      {d.name} ({d.cidr})
-                    </option>
-                  ))}
-                </select>
+                <div className="field-hint" role="status">
+                  {automaticDomain
+                    ? zh
+                      ? `系统已配置网络域，任务将默认启用跨集群网络（${automaticDomain}）。`
+                      : `A network domain is configured. Cross-cluster networking will be enabled automatically (${automaticDomain}).`
+                    : zh
+                      ? "系统尚未配置网络域，任务不会启用跨集群网络。"
+                      : "No network domain is configured. Cross-cluster networking will not be enabled."}
+                </div>
               </div>
               <div className="form-section">
                 <div className="form-section-head">
@@ -1426,19 +1576,32 @@ export function CreateJobModal({
                       : "SSH Public Key Injection (optional)"}
                   </small>
                 </div>
-                <select
-                  value={sshPublicKey}
-                  onChange={(e) => setSSHPublicKey(e.target.value)}
-                >
-                  <option value="">
-                    {zh ? "不注入 SSH 公钥" : "No SSH key injection"}
-                  </option>
-                  {sshKeys.map((k) => (
-                    <option key={`${k.user}-${k.index}`} value={k.public_key}>
-                      {k.user} #{k.index + 1} ({k.public_key.slice(0, 40)}...)
-                    </option>
-                  ))}
-                </select>
+                <div className="ssh-key-select-list">
+                  {sshKeys.map((k) => {
+                    const selected = sshPublicKeys.includes(k.public_key);
+                    const label = `${k.user} #${k.index + 1} (${k.public_key.slice(0, 40)}...)`;
+
+                    return (
+                      <label
+                        className={`ssh-key-select-option${selected ? " selected" : ""}`}
+                        key={`${k.user}-${k.index}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() =>
+                            setSSHPublicKeys((current) =>
+                              selected
+                                ? current.filter((key) => key !== k.public_key)
+                                : [...current, k.public_key],
+                            )
+                          }
+                        />
+                        <span title={k.public_key}>{label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
                 {sshKeysLoaded && sshKeys.length === 0 && (
                   <small className="field-hint">
                     {zh
@@ -1449,8 +1612,8 @@ export function CreateJobModal({
                 {sshPublicKey && (
                   <small className="field-hint">
                     {zh
-                      ? "选中的公钥将注入到所有角色的 Pod 的 authorized_keys 中。"
-                      : "The selected public key will be injected into all role pods' authorized_keys."}
+                      ? "选中的公钥将以换行分隔注入到所有角色 Pod 的 authorized_keys 中。"
+                      : "Selected public keys will be newline-separated and injected into all role pods' authorized_keys."}
                   </small>
                 )}
               </div>
@@ -1525,7 +1688,7 @@ export function CreateJobModal({
                     onClick={() => {
                       if (showNextRole) {
                         const idx = roles.indexOf(currentRole);
-                        setActiveRoleTab(roles[idx + 1]);
+                        selectRole(roles[idx + 1], true);
                         setError("");
                       } else {
                         goToStep(step + 1);

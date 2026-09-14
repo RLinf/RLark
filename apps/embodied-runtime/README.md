@@ -240,11 +240,11 @@ Where host device passthrough mounts existing `/dev/*` nodes, **host macvlan** c
 ```yaml
 initContainers:
   - name: devinit
-    image: rlinf/embodied-runtime:v0.1.0
-    command: ["devinit", "setup"]   # reads RLINF_EMBODIED_DEVINIT_SOCKET_PATH
+    image: busybox:latest
+    command: ["/opt/rlinf/bin/devinit", "setup"]   # reads RLINF_EMBODIED_DEVINIT_SOCKET_PATH
     resources:
       requests:
-        rlinf.io/device: 1          # triggers Allocate → RunDir mount + env vars
+        rlinf.io/device: 1          # triggers Allocate → RunDir mount + BinDir mount + env vars
       limits:                        # required: LimitRanger/ResourceQuota rejects init containers without limits
         rlinf.io/device: 1           # extended-resource limits must equal requests
 ```
@@ -271,7 +271,7 @@ The webhook has **automatic CA management**:
 2. It reads the `MutatingWebhookConfiguration` (named via `--webhook-mutating-config`); when a webhook's `caBundle` is empty it patches in the CA certificate.
 3. It signs a serving certificate with the CA and starts the HTTPS server.
 
-When the `caBundle` is non-empty the webhook leaves it alone (assumed managed); a mismatch logs a warning. The init image defaults to the auto-discovered device-plugin image (downward API), which ships `devinit` — so it usually needs no configuration.
+When the `caBundle` is non-empty the webhook leaves it alone (assumed managed); a mismatch logs a warning. The init image defaults to the auto-discovered device-plugin image (downward API), falling back to `busybox:latest`. The devinit binary is mounted from the host via BinDir, so the image does not need to contain it.
 
 Device-plugin CLI flags:
 
@@ -283,7 +283,7 @@ Device-plugin CLI flags:
 | `--webhook-mutating-config` | `MutatingWebhookConfiguration` name whose `caBundle` is auto-managed. |
 | `--webhook-service-name` / `--webhook-service-namespace` | Service fronting the webhook (forms the serving cert DNS SAN). |
 | `--webhook-ca-secret-name` / `--webhook-ca-secret-namespace` | Secret persisting the CA (empty = in-memory). |
-| `--webhook-devinit-image` | Injected init container image (default: auto-discovered device-plugin image). |
+| `--webhook-devinit-image` | Injected init container image (default: auto-discovered device-plugin image, then `busybox:latest`). The binary is mounted from the host, so the image does not need to contain devinit. |
 
 See the [Helm chart](./charts/embodied-runtime) `webhook:` values for a turnkey deployment: it renders the webhook Service, the `MutatingWebhookConfiguration` (empty `caBundle`), the required RBAC (cluster-scoped `mutatingwebhookconfigurations` get/patch + namespaced `secrets`), and wires all the flags above into the device-plugin DaemonSet. Enable it with:
 
@@ -295,7 +295,7 @@ webhook:
   caSecret:               # persist the CA across restarts (recommended)
     name: devinit-ca
     namespace: rlark-system   # defaults to the release namespace
-  # devinitImage: ""      # defaults to .Values.devicePlugin.image
+  # devinitImage: ""      # defaults to .Values.devicePlugin.image, then busybox:latest (binary is mounted from host)
 ```
 
 The webhook only renders when **both** `webhook.enabled` and `config.hostMacvlans` are set; enabling it without macvlans is a no-op (the handler injects nothing).

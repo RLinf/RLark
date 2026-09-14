@@ -95,6 +95,35 @@ func envOrDefault(key, defaultVal string) string {
 	return defaultVal
 }
 
+// ensureDevinitBinary copies the devinit CLI binary from the device-plugin
+// image (/usr/local/bin/devinit) to the host-mounted BinDir so it can be
+// mounted into workload pods via Allocate. The init container then runs the
+// binary from the mounted path without needing the device-plugin image.
+// Idempotent: if the destination already exists it is silently skipped.
+func ensureDevinitBinary() {
+	src := "/usr/local/bin/devinit"
+	dst := filepath.Join(BinDir, "devinit")
+
+	if _, err := os.Stat(dst); err == nil {
+		return
+	}
+
+	data, err := os.ReadFile(src)
+	if err != nil {
+		log.Printf("[device-plugin] WARNING: devinit binary not found at %s — init container will be skipped: %v", src, err)
+		return
+	}
+	if err := os.MkdirAll(BinDir, 0755); err != nil {
+		log.Printf("[device-plugin] WARNING: create %s: %v — init container will be skipped", BinDir, err)
+		return
+	}
+	if err := os.WriteFile(dst, data, 0755); err != nil {
+		log.Printf("[device-plugin] WARNING: write %s: %v — init container will be skipped", dst, err)
+		return
+	}
+	log.Printf("[device-plugin] devinit binary copied to %s", dst)
+}
+
 // PluginSocketPath returns the full path to the plugin's gRPC socket.
 func PluginSocketPath() string {
 	return pluginapi.DevicePluginPath + PluginSocketName
@@ -411,6 +440,11 @@ func NewPlugin(cfg PluginConfig, whcfg WebhookConfig) *Plugin {
 
 	// Detect devices (after managers are started).
 	p.devices = p.detectDevices()
+
+	// Copy the devinit binary to the host-mounted BinDir so the webhook can
+	// inject an init container that uses the mounted binary (no image
+	// dependency). Best-effort: a failure is logged but does not block startup.
+	ensureDevinitBinary()
 
 	return p
 }

@@ -41,6 +41,11 @@ const (
 const (
 	SystemConfigKeySSHJumpHost = "sshJumpHost"
 	SystemConfigKeySSHJumpPort = "sshJumpPort"
+
+	// SystemConfigKeySSH stores SSH config as a JSON object.
+	SystemConfigKeySSH = "ssh"
+	// SystemConfigKeyLog stores log backend config as a JSON object.
+	SystemConfigKeyLog = "log"
 )
 
 // Constants used by the package.

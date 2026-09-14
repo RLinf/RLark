@@ -16,6 +16,7 @@ export function makeDefaultRoleResources(
         objectStorage: "",
         mountPath: "/mnt/dataset",
         hostPath: "/host/dataset",
+        pvcSizeGb: 10,
       },
     ];
     rr[role] = {

@@ -11,7 +11,11 @@ export function crdToJob(crd: CRDJob): Job {
     (t) => t.phase === "Running",
   ).length;
   const headerTask = tasks.find((t) => t.head) ?? tasks[0];
-  const roles = tasks.map((t) => t.name);
+  const taskRoleName = (task: CRDJobTask) =>
+    task.kubernetes?.workload?.template.spec.containers?.[0]?.env?.find(
+      (env) => env.name === "RLARK_TASK_ROLE",
+    )?.value ?? task.name;
+  const roles = tasks.map(taskRoleName);
   const roleCount = new Set(tasks.map((task) => task.role).filter(Boolean))
     .size;
   const displayName =
@@ -49,6 +53,7 @@ export function crdToJob(crd: CRDJob): Job {
           objectStorage: storageClass,
           mountPath: vm.mountPath,
           hostPath: "",
+          pvcSizeGb: t.kubernetes?.workload?.pvcSizeGbMap?.[claimName] ?? 10,
         };
       }
       const hostPath = vol?.hostPath?.path ?? "";
@@ -57,10 +62,11 @@ export function crdToJob(crd: CRDJob): Job {
         objectStorage: "",
         mountPath: vm.mountPath,
         hostPath,
+        pvcSizeGb: 10,
       };
     });
     return {
-      role: t.name,
+      role: taskRoleName(t),
       cluster: "",
       nodeSelector: nsStr,
       replicas: t.kubernetes?.workload?.replicas ?? 1,
@@ -95,6 +101,8 @@ export function crdToJob(crd: CRDJob): Job {
         objectStorage: storageClass,
         mountPath: vm.mountPath,
         hostPath: "",
+        pvcSizeGb:
+          tasks[0]?.kubernetes?.workload?.pvcSizeGbMap?.[claimName] ?? 10,
       };
     }
     const hostPath = vol?.hostPath?.path ?? "";
@@ -103,6 +111,7 @@ export function crdToJob(crd: CRDJob): Job {
       objectStorage: "",
       mountPath: vm.mountPath,
       hostPath,
+      pvcSizeGb: 10,
     };
   });
   return {
@@ -134,8 +143,8 @@ export function crdToJob(crd: CRDJob): Job {
     tensorBoardDir: headerTask?.tensorBoardDir ?? "",
     env,
     mounts,
-    headerRole: headerTask?.name ?? "",
-    headerWorker: headerTask?.name ?? "",
+    headerRole: headerTask ? taskRoleName(headerTask) : "",
+    headerWorker: headerTask ? taskRoleName(headerTask) : "",
     sshAddress: "",
     stopped: crd.spec.stopped ?? false,
     domain: crd.spec.domain ?? "",

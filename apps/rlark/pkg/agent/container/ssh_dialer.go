@@ -261,14 +261,14 @@ func (d *SSHDialer) getOrCreate(domainID string) *domainEntry {
 // ===========================================================================
 
 func (entry *domainEntry) borrow(ctx context.Context, d *SSHDialer, sshAddr, cert, key string) (*ssh.Client, error) {
-	entry.mu.RLock()
+	entry.mu.Lock()
 	if !entry.broken && entry.client != nil {
 		entry.lastUsed = time.Now()
 		client := entry.client
-		entry.mu.RUnlock()
+		entry.mu.Unlock()
 		return client, nil
 	}
-	entry.mu.RUnlock()
+	entry.mu.Unlock()
 	return entry.reconnect(ctx, d, sshAddr, cert, key)
 }
 
@@ -349,6 +349,7 @@ func (entry *domainEntry) finishReconnect(client *ssh.Client, err error, dialerC
 		}
 		entry.client = client
 		entry.broken = false
+		entry.lastUsed = time.Now()
 		entry.reconnectBackoff = 0
 		// 关闭上一个 keepalive goroutine(如果有),避免泄漏
 		if entry.keepaliveDone != nil {

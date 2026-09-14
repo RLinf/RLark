@@ -411,7 +411,7 @@ func createUIAuthSecretInKCP(ctx context.Context, clientset *kubernetes.Clientse
 	podName := pods.Items[0].Name
 	kc := constants.KCPDataDir + "/admin.kubeconfig"
 
-	// Check if secret already exists in KCP
+	// Check if secret already exists in KCP.
 	checkCmd := exec.Command("kubectl", "-n", constants.Namespace, "exec", podName, "--",
 		"kubectl", "--kubeconfig", kc, "get", "secret", common.UIAuthSecretName, "-n", "default")
 	if err := checkCmd.Run(); err == nil {
@@ -441,7 +441,7 @@ stringData:
 `, common.UIAuthSecretName, adminPassword, userPassword)
 
 	applyCmd := exec.Command("kubectl", "-n", constants.Namespace, "exec", "-i", podName, "--",
-		"kubectl", "--kubeconfig", kc, "apply", "-f", "-")
+		"kubectl", "--kubeconfig", kc, "apply", "--validate=false", "-f", "-")
 	applyCmd.Stdin = strings.NewReader(manifest)
 	var errBuf bytes.Buffer
 	applyCmd.Stderr = &errBuf

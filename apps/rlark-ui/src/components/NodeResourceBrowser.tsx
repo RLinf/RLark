@@ -30,6 +30,7 @@ export function NodeResourceBrowser({
   copy: c,
   onSelectNode,
   onRefresh,
+  refreshing,
   onToggleScheduling,
   updatingNode,
   initialCategory = "all",
@@ -43,7 +44,8 @@ export function NodeResourceBrowser({
   nodeWorkloads?: Record<string, { jobs: string[]; workers: number }>;
   copy: Copy;
   onSelectNode: (name: string) => void;
-  onRefresh?: () => void;
+  onRefresh?: () => void | Promise<void>;
+  refreshing?: boolean;
   onToggleScheduling?: (node: CRDNode) => void;
   updatingNode?: string | null;
   initialCategory?: CategoryFilter;
@@ -235,6 +237,7 @@ export function NodeResourceBrowser({
         count={filteredNodes.length}
         copy={c}
         onRefresh={onRefresh}
+        refreshing={refreshing}
         filterValue={phaseFilter}
         onFilterChange={(value) => setPhaseFilter(value as "All" | Phase)}
         filterOptions={[

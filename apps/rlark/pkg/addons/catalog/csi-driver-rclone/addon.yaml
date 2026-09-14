@@ -43,6 +43,15 @@ parameters:
     default: rclone.csi.veloxpack.io
     required: true
 
+  - name: nodeSelector
+    displayName: 节点选择器
+    description: |
+      Node DaemonSet 的节点选择器（label=value 格式）。建议先指定单个灰度节点，验证通过后再扩展标签范围。
+      示例: rlark.io/rclone-csi=enabled
+    type: string
+    default: ""
+    required: false
+
   - name: controllerReplicas
     displayName: Controller 副本数
     description: Controller Deployment 副本数量

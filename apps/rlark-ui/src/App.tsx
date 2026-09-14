@@ -373,13 +373,13 @@ export default function App() {
             setEditJob(null);
             setRestartAfterEdit(false);
           }}
-          onSuccess={(message) => {
+          onSuccess={(message, jobName) => {
             setCreateOpen(false);
             setCloneJob(null);
             setEditJob(null);
             setRestartAfterEdit(false);
             setJobSubmitNotice(message);
-            navigate("jobs", undefined, { replace: true });
+            navigate("jobs", jobName, { replace: true });
           }}
           copy={c}
           cloneJob={cloneJob}

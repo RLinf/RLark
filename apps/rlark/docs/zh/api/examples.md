@@ -41,10 +41,10 @@ curl -X PATCH \
 
 ## 2. 创建和查看 Job
 
-用户通过完整的 Task 模板创建 Job。Job 控制器创建对应的命名空间级 Task 资源，Agent 随后创建下层 workload。
+用户通过完整的 Task 模板创建 Job。Gateway 会将请求中的 `metadata.name` 保存为展示名，并在响应的 `metadata.name` 中返回系统生成的资源 ID；API 客户端必须保存该 ID，后续通过它访问任务。Job 控制器创建对应的命名空间级 Task 资源，Agent 随后创建下层 workload。
 
 ```bash
-curl -X POST "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs" \
+JOB_ID="$(curl -fsS -X POST "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs" \
   -H "Content-Type: application/json" \
   -d '{
     "apiVersion": "rlinf.io/v1alpha1",
@@ -86,7 +86,9 @@ curl -X POST "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs" \
         }
       ]
     }
-  }'
+  }' | jq -r '.metadata.name')"
+
+echo "$JOB_ID" # jo-<16 位十六进制字符>
 ```
 
 镜像、命令、环境变量、资源和卷应放在 `kubernetes.workload.template.spec.containers` 下，而不是作为 Task 的顶层字段。
@@ -96,16 +98,16 @@ curl -X POST "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs" \
 curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs?labelSelector=framework=ppo"
 
 # 获取 Job，包括其 status 字段。
-curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/ppo-cartpole"
+curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/$JOB_ID"
 
 # 停止 Job。
 curl -X PATCH \
-  "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/ppo-cartpole" \
+  "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/$JOB_ID" \
   -H "Content-Type: application/merge-patch+json" \
   -d '{"spec":{"stopped":true}}'
 
 # 删除 Job。
-curl -X DELETE "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/ppo-cartpole"
+curl -X DELETE "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/$JOB_ID"
 ```
 
 Merge Patch 会整体替换数组。修补 `tasks` 或 `jobTemplates` 时，应发送包含 `role` 等必填字段的完整数组元素，或者改用 JSON Patch。
@@ -221,7 +223,7 @@ curl "$RLARK_GATEWAY/api/v1/storage/storageclass?clusters=cluster-a,cluster-b"
 curl "$RLARK_GATEWAY/api/v1/storage/storageclass/provider"
 
 # 读取 Job 日志。
-curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/ppo-cartpole/logs"
+curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/$JOB_ID/logs"
 
 # 列出用户的 SSH 公钥。
 curl "$RLARK_GATEWAY/api/v1/ssh-user-keys?user=alice"

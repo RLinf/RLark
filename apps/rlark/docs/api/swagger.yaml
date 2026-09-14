@@ -31,6 +31,20 @@ tags:
     description: Cluster-scoped Workflow resources
 
 paths:
+  /api/v1/images:
+    get:
+      tags: [Image]
+      summary: List recently used images
+      description: Returns up to ten images used by the most recent jobs, ordered by last use time.
+      operationId: listImages
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageUsageList'
+
   # ─── Job Collection ───────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/jobs:
     get:
@@ -795,6 +809,27 @@ components:
         type: boolean
 
   schemas:
+    ImageUsage:
+      type: object
+      required: [image, useCount, lastUsedAt]
+      properties:
+        image:
+          type: string
+        useCount:
+          type: integer
+          format: int32
+        lastUsedAt:
+          type: string
+          format: date-time
+    ImageUsageList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImageUsage'
+
     # ─── Common Kubernetes Schemas ──────────────────────────────────
     ObjectMeta:
       type: object

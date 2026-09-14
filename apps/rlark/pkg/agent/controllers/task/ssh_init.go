@@ -18,14 +18,6 @@ func applySSHServer(template *corev1.PodTemplateSpec, mgmtTask *rlarkv1alpha1.Ta
 		return
 	}
 
-	role := ""
-	if mgmtTask.Annotations != nil {
-		role = mgmtTask.Annotations[rlarkv1alpha1.RayRoleAnnotation]
-	}
-	if role != rlarkv1alpha1.RayRoleHead {
-		return
-	}
-
 	template.Spec.Volumes = append(template.Spec.Volumes, corev1.Volume{
 		Name: sshServerVolumeName,
 		VolumeSource: corev1.VolumeSource{

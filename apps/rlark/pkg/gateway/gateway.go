@@ -46,6 +46,9 @@ type Gateway struct {
 	storageClients   map[string]*storage.Client
 	storageClientsMu sync.RWMutex
 
+	imagesMu sync.RWMutex
+	images   map[string]imageUsage
+
 	serverTransport *http.Transport
 }
 
@@ -105,6 +108,9 @@ func (g *Gateway) init(ctx context.Context) error {
 
 	// init accessors
 	g.accessors = registerAccessors(g.kubeClient)
+	if err := g.initializeImageUsage(); err != nil {
+		return fmt.Errorf("initialize image usage: %w", err)
+	}
 
 	// init DB (optional)
 	if g.config.DBConfigPath != "" {

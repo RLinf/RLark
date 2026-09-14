@@ -49,6 +49,7 @@ export interface CRDWorkload {
   kind: string;
   replicas: number;
   pvcStorageMap?: Record<string, string>;
+  pvcSizeGbMap?: Record<string, number>;
   template: {
     spec: {
       containers: Array<{
@@ -190,8 +191,10 @@ export interface RoleResource {
     objectStorage: string;
     mountPath: string;
     hostPath: string;
+    pvcSizeGb: number;
   }>;
   pvcStorageMap?: Record<string, string>;
+  pvcSizeGbMap?: Record<string, number>;
 }
 
 export interface WorkflowJobDef {

@@ -135,8 +135,10 @@ export interface Job {
       objectStorage: string;
       mountPath: string;
       hostPath: string;
+      pvcSizeGb: number;
     }>;
     pvcStorageMap?: Record<string, string>;
+    pvcSizeGbMap?: Record<string, number>;
   }>;
   taskStatuses: Array<{
     name: string;

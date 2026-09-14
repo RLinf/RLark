@@ -5,7 +5,7 @@
 通过 `--db-config` 参数加载的 PostgreSQL 连接配置。rlark-server、rlark-gateway 和 rlark-controller-manager 使用此配置。
 
 | 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `host` | string | `localhost` | PostgreSQL 主机 |
 | `port` | int | `5432` | PostgreSQL 端口 |
 | `database` | string | `rlark` | 数据库名 |
@@ -21,6 +21,7 @@
     根据实际负载调整 `maxOpenConns` 和 `maxIdleConns`。高并发场景建议增大这两个值。
 
 **示例：**
+
 ```yaml
 host: postgresql
 port: 5432
@@ -39,7 +40,7 @@ debug: false
 控制面服务器。管理 TLS/SSH 证书、Agent 注册和 Gateway API。
 
 | 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `--https-port` | int | `8443` | HTTPS 监听端口 |
 | `--ssh-port` | int | `2222` | SSH 监听端口 |
 | `--unsafe-http-port` | int | `8888` | 内部 HTTP：`/healthz`、`/readyz`、`/livez`、`/metrics` 和 Peer 代理 |
@@ -60,6 +61,7 @@ debug: false
     该端点没有认证。应保持内部可见；Agent TLS 连接和证书操作使用 8443 端口。
 
 **示例：**
+
 ```bash
 rlark-server \
   --https-port=8443 \
@@ -74,7 +76,7 @@ rlark-server \
 API 网关。处理所有 REST API 请求，包括集群管理、任务管理和存储操作。
 
 | 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `--addr` | string | `:8080` | API 网关绑定地址；`rlarkadm` 会覆盖为 `:8090` |
 | `--db-config` | string | `""` | 数据库配置文件路径 |
 | `--server-address` | string | `https://rlark-server.rlark-system.svc:8443` | 证书签名的 RLark Server 地址 |
@@ -87,6 +89,7 @@ API 网关。处理所有 REST API 请求，包括集群管理、任务管理和
 | `--kube-timeout` | duration | `0` | Kubernetes 客户端请求超时 |
 
 **示例：**
+
 ```bash
 rlark-gateway \
   --addr=:8080 \
@@ -99,7 +102,7 @@ rlark-gateway \
 控制器管理器。调和 Job、Workflow 和 Domain 资源。
 
 | 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `--server-address` | string | `https://rlark-server.rlark-system.svc:8443` | RLark Server 地址 |
 | `--db-config` | string | `""` | 数据库配置文件路径 |
 | `--leader-elect` | bool | `true` | 启用 Leader Election（高可用） |
@@ -119,6 +122,7 @@ rlark-gateway \
     单实例部署时建议设置 `--leader-elect=false` 以避免不必要的选举开销。
 
 **示例：**
+
 ```bash
 rlark-controller-manager \
   --server-address=https://rlark-server:8443 \
@@ -133,7 +137,7 @@ rlark-controller-manager \
 数据面 Agent。部署在每个集群或节点上。管理节点注册、Task 执行和跨集群网络。
 
 | 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `--server-address` | string | `https://localhost:8443` | RLark Server 地址 |
 | `--server-hostname` | string | `""` | 服务器 TLS 预期主机名 |
 | `--client-cert` | string | `""` | 客户端 TLS 证书路径 |
@@ -171,6 +175,7 @@ rlark-controller-manager \
     - `both`：同时运行集群和节点级 Agent
 
 **示例：**
+
 ```bash
 rlark-agent \
   --mode=both \
@@ -187,7 +192,7 @@ rlark-agent \
 网络 Sidecar。与每个 Task Pod 一起运行，通过 TUN 设备和 gVisor netstack 实现跨集群 Pod 到 Pod 网络通信。
 
 | 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `--sidecar-unix-socket` | string | `/var/run/rlark/nodeserver.sock` | NodeServer Unix Socket 路径 |
 | `--sidecar-tun-name` | string | `gnet0` | TUN 设备名称 |
 | `--sidecar-tun-mtu` | int | `1500` | TUN 设备 MTU |
@@ -197,6 +202,7 @@ rlark-agent \
 | `--sidecar-hosts-file` | string | `/etc/hosts` | hosts 文件路径 |
 
 **示例：**
+
 ```bash
 rlark-network-sidecar \
   --sidecar-unix-socket=/var/run/rlark/nodeserver.sock \
@@ -209,14 +215,14 @@ rlark-network-sidecar \
 SSH 守护进程。提供对运行中 Task Pod 的 SSH 访问。已集成到 rlark-server 中（通过 `--ssh-port` 参数）。
 
 | 参数 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `--port` | string | `22` | SSH 监听端口 |
 | `--shell` | string | `""` | Shell 二进制路径（默认 /bin/bash） |
 
 **环境变量：**
 
 | 变量 | 说明 |
-|------|------|
+| ------ | ------ |
 | `RLARK_SSH_PUBLIC_KEY` | 用于 authorized_keys 的 SSH 公钥 |
 | `RLARK_SSH_AUTHORIZED_KEYS_FILE` | authorized_keys 文件路径 |
 
@@ -225,7 +231,7 @@ SSH 守护进程。提供对运行中 Task Pod 的 SSH 访问。已集成到 rla
 Gateway 使用的对象存储后端配置。
 
 | 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `accessKeyId` | string | `""` | 访问密钥 ID |
 | `secretAccessKey` | string | `""` | 访问密钥 Secret |
 | `bucket` | string | `""` | Bucket 名称 |
@@ -246,7 +252,7 @@ Gateway 使用的对象存储后端配置。
 下表名称是 `rlarkadm` 接受的准确 YAML 键名。
 
 | 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `apiVersion` | string | — | API 版本（必填）；仓库示例使用 `rlark.io/v1alpha1` |
 | `kind` | string | — | 必须为 `DeployConfig` |
 | `plane` | string | — | 必填：`control`（控制面）或 `data`（数据面） |
@@ -264,7 +270,7 @@ Gateway 使用的对象存储后端配置。
 ### DBConfig
 
 | 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `host` | string | `postgresql` | PostgreSQL 主机 |
 | `port` | int | `5432` | PostgreSQL 端口 |
 | `database` | string | `rlark` | 数据库名 |
@@ -274,7 +280,7 @@ Gateway 使用的对象存储后端配置。
 ### KubernetesEnv
 
 | 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `kubeconfig` | string | `""` | kubeconfig 文件路径；空值使用 client-go 常规加载规则 |
 | `gateway-image` | string | `""` | Gateway 镜像 |
 | `controller-manager-image` | string | `""` | Controller Manager 镜像 |
@@ -298,7 +304,7 @@ Gateway 使用的对象存储后端配置。
 ### DockerEnv
 
 | 字段 | 类型 | 说明 |
-|------|------|------|
+| ------ | ------ | ------ |
 | `gateway-image` | string | Gateway 镜像 |
 | `controller-manager-image` | string | Controller Manager 镜像 |
 | `server-image` | string | Server 镜像 |
@@ -315,7 +321,7 @@ Gateway 使用的对象存储后端配置。
     Raw 部署模式目前处于实验阶段，建议优先使用 Kubernetes 或 Docker 部署。
 
 | 字段 | 类型 | 说明 |
-|------|------|------|
+| ------ | ------ | ------ |
 | `gateway-artifact` | string | Gateway 二进制路径 |
 | `controller-manager-artifact` | string | Controller Manager 二进制路径 |
 | `server-artifact` | string | Server 二进制路径 |
@@ -330,7 +336,7 @@ Gateway 使用的对象存储后端配置。
 数据面部署时必须提供。
 
 | 字段 | 类型 | 说明 |
-|------|------|------|
+| ------ | ------ | ------ |
 | `ca-cert` | string | 内联 CA PEM 或已存在的文件路径 |
 | `agent-cert` | string | 内联 Agent 证书 PEM 或已存在的文件路径 |
 | `agent-key` | string | 内联 Agent 私钥 PEM 或已存在的文件路径 |
@@ -338,7 +344,7 @@ Gateway 使用的对象存储后端配置。
 ### StorageConfig
 
 | 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
+| ------ | ------ | -------- | ------ |
 | `type` | string | | 存储类型：emptyDir、hostPath、pvc |
 | `host-path` | string | `""` | hostPath 类型的主机路径 |
 | `storage-class` | string | `""` | PVC 类型的 StorageClass；空值使用集群默认值 |
@@ -348,19 +354,20 @@ Gateway 使用的对象存储后端配置。
 ### ComponentConfig
 
 | 字段 | 类型 | 说明 |
-|------|------|------|
+| ------ | ------ | ------ |
 | `replicas` | int | 副本数 |
 | `storage` | StorageConfig | 存储配置 |
 
 ### EtcdConfig
 
 | 字段 | 类型 | 说明 |
-|------|------|------|
+| ------ | ------ | ------ |
 | `address` | string | etcd 地址 |
 | `replicas` | int | 副本数 |
 | `storage` | StorageConfig | 存储配置 |
 
 **示例（控制面）：**
+
 ```yaml
 apiVersion: rlark.io/v1alpha1
 kind: DeployConfig
@@ -382,6 +389,7 @@ db:
 ```
 
 **示例（数据面）：**
+
 ```yaml
 apiVersion: rlark.io/v1alpha1
 kind: DeployConfig

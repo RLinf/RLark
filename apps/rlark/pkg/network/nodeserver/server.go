@@ -148,6 +148,7 @@ func (s *NodeServer[C]) handleConnection(ctx context.Context, conn *utils.WrapCo
 			logger.Error(nil, "Failed to connect to local service", "err", err)
 			return
 		}
+		defer func() { _ = conn2.Close() }()
 	} else {
 		dial, err := s.getDial(ctx, cred, host, query)
 		if err != nil {
@@ -188,13 +189,16 @@ func (s *NodeServer[C]) handleConnection(ctx context.Context, conn *utils.WrapCo
 		resultCh <- copyResult{direction: "upstream->sidecar", err: err}
 	}()
 
-	first := <-resultCh
-	logger.Info("Forwarding connection closing",
-		"host", host, "port", port,
-		"closedBy", first.direction,
-		"err", first.err,
-		"errType", fmt.Sprintf("%T", first.err),
-	)
+	for range 2 {
+		result := <-resultCh
+		logger.Info("Forwarding connection closing",
+			"host", host, "port", port,
+			"closedBy", result.direction,
+			"err", result.err,
+			"errType", fmt.Sprintf("%T", result.err),
+		)
+	}
+	close(resultCh)
 }
 
 func (s *NodeServer[C]) handleGetIP(ctx *gin.Context) {
