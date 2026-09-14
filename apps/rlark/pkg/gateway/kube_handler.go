@@ -3,11 +3,14 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -49,6 +52,9 @@ func (c *kubeClient[T]) accessor() *resourceAccessor {
 			obj := new(T)
 			if err := json.Unmarshal(body, obj); err != nil {
 				return nil, err
+			}
+			if task, ok := any(obj).(*rlarkiov1alpha1.Task); ok {
+				task.Status = rlarkiov1alpha1.TaskStatus{}
 			}
 			return c.doCreate(ctx, ns, obj, metav1.CreateOptions{})
 		},
@@ -259,6 +265,36 @@ func (g *Gateway) handleGetKube(c *gin.Context, resource string) {
 	c.JSON(http.StatusOK, result)
 }
 
+const (
+	jobDisplayNameAnnotation = "rlark.io/display-name"
+	maxJobNameLength         = 50
+)
+
+func prepareJobForCreate(body []byte) ([]byte, error) {
+	var job rlarkiov1alpha1.Job
+	if err := json.Unmarshal(body, &job); err != nil {
+		return nil, err
+	}
+
+	displayName := strings.TrimSpace(job.Annotations[jobDisplayNameAnnotation])
+	if displayName == "" {
+		displayName = job.Name
+	}
+	if len(displayName) > maxJobNameLength {
+		return nil, fmt.Errorf("job name cannot exceed %d characters", maxJobNameLength)
+	}
+	if job.Annotations == nil {
+		job.Annotations = make(map[string]string)
+	}
+	if displayName != "" {
+		job.Annotations[jobDisplayNameAnnotation] = displayName
+	}
+	job.Name = "jo-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
+	job.GenerateName = ""
+
+	return json.Marshal(&job)
+}
+
 func (g *Gateway) handleKubeCreate(resource string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		a, ok := g.accessors[resource]
@@ -275,11 +311,21 @@ func (g *Gateway) handleKubeCreate(resource string) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		if resource == "jobs" {
+			bodyBytes, err = prepareJobForCreate(bodyBytes)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
 
 		result, err := a.create(ctx, namespace, bodyBytes)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
+		}
+		if job, ok := result.(*rlarkiov1alpha1.Job); ok {
+			g.recordJobImages(job)
 		}
 		c.JSON(http.StatusCreated, result)
 	}
@@ -355,6 +401,6 @@ func (g *Gateway) handleKubeDelete(resource string) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+		c.Status(http.StatusOK)
 	}
 }

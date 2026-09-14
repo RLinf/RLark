@@ -95,6 +95,11 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		auth.POST("/login", g.handleLogin)
 	}
 
+	images := r.Group("/api/v1/images")
+	{
+		images.GET("", g.listImages)
+	}
+
 	// Image Registry APIs
 	imageRegistries := r.Group("/api/v1/image-registries")
 	{

@@ -255,7 +255,7 @@ camctr watch <camera-id> | ffplay -i -           # 管道喂给 ffplay
 | `--webhook-mutating-config` | 待自动管理 `caBundle` 的 `MutatingWebhookConfiguration` 名称。 |
 | `--webhook-service-name` / `--webhook-service-namespace` | 前置 webhook 的 Service。 |
 | `--webhook-ca-secret-name` / `--webhook-ca-secret-namespace` | 持久化 CA 的 Secret（留空 = 内存中生成）。 |
-| `--webhook-devinit-image` | 注入的 init 容器镜像（默认：自动发现）。 |
+| `--webhook-devinit-image` | 注入的 init 容器镜像（默认：自动发现，回退到 `busybox:latest`）。二进制从宿主挂载，镜像无需包含 devinit。 |
 
 通过 Helm 启用：
 

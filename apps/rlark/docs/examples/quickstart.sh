@@ -29,7 +29,7 @@ for i in $(seq 1 $CLUSTER_COUNT); do
   kind delete cluster --name "rlark-data-$i" 2>/dev/null || true
 done
 docker rm -f local-registry 2>/dev/null || true
-rm -rf /tmp/rlark /tmp/kind-kubeconfig-* /tmp/kind-config.yaml /tmp/Dockerfile.rlark /tmp/rlark-bin 2>/dev/null || true
+rm -rf /tmp/rlark /tmp/kind-kubeconfig-* /tmp/kind-config.yaml /tmp/rlark-bin 2>/dev/null || true
 ok "Cleanup complete"
 
 # =============================================================================
@@ -75,7 +75,7 @@ GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/gateway ./cmd/gateway/ &
 GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/network-sidecar ./cmd/network-sidecar/ &
 wait
 
-cat > /tmp/Dockerfile.rlark <<'DOCKERFILE'
+cat > /tmp/rlark-bin/Dockerfile <<'DOCKERFILE'
 FROM scratch
 COPY server /rlark-server
 COPY agent /rlark-agent
@@ -84,7 +84,7 @@ COPY gateway /rlark-gateway
 COPY network-sidecar /usr/local/bin/network-sidecar
 DOCKERFILE
 
-docker build -t "$IMAGE" -f /tmp/Dockerfile.rlark /tmp/rlark-bin
+docker build -t "$IMAGE" /tmp/rlark-bin
 docker push "$IMAGE"
 
 # Pull busybox (try Docker Hub, then mirror, use local if available)

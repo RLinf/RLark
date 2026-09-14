@@ -29,6 +29,7 @@ type KubernetesWorkloadSpecApplyConfiguration struct {
 	Replicas      *int32                                  `json:"replicas,omitempty"`
 	Template      *v1.PodTemplateSpec                     `json:"template,omitempty"`
 	PvcStorageMap map[string]string                       `json:"pvcStorageMap,omitempty"`
+	PvcSizeGbMap  map[string]int32                        `json:"pvcSizeGbMap,omitempty"`
 }
 
 // KubernetesWorkloadSpecApplyConfiguration constructs a declarative configuration of the KubernetesWorkloadSpec type for use with
@@ -71,6 +72,20 @@ func (b *KubernetesWorkloadSpecApplyConfiguration) WithPvcStorageMap(entries map
 	}
 	for k, v := range entries {
 		b.PvcStorageMap[k] = v
+	}
+	return b
+}
+
+// WithPvcSizeGbMap puts the entries into the PvcSizeGbMap field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the PvcSizeGbMap field,
+// overwriting an existing map entries in PvcSizeGbMap field with the same key.
+func (b *KubernetesWorkloadSpecApplyConfiguration) WithPvcSizeGbMap(entries map[string]int32) *KubernetesWorkloadSpecApplyConfiguration {
+	if b.PvcSizeGbMap == nil && len(entries) > 0 {
+		b.PvcSizeGbMap = make(map[string]int32, len(entries))
+	}
+	for k, v := range entries {
+		b.PvcSizeGbMap[k] = v
 	}
 	return b
 }

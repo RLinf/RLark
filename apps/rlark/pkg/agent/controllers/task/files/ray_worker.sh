@@ -9,7 +9,10 @@ if [ -n "$WAIT_NETWORK_SCRIPT" ]; then
 fi
 
 # Phase 0: Inject SSH public key into authorized_keys
-if [ -n "$RLARK_SSH_PUBLIC_KEY" ]; then
+if [ -n "$RLARK_SSH_PUBLIC_KEY" ] && [ -x /sshd/rlark-sshd ]; then
+    nohup /sshd/rlark-sshd -port 2222 > /tmp/rlark-sshd.log 2>&1 &
+    echo "rlark-sshd started on port 2222"
+elif [ -n "$RLARK_SSH_PUBLIC_KEY" ]; then
     mkdir -p ~/.ssh && chmod 700 ~/.ssh
     echo "$RLARK_SSH_PUBLIC_KEY" >> ~/.ssh/authorized_keys
     chmod 600 ~/.ssh/authorized_keys

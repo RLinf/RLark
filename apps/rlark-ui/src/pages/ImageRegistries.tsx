@@ -192,9 +192,15 @@ export function ImageRegistriesPage({
             <button
               className="icon-button"
               title={zh ? "刷新" : "Refresh"}
+              aria-label={zh ? "刷新" : "Refresh"}
+              aria-busy={loading}
+              disabled={loading}
               onClick={fetchItems}
             >
-              <RefreshCw size={16} />
+              <RefreshCw
+                size={16}
+                className={loading ? "job-action-loading" : ""}
+              />
             </button>
           </div>
         </div>

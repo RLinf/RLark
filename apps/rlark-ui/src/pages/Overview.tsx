@@ -42,6 +42,7 @@ export function Overview({
   const [realClusters, setRealClusters] = useState<Cluster[]>([]);
   const [realNodes, setRealNodes] = useState<CRDNode[]>([]);
   const [realJobs, setRealJobs] = useState<Job[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
   const isZh = c.nav.overview === "总览";
 
   const { refresh } = useAutoRefresh(async () => {
@@ -61,6 +62,16 @@ export function Overview({
     const jobItems: CRDJob[] = jobsRes.items ?? [];
     setRealJobs(jobItems.map(crdToJob));
   }, 15000);
+
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const displayNodes = realNodes;
   const embodiedClusters = realClusters.filter((x) => x.type === "Embodied");
@@ -306,8 +317,18 @@ export function Overview({
               <span>{c.overview.recent}</span>
               <h3>{c.common.production}</h3>
             </div>
-            <button className="icon-button small" onClick={refresh}>
-              <RefreshCw size={15} />
+            <button
+              className="icon-button small"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              aria-busy={refreshing}
+              aria-label={isZh ? "刷新" : "Refresh"}
+              title={isZh ? "刷新" : "Refresh"}
+            >
+              <RefreshCw
+                size={15}
+                className={refreshing ? "job-action-loading" : ""}
+              />
             </button>
           </div>
           <div className="activity-list">

@@ -1,10 +1,31 @@
 import { useEffect, useState } from "react";
-import { Settings, Save, Check, Copy as CopyIcon } from "lucide-react";
+import {
+  Settings,
+  Save,
+  Check,
+  Copy as CopyIcon,
+  RefreshCw,
+} from "lucide-react";
 import type { Copy } from "../i18n";
+
+interface LogBackendConfig {
+  endpoint: string;
+  project: string;
+  logstore: string;
+  accessKeyId: string;
+  accessKeySecret: string;
+}
+
+interface LogConfig {
+  backend: string;
+  config: LogBackendConfig;
+}
 
 interface SystemConfig {
   sshJumpHost: string;
   sshJumpPort: string;
+  log: LogConfig;
+  isAccessKeySecretSet: boolean; // 标记 accessKeySecret 是否已设置（用于区分掩码和用户输入）
 }
 
 export function SystemConfigPage({ copy: c }: { copy: Copy }) {
@@ -12,12 +33,25 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
   const [config, setConfig] = useState<SystemConfig>({
     sshJumpHost: "",
     sshJumpPort: "",
+    log: {
+      backend: "sls",
+      config: {
+        endpoint: "",
+        project: "",
+        logstore: "",
+        accessKeyId: "",
+        accessKeySecret: "",
+      },
+    },
+    isAccessKeySecretSet: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
+  // 记录日志配置是否被修改过，用于决定是否在保存时发送 log 字段
+  const [isLogConfigDirty, setIsLogConfigDirty] = useState(false);
 
   useEffect(() => {
     fetchConfig();
@@ -30,10 +64,25 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
       const resp = await fetch("/api/v1/system-config");
       if (!resp.ok) throw new Error(await resp.text());
       const data = await resp.json();
+      const secret = data.log?.config?.accessKeySecret || "";
       setConfig({
-        sshJumpHost: data.sshJumpHost || "",
-        sshJumpPort: data.sshJumpPort || "",
+        sshJumpHost: data.ssh?.jumpHost || data.sshJumpHost || "",
+        sshJumpPort: data.ssh?.jumpPort || data.sshJumpPort || "",
+        log: {
+          backend: data.log?.backend || "sls",
+          config: {
+            endpoint: data.log?.config?.endpoint || "",
+            project: data.log?.config?.project || "",
+            logstore: data.log?.config?.logstore || "",
+            accessKeyId: data.log?.config?.accessKeyId || "",
+            // 后端返回掩码时展示掩码；用于让用户知道已设置
+            accessKeySecret: secret,
+          },
+        },
+        isAccessKeySecretSet: Boolean(secret),
       });
+      // 加载完成后，重置脏标记
+      setIsLogConfigDirty(false);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -46,10 +95,22 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
     setError("");
     setSaved(false);
     try {
+      // 构建请求体：如果日志配置没有被修改，则不包含 log 字段
+      const requestBody: any = {
+        ssh: {
+          jumpHost: config.sshJumpHost,
+          jumpPort: config.sshJumpPort,
+        },
+      };
+
+      if (isLogConfigDirty) {
+        requestBody.log = config.log;
+      }
+
       const resp = await fetch("/api/v1/system-config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config),
+        body: JSON.stringify(requestBody),
       });
       if (!resp.ok) throw new Error(await resp.text());
       setSaved(true);
@@ -92,8 +153,19 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
             onClick={fetchConfig}
             title={zh ? "刷新" : "Refresh"}
             disabled={loading}
+            aria-busy={loading}
           >
-            {loading ? "…" : zh ? "刷新" : "Refresh"}
+            <RefreshCw
+              size={16}
+              className={loading ? "job-action-loading" : ""}
+            />
+            {loading
+              ? zh
+                ? "刷新中..."
+                : "Refreshing..."
+              : zh
+                ? "刷新"
+                : "Refresh"}
           </button>
           <button
             className="primary-button"
@@ -168,7 +240,7 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
       </section>
 
       {sshCommand && (
-        <section className="table-panel">
+        <section className="table-panel" style={{ marginBottom: 20 }}>
           <div className="storage-table-heading">
             <div>
               <strong>{zh ? "预览 SSH 命令" : "SSH Command Preview"}</strong>
@@ -196,6 +268,160 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
           </div>
         </section>
       )}
+
+      <section className="table-panel">
+        <div className="storage-table-heading">
+          <div>
+            <strong>{zh ? "日志后端配置" : "Log Backend Configuration"}</strong>
+            <small>
+              {zh
+                ? "配置日志后端的连接参数，用于查询历史日志"
+                : "Configure log backend connection parameters for querying historical logs"}
+            </small>
+          </div>
+        </div>
+        <div
+          className="storage-create-form"
+          style={{ background: "transparent", padding: "18px 20px" }}
+        >
+          <div className="form-section">
+            <div
+              className="form-grid"
+              style={{ gridTemplateColumns: "1fr 1fr" }}
+            >
+              <label>
+                {zh ? "后端类型" : "Backend Type"}
+                <select
+                  value={config.log.backend}
+                  onChange={(e) => {
+                    setConfig({
+                      ...config,
+                      log: { ...config.log, backend: e.target.value },
+                    });
+                    setIsLogConfigDirty(true);
+                  }}
+                >
+                  <option value="sls">阿里云 SLS</option>
+                  <option value="loki" disabled>
+                    Loki (待支持)
+                  </option>
+                  <option value="elasticsearch" disabled>
+                    Elasticsearch (待支持)
+                  </option>
+                </select>
+              </label>
+              <label>
+                {zh ? "接入地址 (Endpoint)" : "Endpoint"}
+                <input
+                  value={config.log.config.endpoint}
+                  onChange={(e) => {
+                    setConfig({
+                      ...config,
+                      log: {
+                        ...config.log,
+                        config: {
+                          ...config.log.config,
+                          endpoint: e.target.value,
+                        },
+                      },
+                    });
+                    setIsLogConfigDirty(true);
+                  }}
+                  placeholder="rlark.cn-beijing.log.aliyuncs.com:10012"
+                />
+              </label>
+              <label>
+                {zh ? "项目/组织名 (Project)" : "Project"}
+                <input
+                  value={config.log.config.project}
+                  onChange={(e) => {
+                    setConfig({
+                      ...config,
+                      log: {
+                        ...config.log,
+                        config: {
+                          ...config.log.config,
+                          project: e.target.value,
+                        },
+                      },
+                    });
+                    setIsLogConfigDirty(true);
+                  }}
+                  placeholder="rlark"
+                />
+              </label>
+              <label>
+                {zh ? "日志库/索引名 (Logstore)" : "Logstore"}
+                <input
+                  value={config.log.config.logstore}
+                  onChange={(e) => {
+                    setConfig({
+                      ...config,
+                      log: {
+                        ...config.log,
+                        config: {
+                          ...config.log.config,
+                          logstore: e.target.value,
+                        },
+                      },
+                    });
+                    setIsLogConfigDirty(true);
+                  }}
+                  placeholder="rlark"
+                />
+              </label>
+              <label>
+                {zh ? "认证 ID (Access Key ID)" : "Access Key ID"}
+                <input
+                  value={config.log.config.accessKeyId}
+                  onChange={(e) => {
+                    setConfig({
+                      ...config,
+                      log: {
+                        ...config.log,
+                        config: {
+                          ...config.log.config,
+                          accessKeyId: e.target.value,
+                        },
+                      },
+                    });
+                    setIsLogConfigDirty(true);
+                  }}
+                  placeholder="xxxxx"
+                />
+              </label>
+              <label>
+                {zh ? "认证 Secret (Access Key Secret)" : "Access Key Secret"}
+                <input
+                  type="password"
+                  value={config.log.config.accessKeySecret}
+                  onChange={(e) => {
+                    setConfig({
+                      ...config,
+                      log: {
+                        ...config.log,
+                        config: {
+                          ...config.log.config,
+                          accessKeySecret: e.target.value,
+                        },
+                      },
+                      isAccessKeySecretSet: false,
+                    });
+                    setIsLogConfigDirty(true);
+                  }}
+                  placeholder={
+                    config.isAccessKeySecretSet
+                      ? zh
+                        ? "已设置，输入以更新"
+                        : "Configured. Type to update"
+                      : "xxxxx"
+                  }
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

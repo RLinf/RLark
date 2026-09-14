@@ -41,6 +41,7 @@ type KubernetesWorkloadSpec struct {
 	Replicas      *int32                 `json:"replicas,omitempty"`
 	Template      corev1.PodTemplateSpec `json:"template,omitempty"`
 	PvcStorageMap map[string]string      `json:"pvcStorageMap,omitempty"`
+	PvcSizeGbMap  map[string]int32       `json:"pvcSizeGbMap,omitempty"`
 }
 
 type DockerTaskSpec struct {

@@ -33,7 +33,6 @@ const (
 	ManagementTaskUIDAnnotation             = "rlark.io/management-task-uid"
 	ManagementTaskDomainAnnotation          = "rlark.io/management-task-domain"
 	ManagementTaskFinalizer                 = "rlark.io/agent-cleanup"
-	DefaultPVCSize                          = "10Gi"
 	PVCTaskLabel                            = "rlark.io/task"
 	PVCOwnerAnnotation                      = "rlark.io/pvc-owner"
 	PVCOwnerTaskAnnotation                  = "rlark.io/pvc-owner-task"
@@ -381,6 +380,10 @@ func (r *pullReconciler) ensurePVCs(ctx context.Context, mgmtTask *rlarkv1alpha1
 		if workloadSpec.PvcStorageMap != nil {
 			storageClassName = workloadSpec.PvcStorageMap[claimName]
 		}
+		pvcSizeGb := int32(10)
+		if workloadSpec.PvcSizeGbMap != nil && workloadSpec.PvcSizeGbMap[claimName] > 0 {
+			pvcSizeGb = workloadSpec.PvcSizeGbMap[claimName]
+		}
 
 		pvc := &corev1.PersistentVolumeClaim{
 			ObjectMeta: metav1.ObjectMeta{
@@ -398,7 +401,7 @@ func (r *pullReconciler) ensurePVCs(ctx context.Context, mgmtTask *rlarkv1alpha1
 				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 				Resources: corev1.VolumeResourceRequirements{
 					Requests: corev1.ResourceList{
-						corev1.ResourceStorage: resource.MustParse(DefaultPVCSize),
+						corev1.ResourceStorage: resource.MustParse(fmt.Sprintf("%dGi", int(pvcSizeGb))),
 					},
 				},
 			},
@@ -406,6 +409,8 @@ func (r *pullReconciler) ensurePVCs(ctx context.Context, mgmtTask *rlarkv1alpha1
 
 		if storageClassName != "" {
 			pvc.Spec.StorageClassName = &storageClassName
+		} else {
+			logger.Info("No valid storage class name provided for claim", "claim", claimName)
 		}
 
 		existing := &corev1.PersistentVolumeClaim{}

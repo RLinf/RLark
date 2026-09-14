@@ -32,35 +32,39 @@ spec:
           image: {{ .Values.rcloneImage }}
           imagePullPolicy: Always
           args:
-            - "--driver-name=$(DRIVER_NAME)"
-            - "--node-id=$(NODE_ID)"
-            - "--endpoint=unix://csi/csi.sock"
-            - "--v={{ .Values.controllerLogLevel }}"
+            - "-v={{ .Values.controllerLogLevel }}"
+            - "--nodeid=$(NODE_ID)"
+            - "--endpoint=$(CSI_ENDPOINT)"
           env:
-            - name: DRIVER_NAME
-              value: {{ .Values.driverName }}
             - name: NODE_ID
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
           securityContext:
             privileged: true
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
-            - name: kubelet-dir
-              mountPath: /var/lib/kubelet
-              mountPropagation: Bidirectional
         - name: csi-provisioner
           image: {{ .Values.csiProvisionerImage }}
           imagePullPolicy: Always
           args:
+            - "-v={{ .Values.controllerLogLevel }}"
             - "--csi-address=$(ADDRESS)"
-            - "--v={{ .Values.controllerLogLevel }}"
-            - "--feature-gates=Topology=true"
+            - "--leader-election"
+            - "--leader-election-namespace=$(POD_NAMESPACE)"
+            - "--extra-create-metadata=true"
+            - "--timeout=1200s"
+            - "--retry-interval-max=30m"
           env:
             - name: ADDRESS
               value: /csi/csi.sock
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
@@ -69,7 +73,8 @@ spec:
           imagePullPolicy: Always
           args:
             - "--csi-address=/csi/csi.sock"
-            - "--health-timeout=30s"
+            - "--probe-timeout=3s"
+            - "--http-endpoint=localhost:29652"
             - "--v={{ .Values.controllerLogLevel }}"
           volumeMounts:
             - name: socket-dir
@@ -77,7 +82,3 @@ spec:
       volumes:
         - name: socket-dir
           emptyDir: {}
-        - name: kubelet-dir
-          hostPath:
-            path: /var/lib/kubelet
-            type: Directory

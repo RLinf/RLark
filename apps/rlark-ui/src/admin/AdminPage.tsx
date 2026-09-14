@@ -49,6 +49,7 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
   const zh = c.nav.overview === "总览";
   const [nodes, setNodes] = useState<CRDNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [selectedClusterNs, setSelectedClusterNs] = useState<string | null>(
     null,
@@ -71,6 +72,16 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
   };
 
   useAutoRefresh(fetchNodes, 10000);
+
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await fetchNodes(false);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const clustersList = useMemo(() => {
     const map = new Map<string, CRDNode[]>();
@@ -142,9 +153,21 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
                 : "View all managed nodes grouped by namespace (cluster)."}
             </p>
           </div>
-          <button className="secondary-button" onClick={() => fetchNodes()}>
-            <RefreshCw size={16} />
-            {c.common.refresh}
+          <button
+            className="secondary-button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-busy={refreshing}
+          >
+            <RefreshCw
+              size={16}
+              className={refreshing ? "job-action-loading" : ""}
+            />
+            {refreshing
+              ? zh
+                ? "刷新中..."
+                : "Refreshing..."
+              : c.common.refresh}
           </button>
         </div>
         <div className="cert-error" style={{ marginBottom: 12 }}>
@@ -169,9 +192,17 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
               : "View all managed nodes grouped by namespace (cluster)."}
           </p>
         </div>
-        <button className="secondary-button" onClick={() => fetchNodes()}>
-          <RefreshCw size={16} />
-          {c.common.refresh}
+        <button
+          className="secondary-button"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          aria-busy={refreshing}
+        >
+          <RefreshCw
+            size={16}
+            className={refreshing ? "job-action-loading" : ""}
+          />
+          {refreshing ? (zh ? "刷新中..." : "Refreshing...") : c.common.refresh}
         </button>
       </div>
       <section className="cluster-overview-grid">
@@ -891,6 +922,7 @@ export function AdminPage({
   const zh = c.nav.overview === "总览";
   const [nodes, setNodes] = useState<CRDNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [editingNode, setEditingNode] = useState<string | null>(null);
   const [labelDraft, setLabelDraft] = useState<Record<string, string>>({});
@@ -932,6 +964,16 @@ export function AdminPage({
   };
 
   useAutoRefresh(fetchNodes, 10000);
+
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await fetchNodes(false);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const startEdit = (node: CRDNode) => {
     const editableLabels = { ...(node.metadata.labels ?? {}) };
@@ -1402,9 +1444,21 @@ export function AdminPage({
               ? `批量设置 (${selectedNodeKeys.size})`
               : `Batch edit (${selectedNodeKeys.size})`}
           </button>
-          <button className="secondary-button" onClick={() => fetchNodes()}>
-            <RefreshCw size={16} />
-            {c.common.refresh}
+          <button
+            className="secondary-button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-busy={refreshing}
+          >
+            <RefreshCw
+              size={16}
+              className={refreshing ? "job-action-loading" : ""}
+            />
+            {refreshing
+              ? zh
+                ? "刷新中..."
+                : "Refreshing..."
+              : c.common.refresh}
           </button>
         </div>
       </div>
@@ -1781,7 +1835,8 @@ export function AdminPage({
         <NodeResourceBrowser
           nodes={nodes}
           copy={c}
-          onRefresh={() => fetchNodes()}
+          onRefresh={handleRefresh}
+          refreshing={refreshing}
           onSelectNode={(name) => onNavigate(name)}
           onToggleScheduling={toggleCordon}
           updatingNode={cordoningNode}

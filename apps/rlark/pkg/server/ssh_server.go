@@ -229,6 +229,7 @@ func (s *Server) handleSSHChannel(srv *ssh.Server, conn *gossh.ServerConn, newCh
 		s.rejectSSHChannel(newChan, fmt.Sprintf("Failed to connect to target: %v", err))
 		return
 	}
+	defer func() { _ = c.Close() }()
 	reverseproxy.PipeConnections(ch, c)
 }
 

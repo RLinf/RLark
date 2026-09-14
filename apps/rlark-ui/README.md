@@ -44,7 +44,7 @@ The frontend uses exactly one data mode so pages never mix mock and backend data
 - Nodes：节点默认按集群和节点名称排序，展示物理位置、GPU/具身设备总量、空闲量与型号；从总览地图点击城市可直接进入对应位置筛选结果
 - Cluster detail：集群详情中的节点表与 Nodes 使用相同的位置、资源数量、空闲状态和型号口径
 - Node metadata：容量与可分配量由 Agent 从 Kubernetes Node 自动上报；管理员维护的位置、节点分类、GPU 型号和具身设备型号存储在 KCP Node CR，并在 Agent 状态同步时保留。节点详情会同时列出 CPU、内存、GPU 以及所有 `rlinf.io/device*` 端侧设备资源
-- Jobs：列表直接展示并支持复制 Kubernetes `metadata.name` 任务 ID；仅在配置 `rlark.io/display-name` 时补充显示名称，并展示去重节点数、创建时间和停止时间
+- Jobs：列表以 `rlark.io/display-name` 展示名为主，并展示和支持复制系统生成的 Kubernetes `metadata.name` 任务 ID；旧任务未配置展示名时回退到资源 ID
 - Lists：集群、节点、任务、工作流、存储和 SSH 公钥主列表支持点击表头切换升序与降序；分页基于排序后的完整筛选结果
 - Time：创建时间、停止时间等统一转换为中国标准时间（`Asia/Shanghai`），格式为 `YYYY-MM-DD HH:mm:ss`
 - Overview：核心指标聚焦具身集群数量、具身节点数量、具身设备种类，以及正在运行/全部任务数量
@@ -66,7 +66,7 @@ Admin task management reuses the business-platform list and detail views, but in
 
 Admin node management exposes Kubernetes scheduling state directly in the node list and detail view. Cordon prevents new workloads from being scheduled without interrupting running workloads; uncordon restores scheduling.
 
-Job IDs use the Kubernetes resource `metadata.name` and can be copied directly. User-facing timestamps use China Standard Time (`Asia/Shanghai`) in `YYYY-MM-DD HH:mm:ss` format. The overview emphasizes embodied clusters, embodied nodes, unique device models, and running/total jobs.
+Job lists primarily show the `rlark.io/display-name` annotation and expose the system-generated Kubernetes `metadata.name` resource ID as copyable secondary information. Legacy Jobs without a display name fall back to the resource ID. User-facing timestamps use China Standard Time (`Asia/Shanghai`) in `YYYY-MM-DD HH:mm:ss` format. The overview emphasizes embodied clusters, embodied nodes, unique device models, and running/total jobs.
 
 - API Reference：后端资源 API 演示
 

@@ -78,7 +78,7 @@ defaults are used. See examples/device-plugin-config.yaml for a template.`,
 	cmd.Flags().StringVar(&wh.CASecretNamespace, "webhook-ca-secret-namespace", "",
 		"Namespace of the CA Secret (required when --webhook-ca-secret-name is set)")
 	cmd.Flags().StringVar(&wh.DevinitImage, "webhook-devinit-image", "",
-		"Image for the injected init container; must contain devinit at /usr/local/bin/devinit (default: auto-discovered device-plugin image)")
+		"Image for the injected init container; the binary is mounted from the host, so the image does not need to contain devinit (default: auto-discovered device-plugin image, then busybox:latest)")
 
 	if err := cmd.Execute(); err != nil {
 		log.Fatalf("[device-plugin] fatal: %v", err)

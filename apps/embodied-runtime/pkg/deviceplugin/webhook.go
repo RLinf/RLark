@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -56,9 +57,10 @@ type WebhookConfig struct {
 	CASecretName      string
 	CASecretNamespace string
 
-	// DevinitImage is the init container image. It must contain the devinit
-	// binary at devinitBinaryPath. When empty, NewPlugin fills it from the
-	// auto-discovered device-plugin image (downward API).
+	// DevinitImage is the init container image. The binary is mounted from
+	// the host via Allocate, so the image does not need to contain devinit.
+	// When empty, the auto-discovered device-plugin image is used; falling
+	// back to "busybox:latest" if auto-discovery is unavailable.
 	DevinitImage string
 }
 
@@ -110,10 +112,25 @@ const (
 	// webhook. Reused to detect an existing injection (idempotency).
 	devinitContainerName = "rlark-devinit"
 
-	// devinitBinaryPath is the devinit CLI path inside the init container
-	// image. The device-plugin image ships it here (see the Dockerfile).
-	devinitBinaryPath = "/usr/local/bin/devinit"
+	// devinitBinaryPath is the path to the devinit CLI binary, mounted from
+	// the host via Allocate (BinDir). The device plugin copies the binary
+	// there at startup; the init container runs it from this mounted path.
+	devinitBinaryPath = BinDir + "/devinit"
+
+	// defaultDevinitImage is the fallback image for the injected init
+	// container when no DevinitImage is configured. The binary is mounted
+	// from the host, so the image does not need to contain it — any image
+	// with a shell works.
+	defaultDevinitImage = "busybox:latest"
 )
+
+// devinitBinaryExists is a function variable that reports whether the devinit
+// binary is present at devinitBinaryPath. Extracted so tests can override it
+// without creating the file on the actual host filesystem.
+var devinitBinaryExists = func() bool {
+	_, err := os.Stat(devinitBinaryPath)
+	return err == nil
+}
 
 // ---------------------------------------------------------------------------
 // Handler
@@ -127,8 +144,9 @@ const (
 // (called for every container that requests the resource) injects the
 // RunDir mount (which exposes the devinit service socket) and the
 // RLINF_EMBODIED_DEVINIT_SOCKET_PATH env var, so the init container can
-// locate the socket and run `devinit setup`. No extra volumes or mounts are
-// needed from the webhook. The devinit binary itself lives in the image.
+// locate the socket and run `devinit setup`. The devinit binary is mounted
+// from the host via BinDir (see ensureDevinitBinary in plugin.go), so the
+// init container image does not need to contain it.
 //
 // The init container runs `devinit setup`, which dials the device plugin's
 // init service Unix socket; the service reads the caller's PID from the
@@ -136,7 +154,7 @@ const (
 // network namespace (skipped for hostNetwork pods).
 type devinitHandler struct {
 	resourceName string // extended resource advertised by this plugin
-	image        string // init container image (contains devinit binary)
+	image        string // init container image (binary is mounted from host)
 }
 
 // newDevinitHandler builds a handler from the plugin's resolved configuration.
@@ -230,7 +248,9 @@ func buildDevinitPatch(pod *corev1.Pod, resourceName, image string) ([]byte, err
 // buildDevinitContainer constructs the init container spec. It requests one
 // unit of the plugin's extended resource (so Allocate injects the RunDir
 // socket mount and RLINF_EMBODIED_DEVINIT_SOCKET_PATH env var) and runs the
-// devinit CLI, which lives in the image at devinitBinaryPath.
+// devinit CLI from the host-mounted BinDir at devinitBinaryPath. The image
+// does not need to contain the binary — it is mounted from the host via
+// Allocate's BinDir mount.
 //
 // The extended resource is mirrored in limits: Kubernetes requires
 // extended-resource limits to equal their requests, and clusters enforcing a
@@ -298,8 +318,12 @@ var _ mutatingwebhook.Handler = (*devinitHandler)(nil)
 //
 // The devinit image is resolved in this order: WebhookConfig.DevinitImage
 // (CLI flag), then the auto-discovered device-plugin image (downward API),
-// which is the natural default since the device-plugin image ships the
-// devinit binary.
+// then the defaultDevinitImage constant. The binary is mounted from the host
+// via BinDir, so the image does not need to contain the devinit binary.
+//
+// If the devinit binary is not found at devinitBinaryPath on the host, the
+// webhook is skipped with a warning — the init container would have nothing
+// to run.
 func newWebhookServer(p *Plugin) (*mutatingwebhook.Server, error) {
 	wh := p.webhookCfg
 	if !wh.Enabled {
@@ -315,12 +339,22 @@ func newWebhookServer(p *Plugin) (*mutatingwebhook.Server, error) {
 	if wh.MutatingWebhookConfigName == "" {
 		return nil, fmt.Errorf("mutating webhook config name not set")
 	}
+
+	// Check that the devinit binary exists on the host (in BinDir, mounted
+	// into the device-plugin container). The binary is copied there by
+	// ensureDevinitBinary in plugin.go. If it is missing, the webhook has
+	// nothing to inject — skip with a warning.
+	if !devinitBinaryExists() {
+		log.Printf("[device-plugin/webhook] WARNING: devinit binary not found at %s — skipping webhook", devinitBinaryPath)
+		return nil, nil
+	}
+
 	image := wh.DevinitImage
 	if image == "" {
 		image = p.disc.initImage
 	}
 	if image == "" {
-		return nil, fmt.Errorf("devinit image not set and device-plugin image could not be auto-discovered")
+		image = defaultDevinitImage
 	}
 	cfg := mutatingwebhook.ServerConfig{
 		Addr:              wh.EffectiveAddr(),

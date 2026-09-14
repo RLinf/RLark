@@ -11,6 +11,7 @@ import (
 )
 
 func (a *containerNetworkAdapter) getProcessNetworkInfo(ctx context.Context, pid int32) (string, string, error) {
+	_ = ctx
 	f, err := os.Open(fmt.Sprintf("/proc/%d/mountinfo", pid))
 	if err != nil {
 		return "", "", fmt.Errorf("open mountinfo for pid %d: %w", pid, err)

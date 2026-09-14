@@ -265,6 +265,7 @@ export function RoleNameInput({
   return (
     <input
       value={draft}
+      maxLength={50}
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {

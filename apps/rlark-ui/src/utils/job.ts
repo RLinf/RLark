@@ -95,6 +95,12 @@ export function selectorToStr(sel: Record<string, string>): string {
     .join(",");
 }
 
+export function generateJobResourceName(): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return `jo-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 export function toResourceName(value: string): string {
   return Array.from(value.toLowerCase())
     .map((char) =>
@@ -107,6 +113,36 @@ export function toResourceName(value: string): string {
     .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
 }
 
+// shortHash 返回输入字符串的短哈希（FNV-1a，6 位十六进制），用于让名字唯一。
+function shortHash(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0").slice(0, 6);
+}
+
+// toVolumeName 把 mount path 转成合法的 k8s volume 名（DNS-1123 label：
+// 小写字母/数字/`-`，最长 63）。非法字符替换为 `-`；如果发生过替换
+// （说明不同 path 可能清洗成同一个名字），追加原 path 的短哈希保证唯一。
+export function toVolumeName(mountPath: string): string {
+  const hadIllegal = /[^a-z0-9/-]/.test(mountPath);
+  let name =
+    mountPath
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "vol";
+  if (hadIllegal) {
+    name = `${name}-${shortHash(mountPath)}`;
+  }
+  if (name.length > 63) {
+    const suffix = shortHash(mountPath);
+    name = `${name.slice(0, 56).replace(/-+$/g, "")}-${suffix}`;
+  }
+  return name;
+}
+
 export function computePvcStorageMap(
   role: string,
   mounts: Array<{
@@ -114,6 +150,7 @@ export function computePvcStorageMap(
     objectStorage: string;
     mountPath: string;
     hostPath: string;
+    pvcSizeGb: number;
   }>,
   jobName?: string,
 ): Record<string, string> | undefined {
@@ -123,8 +160,7 @@ export function computePvcStorageMap(
   const map: Record<string, string> = {};
   const jobSlug = jobName ? toResourceName(jobName) : "";
   storageMounts.forEach((m) => {
-    const volName =
-      m.mountPath.replace(/\//g, "-").replace(/^-|-$/g, "") || "vol";
+    const volName = toVolumeName(m.mountPath);
     const claimName = jobSlug
       ? `pvc-${jobSlug}-${roleSlug}-${volName}`
       : `pvc-${roleSlug}-${volName}`;
@@ -133,8 +169,41 @@ export function computePvcStorageMap(
   return map;
 }
 
+export function computePvcSizeGbMap(
+  role: string,
+  mounts: Array<{
+    type: "host" | "storage";
+    mountPath: string;
+    pvcSizeGb: number;
+  }>,
+  jobName?: string,
+): Record<string, number> | undefined {
+  const roleSlug = toResourceName(role);
+  const storageMounts = mounts.filter((m) => m.type === "storage");
+  if (storageMounts.length === 0) return undefined;
+  const map: Record<string, number> = {};
+  const jobSlug = jobName ? toResourceName(jobName) : "";
+  storageMounts.forEach((m) => {
+    const volName =
+      m.mountPath.replace(/\//g, "-").replace(/^-|-$/g, "") || "vol";
+    const claimName = jobSlug
+      ? `pvc-${jobSlug}-${roleSlug}-${volName}`
+      : `pvc-${roleSlug}-${volName}`;
+    map[claimName] = Math.min(200, Math.max(1, m.pvcSizeGb));
+  });
+  return map;
+}
+
+export function automaticNetworkDomain(domains: Array<{ name: string }>) {
+  return (
+    [...domains].sort((left, right) => left.name.localeCompare(right.name))[0]
+      ?.name ?? ""
+  );
+}
+
 export function generateJobCRD(opts: {
   name: string;
+  displayName?: string;
   type: JobType;
   headerRole: string;
   roles: string[];
@@ -164,13 +233,12 @@ export function generateJobCRD(opts: {
       const storageMounts = roleMounts.filter((m) => m.type === "storage");
 
       const containerVolumes = hostMounts.map((m) => ({
-        name: m.mountPath.replace(/\//g, "-").replace(/^-|-$/g, "") || "vol",
+        name: toVolumeName(m.mountPath),
         hostPath: { path: m.hostPath || m.objectStorage },
       }));
 
       const storageVolumes = storageMounts.map((m) => {
-        const volName =
-          m.mountPath.replace(/\//g, "-").replace(/^-|-$/g, "") || "vol";
+        const volName = toVolumeName(m.mountPath);
         const claimName = `pvc-${jobSlug}-${taskName}-${volName}`;
         return {
           name: volName,
@@ -180,11 +248,15 @@ export function generateJobCRD(opts: {
         };
       });
 
-      const pvcStorageMap =
-        res?.pvcStorageMap ?? computePvcStorageMap(role, roleMounts, opts.name);
+      const pvcStorageMap = computePvcStorageMap(
+        taskName,
+        roleMounts,
+        opts.name,
+      );
+      const pvcSizeGbMap = computePvcSizeGbMap(taskName, roleMounts, opts.name);
 
       const allVolumeMounts = roleMounts.map((m) => ({
-        name: m.mountPath.replace(/\//g, "-").replace(/^-|-$/g, "") || "vol",
+        name: toVolumeName(m.mountPath),
         mountPath: m.mountPath,
       }));
 
@@ -204,6 +276,7 @@ export function generateJobCRD(opts: {
             kind: "StatefulSet",
             replicas: res ? Number(res.replicas) : 1,
             ...(pvcStorageMap ? { pvcStorageMap } : {}),
+            ...(pvcSizeGbMap ? { pvcSizeGbMap } : {}),
             template: {
               spec: {
                 containers: [
@@ -262,7 +335,12 @@ export function generateJobCRD(opts: {
   return {
     apiVersion: "rlinf.io/v1alpha1",
     kind: "Job",
-    metadata: { name: opts.name },
+    metadata: {
+      name: opts.name,
+      ...(opts.displayName
+        ? { annotations: { "rlark.io/display-name": opts.displayName } }
+        : {}),
+    },
     spec: {
       tasks,
       ...(opts.domain ? { domain: opts.domain } : {}),

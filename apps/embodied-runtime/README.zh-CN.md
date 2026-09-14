@@ -238,11 +238,11 @@ host_devices:
 ```yaml
 initContainers:
   - name: devinit
-    image: rlinf/embodied-runtime:v0.1.0
-    command: ["devinit", "setup"]   # 读取 RLINF_EMBODIED_DEVINIT_SOCKET_PATH
+    image: busybox:latest
+    command: ["/opt/rlinf/bin/devinit", "setup"]   # 读取 RLINF_EMBODIED_DEVINIT_SOCKET_PATH
     resources:
       requests:
-        rlinf.io/device: 1          # 触发 Allocate → RunDir 挂载 + 环境变量
+        rlinf.io/device: 1          # 触发 Allocate → RunDir 挂载 + BinDir 挂载 + 环境变量
       limits:                        # 必填：LimitRanger/ResourceQuota 会拒绝未设置 limits 的 init 容器
         rlinf.io/device: 1           # 扩展资源的 limits 必须等于 requests
 ```
@@ -269,7 +269,7 @@ host_macvlans:
 2. 读取 `MutatingWebhookConfiguration`（由 `--webhook-mutating-config` 指定）；当某 webhook 的 `caBundle` 为空时，把 CA 证书 patch 进去。
 3. 用该 CA 签发服务证书并启动 HTTPS 服务。
 
-`caBundle` 非空时 webhook 不动它（视为已托管）；不匹配时打印告警。init 镜像默认取自动发现的 device plugin 镜像（downward API），其中已包含 `devinit`，通常无需配置。
+`caBundle` 非空时 webhook 不动它（视为已托管）；不匹配时打印告警。init 镜像默认取自动发现的 device plugin 镜像（downward API），回退到 `busybox:latest`。devinit 二进制从宿主通过 BinDir 挂载，镜像无需包含它。
 
 device-plugin CLI 参数：
 
@@ -281,7 +281,7 @@ device-plugin CLI 参数：
 | `--webhook-mutating-config` | 待自动管理 `caBundle` 的 `MutatingWebhookConfiguration` 名称。 |
 | `--webhook-service-name` / `--webhook-service-namespace` | 前置 webhook 的 Service（构成服务证书 DNS SAN）。 |
 | `--webhook-ca-secret-name` / `--webhook-ca-secret-namespace` | 持久化 CA 的 Secret（留空 = 内存中生成）。 |
-| `--webhook-devinit-image` | 注入的 init 容器镜像（默认：自动发现的 device plugin 镜像）。 |
+| `--webhook-devinit-image` | 注入的 init 容器镜像（默认：自动发现的 device plugin 镜像，回退到 `busybox:latest`）。二进制从宿主挂载，镜像无需包含 devinit。 |
 
 参见 [Helm chart](./charts/embodied-runtime) 的 `webhook:` 值，提供一键式部署：渲染 webhook Service、`MutatingWebhookConfiguration`（`caBundle` 留空）、所需 RBAC（集群级 `mutatingwebhookconfigurations` 的 get/patch + 命名空间级 `secrets`），并把上述参数全部接进 device-plugin DaemonSet。启用方式：
 
@@ -293,7 +293,7 @@ webhook:
   caSecret:               # 持久化 CA，跨重启复用（推荐）
     name: devinit-ca
     namespace: rlark-system   # 默认取发布命名空间
-  # devinitImage: ""      # 默认取 .Values.devicePlugin.image
+  # devinitImage: ""      # 默认取 .Values.devicePlugin.image，回退到 busybox:latest（二进制从宿主挂载）
 ```
 
 webhook 仅在 `webhook.enabled` 与 `config.hostMacvlans` **同时**设置时渲染；未配置 macvlan 时启用它无效（handler 不注入任何内容）。

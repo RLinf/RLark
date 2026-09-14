@@ -5,7 +5,7 @@
 PostgreSQL connection configuration loaded via `--db-config` flag. Used by rlark-server, rlark-gateway, and rlark-controller-manager.
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| ------- | ------ | --------- | ------------- |
 | `host` | string | `localhost` | PostgreSQL host |
 | `port` | int | `5432` | PostgreSQL port |
 | `database` | string | `rlark` | Database name |
@@ -21,6 +21,7 @@ PostgreSQL connection configuration loaded via `--db-config` flag. Used by rlark
     Adjust `maxOpenConns` and `maxIdleConns` based on actual load. Increase for high-concurrency scenarios.
 
 **Example:**
+
 ```yaml
 host: postgresql
 port: 5432
@@ -39,7 +40,7 @@ debug: false
 Control plane server. Manages TLS/SSH certificates, agent registration, and the Gateway API.
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--https-port` | int | `8443` | HTTPS listen port |
 | `--ssh-port` | int | `2222` | SSH listen port |
 | `--unsafe-http-port` | int | `8888` | Internal HTTP for `/healthz`, `/readyz`, `/livez`, `/metrics`, and peer proxying |
@@ -60,6 +61,7 @@ Control plane server. Manages TLS/SSH certificates, agent registration, and the 
     Agents use this port for certificate signing. In production, only expose to internal networks.
 
 **Example:**
+
 ```bash
 rlark-server \
   --https-port=8443 \
@@ -74,7 +76,7 @@ rlark-server \
 API gateway. Handles all REST API requests including cluster management, job management, and storage operations.
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--addr` | string | `:8080` | API gateway bind address; `rlarkadm` overrides it to `:8090` |
 | `--db-config` | string | `""` | Database configuration file path |
 | `--server-address` | string | `https://rlark-server.rlark-system.svc:8443` | RLark server address for certificate signing |
@@ -87,6 +89,7 @@ API gateway. Handles all REST API requests including cluster management, job man
 | `--kube-timeout` | duration | `0` | Kubernetes client request timeout |
 
 **Example:**
+
 ```bash
 rlark-gateway \
   --addr=:8080 \
@@ -99,7 +102,7 @@ rlark-gateway \
 Controller manager. Reconciles Jobs, Workflows, and Domain resources.
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--server-address` | string | `https://rlark-server.rlark-system.svc:8443` | RLark server address |
 | `--db-config` | string | `""` | Database configuration file path |
 | `--leader-elect` | bool | `true` | Enable leader election for HA |
@@ -119,6 +122,7 @@ Controller manager. Reconciles Jobs, Workflows, and Domain resources.
     Set `--leader-elect=false` for single-instance deployments to avoid unnecessary election overhead.
 
 **Example:**
+
 ```bash
 rlark-controller-manager \
   --server-address=https://rlark-server:8443 \
@@ -133,7 +137,7 @@ rlark-controller-manager \
 Data plane agent. Deployed on each cluster or node. Manages node registration, Task execution, and cross-cluster networking.
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--server-address` | string | `https://localhost:8443` | RLark server address |
 | `--server-hostname` | string | `""` | Expected server TLS hostname |
 | `--client-cert` | string | `""` | Client TLS certificate path |
@@ -171,6 +175,7 @@ Data plane agent. Deployed on each cluster or node. Manages node registration, T
     - `both`: Runs both cluster and node-level agents
 
 **Example:**
+
 ```bash
 rlark-agent \
   --mode=both \
@@ -187,7 +192,7 @@ rlark-agent \
 Network sidecar. Runs alongside each Task Pod to provide cross-cluster Pod-to-Pod networking via TUN device and gVisor netstack.
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--sidecar-unix-socket` | string | `/var/run/rlark/nodeserver.sock` | NodeServer Unix socket path |
 | `--sidecar-tun-name` | string | `gnet0` | TUN device name |
 | `--sidecar-tun-mtu` | int | `1500` | TUN device MTU |
@@ -197,6 +202,7 @@ Network sidecar. Runs alongside each Task Pod to provide cross-cluster Pod-to-Po
 | `--sidecar-hosts-file` | string | `/etc/hosts` | Hosts file path |
 
 **Example:**
+
 ```bash
 rlark-network-sidecar \
   --sidecar-unix-socket=/var/run/rlark/nodeserver.sock \
@@ -209,14 +215,14 @@ rlark-network-sidecar \
 SSH daemon. Provides SSH access to running Task Pods. Integrated into rlark-server via `--ssh-port`.
 
 | Flag | Type | Default | Description |
-|------|------|---------|-------------|
+| ------ | ------ | --------- | ------------- |
 | `--port` | string | `22` | SSH listen port |
 | `--shell` | string | `""` | Shell binary path (default: /bin/bash) |
 
 **Environment variables:**
 
 | Variable | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `RLARK_SSH_PUBLIC_KEY` | SSH public key for authorized_keys |
 | `RLARK_SSH_AUTHORIZED_KEYS_FILE` | Path to authorized_keys file |
 
@@ -225,7 +231,7 @@ SSH daemon. Provides SSH access to running Task Pods. Integrated into rlark-serv
 Object storage backend configuration used by the gateway.
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| ------- | ------ | --------- | ------------- |
 | `accessKeyId` | string | `""` | Access key ID |
 | `secretAccessKey` | string | `""` | Secret access key |
 | `bucket` | string | `""` | Bucket name |
@@ -246,7 +252,7 @@ The YAML file passed to `rlarkadm install -f`. See [CLI Reference](cli.md#rlarka
 These names are the exact YAML keys accepted by `rlarkadm`.
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| ------- | ------ | --------- | ------------- |
 | `apiVersion` | string | — | API version (required); maintained examples use `rlark.io/v1alpha1` |
 | `kind` | string | — | Must be `DeployConfig` |
 | `plane` | string | — | Required: `control` or `data` |
@@ -264,7 +270,7 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 ### DBConfig
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| ------- | ------ | --------- | ------------- |
 | `host` | string | `postgresql` | PostgreSQL host |
 | `port` | int | `5432` | PostgreSQL port |
 | `database` | string | `rlark` | Database name |
@@ -274,7 +280,7 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 ### KubernetesEnv
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| ------- | ------ | --------- | ------------- |
 | `kubeconfig` | string | `""` | kubeconfig file path; an empty value uses the normal client-go loading rules |
 | `gateway-image` | string | `""` | Gateway image |
 | `controller-manager-image` | string | `""` | Controller Manager image |
@@ -298,7 +304,7 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 ### DockerEnv
 
 | Field | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | `gateway-image` | string | Gateway image |
 | `controller-manager-image` | string | Controller Manager image |
 | `server-image` | string | Server image |
@@ -315,7 +321,7 @@ These names are the exact YAML keys accepted by `rlarkadm`.
     Raw deployment is experimental. Prefer Kubernetes or Docker.
 
 | Field | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | `gateway-artifact` | string | Gateway binary path |
 | `controller-manager-artifact` | string | Controller Manager binary path |
 | `server-artifact` | string | Server binary path |
@@ -330,7 +336,7 @@ These names are the exact YAML keys accepted by `rlarkadm`.
 Required for data plane deployment.
 
 | Field | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | `ca-cert` | string | Inline CA PEM or an existing file path |
 | `agent-cert` | string | Inline Agent certificate PEM or an existing file path |
 | `agent-key` | string | Inline Agent private key PEM or an existing file path |
@@ -338,7 +344,7 @@ Required for data plane deployment.
 ### StorageConfig
 
 | Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| ------- | ------ | --------- | ------------- |
 | `type` | string | | Storage type: emptyDir, hostPath, pvc |
 | `host-path` | string | `""` | Host path for hostPath type |
 | `storage-class` | string | `""` | StorageClass for PVC type; empty uses the cluster default |
@@ -348,19 +354,20 @@ Required for data plane deployment.
 ### ComponentConfig
 
 | Field | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | `replicas` | int | Number of replicas |
 | `storage` | StorageConfig | Storage configuration |
 
 ### EtcdConfig
 
 | Field | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | `address` | string | etcd address |
 | `replicas` | int | Number of replicas |
 | `storage` | StorageConfig | Storage configuration |
 
 **Example (control plane):**
+
 ```yaml
 apiVersion: rlark.io/v1alpha1
 kind: DeployConfig
@@ -382,6 +389,7 @@ db:
 ```
 
 **Example (data plane):**
+
 ```yaml
 apiVersion: rlark.io/v1alpha1
 kind: DeployConfig

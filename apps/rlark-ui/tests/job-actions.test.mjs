@@ -14,6 +14,10 @@ const createJobSource = await readFile(
   new URL("../src/pages/CreateJob.tsx", import.meta.url),
   "utf8",
 );
+const sharedSource = await readFile(
+  new URL("../src/components/shared.tsx", import.meta.url),
+  "utf8",
+);
 const clustersSource = await readFile(
   new URL("../src/pages/Clusters.tsx", import.meta.url),
   "utf8",
@@ -22,6 +26,45 @@ const appSource = await readFile(
   new URL("../src/App.tsx", import.meta.url),
   "utf8",
 );
+const { crdToJob } = await import("../dist/test/utils/crd.js");
+
+test("cloning uses the user-facing task role instead of the resource name", () => {
+  const job = crdToJob({
+    apiVersion: "rlinf.io/v1alpha1",
+    kind: "Job",
+    metadata: { name: "jo-a746801868d9410e" },
+    spec: {
+      tasks: [
+        {
+          name: "65b0-89d2-8272",
+          head: true,
+          agentType: "Kubernetes",
+          role: "Actor",
+          nodeSelector: {},
+          kubernetes: {
+            workload: {
+              template: {
+                spec: {
+                  containers: [
+                    {
+                      name: "main",
+                      image: "busybox",
+                      env: [{ name: "RLARK_TASK_ROLE", value: "Learner" }],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(job.defaultRoles, ["Learner"]);
+  assert.equal(job.resources[0].role, "Learner");
+  assert.equal(job.headerRole, "Learner");
+});
 
 test("failed jobs clean residual workers before starting", () => {
   assert.match(
@@ -46,23 +89,19 @@ test("failed jobs clean residual workers before starting", () => {
     jobsSource,
     /body: JSON\.stringify\(\{ spec: \{ stopped: false \} \}\)/,
   );
-  assert.match(jobsSource, /isStartable \? <Play size=\{14\} \/> : <Square/);
+  assert.match(
+    jobsSource,
+    /isStartable \? <Play size=\{14\} \/> : <Square size=\{13\} \/>/,
+  );
 });
 
-test("primary job actions are visible and deletion stays in more actions", () => {
-  assert.match(jobsSource, /className="job-row-action"[\s\S]*?"复制"/);
-  assert.match(jobsSource, /className="job-row-action"[\s\S]*?"重启"/);
-  assert.match(jobsSource, /job-quick-lifecycle[\s\S]*?"停止"/);
+test("job icon actions provide visible hover hints", () => {
+  assert.match(jobsSource, /title=\{lifecycleLabel\}/);
   assert.match(
     jobsSource,
     /data-tooltip=\{zh \? "更多操作" : "More actions"\}/,
   );
-  assert.match(
-    jobsSource,
-    /className="action-dropdown-item danger"[\s\S]*?"删除"/,
-  );
   assert.match(jobsSource, /onRestart=\{\(\) => setRestartTarget\(job\)\}/);
-  assert.match(jobsStyles, /\.job-row-action/);
 });
 
 test("job lifecycle actions use the shared in-app confirmation dialog", () => {
@@ -79,11 +118,22 @@ test("worker event tooltip stays compact and shows only recent events", () => {
   assert.match(jobsStyles, /-webkit-line-clamp: 2/);
 });
 
-test("long job IDs remain fully readable", () => {
+test("job IDs remain readable and can be copied from list and detail", () => {
   assert.match(jobsSource, /job-id-cell/);
   assert.match(jobsSource, /title=\{job\.id\}/);
-  assert.match(jobsStyles, /overflow-wrap: anywhere/);
+  assert.match(jobsSource, /handleCopyJobId\(job\.id\)/);
+  assert.match(jobsSource, /handleCopyResourceId/);
+  assert.match(jobsSource, /复制资源 ID/);
+  assert.match(jobsStyles, /white-space: nowrap/);
+  assert.match(jobsStyles, /text-overflow: ellipsis/);
   assert.match(jobsStyles, /\.job-id-cell\.is-long strong/);
+  assert.match(jobsStyles, /\.job-id-copy/);
+});
+
+test("switching worker roles scrolls back to the configuration header", () => {
+  assert.match(createJobSource, /const roleConfigTopRef = useRef/);
+  assert.match(createJobSource, /modalBody\.scrollTop = 0/);
+  assert.match(createJobSource, /selectRole\(roles\[idx \+ 1\], true\)/);
 });
 
 test("job deletion waits for worker cleanup before deleting", () => {
@@ -95,21 +145,27 @@ test("job deletion waits for worker cleanup before deleting", () => {
   );
 });
 
-test("job actions report success and return to the list", () => {
+test("job actions report success and keep the selected job detail", () => {
   assert.match(jobsSource, /className="job-action-notice" role="status"/);
   assert.match(
     jobsSource,
     /setActionNotice\(zh \? "任务已删除" : "Job deleted"\)/,
   );
-  assert.match(jobsSource, /if \(selectedName\) onSelect\(undefined\)/);
+  assert.match(jobsSource, /if \(selectedName\) onSelect\(job\.name\)/);
+  assert.match(jobsSource, /if \(succeeded\) onSelect\(job\.name\)/);
   assert.match(jobsStyles, /\.job-action-notice/);
 });
 
-test("job submission reports success and returns to the job list", () => {
-  assert.match(createJobSource, /onSuccess: \(message: string\) => void/);
+test("job submission reports success and opens the saved job detail", () => {
+  assert.match(
+    createJobSource,
+    /onSuccess: \(message: string, jobName: string\) => void/,
+  );
+  assert.match(createJobSource, /const savedJob = await resp\.json\(\)/);
+  assert.match(createJobSource, /savedJob\.metadata\?\.name/);
   assert.match(createJobSource, /\? "任务提交成功"/);
   assert.match(appSource, /setJobSubmitNotice\(message\)/);
-  assert.match(appSource, /navigate\("jobs", undefined, \{ replace: true \}\)/);
+  assert.match(appSource, /navigate\("jobs", jobName, \{ replace: true \}\)/);
   assert.match(
     appSource,
     /className="job-action-notice app-job-submit-notice"/,
@@ -117,11 +173,38 @@ test("job submission reports success and returns to the job list", () => {
   assert.match(appSource, /role="status"/);
 });
 
-test("worker SSH copy is disabled when the jump host is unavailable", () => {
-  assert.match(jobsSource, /if \(!value\) return false/);
-  assert.match(jobsSource, /disabled=\{!sshCommand\}/);
-  assert.match(jobsSource, /未配置 SSH 跳板地址/);
-  assert.match(jobsSource, /\{sshCommand && \(/);
+test("job and worker refresh actions show progress", () => {
+  assert.match(jobsSource, /refreshing=\{listRefreshing\}/);
+  assert.match(jobsSource, /setWorkerRefreshing\(true\)/);
+  assert.match(jobsSource, /aria-busy=\{workerRefreshing\}/);
+  assert.match(jobsSource, /刷新中\.\.\./);
+  assert.match(sharedSource, /const \[localRefreshing, setLocalRefreshing\]/);
+  assert.match(sharedSource, /await onRefresh\(\)/);
+  assert.match(sharedSource, /disabled=\{isRefreshing\}/);
+  assert.match(sharedSource, /aria-busy=\{isRefreshing\}/);
+  assert.match(
+    sharedSource,
+    /className=\{isRefreshing \? "job-action-loading" : ""\}/,
+  );
+});
+
+test("stopping a job immediately uses the latest server status", () => {
+  const waitForStoppedSource = jobsSource.slice(
+    jobsSource.indexOf("const waitForJobWorkersStopped"),
+    jobsSource.indexOf("const handleSetStopped"),
+  );
+  assert.match(waitForStoppedSource, /return current;/);
+  assert.doesNotMatch(waitForStoppedSource, /return;\s*\n\s*}/);
+  assert.match(
+    jobsSource,
+    /const stoppedJob = stopped \? await waitForJobWorkersStopped\(job\) : null/,
+  );
+  assert.match(jobsSource, /stoppedJob \?\?/);
+});
+
+test("job storage mappings are derived from the generated resource ID", () => {
+  assert.doesNotMatch(createJobSource, /computePvcStorageMap/);
+  assert.match(createJobSource, /name: jobResourceName/);
 });
 
 test("worker details show cluster and link node names", () => {
@@ -130,11 +213,9 @@ test("worker details show cluster and link node names", () => {
     /cluster: pod\.taskNamespace \|\| pod\.namespace \|\| "—"/,
   );
   assert.match(jobsSource, /zh \? "集群" : "Cluster"/);
-  assert.doesNotMatch(jobsSource, /zh \? "申请 CPU" : "CPU request"/);
-  assert.doesNotMatch(jobsSource, /zh \? "申请内存" : "Memory request"/);
   assert.match(jobsSource, /function WorkerNodeLink/);
   assert.match(jobsSource, /onClick=\{\(\) => onSelectNode\(node\)\}/);
-  assert.match(jobsStyles, /\.worker-node-link/);
+  assert.match(jobsStyles, /\.worker-chip-link/);
   assert.match(
     clustersSource,
     /realNodes\.find\(\(n\) => n\.metadata\.name === selectedNodeName\)/,

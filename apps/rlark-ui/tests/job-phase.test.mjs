@@ -10,18 +10,18 @@ function job(phase, stopped, taskPhases) {
   };
 }
 
-test("derives Running and Stopped only when every task matches", () => {
+test("uses the aggregate Job phase regardless of task phases", () => {
   assert.equal(
     effectiveJobPhase(job("Pending", false, ["Running", "Running"])),
-    "Running",
+    "Pending",
   );
   assert.equal(
-    effectiveJobPhase(job("Pending", true, ["Stopped", "Stopped"])),
+    effectiveJobPhase(job("Stopped", true, ["Stopped", "Stopped"])),
     "Stopped",
   );
   assert.equal(
     effectiveJobPhase(job("Running", false, ["Running", "Pending"])),
-    "Pending",
+    "Running",
   );
   assert.equal(
     effectiveJobPhase(job("Running", true, ["Stopped", "Running"])),
@@ -42,13 +42,13 @@ test("distinguishes stopping from normal Pending states", () => {
   assert.equal(effectiveJobPhase(job("Pending", false, [])), "Pending");
 });
 
-test("derives terminal states while the aggregate is Pending", () => {
+test("does not infer terminal states from task phases", () => {
   assert.equal(
     effectiveJobPhase(job("Pending", false, ["Pending", "Failed"])),
-    "Failed",
+    "Pending",
   );
   assert.equal(
     effectiveJobPhase(job("Pending", false, ["Succeeded", "Succeeded"])),
-    "Succeeded",
+    "Pending",
   );
 });

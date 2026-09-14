@@ -54,7 +54,7 @@ RLark 支持以下任务类型，每种类型预配置了适合该工作负载�
 
 - **存储挂载** — 向 Worker 容器挂载存储。支持两种类型：
   - **hostPath**：挂载宿主机节点上的目录，任务生命周期操作不会删除其中的数据。
-  - **PVC**（PersistentVolumeClaim）：挂载 Kubernetes 持久卷。停止、重启或删除任务会删除任务 PVC；启动或重启会新建空 PVC。
+  - **PVC**（PersistentVolumeClaim）：使用所选存储类挂载 Kubernetes 持久卷。停止、重启或删除任务会删除任务 PVC；启动或重启会新建空 PVC。
 
 ![Worker 配置](../../images/ui/create-job-worker-configuration.png)
 
@@ -64,7 +64,7 @@ RLark 支持以下任务类型，每种类型预配置了适合该工作负载�
 
 - **Header 角色** — 选择一个角色作为 Header。该角色的第一个 Worker 协调分布式训练，其 IP 地址会通知所有其他 Worker。
 
-- **跨集群网络域** — 当任务跨多个集群时，选择预先配置的网络域。这通过 RLark 虚拟网络（TUN + gVisor + SSH 隧道）实现跨集群 Pod 间网络通信。
+- **跨集群网络域** — 如果后台配置了网络域，控制台会按名称选择第一个网络域，并为所有任务自动启用，不受 Worker 是否跨集群影响；未配置时不会写入网络域。
 
 - **SSH 公钥** — 提供一个或多个将被注入到每个 Worker 容器 `~/.ssh/authorized_keys` 的 SSH 公钥。这允许你通过 SSH 进入运行中的容器进行调试。
 
@@ -78,7 +78,7 @@ RLark 支持以下任务类型，每种类型预配置了适合该工作负载�
 
 从任务列表打开任务详情页，查看概况：
 
-- **名称** — 任务名称（集群内唯一）
+- **名称** — 面向用户的展示名，可以重复；RLark 会另外分配 `jo-<16 位十六进制字符>` 系统资源 ID。
 - **类型** — 任务类型（强化学习、数据采集、评测、自定义）
 - **状态** — 当前状态：Pending、Running、Succeeded、Failed、Stopped
 - **Worker 数量** — 所有角色的 Worker 总数

@@ -102,6 +102,8 @@ spec:
               mountPath: /var/lib/kubelet/device-plugins
             - name: socket-dir
               mountPath: /var/run/rlark
+            - name: bin-dir
+              mountPath: /opt/rlinf/bin
 
           securityContext:
             privileged: true
@@ -117,4 +119,8 @@ spec:
         - name: socket-dir
           hostPath:
             path: /var/run/rlark
+            type: DirectoryOrCreate
+        - name: bin-dir
+          hostPath:
+            path: /opt/rlinf/bin
             type: DirectoryOrCreate

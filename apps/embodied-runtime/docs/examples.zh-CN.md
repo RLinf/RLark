@@ -361,16 +361,16 @@ ip route
 curl -k https://172.16.0.2/      # 直接在机器人子网上访问机器人
 ```
 
-若不想用 webhook，可自行编写 init 容器（只需申请资源并运行 `devinit setup`）：
+若不想用 webhook，可自行编写 init 容器（只需申请资源并运行 `devinit setup`）。devinit 二进制从宿主通过 BinDir 挂载，镜像无需包含它：
 
 ```yaml
 initContainers:
   - name: devinit
-    image: rlinf/embodied-runtime:v0.1.0
-    command: ["devinit", "setup"]   # 读取 RLINF_EMBODIED_DEVINIT_SOCKET_PATH
+    image: busybox:latest
+    command: ["/opt/rlinf/bin/devinit", "setup"]   # 读取 RLINF_EMBODIED_DEVINIT_SOCKET_PATH
     resources:
       requests:
-        rlinf.io/device: 1          # 触发 Allocate → RunDir 挂载 + 环境变量
+        rlinf.io/device: 1          # 触发 Allocate → RunDir 挂载 + BinDir 挂载 + 环境变量
       limits:                        # 必填：LimitRanger/ResourceQuota 会拒绝未设置 limits 的 init 容器
         rlinf.io/device: 1           # 扩展资源的 limits 必须等于 requests
 ```

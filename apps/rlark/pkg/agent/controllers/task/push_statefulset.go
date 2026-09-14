@@ -91,5 +91,12 @@ func statefulSetPhase(ctx context.Context, logger logr.Logger, localClient clien
 		phase = rlarkv1alpha1.TaskPhaseFailed
 		message = podMsg
 	}
+	if phase == rlarkv1alpha1.TaskPhasePending {
+		if found, err := hasFailedSchedulingEvent(ctx, localClient, sts.Namespace, pods); err != nil {
+			logger.Error(err, "failed to list pod scheduling events")
+		} else if found {
+			message = "FailedScheduling"
+		}
+	}
 	return phase, message, pods
 }

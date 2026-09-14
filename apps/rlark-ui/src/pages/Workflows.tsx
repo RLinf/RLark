@@ -20,6 +20,7 @@ import { useAutoRefresh } from "../hooks";
 import { crdToWorkflow } from "../utils/crd";
 import { hasCycle, makeDefaultRoleResources } from "../utils/dag";
 import {
+  automaticNetworkDomain,
   computePvcStorageMap,
   generateJobCRD,
   ROLE_TEMPLATES,
@@ -484,7 +485,7 @@ export function WorkflowsPage({
         onChange={setQuery}
         count={filteredItems.length}
         copy={c}
-        onRefresh={() => fetchWorkflows()}
+        onRefresh={() => fetchWorkflows(false)}
       />
       {error && (
         <div className="cert-error" style={{ marginBottom: 12 }}>
@@ -991,7 +992,7 @@ export function CreateWorkflowModal({
       roles: job.roles,
       roleResources: job.roleResources,
       runScript: job.runScript,
-      domain: job.domain,
+      domain: automaticNetworkDomain(domains),
     });
     return { domain: crd.spec.domain, tasks: crd.spec.tasks };
   };
@@ -1020,8 +1021,29 @@ export function CreateWorkflowModal({
   const yaml = toYaml(crd);
 
   const handleSubmit = async () => {
-    setSubmitting(true);
     setError("");
+    for (const job of jobs) {
+      const normalizedRoles = job.roles.map((role) =>
+        role.trim().toLowerCase(),
+      );
+      if (normalizedRoles.some((role) => !role)) {
+        setError(zh ? "角色名称不能为空。" : "Role names cannot be empty.");
+        return;
+      }
+      if (job.roles.some((role) => role.trim().length > 50)) {
+        setError(
+          zh
+            ? "角色名称不能超过 50 个字符。"
+            : "Role names cannot exceed 50 characters.",
+        );
+        return;
+      }
+      if (new Set(normalizedRoles).size !== normalizedRoles.length) {
+        setError(zh ? "角色名称不能重复。" : "Role names must be unique.");
+        return;
+      }
+    }
+    setSubmitting(true);
     try {
       const resp = await fetch("/api/v1/rlinf.io/v1alpha1/workflows", {
         method: "POST",
@@ -1140,8 +1162,8 @@ export function CreateWorkflowModal({
   const updateRRMount = (
     role: string,
     index: number,
-    field: "objectStorage" | "mountPath" | "type" | "hostPath",
-    value: string,
+    field: "objectStorage" | "mountPath" | "type" | "hostPath" | "pvcSizeGb",
+    value: string | number,
   ) => {
     if (!activeJob) return;
     const rr = activeJob.roleResources[role];
@@ -1169,6 +1191,7 @@ export function CreateWorkflowModal({
         objectStorage: "",
         mountPath: "",
         hostPath: "",
+        pvcSizeGb: 10,
       },
     ];
     const pvcStorageMap = computePvcStorageMap(role, newMounts, activeJob.name);
@@ -1235,6 +1258,7 @@ export function CreateWorkflowModal({
           objectStorage: "",
           mountPath: "/mnt/dataset",
           hostPath: "/host/dataset",
+          pvcSizeGb: 10,
         },
       ],
     };
@@ -1255,7 +1279,14 @@ export function CreateWorkflowModal({
 
   const renameRole = (old: string, newName: string) => {
     if (!activeJob) return;
-    if (!newName.trim()) return;
+    newName = newName.trim();
+    if (!newName || newName.length > 50 || old === newName) return;
+    if (
+      activeJob.roles.some(
+        (role) => role !== old && role.toLowerCase() === newName.toLowerCase(),
+      )
+    )
+      return;
     const roles = activeJob.roles.map((r) => (r === old ? newName : r));
     const rr: Record<string, RoleResource> = {};
     for (const [k, v] of Object.entries(activeJob.roleResources)) {
@@ -1936,6 +1967,33 @@ export function CreateWorkflowModal({
                                   placeholder="/mnt/data"
                                 />
                               </label>
+                              {mount.type === "storage" && (
+                                <label className="mount-field-box mount-size-field">
+                                  <span>
+                                    {zh ? "存储大小 (Gi)" : "PVC size (Gi)"}
+                                  </span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="200"
+                                    value={mount.pvcSizeGb}
+                                    onChange={(e) =>
+                                      updateRRMount(
+                                        role,
+                                        index,
+                                        "pvcSizeGb",
+                                        Math.min(
+                                          200,
+                                          Math.max(
+                                            1,
+                                            Number(e.target.value) || 1,
+                                          ),
+                                        ),
+                                      )
+                                    }
+                                  />
+                                </label>
+                              )}
                               <button
                                 className="icon-button danger"
                                 onClick={() => removeRRMount(role, index)}
@@ -1975,27 +2033,17 @@ export function CreateWorkflowModal({
               </div>
               <div className="form-section">
                 <div className="form-section-head">
-                  <small>
-                    {zh
-                      ? "跨集群网络域 (可选)"
-                      : "Cross-cluster Network Domain (optional)"}
-                  </small>
+                  <small>{zh ? "跨集群网络" : "Cross-cluster Network"}</small>
                 </div>
-                <select
-                  value={activeJob.domain}
-                  onChange={(e) =>
-                    updateJob(activeJob.id, { domain: e.target.value })
-                  }
-                >
-                  <option value="">
-                    {zh ? "不使用跨集群网络" : "No cross-cluster network"}
-                  </option>
-                  {domains.map((d) => (
-                    <option key={d.name} value={d.name}>
-                      {d.name} ({d.cidr})
-                    </option>
-                  ))}
-                </select>
+                <div className="field-hint" role="status">
+                  {automaticNetworkDomain(domains)
+                    ? zh
+                      ? `系统已配置网络域，任务将默认启用跨集群网络（${automaticNetworkDomain(domains)}）。`
+                      : `A network domain is configured. Cross-cluster networking will be enabled automatically (${automaticNetworkDomain(domains)}).`
+                    : zh
+                      ? "系统尚未配置网络域，任务不会启用跨集群网络。"
+                      : "No network domain is configured. Cross-cluster networking will not be enabled."}
+                </div>
               </div>
               <div className="form-section">
                 <div className="form-section-head">

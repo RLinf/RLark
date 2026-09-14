@@ -227,7 +227,17 @@ export function ClusterManagementPage({
     if (isInitial) setLoading(true);
     let resolvedNodes: CRDNode[] = [];
     try {
-      const response = await fetch("/api/v1/rlinf.io/v1alpha1/nodes");
+      const nodesURL = new URL(
+        "/api/v1/rlinf.io/v1alpha1/nodes",
+        window.location.origin,
+      );
+      if (selectedClusterID) {
+        nodesURL.searchParams.set(
+          "labelSelector",
+          `rlark.io/cluster-id=${selectedClusterID}`,
+        );
+      }
+      const response = await fetch(nodesURL);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json();
       resolvedNodes = body.items ?? [];
@@ -456,7 +466,7 @@ export function ClusterManagementPage({
           <NodeResourceBrowser
             nodes={visibleDetailNodes}
             copy={c}
-            onRefresh={() => fetchClusters()}
+            onRefresh={() => fetchClusters(false)}
             onSelectNode={onSelectNode}
           />
         </section>
@@ -489,7 +499,7 @@ export function ClusterManagementPage({
         onChange={setQuery}
         count={filteredClusters.length}
         copy={c}
-        onRefresh={() => fetchClusters()}
+        onRefresh={() => fetchClusters(false)}
         filterValue={phaseFilter}
         onFilterChange={(value) => setPhaseFilter(value as ClusterPhaseFilter)}
         filterOptions={[
