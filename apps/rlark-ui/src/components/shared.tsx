@@ -488,6 +488,7 @@ export function PageToolbar({
   count,
   copy: c,
   onRefresh,
+  refreshing = false,
   filterValue,
   onFilterChange,
   filterOptions,
@@ -497,11 +498,24 @@ export function PageToolbar({
   onChange: (value: string) => void;
   count: number;
   copy: Copy;
-  onRefresh?: () => void;
+  onRefresh?: () => void | Promise<void>;
+  refreshing?: boolean;
   filterValue?: string;
   onFilterChange?: (value: string) => void;
   filterOptions?: Array<{ value: string; label: string }>;
 }) {
+  const [localRefreshing, setLocalRefreshing] = useState(false);
+  const isRefreshing = refreshing || localRefreshing;
+  const handleRefresh = async () => {
+    if (!onRefresh || isRefreshing) return;
+    setLocalRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setLocalRefreshing(false);
+    }
+  };
+
   return (
     <div className="page-toolbar">
       <div className="search-field">
@@ -530,9 +544,22 @@ export function PageToolbar({
         </label>
       )}
       {onRefresh && (
-        <button type="button" className="secondary-button" onClick={onRefresh}>
-          <RefreshCw size={16} />
-          {c.common.refresh}
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          aria-busy={isRefreshing}
+        >
+          <RefreshCw
+            size={16}
+            className={isRefreshing ? "job-action-loading" : ""}
+          />
+          {isRefreshing
+            ? c.nav.overview === "总览"
+              ? "刷新中..."
+              : "Refreshing..."
+            : c.common.refresh}
         </button>
       )}
       <small>

@@ -1,6 +1,7 @@
 # IDE
 .idea/
 .vscode/
+.codex/
 *.swp
 
 # Build output

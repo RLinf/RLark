@@ -361,16 +361,16 @@ ip route
 curl -k https://172.16.0.2/      # reach the robot directly on its subnet
 ```
 
-If you prefer not to use the webhook, author the init container yourself (it just requests the resource and runs `devinit setup`):
+If you prefer not to use the webhook, author the init container yourself (it just requests the resource and runs `devinit setup`). The devinit binary is mounted from the host via BinDir, so the image does not need to contain it:
 
 ```yaml
 initContainers:
   - name: devinit
-    image: rlinf/embodied-runtime:v0.1.0
-    command: ["devinit", "setup"]   # reads RLINF_EMBODIED_DEVINIT_SOCKET_PATH
+    image: busybox:latest
+    command: ["/opt/rlinf/bin/devinit", "setup"]   # reads RLINF_EMBODIED_DEVINIT_SOCKET_PATH
     resources:
       requests:
-        rlinf.io/device: 1          # triggers Allocate → RunDir mount + env vars
+        rlinf.io/device: 1          # triggers Allocate → RunDir mount + BinDir mount + env vars
       limits:                        # required: LimitRanger/ResourceQuota rejects init containers without limits
         rlinf.io/device: 1           # extended-resource limits must equal requests
 ```

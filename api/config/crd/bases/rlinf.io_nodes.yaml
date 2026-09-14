@@ -88,6 +88,11 @@ spec:
                   等 Warning 事件及镜像拉取/调度相关事件）。控制面 Task reconciler 在 Task
                   处于 Pending 期间聚合各节点事件到 Task.status.events，供前端展示。
                 items:
+                  description: |-
+                    NodeEvent represents a Kubernetes Event observed on a node that is relevant
+                    for surfacing to operators (e.g. DiskPressure warnings, FailedScheduling,
+                    image pull failures). The node-agent collects Warning events plus a small
+                    set of Normal scheduling/pulling events and writes them to Node.status.events.
                   properties:
                     count:
                       format: int32
@@ -127,6 +132,8 @@ spec:
                 type: string
               pullProgress:
                 items:
+                  description: PullProgress captures the progress of an in-flight
+                    image pull on a node.
                   properties:
                     downloaded:
                       format: int64

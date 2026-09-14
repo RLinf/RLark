@@ -56,7 +56,7 @@ For each worker role, configure the following:
 
 - **Storage Mounts** — Attach storage to worker containers. Two types are supported:
   - **hostPath**: Mount a directory from the host node's filesystem. Its data is not deleted by Job lifecycle actions.
-  - **PVC** (PersistentVolumeClaim): Mount a Kubernetes persistent volume. Stopping, restarting, or deleting the Job deletes its task PVCs; starting or restarting creates empty PVCs.
+  - **PVC** (PersistentVolumeClaim): Mount a Kubernetes persistent volume using the selected storage class. Stopping, restarting, or deleting the Job deletes its task PVCs; starting or restarting creates empty PVCs.
 
 ![Worker configuration](../images/ui/create-job-worker-configuration.png)
 
@@ -66,7 +66,7 @@ Configure settings that apply to all workers in the job:
 
 - **Header Role** — Select one role as the Header role. This role's first worker coordinates the distributed training, and its IP address is communicated to all other workers.
 
-- **Cross-Cluster Network Domain** — When the job spans multiple clusters, select the pre-configured network domain. This enables cross-cluster Pod-to-Pod networking via the RLark virtual network (TUN + gVisor + SSH tunnels).
+- **Cross-Cluster Network Domain** — If network domains are configured, the console automatically enables the first domain by name for every Job, regardless of Worker placement. No domain is added when none is configured.
 
 - **SSH Public Keys** — Provide one or more SSH public keys that will be injected into the `~/.ssh/authorized_keys` of every worker container. This allows you to SSH into running containers for debugging.
 
@@ -80,7 +80,7 @@ Configure settings that apply to all workers in the job:
 
 Open the Job Details page from the Jobs list to see a high-level summary:
 
-- **Name** — The job name (unique within the cluster)
+- **Name** — The user-facing display name. It may be reused; RLark assigns a separate `jo-<16 hexadecimal characters>` resource ID.
 - **Type** — The job type (Reinforcement Learning, Data Collection, Evaluation, Custom)
 - **Status** — Current state: Pending, Running, Succeeded, Failed, Stopped
 - **Worker Count** — Total number of workers across all roles

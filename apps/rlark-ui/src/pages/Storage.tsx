@@ -38,7 +38,6 @@ import { formatChinaDateTime } from "../utils/time";
 
 type StorageClassFormState = {
   name: string;
-  namespace: string;
   provider: StorageProvider;
   clusters: string[];
   endpoint: string;
@@ -88,7 +87,6 @@ function storageClassToForm(
 ): StorageClassFormState {
   return {
     name: storageClass?.name ?? "",
-    namespace: storageClass?.namespace ?? "default",
     provider: storageClass?.provider ?? "MinIO",
     clusters: storageClass?.clusters ?? [],
     endpoint: storageClass?.endpoint ?? "",
@@ -294,6 +292,7 @@ export function StorageClassesPage({
         count={filtered.length}
         copy={c}
         onRefresh={fetchClasses}
+        refreshing={loading}
         filterValue={providerFilter}
         onFilterChange={setProviderFilter}
         filterOptions={[
@@ -765,16 +764,6 @@ export function StorageClassCreatePage({
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder={zh ? "my-storage-class" : "my-storage-class"}
-                />
-              </label>
-              <label>
-                {c.storageClass.namespace}
-                <input
-                  value={form.namespace}
-                  onChange={(e) =>
-                    setForm({ ...form, namespace: e.target.value })
-                  }
-                  placeholder="default"
                 />
               </label>
               <label>
@@ -1356,8 +1345,11 @@ export function StorageClassFilesPage({
           onClick={fetchFiles}
           disabled={loading}
         >
-          <RefreshCw size={16} />
-          {c.common.refresh}
+          <RefreshCw
+            size={16}
+            className={loading ? "job-action-loading" : ""}
+          />
+          {loading ? (zh ? "刷新中..." : "Refreshing...") : c.common.refresh}
         </button>
       </div>
 

@@ -27,6 +27,7 @@ var (
 )
 
 func (s *Server) initPeerTransport(ctx context.Context) error {
+	_ = ctx
 	if len(s.ca) == 0 {
 		return fmt.Errorf("no CA available for peer transport")
 	}

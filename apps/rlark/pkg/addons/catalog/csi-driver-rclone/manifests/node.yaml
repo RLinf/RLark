@@ -6,6 +6,10 @@ metadata:
   labels:
     app: csi-driver-rclone-node
 spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: csi-driver-rclone-node
@@ -14,8 +18,17 @@ spec:
       labels:
         app: csi-driver-rclone-node
     spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       serviceAccountName: csi-driver-rclone
       priorityClassName: system-cluster-critical
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- $parts := splitList "=" .Values.nodeSelector }}
+        {{- if eq (len $parts) 2 }}
+        {{ index $parts 0 }}: {{ index $parts 1 }}
+        {{- end }}
+      {{- end }}
       tolerations:
         - operator: Exists
       containers:
@@ -23,28 +36,29 @@ spec:
           image: {{ .Values.rcloneImage }}
           imagePullPolicy: Always
           args:
-            - "--driver-name=$(DRIVER_NAME)"
-            - "--node-id=$(NODE_ID)"
-            - "--endpoint=unix://csi/csi.sock"
-            - "--v={{ .Values.nodeLogLevel }}"
+            - "-v={{ .Values.nodeLogLevel }}"
+            - "--nodeid=$(NODE_ID)"
+            - "--endpoint=$(CSI_ENDPOINT)"
           env:
-            - name: DRIVER_NAME
-              value: {{ .Values.driverName }}
             - name: NODE_ID
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
           securityContext:
             privileged: true
+          livenessProbe:
+            httpGet:
+              host: localhost
+              path: /healthz
+              port: 29653
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+            periodSeconds: 30
           volumeMounts:
-            - name: socket-dir
-              mountPath: /csi
-            - name: kubelet-dir
-              mountPath: /var/lib/kubelet
-              mountPropagation: Bidirectional
             - name: plugin-dir
-              mountPath: /var/lib/kubelet/plugins
-              mountPropagation: Bidirectional
+              mountPath: /csi
             - name: mount-dir
               mountPath: /var/lib/kubelet/pods
               mountPropagation: Bidirectional
@@ -61,7 +75,7 @@ spec:
             - name: DRIVER_REG_SOCK_PATH
               value: /var/lib/kubelet/plugins/{{ .Values.driverName }}/csi.sock
           volumeMounts:
-            - name: socket-dir
+            - name: plugin-dir
               mountPath: /csi
             - name: registration-dir
               mountPath: /registration
@@ -70,21 +84,16 @@ spec:
           imagePullPolicy: Always
           args:
             - "--csi-address=/csi/csi.sock"
-            - "--health-timeout=30s"
+            - "--probe-timeout=3s"
+            - "--http-endpoint=localhost:29653"
             - "--v={{ .Values.nodeLogLevel }}"
           volumeMounts:
-            - name: socket-dir
+            - name: plugin-dir
               mountPath: /csi
       volumes:
-        - name: socket-dir
-          emptyDir: {}
-        - name: kubelet-dir
-          hostPath:
-            path: /var/lib/kubelet
-            type: Directory
         - name: plugin-dir
           hostPath:
-            path: /var/lib/kubelet/plugins
+            path: /var/lib/kubelet/plugins/{{ .Values.driverName }}
             type: DirectoryOrCreate
         - name: mount-dir
           hostPath:

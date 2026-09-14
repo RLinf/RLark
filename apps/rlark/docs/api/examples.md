@@ -41,10 +41,10 @@ curl -X PATCH \
 
 ## 2. Create and inspect a Job
 
-Users create Jobs with complete Task templates. The Job controller creates the corresponding namespaced Task resources and the Agent creates the downstream workload.
+Users create Jobs with complete Task templates. The Gateway stores the submitted `metadata.name` as the display name and returns a generated resource ID in `metadata.name`. API clients must retain that returned ID for later requests. The Job controller creates the corresponding namespaced Task resources and the Agent creates the downstream workload.
 
 ```bash
-curl -X POST "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs" \
+JOB_ID="$(curl -fsS -X POST "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs" \
   -H "Content-Type: application/json" \
   -d '{
     "apiVersion": "rlinf.io/v1alpha1",
@@ -86,7 +86,9 @@ curl -X POST "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs" \
         }
       ]
     }
-  }'
+  }' | jq -r '.metadata.name')"
+
+echo "$JOB_ID" # jo-<16 hexadecimal characters>
 ```
 
 The image, command, environment, resources, and volumes belong under `kubernetes.workload.template.spec.containers`; they are not top-level Task fields.
@@ -96,16 +98,16 @@ The image, command, environment, resources, and volumes belong under `kubernetes
 curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs?labelSelector=framework=ppo"
 
 # Get the Job, including its status field.
-curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/ppo-cartpole"
+curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/$JOB_ID"
 
 # Stop the Job.
 curl -X PATCH \
-  "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/ppo-cartpole" \
+  "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/$JOB_ID" \
   -H "Content-Type: application/merge-patch+json" \
   -d '{"spec":{"stopped":true}}'
 
 # Delete the Job.
-curl -X DELETE "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/ppo-cartpole"
+curl -X DELETE "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/$JOB_ID"
 ```
 
 A merge patch replaces arrays as a whole. When patching `tasks` or `jobTemplates`, send complete array elements, including required fields such as `role`, or use JSON Patch.
@@ -221,7 +223,7 @@ curl "$RLARK_GATEWAY/api/v1/storage/storageclass?clusters=cluster-a,cluster-b"
 curl "$RLARK_GATEWAY/api/v1/storage/storageclass/provider"
 
 # Read Job logs.
-curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/ppo-cartpole/logs"
+curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs/$JOB_ID/logs"
 
 # List SSH public keys for a user.
 curl "$RLARK_GATEWAY/api/v1/ssh-user-keys?user=alice"

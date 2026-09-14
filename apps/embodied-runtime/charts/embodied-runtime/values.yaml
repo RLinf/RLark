@@ -48,10 +48,11 @@ webhook:
   caSecret:
     name: ""
     namespace: ""
-  # devinitImage overrides the injected init container image. It must contain
-  # the devinit binary at /usr/local/bin/devinit. When empty, the device
-  # plugin auto-discovers its own image (.Values.devicePlugin.image, via the
-  # downward API) which ships devinit — so this is rarely needed.
+  # devinitImage overrides the injected init container image. The devinit
+  # binary is mounted from the host (/opt/rlinf/bin/devinit) via Allocate, so
+  # the image does not need to contain it. When empty, the device plugin
+  # auto-discovers its own image (.Values.devicePlugin.image, via the
+  # downward API) or falls back to "busybox:latest".
   devinitImage: ""
 
 # device-plugin configuration file. Keys are snake_case to match the binary's

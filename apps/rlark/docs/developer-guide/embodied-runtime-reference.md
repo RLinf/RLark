@@ -257,7 +257,7 @@ The webhook has **automatic CA management**: it loads the CA cert+key from a Sec
 | `--webhook-mutating-config` | `MutatingWebhookConfiguration` name for auto CA management. |
 | `--webhook-service-name` / `--webhook-service-namespace` | Service fronting the webhook. |
 | `--webhook-ca-secret-name` / `--webhook-ca-secret-namespace` | Secret persisting the CA (empty = in-memory). |
-| `--webhook-devinit-image` | Injected init container image (default: auto-discovered). |
+| `--webhook-devinit-image` | Injected init container image (default: auto-discovered, then `busybox:latest`). The binary is mounted from the host, so the image does not need to contain devinit. |
 
 Enable via Helm:
 

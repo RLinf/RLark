@@ -1,0 +1,12 @@
+{
+  "name": "RLark Development",
+  "image": "harbor.infini-ai.com/share/devpods/universal:alpha1",
+  "containerEnv": {
+    "GOPROXY": "https://goproxy.cn,direct",
+    "GO111MODULE": "on",
+    "GOPRIVATE": "gitlab.infini-ai.com",
+    "GONOSUMDB": "gitlab.infini-ai.com",
+    "GONOPROXY": "gitlab.infini-ai.com",
+    "GOAUTH": "${containerWorkspaceFolder}/.devcontainer/goauth.sh"
+  }
+}

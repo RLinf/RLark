@@ -18,6 +18,8 @@
 | `pods` | Namespaced | `GET /api/v1/rlinf.io/v1alpha1/pods`；`GET, PATCH /api/v1/rlinf.io/v1alpha1/pods/{name}`；`GET /api/v1/rlinf.io/v1alpha1/pods/{name}/events`；`GET /api/v1/rlinf.io/v1alpha1/pods/{name}/terminal` |
 | `domains` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/domains`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/domains/{name}` |
 
+创建 Job 时，Gateway 会将请求中的 `metadata.name` 保存为展示名，并在响应的 `metadata.name` 中返回系统生成的 `jo-<16 位十六进制字符>` 资源 ID。后续 Job API 请求应使用该返回 ID。
+
 Gateway Router 未暴露 CRD status 子资源路由；状态随普通资源响应返回。
 
 ## 集群与证书

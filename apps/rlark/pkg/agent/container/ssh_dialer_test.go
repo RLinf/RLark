@@ -346,8 +346,11 @@ func TestSSHDialer_GC(t *testing.T) {
 	defer func() { _ = d.Close() }()
 
 	entry := d.getOrCreate("test-domain")
-	entry.client = newSSHClient(t)
+	client := newSSHClient(t)
+	entry.mu.Lock()
+	entry.client = client
 	entry.lastUsed = time.Now().Add(-1 * time.Hour)
+	entry.mu.Unlock()
 
 	time.Sleep(100 * time.Millisecond)
 

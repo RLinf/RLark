@@ -121,7 +121,7 @@ export function DomainsPage({
         onChange={() => {}}
         count={domains.length}
         copy={c}
-        onRefresh={() => fetchDomains()}
+        onRefresh={() => fetchDomains(false)}
       />
       {error && (
         <div className="cert-error" style={{ marginBottom: 12 }}>

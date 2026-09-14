@@ -58,7 +58,7 @@ func (g *Gateway) handlePodTerminal(c *gin.Context) {
 	}
 
 	container := c.DefaultQuery("container", "main")
-	command := c.DefaultQuery("command", "/bin/sh")
+	command := c.DefaultQuery("command", "/bin/bash")
 
 	browserWs, err := gwTerminalUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {

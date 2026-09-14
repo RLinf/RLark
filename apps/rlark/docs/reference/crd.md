@@ -1403,6 +1403,7 @@ Responses:
   - `kubernetes`: `object`, optional
     - `workload`: `object`, optional
       - `kind`: `string`, optional
+      - `pvcSizeGbMap`: `object`, optional
       - `pvcStorageMap`: `object`, optional
       - `replicas`: `integer`, optional
       - `template`: `object`, optional - PodTemplateSpec describes the data a pod should have when created from a template

@@ -256,6 +256,14 @@ export function installMockBackend() {
     if (method === "GET" && path === "/api/v1/rlinf.io/v1alpha1/nodes")
       return json({ items: nodes });
     if (
+      method === "GET" &&
+      path.startsWith("/api/v1/rlinf.io/v1alpha1/nodes/")
+    ) {
+      const name = decodeURIComponent(path.split("/").pop()!);
+      const node = nodes.find((item) => item.metadata.name === name);
+      return node ? json(node) : json({ error: "not found" }, 404);
+    }
+    if (
       method === "PATCH" &&
       path.startsWith("/api/v1/rlinf.io/v1alpha1/nodes/")
     ) {
@@ -391,7 +399,7 @@ export function installMockBackend() {
       const next: StorageClass = {
         id: name,
         name,
-        namespace: payload.namespace || "default",
+        namespace: "kube-system",
         provider: payload.provider || "MinIO",
         clusters: Array.isArray(payload.clusters) ? payload.clusters : [],
         endpoint: payload.endpoint || "",

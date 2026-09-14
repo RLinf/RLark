@@ -184,6 +184,8 @@ export function JobsPage({
   const [phaseFilter, setPhaseFilter] = useState<"All" | Phase>("All");
   const [realJobs, setRealJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listRefreshing, setListRefreshing] = useState(false);
+  const [copiedJobId, setCopiedJobId] = useState("");
   const [error, setError] = useState("");
   const [actionNotice, setActionNotice] = useState("");
   const [jobAction, setJobAction] = useState<
@@ -233,19 +235,35 @@ export function JobsPage({
     if (isInitial) setLoading(true);
     setError("");
     try {
-      const [jobsResp, nodesResp] = await Promise.all([
-        fetch("/api/v1/rlinf.io/v1alpha1/jobs"),
-        fetch("/api/v1/rlinf.io/v1alpha1/nodes"),
-      ]);
+      const jobsResp = await fetch("/api/v1/rlinf.io/v1alpha1/jobs");
       if (!jobsResp.ok) throw new Error(`HTTP ${jobsResp.status}`);
       const data = await jobsResp.json();
       const items: CRDJob[] = data.items ?? [];
       setRealJobs(items.map(crdToJob));
+
+      const nodeNames = new Set<string>();
+      for (const job of items) {
+        for (const task of job.status?.tasks ?? []) {
+          for (const nodeName of task.observedNodes ?? []) {
+            if (nodeName) nodeNames.add(nodeName);
+          }
+        }
+      }
+
       // Build nodeName -> pullProgress / nodeName -> events maps. Failures
       // here are non-fatal: the hover tooltip simply won't appear.
-      if (nodesResp.ok) {
-        const nodesData = await nodesResp.json();
-        const nodeItems: CRDNode[] = nodesData.items ?? [];
+      const nodeResponses = await Promise.all(
+        [...nodeNames].map(async (nodeName) => {
+          const response = await fetch(
+            `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(nodeName)}`,
+          );
+          return response.ok ? response.json() : null;
+        }),
+      );
+      {
+        const nodeItems: CRDNode[] = nodeResponses.filter(
+          (node): node is CRDNode => node !== null,
+        );
         const progressMap: Record<string, PullProgressEntry[]> = {};
         const eventsMap: Record<string, NodeEventEntry[]> = {};
         const deviceModelMap: Record<
@@ -280,6 +298,22 @@ export function JobsPage({
   };
 
   useAutoRefresh(fetchJobs, 10000);
+
+  const handleListRefresh = async () => {
+    if (listRefreshing) return;
+    setListRefreshing(true);
+    try {
+      await fetchJobs(false);
+    } finally {
+      setListRefreshing(false);
+    }
+  };
+
+  const handleCopyJobId = async (jobId: string) => {
+    if (!(await copyText(jobId))) return;
+    setCopiedJobId(jobId);
+    window.setTimeout(() => setCopiedJobId(""), 1600);
+  };
 
   const handleDelete = async (job: Job) => {
     setJobAction("delete");
@@ -329,14 +363,12 @@ export function JobsPage({
         (task) => task.status?.phase === "Stopped",
       );
       if (current.phase === "Stopped" && workersStopped) {
-        return;
+        return current;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
     }
     throw new Error(
-      zh
-        ? "等待 Worker 停止超时，任务未删除。"
-        : "Timed out waiting for workers to stop; the job was not deleted.",
+      zh ? "等待 Worker 停止超时。" : "Timed out waiting for workers to stop.",
     );
   };
 
@@ -350,15 +382,16 @@ export function JobsPage({
         body: JSON.stringify({ spec: { stopped } }),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      if (stopped) await waitForJobWorkersStopped(job);
+      const stoppedJob = stopped ? await waitForJobWorkersStopped(job) : null;
       setRealJobs((prev) =>
         prev.map((j) =>
           j.id === job.id
-            ? {
+            ? (stoppedJob ?? {
                 ...j,
                 stopped,
-                phase: (stopped ? "Stopped" : "Pending") as Phase,
-              }
+                phase: "Pending" as Phase,
+                stoppedAt: "—",
+              })
             : j,
         ),
       );
@@ -484,7 +517,7 @@ export function JobsPage({
             : await handleRestart(job);
     if (succeeded) {
       setLifecycleConfirm(null);
-      if (selectedName) onSelect(undefined);
+      if (selectedName) onSelect(job.name);
     }
   };
 
@@ -573,7 +606,7 @@ export function JobsPage({
               const job = restartTarget;
               setRestartTarget(null);
               void handleRestart(job).then((succeeded) => {
-                if (succeeded) onSelect(undefined);
+                if (succeeded) onSelect(job.name);
               });
             }}
             onEditRestart={
@@ -665,7 +698,8 @@ export function JobsPage({
         onChange={setQuery}
         count={filtered.length}
         copy={c}
-        onRefresh={() => fetchJobs()}
+        onRefresh={handleListRefresh}
+        refreshing={listRefreshing}
         filterValue={phaseFilter}
         onFilterChange={(value) => setPhaseFilter(value as "All" | Phase)}
         filterOptions={[
@@ -788,16 +822,29 @@ export function JobsPage({
               return (
                 <tr key={job.id}>
                   <td>
-                    <button
-                      className={`link-cell job-id-cell${job.id.length > 28 ? " is-long" : ""}`}
-                      title={job.id}
-                      onClick={() => onSelect(job.id)}
-                    >
-                      <strong>{job.id}</strong>
-                      {job.displayName !== job.id && (
-                        <small>{job.displayName}</small>
-                      )}
-                    </button>
+                    <div className="job-id-cell-wrap">
+                      <button
+                        className={`link-cell job-id-cell${job.id.length > 28 ? " is-long" : ""}`}
+                        title={job.id}
+                        onClick={() => onSelect(job.id)}
+                      >
+                        <strong>{job.displayName}</strong>
+                      </button>
+                      <button
+                        type="button"
+                        className="plain-button job-id-copy"
+                        onClick={() => handleCopyJobId(job.id)}
+                        title={zh ? "复制资源 ID" : "Copy resource ID"}
+                        aria-label={zh ? "复制资源 ID" : "Copy resource ID"}
+                      >
+                        {copiedJobId === job.id ? (
+                          <Check size={13} />
+                        ) : (
+                          <Copy size={13} />
+                        )}
+                        <small>{job.id}</small>
+                      </button>
+                    </div>
                   </td>
                   <td>
                     <span className="role-chip">{c.jobType[job.type]}</span>
@@ -1505,6 +1552,12 @@ export function JobDetailPage({
   >;
 }) {
   const zh = c.nav.overview === "总览";
+  const [jobIdCopied, setJobIdCopied] = useState(false);
+  const handleCopyResourceId = async () => {
+    if (!(await copyText(job.id))) return;
+    setJobIdCopied(true);
+    window.setTimeout(() => setJobIdCopied(false), 1600);
+  };
   const [activeTab, setActiveTab] = useState<"workers" | "logs" | "metrics">(
     "workers",
   );
@@ -1533,9 +1586,28 @@ export function JobDetailPage({
       logs: string;
     }>
   >([]);
+  const [backendLogs, setBackendLogs] = useState<
+    Array<{
+      timestamp: string;
+      line: string;
+      labels?: Record<string, string>;
+      fields?: Record<string, any>;
+    }>
+  >([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsError, setLogsError] = useState<string | null>(null);
-  const [workerRoleFilter, setWorkerRoleFilter] = useState("All");
+  const [logsHasMore, setLogsHasMore] = useState(false);
+  const [logsNextCursor, setLogsNextCursor] = useState("");
+  const [logsLoadingMore, setLogsLoadingMore] = useState(false);
+  // 游标历史栈，用于上一页/下一页翻页。首页为空字符串，第一页查完后 push(nextCursor)。
+  const [logsCursorHistory, setLogsCursorHistory] = useState<string[]>([""]);
+  const [logsPageIndex, setLogsPageIndex] = useState(0);
+  // 角色配置区块的角色选择（默认第一个角色）
+  const [workerRoleFilter, setWorkerRoleFilter] = useState(
+    job.resources.length > 0 ? job.resources[0].role : "All",
+  );
+  // Worker 列表的角色筛选（独立于角色配置区块，默认 All）
+  const [workerListRoleFilter, setWorkerListRoleFilter] = useState("All");
   const [workerPage, setWorkerPage] = useState(1);
   const [workerSort, setWorkerSort] = useState<{
     key:
@@ -1545,6 +1617,8 @@ export function JobDetailPage({
       | "node"
       | "kind"
       | "ip"
+      | "domainIP"
+      | "gpu"
       | "createdAt"
       | "phase";
     direction: SortDirection;
@@ -1558,6 +1632,9 @@ export function JobDetailPage({
   const [logWorkerFilter, setLogWorkerFilter] = useState("All");
   const [logQuery, setLogQuery] = useState("");
   const [logRange, setLogRange] = useState("1h");
+  const [logCustomRange, setLogCustomRange] = useState(false);
+  const [logCustomFrom, setLogCustomFrom] = useState("");
+  const [logCustomTo, setLogCustomTo] = useState("");
   const [logStreamEnabled, setLogStreamEnabled] = useState(false);
 
   // Aggregate Node CR pullProgress for the top StatusBadge hover. Uses Node CR
@@ -1625,10 +1702,18 @@ export function JobDetailPage({
   });
   const workerTaskNamesKey = workerTaskNames.join(",");
 
+  const handleWorkerRefresh = async () => {
+    if (workerRefreshing) return;
+    setWorkerRefreshing(true);
+    await refreshTasks();
+    setWorkerRefreshKey((key) => key + 1);
+  };
+
   useEffect(() => {
     if (!workerTaskNamesKey) {
       setPods([]);
       setDomainIPMap({});
+      setWorkerRefreshing(false);
       return;
     }
     let cancelled = false;
@@ -1737,69 +1822,180 @@ export function JobDetailPage({
     [pendingPodNamesKey],
   );
 
-  const fetchLogs = async (isInitial = true) => {
+  const getLogTimeRange = (): { from: string; to: string } => {
+    if (logCustomRange) {
+      if (logCustomFrom && logCustomTo) {
+        // Convert local datetime-local input (no timezone) to UTC ISO string
+        const fromDate = new Date(logCustomFrom);
+        const toDate = new Date(logCustomTo);
+        return { from: fromDate.toISOString(), to: toDate.toISOString() };
+      }
+      // Fallback to 1h if custom range is incomplete
+    }
+    const to = new Date();
+    const from = new Date();
+    switch (logRange) {
+      case "15m":
+        from.setMinutes(from.getMinutes() - 15);
+        break;
+      case "1h":
+        from.setHours(from.getHours() - 1);
+        break;
+      case "6h":
+        from.setHours(from.getHours() - 6);
+        break;
+      case "24h":
+        from.setHours(from.getHours() - 24);
+        break;
+      case "7d":
+        from.setDate(from.getDate() - 7);
+        break;
+      case "30d":
+        from.setDate(from.getDate() - 30);
+        break;
+      default:
+        from.setHours(from.getHours() - 1);
+    }
+    // Convert to UTC ISO string (new Date() is already local time)
+    return { from: from.toISOString(), to: to.toISOString() };
+  };
+
+  const fetchLogs = async (isInitial = true, cursor = "") => {
     if (activeTab !== "logs") return;
-    if (!isInitial && !logStreamEnabled) return;
     if (isInitial) setLogsLoading(true);
+    if (cursor) setLogsLoadingMore(true);
     setLogsError(null);
     try {
+      const params = new URLSearchParams();
+      const { from, to } = getLogTimeRange();
+      params.set("from", from);
+      params.set("to", to);
+
+      // Always send the first task as the base filter (backend requires it)
+      let taskName = "";
+      if (logRoleFilter !== "All") {
+        const resource = job.resources.find((r) => r.role === logRoleFilter);
+        taskName = resource
+          ? taskResourceName(job.name, resource.role)
+          : logRoleFilter;
+      } else if (logWorkerFilter !== "All") {
+        const matchedPod = pods.find((p) => p.podName === logWorkerFilter);
+        if (matchedPod && matchedPod.taskName) {
+          taskName = matchedPod.taskName;
+        }
+      }
+
+      if (!taskName && job.resources.length > 0) {
+        // Default to the first resource's task if nothing selected
+        taskName = taskResourceName(job.name, job.resources[0].role);
+      }
+
+      if (taskName) {
+        params.set("task", taskName);
+      }
+
+      if (logWorkerFilter !== "All") {
+        params.set("pod", logWorkerFilter);
+      }
+
+      if (logQuery.trim()) {
+        params.set("query", logQuery.trim());
+      }
+
+      if (cursor) {
+        params.set("cursor", cursor);
+      }
+
       const resp = await fetch(
-        `/api/v1/rlinf.io/v1alpha1/jobs/${encodeURIComponent(job.name)}/logs`,
+        `/api/v1/rlinf.io/v1alpha1/jobs/${encodeURIComponent(job.name)}/logs?${params.toString()}`,
       );
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      setPodLogs(Array.isArray(data.pods) ? data.pods : []);
+      if (data.source === "backend" && Array.isArray(data.entries)) {
+        // 分页模式：替换当前页数据，而不是追加
+        setBackendLogs(data.entries);
+        setPodLogs([]);
+        setLogsHasMore(Boolean(data.hasMore));
+        setLogsNextCursor(data.nextCursor || "");
+      } else {
+        setPodLogs(Array.isArray(data.pods) ? data.pods : []);
+        setBackendLogs([]);
+        setLogsHasMore(false);
+        setLogsNextCursor("");
+      }
     } catch (e) {
-      setPodLogs([]);
+      if (!cursor) {
+        setPodLogs([]);
+        setBackendLogs([]);
+      }
       setLogsError(e instanceof Error ? e.message : String(e));
     } finally {
       setLogsLoading(false);
+      setLogsLoadingMore(false);
     }
   };
 
-  useAutoRefresh(fetchLogs, 5000, [activeTab, job.name, logStreamEnabled]);
+  // 查询条件变化时重置到第一页
+  const resetLogsPagination = () => {
+    setLogsCursorHistory([""]);
+    setLogsPageIndex(0);
+  };
 
-  const fallbackWorkers: WorkerItem[] =
-    job.taskStatuses.length > 0
-      ? job.taskStatuses.map((ts, i) => {
-          const childTaskName = ts.name.toLowerCase().replace(/\s+/g, "-");
-          const jobChildName = `${job.name}-${childTaskName}`
-            .toLowerCase()
-            .replace(/\s+/g, "-");
-          return {
-            id: `${job.id}-${i}`,
-            name: ts.name,
-            jobId: job.id,
-            role: ts.name,
-            node:
-              taskNodes[jobChildName] ??
-              taskNodes[ts.name] ??
-              ts.observedNodes?.join(", ") ??
-              "—",
-            cluster: taskClusters[jobChildName] ?? taskClusters[ts.name] ?? "—",
-            phase: (ts.phase || "Pending") as Phase,
-            cpu: job.resources.find((item) => item.role === ts.name)?.cpu ?? "",
-            memory:
-              job.resources.find((item) => item.role === ts.name)?.memory ?? "",
-            gpu: job.resources.find((item) => item.role === ts.name)?.gpu,
-            logs: ts.message
-              ? [ts.message]
-              : [
-                  `${ts.name}: worker state synced`,
-                  `${ts.name}: waiting for runtime heartbeat`,
-                ],
-            statusMessage: ts.message || undefined,
-            pullProgress:
-              pullProgressMap[jobChildName] ??
-              pullProgressMap[ts.name.toLowerCase()] ??
-              [],
-            events:
-              taskEventsMap[jobChildName] ??
-              taskEventsMap[ts.name.toLowerCase()] ??
-              [],
-          };
-        })
-      : [];
+  const goToNextLogPage = () => {
+    if (!logsHasMore || !logsNextCursor || logsLoadingMore) return;
+    const nextHistory = [...logsCursorHistory];
+    nextHistory[logsPageIndex + 1] = logsNextCursor;
+    setLogsCursorHistory(nextHistory);
+    setLogsPageIndex(logsPageIndex + 1);
+    fetchLogs(false, logsNextCursor);
+  };
+
+  const goToPrevLogPage = () => {
+    if (logsPageIndex === 0 || logsLoadingMore) return;
+    const prevIndex = logsPageIndex - 1;
+    const prevCursor = logsCursorHistory[prevIndex] || "";
+    setLogsPageIndex(prevIndex);
+    fetchLogs(false, prevCursor);
+  };
+
+  // 查询条件变化时重置分页到第一页
+  useEffect(() => {
+    resetLogsPagination();
+  }, [
+    logRange,
+    logCustomRange,
+    logCustomFrom,
+    logCustomTo,
+    logRoleFilter,
+    logWorkerFilter,
+    logQuery,
+  ]);
+
+  useAutoRefresh(fetchLogs, 5000, [
+    activeTab,
+    job.name,
+    logStreamEnabled,
+    logRange,
+    logCustomRange,
+    logCustomFrom,
+    logCustomTo,
+    logRoleFilter,
+    logWorkerFilter,
+    logQuery,
+  ]);
+
+  const schedulingSummary = (
+    message: string | undefined,
+    events: NodeEventEntry[],
+  ) =>
+    message === "FailedScheduling" ||
+    events.some((event) => event.reason === "FailedScheduling")
+      ? zh
+        ? "没有合适的节点可调度，资源可能被占用"
+        : "No suitable node is available; resources may be occupied"
+      : message;
+
+  const fallbackWorkers: WorkerItem[] = [];
   const resourceForTask = (taskName: string) =>
     job.resources.find(
       (resource) => taskResourceName(job.name, resource.role) === taskName,
@@ -1815,7 +2011,9 @@ export function JobDetailPage({
           // hover surfaces live image pull progress for this worker.
           const nodePullProgress =
             phase === "Pending" && pod.node
-              ? (nodePullProgressMap[pod.node] ?? [])
+              ? (nodePullProgressMap[pod.node] ?? []).filter(
+                  (progress) => progress.image === resource?.image,
+                )
               : [];
           // 同样从 Node.status.events 取节点 warning 事件；当 pod.node
           // 缺失时回退到 Task.status.events，让 Pending worker 行 tooltip
@@ -1845,7 +2043,7 @@ export function JobDetailPage({
                   `${role}: worker state synced`,
                   `${role}: waiting for runtime heartbeat`,
                 ],
-            statusMessage: pod.message || undefined,
+            statusMessage: schedulingSummary(pod.message, workerEvents),
             pullProgress: nodePullProgress,
             events: workerEvents,
           };
@@ -1854,10 +2052,7 @@ export function JobDetailPage({
   const runningWorkerCount = jobWorkers.filter(
     (worker) => worker.phase === "Running",
   ).length;
-  const displayPhase = effectiveJobPhase(
-    job,
-    jobWorkers.map((worker) => worker.phase),
-  );
+  const displayPhase = effectiveJobPhase(job);
   const workerPodsByTask = new Map<string, PodInfo[]>();
   for (const worker of jobWorkers) {
     workerPodsByTask.set(
@@ -1869,9 +2064,12 @@ export function JobDetailPage({
       ),
     );
   }
-  const workerRoles = [...new Set(jobWorkers.map((worker) => worker.role))];
+  const workerRoles = [
+    ...new Set(job.resources.map((resource) => resource.role)),
+  ];
   const filteredWorkers = jobWorkers.filter(
-    (worker) => workerRoleFilter === "All" || worker.role === workerRoleFilter,
+    (worker) =>
+      workerListRoleFilter === "All" || worker.role === workerListRoleFilter,
   );
   const toggleWorkerSort = (key: typeof workerSort.key) => {
     setWorkerSort((current) => ({
@@ -1899,6 +2097,14 @@ export function JobDetailPage({
             return getNodeKindLabel(worker);
           case "ip":
             return pod?.ip ?? "";
+          case "domainIP":
+            return worker.id
+              ? (domainIPMap[
+                  `${worker.id.split("/")[0]}/${worker.id.split("/")[1]}/${worker.id.split("/")[2]}`
+                ] ?? "")
+              : "";
+          case "gpu":
+            return worker.gpu ?? "";
           case "createdAt":
             return formatWorkerCreatedAt(job.startedAt, index);
           case "phase":
@@ -1953,33 +2159,74 @@ export function JobDetailPage({
     workerTableDrag.current.active = false;
     setWorkerTableDragging(false);
   };
-  const logEntries = podLogs.flatMap((pod) => {
-    const role =
-      resourceForTask(pod.taskName)?.role ??
-      job.resources.find((resource) => resource.role === pod.taskName)?.role ??
-      pod.taskName;
-    return pod.logs
-      .split("\n")
-      .filter(Boolean)
-      .map((message, index) => ({
-        id: `${pod.podName}-${index}-${message}`,
-        worker: pod.podName,
-        role,
-        phase: pod.phase,
-        node: pod.node,
-        message,
-      }));
-  });
-  const logRoles = [...new Set(logEntries.map((entry) => entry.role))];
-  const logWorkers = [
-    ...new Set(
-      logEntries
-        .filter(
-          (entry) => logRoleFilter === "All" || entry.role === logRoleFilter,
-        )
-        .map((entry) => entry.worker),
-    ),
-  ];
+  const logEntries =
+    backendLogs.length > 0
+      ? backendLogs.map((entry, index) => {
+          const taskName = entry.labels?.task || entry.fields?.task || "";
+          const podName = entry.labels?.pod || entry.fields?.pod || "";
+          const node = entry.labels?.node || entry.fields?.node || "";
+          const role =
+            resourceForTask(taskName)?.role ??
+            job.resources.find((resource) => resource.role === taskName)
+              ?.role ??
+            taskName;
+          return {
+            id: `${podName}-${entry.timestamp}-${index}`,
+            worker: podName,
+            role,
+            phase: "Running", // Backend logs don't have phase, assume running
+            node,
+            message: entry.line,
+            timestamp: entry.timestamp,
+          };
+        })
+      : podLogs.flatMap((pod) => {
+          const role =
+            resourceForTask(pod.taskName)?.role ??
+            job.resources.find((resource) => resource.role === pod.taskName)
+              ?.role ??
+            pod.taskName;
+          return pod.logs
+            .split("\n")
+            .filter(Boolean)
+            .map((message, index) => ({
+              id: `${pod.podName}-${index}-${message}`,
+              worker: pod.podName,
+              role,
+              phase: pod.phase,
+              node: pod.node,
+              message,
+              timestamp: undefined,
+            }));
+        });
+  // Derive available roles and workers from Job metadata (resources and pods)
+  // so the dropdowns remain populated and selectable even when log query returns 0 entries.
+  const logRoles = useMemo(() => {
+    const rolesFromResources = job.resources.map((r) => r.role);
+    const rolesFromPods = pods.map((p) => {
+      const resource = resourceForTask(p.taskName);
+      return resource?.role ?? p.taskName;
+    });
+    return [...new Set([...rolesFromResources, ...rolesFromPods])].filter(
+      Boolean,
+    );
+  }, [job.resources, pods]);
+
+  const logWorkers = useMemo(() => {
+    return [
+      ...new Set(
+        pods
+          .filter((p) => {
+            if (logRoleFilter === "All") return true;
+            const resource = resourceForTask(p.taskName);
+            const role = resource?.role ?? p.taskName;
+            return role === logRoleFilter;
+          })
+          .map((p) => p.podName),
+      ),
+    ].filter(Boolean);
+  }, [pods, logRoleFilter]);
+
   const filteredLogEntries = logEntries.filter(
     (entry) =>
       (logRoleFilter === "All" || entry.role === logRoleFilter) &&
@@ -1989,7 +2236,7 @@ export function JobDetailPage({
         .includes(logQuery.toLowerCase()),
   );
   const tabs: Array<{ id: typeof activeTab; label: string }> = [
-    { id: "workers", label: zh ? "Worker" : "Workers" },
+    { id: "workers", label: zh ? "详情" : "Details" },
     { id: "logs", label: c.common.logs },
     { id: "metrics", label: zh ? "监控" : "Metrics" },
   ];
@@ -2002,374 +2249,29 @@ export function JobDetailPage({
       : undefined;
   return (
     <div className="page-content resource-page job-detail-page">
-      <JobPublicOverview
-        job={job}
-        copy={c}
-        onBack={onBack}
-        runningWorkerCount={runningWorkerCount}
-        totalWorkers={jobWorkers.length || job.workers}
-        displayPhase={displayPhase}
-        tensorBoardProxy={tensorBoardProxy}
-        onClone={onClone}
-        lifecycleActions={lifecycleActions}
-        jobPullProgress={jobPullProgress}
-        jobEvents={jobEvents}
-        jobFailedMessage={jobFailedMessage}
-      />
-      <div className="sub-tabs">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            className={activeTab === tab.id ? "active" : ""}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-      {activeTab === "workers" && (
-        <div className="worker-primary-panel worker-console-panel">
-          <div className="worker-panel-head">
-            <div>
-              <span className="eyebrow">
-                {zh ? "运行实例" : "Runtime instances"}
-              </span>
-              <h3>{zh ? "Worker 列表" : "Worker list"}</h3>
-            </div>
-            <div className="worker-panel-actions">
-              <span className="worker-total-count">
-                {filteredWorkers.length} {zh ? "个 Worker" : "workers"}
-              </span>
-              <button
-                className="secondary-button worker-refresh-button"
-                onClick={() => {
-                  refreshTasks();
-                  setWorkerRefreshKey((key) => key + 1);
-                }}
-                disabled={workerRefreshing}
-                title={zh ? "刷新 Worker 列表" : "Refresh worker list"}
-              >
-                <RotateCcw
-                  size={14}
-                  className={workerRefreshing ? "job-action-loading" : ""}
-                />
-                {zh ? "刷新" : "Refresh"}
-              </button>
-            </div>
-          </div>
-          <RoleRuntimeConfig
-            job={job}
-            copy={c}
-            roles={workerRoles}
-            selectedRole={workerRoleFilter}
-            nodeDeviceModelMap={nodeDeviceModelMap}
-            onRoleChange={(role) => {
-              setWorkerRoleFilter(role);
-              setWorkerPage(1);
-            }}
-          />
-          <div
-            ref={workerTableRef}
-            className={`worker-table worker-console-table worker-table-scroll${workerTableDragging ? " dragging" : ""}`}
-            onPointerDown={handleWorkerTablePointerDown}
-            onPointerMove={handleWorkerTablePointerMove}
-            onPointerUp={stopWorkerTableDrag}
-            onPointerCancel={stopWorkerTableDrag}
-          >
-            <table>
-              <thead>
-                <tr>
-                  {(
-                    [
-                      ["name", zh ? "实例名称" : "Worker name"],
-                      ["role", zh ? "角色" : "Role"],
-                      ["cluster", zh ? "集群" : "Cluster"],
-                      ["node", zh ? "节点" : "Node"],
-                      ["kind", zh ? "节点类型" : "Node type"],
-                      ["ip", zh ? "实例 IP" : "Worker IP"],
-                      ["createdAt", zh ? "创建时间" : "Created"],
-                      ["phase", zh ? "状态" : "Status"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <th key={key}>
-                      <SortButton
-                        label={label}
-                        active={workerSort.key === key}
-                        direction={workerSort.direction}
-                        onClick={() => toggleWorkerSort(key)}
-                      />
-                    </th>
-                  ))}
-                  <th aria-label={zh ? "操作" : "Actions"} />
-                </tr>
-              </thead>
-              <tbody>
-                {visibleWorkers.map(({ worker, index }) => (
-                  <WorkerTableRow
-                    key={worker.id}
-                    jobName={job.name}
-                    worker={worker}
-                    copy={c}
-                    pods={workerPodsByTask.get(worker.id) ?? []}
-                    domainIPMap={domainIPMap}
-                    isHeader={
-                      worker.role === job.headerRole &&
-                      worker.name === job.headerWorker
-                    }
-                    createdAt={formatWorkerCreatedAt(job.startedAt, index)}
-                    onSelectNode={onSelectNode}
-                    onSelectCluster={onSelectCluster}
-                    podEventsMap={podEventsMap}
-                    nodeEventsMap={nodeEventsMap}
-                    nodePullProgressMap={nodePullProgressMap}
-                    taskEventsMap={taskEventsMap}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="worker-pagination">
-            <span>
-              {zh
-                ? `第 ${workerPage} / ${workerPageCount} 页`
-                : `Page ${workerPage} of ${workerPageCount}`}
-            </span>
-            <div>
-              <button
-                className="secondary-button"
-                disabled={workerPage <= 1}
-                onClick={() => setWorkerPage((page) => Math.max(1, page - 1))}
-              >
-                {zh ? "上一页" : "Previous"}
-              </button>
-              <button
-                className="secondary-button"
-                disabled={workerPage >= workerPageCount}
-                onClick={() =>
-                  setWorkerPage((page) => Math.min(workerPageCount, page + 1))
-                }
-              >
-                {zh ? "下一页" : "Next"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {activeTab === "logs" && (
-        <div className="job-observe-panel">
-          <div className="observe-panel-head">
-            <div>
-              <span className="eyebrow">{zh ? "任务日志" : "Job logs"}</span>
-              <h3>{zh ? "Worker 日志流" : "Worker log stream"}</h3>
-            </div>
-          </div>
-          {logsLoading ? (
-            <div className="log-loading-state" role="status" aria-live="polite">
-              <span className="log-loading-icon">
-                <LoaderCircle size={20} />
-              </span>
-              <div>
-                <strong>
-                  {zh ? "正在连接 Worker 日志" : "Connecting to worker logs"}
-                </strong>
-                <small>
-                  {zh
-                    ? "正在汇总各实例的最新输出…"
-                    : "Collecting the latest output from each instance…"}
-                </small>
-              </div>
-              <i className="log-loading-shimmer" aria-hidden="true" />
-            </div>
-          ) : logsError ? (
-            <code className="log-error">{logsError}</code>
-          ) : podLogs.length === 0 ? (
-            <code>{zh ? "暂无日志" : "No logs available"}</code>
-          ) : (
-            <>
-              <div className="log-console-toolbar">
-                <label className="log-role-filter">
-                  <span>{zh ? "角色" : "Role"}</span>
-                  <select
-                    value={logRoleFilter}
-                    onChange={(event) => {
-                      setLogRoleFilter(event.target.value);
-                      setLogWorkerFilter("All");
-                    }}
-                  >
-                    <option value="All">{zh ? "全部角色" : "All roles"}</option>
-                    {logRoles.map((role) => (
-                      <option key={role} value={role}>
-                        {role}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="log-worker-filter">
-                  <span>Worker</span>
-                  <select
-                    value={logWorkerFilter}
-                    onChange={(event) => setLogWorkerFilter(event.target.value)}
-                  >
-                    <option value="All">
-                      {zh ? "全部 Worker" : "All workers"}
-                    </option>
-                    {logWorkers.map((worker) => (
-                      <option key={worker} value={worker}>
-                        {worker}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="log-range-filter">
-                  <span>{zh ? "时间范围" : "Time range"}</span>
-                  <select
-                    value={logRange}
-                    onChange={(event) => setLogRange(event.target.value)}
-                  >
-                    <option value="15m">15m</option>
-                    <option value="1h">1h</option>
-                    <option value="6h">6h</option>
-                    <option value="24h">24h</option>
-                  </select>
-                </label>
-                <label className="log-search-field">
-                  <Search size={15} />
-                  <input
-                    value={logQuery}
-                    onChange={(event) => setLogQuery(event.target.value)}
-                    placeholder={zh ? "搜索日志内容" : "Search logs"}
-                  />
-                </label>
-                <button
-                  className={
-                    "stream-toggle" + (logStreamEnabled ? " active" : "")
-                  }
-                  onClick={() => setLogStreamEnabled((enabled) => !enabled)}
-                >
-                  <i />
-                  {logStreamEnabled
-                    ? zh
-                      ? "实时输出中"
-                      : "Streaming"
-                    : zh
-                      ? "已暂停"
-                      : "Paused"}
-                </button>
-                <button
-                  className="secondary-button log-export-button"
-                  onClick={() => exportLogs(filteredLogEntries, job.name)}
-                >
-                  <Download size={15} />
-                  {zh ? "导出" : "Export"}
-                </button>
-              </div>
-              <div
-                className="log-list"
-                aria-live={logStreamEnabled ? "polite" : "off"}
-              >
-                {filteredLogEntries.length > 0 ? (
-                  <>
-                    <div className="log-list-head" aria-hidden="true">
-                      <span>{zh ? "角色" : "Role"}</span>
-                      <span>Worker</span>
-                      <span>{zh ? "日志内容" : "Log message"}</span>
-                    </div>
-                    {filteredLogEntries.map((entry) => (
-                      <div className="log-list-row" key={entry.id}>
-                        <span className="log-role-name">{entry.role}</span>
-                        <span className="log-worker-name">{entry.worker}</span>
-                        <p>{entry.message}</p>
-                      </div>
-                    ))}
-                  </>
-                ) : (
-                  <div className="empty-inline">
-                    {zh ? "未找到匹配的日志。" : "No matching logs found."}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-      {activeTab === "metrics" && (
-        <div className="job-observe-panel">
-          <div className="observe-panel-head">
-            <div>
-              <span className="eyebrow">{zh ? "任务监控" : "Job metrics"}</span>
-              <h3>
-                {zh
-                  ? "Worker 资源与具身通道"
-                  : "Worker resources and live channel"}
-              </h3>
-            </div>
-          </div>
-          <MetricsDashboard
-            workers={jobWorkers}
-            copy={c}
-            isMockMode={isMockMode}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function JobPublicOverview({
-  job,
-  copy: c,
-  onBack,
-  runningWorkerCount,
-  totalWorkers,
-  displayPhase,
-  tensorBoardProxy,
-  onClone,
-  lifecycleActions,
-  jobPullProgress = [],
-  jobEvents = [],
-  jobFailedMessage,
-}: {
-  job: Job;
-  copy: CopyType;
-  onBack: () => void;
-  runningWorkerCount: number;
-  totalWorkers: number;
-  displayPhase: JobDisplayPhase;
-  tensorBoardProxy?: string;
-  onClone?: () => void;
-  lifecycleActions: JobLifecycleActions;
-  // Per-node pullProgress cache shared from JobsPage; surfaced next to the
-  // top StatusBadge while the job is still Pending.
-  jobPullProgress?: PullProgressEntry[];
-  // 节点级 Warning 事件聚合，在 Pending 时与 pullProgress 一并展示。
-  jobEvents?: NodeEventEntry[];
-  // Failed 状态下聚合的异常原因（CrashLoopBackOff / ImagePullBackOff 等），
-  // 供状态徽标 "i" tooltip 展示。
-  jobFailedMessage?: string;
-}) {
-  const zh = c.nav.overview === "总览";
-  const baseConfigRows = [
-    {
-      label: zh ? "网络域" : "Network domain",
-      value: job.domain || (zh ? "未配置" : "Not configured"),
-    },
-    {
-      label: "TensorBoard",
-      value: job.tensorBoardDir || (zh ? "未配置" : "Not configured"),
-    },
-  ];
-  return (
-    <section className="job-detail-summary-card">
+      {/* 顶部返回与操作栏 */}
       <div className="job-detail-summary-head">
         <div>
           <button className="plain-button back-button" onClick={onBack}>
             ← {zh ? "返回任务列表" : "Back"}
           </button>
           <span className="eyebrow">{c.jobs.selected}</span>
-          <h2>{job.name}</h2>
-          <p>
-            {c.jobType[job.type]} · {job.cluster}
-          </p>
+          <h2>{job.displayName}</h2>
+          <div className="job-detail-resource-line">
+            <button
+              type="button"
+              className="plain-button job-id-copy"
+              onClick={handleCopyResourceId}
+              title={zh ? "复制资源 ID" : "Copy resource ID"}
+              aria-label={zh ? "复制资源 ID" : "Copy resource ID"}
+            >
+              {jobIdCopied ? <Check size={13} /> : <Copy size={13} />}
+              <span>{job.id}</span>
+            </button>
+            <span>
+              {c.jobType[job.type]} · {job.cluster}
+            </span>
+          </div>
         </div>
         <div className="job-detail-summary-status">
           <div className="status-with-info">
@@ -2474,113 +2376,607 @@ function JobPublicOverview({
         </div>
       </div>
 
-      <div className="job-detail-summary-grid">
-        <SummaryMetric
-          label={zh ? "Worker" : "Workers"}
-          value={`${runningWorkerCount} / ${totalWorkers}`}
-          hint={zh ? "运行中 / 总数" : "running / total"}
-          tone="blue"
-        />
-        <SummaryMetric
-          label={zh ? "创建时间" : "Created"}
-          value={formatTaskTime(job.startedAt)}
-          hint={zh ? "提交到控制面" : "submitted to control plane"}
-        />
-        <SummaryMetric
-          label={zh ? "已运行" : "Running for"}
-          value={job.duration || "—"}
-          hint={
-            job.stopped
-              ? zh
-                ? "已停止"
-                : "stopped"
-              : zh
-                ? "持续运行中"
-                : "still running"
-          }
-        />
-        <div className="task-summary-metric header-summary-metric">
-          <span>Header Worker</span>
-          <strong>{job.headerRole || "—"}</strong>
-          <small>{zh ? "访问入口" : "Access entry"}</small>
-          {tensorBoardProxy && (
-            <a
-              href={tensorBoardProxy}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="TensorBoard"
+      {/* Tab 导航切换（切换 详情 / 日志 / 监控），与下方内容融合为一个整体卡片 */}
+      <div className="job-tab-panel">
+        <div className="sub-tabs">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              className={activeTab === tab.id ? "active" : ""}
+              onClick={() => setActiveTab(tab.id)}
             >
-              <ExternalLink size={14} />
-            </a>
-          )}
+              {tab.label}
+            </button>
+          ))}
         </div>
-      </div>
 
-      <div className="job-detail-summary-columns">
-        <section className="job-detail-summary-section header-worker-card-legacy">
-          <div className="public-card-head">
-            <div>
-              <span className="eyebrow">{zh ? "访问入口" : "Access"}</span>
-              <h3>Header Worker</h3>
-            </div>
-            {tensorBoardProxy && (
-              <a
-                href={tensorBoardProxy}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="TensorBoard"
-              >
-                <ExternalLink size={16} />
-              </a>
-            )}
-          </div>
-          <div className="header-worker-identity">
-            <span className="role-chip">{job.headerRole || "—"}</span>
-            {job.headerWorker && job.headerWorker !== job.headerRole && (
-              <strong>{job.headerWorker}</strong>
-            )}
-          </div>
-        </section>
+        {activeTab === "workers" && (
+          <>
+            {/* 第一块：角色配置信息（平铺展示，支持切换角色） */}
+            <RoleRuntimeConfig
+              job={job}
+              copy={c}
+              roles={workerRoles}
+              selectedRole={workerRoleFilter}
+              nodeDeviceModelMap={nodeDeviceModelMap}
+              onRoleChange={(role) => {
+                setWorkerRoleFilter(role);
+                setWorkerPage(1);
+              }}
+            />
 
-        <div className="public-runtime-card">
-          <div className="public-runtime-topology">
-            <div className="public-command-card">
-              <span className="public-config-title">
-                {zh ? "启动命令" : "Start command"}
-              </span>
-              <CommandCodeBlock value={job.command || "—"} copy={c} />
-            </div>
-            <div className="public-basic-config-card">
-              <span className="public-config-title">
-                {zh ? "公共配置" : "Shared settings"}
-              </span>
-              <div className="public-basic-config-list">
-                {baseConfigRows.map((row) => (
-                  <div key={row.label}>
-                    <span>{row.label}</span>
-                    <code>{row.value}</code>
+            {/* 第二块：公共配置 */}
+            <JobPublicOverview
+              job={job}
+              copy={c}
+              onBack={onBack}
+              runningWorkerCount={runningWorkerCount}
+              totalWorkers={pods.length || job.workers}
+              displayPhase={displayPhase}
+              tensorBoardProxy={tensorBoardProxy}
+              onClone={onClone}
+              lifecycleActions={lifecycleActions}
+              jobPullProgress={jobPullProgress}
+              jobEvents={jobEvents}
+              jobFailedMessage={jobFailedMessage}
+            />
+
+            {/* 第三块：Pod 实例列表 */}
+            <div className="worker-primary-panel worker-console-panel">
+              <div className="worker-panel-head">
+                <div>
+                  <span className="eyebrow">
+                    {zh ? "Worker 列表" : "Runtime workers"}
+                  </span>
+                  <h3>{zh ? "Worker 维度查看实例信息" : "Worker list"}</h3>
+                </div>
+                <div className="worker-panel-actions">
+                  <div
+                    className="role-runtime-tabs worker-list-role-tabs"
+                    aria-label={zh ? "筛选角色" : "Filter by role"}
+                  >
+                    <button
+                      className={workerListRoleFilter === "All" ? "active" : ""}
+                      onClick={() => {
+                        setWorkerListRoleFilter("All");
+                        setWorkerPage(1);
+                      }}
+                    >
+                      All
+                    </button>
+                    {workerRoles.map((role) => (
+                      <button
+                        key={role}
+                        className={
+                          role === workerListRoleFilter ? "active" : ""
+                        }
+                        onClick={() => {
+                          setWorkerListRoleFilter(role);
+                          setWorkerPage(1);
+                        }}
+                      >
+                        {role}
+                      </button>
+                    ))}
                   </div>
-                ))}
+                  <span className="worker-total-count">
+                    {filteredWorkers.length} {zh ? "个 Pod" : "pods"}
+                  </span>
+                  <button
+                    className="secondary-button worker-refresh-button"
+                    onClick={handleWorkerRefresh}
+                    disabled={workerRefreshing}
+                    aria-busy={workerRefreshing}
+                    title={zh ? "刷新 Worker 列表" : "Refresh worker list"}
+                  >
+                    <RotateCcw
+                      size={14}
+                      className={workerRefreshing ? "job-action-loading" : ""}
+                    />
+                    {workerRefreshing
+                      ? zh
+                        ? "刷新中..."
+                        : "Refreshing..."
+                      : zh
+                        ? "刷新"
+                        : "Refresh"}
+                  </button>
+                </div>
+              </div>
+              <div
+                ref={workerTableRef}
+                className={`worker-table worker-console-table worker-table-scroll${workerTableDragging ? " dragging" : ""}`}
+                onPointerDown={handleWorkerTablePointerDown}
+                onPointerMove={handleWorkerTablePointerMove}
+                onPointerUp={stopWorkerTableDrag}
+                onPointerCancel={stopWorkerTableDrag}
+              >
+                <table>
+                  <thead>
+                    <tr>
+                      {(
+                        [
+                          ["name", zh ? "实例名称" : "Worker name"],
+                          ["role", zh ? "角色" : "Role"],
+                          ["cluster", zh ? "集群" : "Cluster"],
+                          ["node", zh ? "节点" : "Node"],
+                          ["kind", zh ? "节点类型" : "Node type"],
+                          ["ip", zh ? "实例 IP" : "Worker IP"],
+                          ["domainIP", zh ? "网络域 IP" : "Domain IP"],
+                          ["gpu", zh ? "申请 GPU" : "GPU"],
+                          ["createdAt", zh ? "创建时间" : "Created"],
+                          ["phase", zh ? "状态" : "Status"],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <th key={key}>
+                          <SortButton
+                            label={label}
+                            active={workerSort.key === key}
+                            direction={workerSort.direction}
+                            onClick={() => toggleWorkerSort(key)}
+                          />
+                        </th>
+                      ))}
+                      <th
+                        className="worker-sticky-header-col"
+                        aria-label={zh ? "操作" : "Actions"}
+                      >
+                        {zh ? "操作" : "Actions"}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleWorkers.length > 0 ? (
+                      visibleWorkers.map(({ worker, index }) => (
+                        <WorkerTableRow
+                          key={worker.id}
+                          jobName={job.name}
+                          worker={worker}
+                          copy={c}
+                          pods={workerPodsByTask.get(worker.id) ?? []}
+                          domainIPMap={domainIPMap}
+                          isHeader={worker.role === job.headerRole}
+                          createdAt={formatWorkerCreatedAt(
+                            job.startedAt,
+                            index,
+                          )}
+                          onSelectNode={onSelectNode}
+                          onSelectCluster={onSelectCluster}
+                          podEventsMap={podEventsMap}
+                          nodeEventsMap={nodeEventsMap}
+                          nodePullProgressMap={nodePullProgressMap}
+                          taskEventsMap={taskEventsMap}
+                        />
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={11} className="empty-cell">
+                          {zh
+                            ? "当前没有运行中的 Worker 实例"
+                            : "No running worker instances"}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {visibleWorkers.length > 0 && (
+                <div className="worker-pagination">
+                  <span>
+                    {zh
+                      ? `第 ${workerPage} / ${workerPageCount} 页`
+                      : `Page ${workerPage} of ${workerPageCount}`}
+                  </span>
+                  <div>
+                    <button
+                      className="secondary-button"
+                      disabled={workerPage <= 1}
+                      onClick={() =>
+                        setWorkerPage((page) => Math.max(1, page - 1))
+                      }
+                    >
+                      {zh ? "上一页" : "Previous"}
+                    </button>
+                    <button
+                      className="secondary-button"
+                      disabled={workerPage >= workerPageCount}
+                      onClick={() =>
+                        setWorkerPage((page) =>
+                          Math.min(workerPageCount, page + 1),
+                        )
+                      }
+                    >
+                      {zh ? "下一页" : "Next"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {activeTab === "logs" && (
+          <div className="job-observe-panel">
+            <div className="observe-panel-head">
+              <div>
+                <span className="eyebrow">{zh ? "任务日志" : "Job logs"}</span>
+                <h3>{zh ? "Worker 日志流" : "Worker log stream"}</h3>
               </div>
             </div>
+            {logsError ? (
+              <code className="log-error">{logsError}</code>
+            ) : (
+              <>
+                <div className="log-console-toolbar">
+                  <label className="log-role-filter">
+                    <span>{zh ? "角色" : "Role"}</span>
+                    <select
+                      value={logRoleFilter}
+                      onChange={(event) => {
+                        setLogRoleFilter(event.target.value);
+                        setLogWorkerFilter("All");
+                      }}
+                    >
+                      <option value="All">
+                        {zh ? "全部角色" : "All roles"}
+                      </option>
+                      {logRoles.map((role) => (
+                        <option key={role} value={role}>
+                          {role}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="log-worker-filter">
+                    <span>Worker</span>
+                    <select
+                      value={logWorkerFilter}
+                      onChange={(event) =>
+                        setLogWorkerFilter(event.target.value)
+                      }
+                    >
+                      <option value="All">
+                        {zh ? "全部 Worker" : "All workers"}
+                      </option>
+                      {logWorkers.map((worker) => (
+                        <option key={worker} value={worker}>
+                          {worker}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="log-range-filter">
+                    <span>{zh ? "时间范围" : "Time range"}</span>
+                    <select
+                      value={logCustomRange ? "custom" : logRange}
+                      onChange={(event) => {
+                        if (event.target.value === "custom") {
+                          setLogCustomRange(true);
+                          const now = new Date();
+                          const past = new Date(now.getTime() - 3600 * 1000);
+                          setLogCustomTo(now.toISOString().slice(0, 16));
+                          setLogCustomFrom(past.toISOString().slice(0, 16));
+                        } else {
+                          setLogCustomRange(false);
+                          setLogRange(event.target.value);
+                        }
+                      }}
+                    >
+                      <option value="15m">
+                        {zh ? "最近 15 分钟" : "Last 15m"}
+                      </option>
+                      <option value="1h">
+                        {zh ? "最近 1 小时" : "Last 1h"}
+                      </option>
+                      <option value="6h">
+                        {zh ? "最近 6 小时" : "Last 6h"}
+                      </option>
+                      <option value="24h">
+                        {zh ? "最近 24 小时" : "Last 24h"}
+                      </option>
+                      <option value="7d">{zh ? "最近 7 天" : "Last 7d"}</option>
+                      <option value="30d">
+                        {zh ? "最近 30 天" : "Last 30d"}
+                      </option>
+                      <option value="custom">
+                        {zh ? "自定义时间" : "Custom range"}
+                      </option>
+                    </select>
+                  </label>
+                  {logCustomRange && (
+                    <div
+                      className="log-custom-range-inputs"
+                      style={{
+                        display: "flex",
+                        gap: "6px",
+                        alignItems: "center",
+                      }}
+                    >
+                      <input
+                        type="datetime-local"
+                        className="log-custom-datetime"
+                        value={logCustomFrom}
+                        onChange={(e) => setLogCustomFrom(e.target.value)}
+                      />
+                      <span
+                        style={{
+                          fontSize: "12px",
+                          color: "var(--text-secondary)",
+                        }}
+                      >
+                        至
+                      </span>
+                      <input
+                        type="datetime-local"
+                        className="log-custom-datetime"
+                        value={logCustomTo}
+                        onChange={(e) => setLogCustomTo(e.target.value)}
+                      />
+                    </div>
+                  )}
+                  <label className="log-search-field">
+                    <Search size={15} />
+                    <input
+                      value={logQuery}
+                      onChange={(event) => setLogQuery(event.target.value)}
+                      placeholder={
+                        zh
+                          ? "搜索日志内容（仅支持完整单词/词组）"
+                          : "Search logs (full words only)"
+                      }
+                      title={
+                        zh
+                          ? "由于日志索引分词限制，请搜索完整的单词或词组"
+                          : "Search with complete words due to log indexing rules"
+                      }
+                    />
+                  </label>
+                  <button
+                    className={
+                      "stream-toggle" + (logStreamEnabled ? " active" : "")
+                    }
+                    onClick={() => setLogStreamEnabled((enabled) => !enabled)}
+                  >
+                    <i />
+                    {logStreamEnabled
+                      ? zh
+                        ? "实时输出中"
+                        : "Streaming"
+                      : zh
+                        ? "已暂停"
+                        : "Paused"}
+                  </button>
+                  <button
+                    className="secondary-button log-export-button"
+                    onClick={() => exportLogs(filteredLogEntries, job.name)}
+                  >
+                    <Download size={15} />
+                    {zh ? "导出" : "Export"}
+                  </button>
+                </div>
+
+                {logsLoading ? (
+                  <div
+                    className="log-loading-state"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <span className="log-loading-icon">
+                      <LoaderCircle size={20} />
+                    </span>
+                    <div>
+                      <strong>
+                        {zh
+                          ? "正在连接 Worker 日志"
+                          : "Connecting to worker logs"}
+                      </strong>
+                      <small>
+                        {zh
+                          ? "正在汇总各实例的最新输出…"
+                          : "Collecting the latest output from each instance…"}
+                      </small>
+                    </div>
+                    <i className="log-loading-shimmer" aria-hidden="true" />
+                  </div>
+                ) : (
+                  <div
+                    className="log-list"
+                    aria-live={logStreamEnabled ? "polite" : "off"}
+                  >
+                    {filteredLogEntries.length > 0 ? (
+                      <>
+                        <div className="log-list-head" aria-hidden="true">
+                          <span>{zh ? "角色" : "Role"}</span>
+                          <span>Worker</span>
+                          <span>{zh ? "日志内容" : "Log message"}</span>
+                          <span>{zh ? "时间" : "Time"}</span>
+                        </div>
+                        {filteredLogEntries.map((entry) => (
+                          <div className="log-list-row" key={entry.id}>
+                            <span className="log-role-name">{entry.role}</span>
+                            <span className="log-worker-name">
+                              {entry.worker}
+                            </span>
+                            <p>{entry.message}</p>
+                            <span className="log-timestamp">
+                              {entry.timestamp
+                                ? new Date(entry.timestamp).toLocaleString(
+                                    zh ? "zh-CN" : "en-US",
+                                    {
+                                      year: "numeric",
+                                      month: "2-digit",
+                                      day: "2-digit",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                      second: "2-digit",
+                                      hour12: false,
+                                    },
+                                  )
+                                : ""}
+                            </span>
+                          </div>
+                        ))}
+                        {backendLogs.length > 0 && (
+                          <div className="log-pagination">
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              disabled={logsPageIndex === 0 || logsLoadingMore}
+                              onClick={goToPrevLogPage}
+                            >
+                              {zh ? "上一页" : "Prev"}
+                            </button>
+                            <span className="log-page-indicator">
+                              {zh
+                                ? `第 ${logsPageIndex + 1} 页`
+                                : `Page ${logsPageIndex + 1}`}
+                            </span>
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              disabled={!logsHasMore || logsLoadingMore}
+                              onClick={goToNextLogPage}
+                            >
+                              {logsLoadingMore
+                                ? zh
+                                  ? "加载中…"
+                                  : "Loading…"
+                                : zh
+                                  ? "下一页"
+                                  : "Next"}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="empty-inline">
+                        {zh ? "未找到匹配的日志。" : "No matching logs found."}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </div>
-          <div className="public-runtime-tables">
-            <PublicCompactConfigTable
-              title={zh ? "环境变量" : "Environment variables"}
-              firstHeader={zh ? "变量名" : "Name"}
-              secondHeader={zh ? "变量值" : "Value"}
-              rows={
-                job.env.length
-                  ? job.env.map((item) => ({
-                      key: item.key,
-                      value: item.value,
-                    }))
-                  : []
-              }
-              empty={
-                zh ? "未配置环境变量" : "No environment variables configured"
-              }
+        )}
+
+        {activeTab === "metrics" && (
+          <div className="job-observe-panel">
+            <div className="observe-panel-head">
+              <div>
+                <span className="eyebrow">
+                  {zh ? "任务监控" : "Job metrics"}
+                </span>
+                <h3>
+                  {zh
+                    ? "Worker 资源与具身通道"
+                    : "Worker resources and live channel"}
+                </h3>
+              </div>
+            </div>
+            <MetricsDashboard
+              workers={jobWorkers}
+              copy={c}
+              isMockMode={isMockMode}
             />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function JobPublicOverview({
+  job,
+  copy: c,
+  onBack,
+  runningWorkerCount,
+  totalWorkers,
+  displayPhase,
+  tensorBoardProxy,
+  onClone,
+  lifecycleActions,
+  jobPullProgress = [],
+  jobEvents = [],
+  jobFailedMessage,
+}: {
+  job: Job;
+  copy: CopyType;
+  onBack: () => void;
+  runningWorkerCount: number;
+  totalWorkers: number;
+  displayPhase: JobDisplayPhase;
+  tensorBoardProxy?: string;
+  onClone?: () => void;
+  lifecycleActions: JobLifecycleActions;
+  jobPullProgress?: PullProgressEntry[];
+  jobEvents?: NodeEventEntry[];
+  jobFailedMessage?: string;
+}) {
+  const zh = c.nav.overview === "总览";
+  const baseConfigRows = [
+    {
+      label: zh ? "Worker 数量" : "Worker count",
+      value: `${runningWorkerCount} / ${totalWorkers}`,
+    },
+    {
+      label: zh ? "创建时间" : "Created",
+      value: formatTaskTime(job.startedAt),
+    },
+    {
+      label: "Header Worker",
+      value: job.headerRole || "—",
+    },
+    {
+      label: zh ? "网络域" : "Network domain",
+      value: job.domain || (zh ? "未配置" : "Not configured"),
+    },
+    {
+      label: "TensorBoard",
+      value: job.tensorBoardDir || (zh ? "未配置" : "Not configured"),
+    },
+    {
+      label: zh ? "SSH 公钥" : "SSH Public Key",
+      value: job.sshPublicKey
+        ? `${job.sshPublicKey.slice(0, 32)}...`
+        : zh
+          ? "未配置"
+          : "Not configured",
+      fullValue: job.sshPublicKey,
+    },
+  ];
+  return (
+    <section className="job-detail-summary-card">
+      <div className="role-runtime-heading" style={{ marginBottom: "16px" }}>
+        <div>
+          <span className="eyebrow">
+            {zh ? "公共配置" : "Shared configuration"}
+          </span>
+          <strong>
+            {zh ? "任务维度查看公共配置" : "Job-level attributes configuration"}
+          </strong>
+        </div>
+      </div>
+      <div className="public-runtime-card" style={{ width: "100%" }}>
+        <div className="public-runtime-topology">
+          <div className="public-command-card">
+            <span className="public-config-title">
+              {zh ? "启动命令" : "Start command"}
+            </span>
+            <CommandCodeBlock value={job.command || "—"} copy={c} />
+          </div>
+          <div className="public-basic-config-card">
+            <span className="public-config-title">
+              {zh ? "公共属性" : "Shared attributes"}
+            </span>
+            <div className="public-basic-config-list">
+              {baseConfigRows.map((row) => (
+                <div key={row.label}>
+                  <span>{row.label}</span>
+                  <code title={row.fullValue || row.value}>{row.value}</code>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -2742,7 +3138,6 @@ function RoleRuntimeConfig({
   >;
 }) {
   const zh = c.nav.overview === "总览";
-  const [expanded, setExpanded] = useState(false);
   const resource = job.resources.find((item) => item.role === selectedRole);
   const taskName = resource ? taskResourceName(job.name, resource.role) : "";
   const taskStatus = job.taskStatuses.find(
@@ -2793,21 +3188,17 @@ function RoleRuntimeConfig({
         .filter(Boolean)
         .join(" / ") || (zh ? "未申请设备" : "No device requested")
     : "";
-  const nodeSelectors = resource?.nodeSelector
-    ? resource.nodeSelector.split(",").map((selector) => {
-        const [key, ...value] = selector.split("=");
-        return { key: key.trim(), value: value.join("=").trim() };
-      })
-    : [];
 
   return (
-    <section className="role-runtime-config">
+    <section className="role-runtime-config job-detail-summary-card">
       <div className="role-runtime-heading">
         <div>
-          <span className="eyebrow">{zh ? "Worker 角色" : "Worker roles"}</span>
+          <span className="eyebrow">
+            {zh ? "角色配置" : "Roles configuration"}
+          </span>
           <strong>
             {zh
-              ? "按角色查看实例与运行配置"
+              ? "角色维度查看运行配置"
               : "Instances and configuration by role"}
           </strong>
         </div>
@@ -2815,23 +3206,11 @@ function RoleRuntimeConfig({
           className="role-runtime-tabs"
           aria-label={zh ? "选择角色" : "Select role"}
         >
-          <button
-            className={selectedRole === "All" ? "active" : ""}
-            onClick={() => {
-              onRoleChange("All");
-              setExpanded(false);
-            }}
-          >
-            All
-          </button>
           {roles.map((role) => (
             <button
               key={role}
               className={role === selectedRole ? "active" : ""}
-              onClick={() => {
-                onRoleChange(role);
-                setExpanded(false);
-              }}
+              onClick={() => onRoleChange(role)}
             >
               {role}
               {role === job.headerRole && <span>Header</span>}
@@ -2863,23 +3242,6 @@ function RoleRuntimeConfig({
             </span>
             <span>{resource.cluster || "—"}</span>
           </div>
-          <button
-            className="secondary-button role-runtime-toggle"
-            onClick={() => setExpanded((value) => !value)}
-            aria-expanded={expanded}
-          >
-            {expanded
-              ? zh
-                ? "收起配置"
-                : "Collapse"
-              : zh
-                ? "展开配置"
-                : "Show configuration"}
-            <ChevronRight
-              size={15}
-              style={{ transform: expanded ? "rotate(90deg)" : "none" }}
-            />
-          </button>
         </div>
       ) : (
         <p className="role-runtime-all-summary">
@@ -2888,7 +3250,7 @@ function RoleRuntimeConfig({
             : `Showing workers from all ${roles.length} roles`}
         </p>
       )}
-      {resource && expanded && (
+      {resource && (
         <div className="role-runtime-details">
           <div className="role-runtime-command-row">
             <section className="role-runtime-command-card">
@@ -2901,14 +3263,12 @@ function RoleRuntimeConfig({
               />
             </section>
             <section className="role-runtime-selector-card">
-              <span>{zh ? "节点选择" : "Node selectors"}</span>
-              {nodeSelectors.length ? (
+              <span>{zh ? "节点选择" : "Node selection"}</span>
+              {resourceNodes.length ? (
                 <div>
-                  {nodeSelectors.map((selector, index) => (
-                    <p key={`${selector.key}-${index}`}>
-                      <code>{selector.key}</code>
-                      <b>=</b>
-                      <code>{selector.value || "—"}</code>
+                  {resourceNodes.map((node, index) => (
+                    <p key={`${node}-${index}`}>
+                      <code>{node}</code>
                     </p>
                   ))}
                 </div>
@@ -3290,7 +3650,7 @@ function formatBytes(bytes: number): string {
 // descendant). The icon's viewport position is measured on hover/focus and
 // the tooltip is placed above the icon, or below if there isn't enough room
 // above (e.g. when the icon sits in the first row of the Jobs list table).
-function PullProgressInfo({
+export function PullProgressInfo({
   progress,
   events = [],
   zh,
@@ -3305,6 +3665,7 @@ function PullProgressInfo({
 }) {
   const wrapperRef = useRef<HTMLSpanElement | null>(null);
   const tooltipRef = useRef<HTMLSpanElement | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{
     top: number;
@@ -3358,14 +3719,36 @@ function PullProgressInfo({
     });
   };
 
+  const cancelClose = () => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
   const show = () => {
+    cancelClose();
     setPos(null);
     setOpen(true);
   };
   const clear = () => {
+    cancelClose();
     setOpen(false);
     setPos(null);
   };
+  const handleMouseLeave = (event: React.MouseEvent<HTMLSpanElement>) => {
+    const nextTarget = event.relatedTarget;
+    if (
+      nextTarget instanceof Node &&
+      (wrapperRef.current?.contains(nextTarget) ||
+        tooltipRef.current?.contains(nextTarget))
+    ) {
+      return;
+    }
+    cancelClose();
+    closeTimerRef.current = window.setTimeout(clear, 250);
+  };
+
+  useEffect(() => () => cancelClose(), []);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -3404,7 +3787,7 @@ function PullProgressInfo({
         tabIndex={0}
         ref={wrapperRef}
         onMouseEnter={show}
-        onMouseLeave={clear}
+        onMouseLeave={handleMouseLeave}
         onFocus={show}
         onBlur={clear}
       >
@@ -3417,6 +3800,8 @@ function PullProgressInfo({
             className={`status-info-tooltip status-info-tooltip-open${pos && !pos.above ? " status-info-tooltip-below" : ""}`}
             style={tooltipStyle}
             role="status"
+            onMouseEnter={show}
+            onMouseLeave={handleMouseLeave}
           >
             <i
               className="status-info-tooltip-arrow"
@@ -3547,29 +3932,36 @@ function WorkerTableRow({
 }) {
   const zh = c.nav.overview === "总览";
   const [copied, setCopied] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const [sshConfig, setSSHConfig] = useState<{
-    sshJumpHost: string;
-    sshJumpPort: string;
+    jumpHost: string;
+    jumpPort: string;
   } | null>(null);
   useEffect(() => {
     fetch("/api/v1/system-config")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d) setSSHConfig(d);
+        if (d) setSSHConfig(d.ssh);
       })
       .catch(() => {});
   }, []);
-  const sshJump = sshConfig?.sshJumpHost
-    ? `${sshConfig.sshJumpHost}${sshConfig.sshJumpPort ? ":" + sshConfig.sshJumpPort : ""}`
+  const sshJump = sshConfig?.jumpHost
+    ? `${sshConfig.jumpHost}${sshConfig.jumpPort ? ":" + sshConfig.jumpPort : ""}`
     : "";
-  const sshCommand = sshJump ? `ssh -J ${sshJump} root@${worker.name}` : "";
+  // head 节点直连 Pod 的 22 端口；非 head 节点通过节点 sshd 的 2222 端口转发到目标 Pod。
+  const sshCommand = sshJump
+    ? isHeader
+      ? `ssh -J ${sshJump} root@${worker.name}`
+      : `ssh -J ${sshJump} root@${worker.name} -p 2222`
+    : "";
   const handleCopy = async () => {
     if (!(await copyText(sshCommand))) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
   const pod = pods[0];
+  const domainIP =
+    domainIPMap[`${pod?.namespace}/${pod?.podNamespace}/${pod?.podName}`] ??
+    "—";
   return (
     <>
       <tr>
@@ -3616,6 +4008,18 @@ function WorkerTableRow({
           <code className="inline-code">{pod?.ip || "—"}</code>
         </td>
         <td>
+          <code className="inline-code">{domainIP}</code>
+        </td>
+        <td>
+          <strong>
+            {worker.gpu && worker.gpu !== "0"
+              ? `${worker.gpu} GPU`
+              : zh
+                ? "未申请"
+                : "None"}
+          </strong>
+        </td>
+        <td>
           <span className="table-date">{createdAt}</span>
         </td>
         <td>
@@ -3648,7 +4052,7 @@ function WorkerTableRow({
               )}
           </div>
         </td>
-        <td>
+        <td className="worker-sticky-actions">
           <div className="worker-table-actions">
             <span
               className="action-tooltip"
@@ -3711,212 +4115,9 @@ function WorkerTableRow({
                 <TerminalSquare size={16} />
               </button>
             </span>
-            <span
-              className="action-tooltip"
-              data-tooltip={
-                expanded
-                  ? zh
-                    ? "收起详情"
-                    : "Collapse details"
-                  : zh
-                    ? "查看详情"
-                    : "View details"
-              }
-            >
-              <button
-                className="icon-button worker-detail-icon"
-                onClick={() => setExpanded((value) => !value)}
-                aria-label={
-                  expanded
-                    ? zh
-                      ? "收起详情"
-                      : "Collapse details"
-                    : zh
-                      ? "查看详情"
-                      : "View details"
-                }
-              >
-                <ChevronRight
-                  size={17}
-                  style={{ transform: expanded ? "rotate(90deg)" : "none" }}
-                />
-              </button>
-            </span>
           </div>
         </td>
       </tr>
-      {expanded && (
-        <tr className="worker-expanded-row">
-          <td colSpan={9}>
-            <div className="worker-detail-drawer">
-              <div className="worker-detail-head">
-                <div>
-                  <span className="eyebrow">
-                    {zh ? "Worker 详情" : "Worker details"}
-                  </span>
-                  <strong>{worker.name}</strong>
-                </div>
-                {sshCommand && (
-                  <div className="worker-ssh-inline">
-                    <KeyRound size={15} />
-                    <code title={sshCommand}>{sshCommand}</code>
-                    <button
-                      className="icon-button"
-                      onClick={handleCopy}
-                      aria-label={zh ? "复制 SSH 地址" : "Copy SSH address"}
-                    >
-                      {copied ? <Check size={15} /> : <Copy size={15} />}
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className="worker-detail-grid">
-                <div>
-                  <span>{zh ? "集群" : "Cluster"}</span>
-                  <WorkerClusterLink
-                    cluster={worker.cluster}
-                    onSelectCluster={onSelectCluster}
-                  />
-                </div>
-                <div>
-                  <span>{zh ? "角色" : "Role"}</span>
-                  <strong>{worker.role}</strong>
-                </div>
-                <div>
-                  <span>{zh ? "节点" : "Node"}</span>
-                  <WorkerNodeLink
-                    node={worker.node}
-                    onSelectNode={onSelectNode}
-                  />
-                </div>
-                <div>
-                  <span>{zh ? "申请 GPU" : "GPU request"}</span>
-                  <strong>
-                    {worker.gpu && worker.gpu !== "0"
-                      ? worker.gpu
-                      : zh
-                        ? "未申请"
-                        : "Not requested"}
-                  </strong>
-                </div>
-              </div>
-              {pods.length > 0 ? (
-                <div className="pod-subtable">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>{zh ? "实例名称" : "Worker name"}</th>
-                        <th>{zh ? "节点" : "Node"}</th>
-                        <th>{zh ? "实例 IP" : "Worker IP"}</th>
-                        <th>{zh ? "网络域" : "Domain"}</th>
-                        <th>{zh ? "状态" : "Status"}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pods.map((pod) => {
-                        const domainIP =
-                          domainIPMap[
-                            `${pod.namespace}/${pod.podNamespace}/${pod.podName}`
-                          ] ?? "";
-                        const podPhase = (pod.phase || "Pending") as Phase;
-                        // Mirror the worker-row tooltip aggregation so the pod
-                        // subtable surfaces the same failure reason / image-pull
-                        // progress / node events as the top-right status badge.
-                        const podPullProgress =
-                          podPhase === "Pending" && pod.node
-                            ? (nodePullProgressMap[pod.node] ?? [])
-                            : [];
-                        const podEvents =
-                          podPhase === "Pending"
-                            ? (podEventsMap[pod.name] ?? []).length > 0
-                              ? (podEventsMap[pod.name] ?? [])
-                              : pod.node &&
-                                  (nodeEventsMap[pod.node] ?? []).length > 0
-                                ? (nodeEventsMap[pod.node] ?? [])
-                                : (taskEventsMap[
-                                    pod.taskName?.toLowerCase() ?? ""
-                                  ] ?? [])
-                            : [];
-                        return (
-                          <tr key={pod.name}>
-                            <td>
-                              <code className="inline-code">{pod.podName}</code>
-                            </td>
-                            <td>
-                              <WorkerNodeLink
-                                node={pod.node || "—"}
-                                onSelectNode={onSelectNode}
-                              />
-                            </td>
-                            <td>{pod.ip || "—"}</td>
-                            <td>
-                              {pod.domain ? (
-                                <>
-                                  <Network
-                                    size={13}
-                                    style={{ marginRight: 4 }}
-                                  />
-                                  {pod.domain}
-                                  {domainIP && (
-                                    <code
-                                      className="inline-code"
-                                      style={{ marginLeft: 6, fontSize: 12 }}
-                                    >
-                                      {domainIP}
-                                    </code>
-                                  )}
-                                </>
-                              ) : (
-                                "—"
-                              )}
-                            </td>
-                            <td>
-                              <div className="status-with-info">
-                                <StatusBadge phase={podPhase} copy={c} />
-                                {podPhase !== "Running" &&
-                                  (podPhase === "Pending" ||
-                                    podPhase === "Failed" ||
-                                    podPullProgress.length > 0 ||
-                                    podEvents.length > 0) && (
-                                    <PullProgressInfo
-                                      progress={podPullProgress}
-                                      events={podEvents}
-                                      zh={zh}
-                                      statusMessage={
-                                        podPhase === "Failed"
-                                          ? pod.message || undefined
-                                          : undefined
-                                      }
-                                      emptyMessage={
-                                        podPhase === "Pending"
-                                          ? pod.node && pod.node !== "—"
-                                            ? zh
-                                              ? `已调度到 ${pod.node}，正在等待容器创建或节点上报镜像拉取状态。`
-                                              : `Scheduled to ${pod.node}; waiting for container creation or image-pull status from the node.`
-                                            : zh
-                                              ? "正在等待节点调度；调度完成后将展示镜像拉取或节点事件。"
-                                              : "Waiting for node scheduling. Image-pull progress or node events will appear after placement."
-                                          : undefined
-                                      }
-                                    />
-                                  )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="empty-inline">
-                  {zh ? "暂无 Pod 详情，等待任务同步。" : "No pod details yet."}
-                </div>
-              )}
-            </div>
-          </td>
-        </tr>
-      )}
     </>
   );
 }

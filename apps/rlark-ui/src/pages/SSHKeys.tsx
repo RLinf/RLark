@@ -162,8 +162,21 @@ export function SSHKeysPage({ copy: c }: { copy: Copy }) {
             className="secondary-button"
             onClick={fetchKeys}
             title={zh ? "刷新" : "Refresh"}
+            aria-label={zh ? "刷新" : "Refresh"}
+            aria-busy={loading}
+            disabled={loading}
           >
-            <RefreshCw size={15} />
+            <RefreshCw
+              size={15}
+              className={loading ? "job-action-loading" : ""}
+            />
+            {loading
+              ? zh
+                ? "刷新中..."
+                : "Refreshing..."
+              : zh
+                ? "刷新"
+                : "Refresh"}
           </button>
           <button
             className="primary-button"

@@ -86,6 +86,13 @@ func deploymentPhase(ctx context.Context, logger logr.Logger, localClient client
 		phase = rlarkv1alpha1.TaskPhaseFailed
 		message = podMsg
 	}
+	if phase == rlarkv1alpha1.TaskPhasePending {
+		if found, err := hasFailedSchedulingEvent(ctx, localClient, deploy.Namespace, pods); err != nil {
+			logger.Error(err, "failed to list pod scheduling events")
+		} else if found {
+			message = "FailedScheduling"
+		}
+	}
 	return phase, message, pods
 }
 
@@ -159,6 +166,30 @@ func podFailureMessage(pods []corev1.Pod) (string, bool) {
 	return "", false
 }
 
+func hasFailedSchedulingEvent(ctx context.Context, localClient client.Client, namespace string, pods []corev1.Pod) (bool, error) {
+	if len(pods) == 0 {
+		return false, nil
+	}
+	podNames := make(map[string]struct{}, len(pods))
+	for i := range pods {
+		podNames[pods[i].Name] = struct{}{}
+	}
+
+	var events corev1.EventList
+	if err := localClient.List(ctx, &events, client.InNamespace(namespace)); err != nil {
+		return false, err
+	}
+	for _, event := range events.Items {
+		if event.InvolvedObject.Kind != "Pod" || event.Reason != "FailedScheduling" {
+			continue
+		}
+		if _, ok := podNames[event.InvolvedObject.Name]; ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // --- shared helper functions for push reconcilers ---
 
 // listTaskPods lists the local pods backing a workload via its selector labels.
@@ -187,15 +218,16 @@ func podNodeNames(pods []corev1.Pod) []string {
 }
 
 // updateMgmtTaskStatus reports the workload phase/message/observedNodes to the
-// management Task status. It does not touch pullProgress: that field is now
-// aggregated by the control-plane Task reconciler from Node.status.pullProgress.
+// management Task status. Pull progress and events are aggregated by the
+// control-plane Task reconciler, and are cleared when the task stops.
 //
 // A strategic merge patch (client.MergeFrom) is used instead of Update so we
-// only send the fields we own (phase, message, observedNodes). Concurrent
-// writes to Task.status.pullProgress by the control-plane reconciler are
-// preserved.
+// only send the fields we own (phase, message, observedNodes, and terminal
+// cleanup fields), preserving concurrent status writes.
 func updateMgmtTaskStatus(ctx context.Context, logger logr.Logger, mgmtClient client.Client, mgmtTask *rlarkv1alpha1.Task, phase rlarkv1alpha1.TaskPhase, message string, observedNodes []string) (reconcile.Result, error) {
-	unchanged := mgmtTask.Status.Phase == phase && mgmtTask.Status.Message == message
+	stopped := phase == rlarkv1alpha1.TaskPhaseStopped
+	unchanged := mgmtTask.Status.Phase == phase && mgmtTask.Status.Message == message &&
+		(!stopped || (len(mgmtTask.Status.PullProgress) == 0 && len(mgmtTask.Status.Events) == 0))
 
 	if unchanged {
 		logger.V(1).Info("management Task status unchanged, skipping")
@@ -205,6 +237,10 @@ func updateMgmtTaskStatus(ctx context.Context, logger logr.Logger, mgmtClient cl
 	original := mgmtTask.DeepCopy()
 	mgmtTask.Status.Phase = phase
 	mgmtTask.Status.Message = message
+	if stopped {
+		mgmtTask.Status.PullProgress = nil
+		mgmtTask.Status.Events = nil
+	}
 	if len(observedNodes) > 0 {
 		mgmtTask.Status.ObservedNodes = observedNodes
 	}

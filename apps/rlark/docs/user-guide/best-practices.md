@@ -121,7 +121,7 @@ Before creating the job, gather the following from your existing RLinf setup:
 1. Navigate to **Jobs** → **Create Job**
 
 2. **Fill in basic info**:
-   - Job name: lowercase, alphanumeric, hyphens (e.g., `my-training-run-001`)
+   - Job name: a display name of up to 128 characters; display names may be reused because RLark assigns a separate resource ID
    - Job type: **Custom** for single-node, or pick a template for multi-role
 
 3. **Configure Worker roles**:
@@ -150,7 +150,7 @@ Before creating the job, gather the following from your existing RLinf setup:
    | Setting | Description |
    |----------|-------------|
    | **Header Role** | Must be the role with exactly 1 Worker |
-   | **Network Domain** | Select if cross-cluster communication is needed |
+   | **Network Domain** | Automatically uses the first configured domain by name; omitted when none is configured |
    | **SSH Key** | Select a key to inject into Workers |
    | **Run Script** | The main command executed after Ray is ready |
    | **TensorBoard Dir** | Path inside the container for TensorBoard logs |
