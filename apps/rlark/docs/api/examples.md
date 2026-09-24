@@ -125,7 +125,7 @@ If embodied-runtime does not yet support a network device but the data-plane nod
 
 This path does not provide embodied-runtime device discovery, resource isolation, controllers, CLIs, or SDK injection. The workload image is responsible for device drivers and lifecycle management. `hostNetwork` reduces network isolation and can cause port conflicts, so use it only on trusted data planes and dedicated device nodes. Do not enable `RLARK_ENABLE_UNSAFE_TASK_PRIVILEGES` for this purpose; that variable globally applies the legacy privileged/hostNetwork mode to multiple tasks.
 
-See the [embodied-runtime deployment and usage examples](../../../embodied-runtime/docs/examples.md#unsupported-devices) for the native and compatibility paths.
+For the native and compatibility paths, see the "Unsupported devices" section in the embodied-runtime documentation at `apps/embodied-runtime/docs/examples.md`.
 
 ```bash
 # List Jobs by label.

@@ -125,7 +125,7 @@ echo "$JOB_ID" # jo-<16 位十六进制字符>
 
 这种方式不会提供 embodied-runtime 的设备发现、资源隔离、controller、CLI 或 SDK 注入，设备驱动和生命周期管理由业务镜像负责。`hostNetwork` 会降低网络隔离并可能造成端口冲突，只应在可信数据面和专用设备节点使用。不要为此开启 `RLARK_ENABLE_UNSAFE_TASK_PRIVILEGES`；该变量会对多个任务全局启用旧版 privileged/hostNetwork 模式。
 
-完整的原生接入与兼容方案见 [embodied-runtime 部署与使用样例](../../../embodied-runtime/docs/examples.zh-CN.md#未适配设备)。
+完整的原生接入与兼容方案，请参阅 embodied-runtime 文档 `apps/embodied-runtime/docs/examples.zh-CN.md` 中的“未适配设备”章节。
 
 ```bash
 # 按标签列出 Job。
