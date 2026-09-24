@@ -169,11 +169,9 @@ rlark-controller-manager \
 | `--pod-orphan-sweep-interval` | duration | `5m` | Agent 范围内管理 Pod 孤儿扫描间隔 |
 | `--pod-orphan-sweep-page-size` | int | `200` | 每页扫描的管理 Pod 数量 |
 | `--pod-stale-ttl` | duration | `15m` | 本地 Pod 缺失后以 `Unknown`/陈旧状态保留、再删除管理 Pod 的时长 |
-
-Pod 孤儿扫描用于兜底处理遗漏的本地删除事件。它只删除 Agent 作用域内、本地 Pod UID 或已验证管理 Task UID 已失效的镜像。旧版镜像仅在以 UID 命名的镜像、存活本地 Pod 注解、管理命名空间、Task UID 以及可用的 Domain 全部一致时才会被接管；身份不明确的旧对象保持不变，需要手动清理。延迟删除会有意保留同名替代 Pod，因此旧镜像可能持续到下一次扫描。
 | `--rlark-server-ssh-address` | string | `""` | RLark Server SSH 地址（user@host:port） |
 | `--rlark-server-ssh-host-key` | string | `""` | RLark Server SSH Host Key |
-| `--ssh-max-connections-per-domain` | int | `4` | 每个 Domain 按负载自适应扩展的物理 SSH 连接上限 |
+| `--ssh-max-connections-per-domain` | int | `4` | 每个 Domain 的物理 SSH 连接上限；单连接 channel 负载增长时连接池会弹性增加 transport |
 | `--image` | string | `""` | RLark 网络 Sidecar 镜像 |
 | `--enable-same-cluster-direct` | bool | `true` | 启用同集群 Pod 直接访问 |
 | `--enable-cross-cluster-direct` | bool | `true` | 启用跨集群 Pod 直接访问 |
@@ -190,6 +188,10 @@ Pod 孤儿扫描用于兜底处理遗漏的本地删除事件。它只删除 Age
 | `--kube-qps` | float32 | `5000` | Kubernetes 客户端 QPS |
 | `--kube-burst` | int | `8000` | Kubernetes 客户端 Burst |
 | `--kube-timeout` | duration | `0` | Kubernetes 客户端请求超时 |
+
+Pod 孤儿扫描用于兜底处理遗漏的本地删除事件。它只删除 Agent 作用域内、本地 Pod UID 或已验证管理 Task UID 已失效的镜像。旧版镜像仅在以 UID 命名的镜像、存活本地 Pod 注解、管理命名空间、Task UID 以及可用的 Domain 全部一致时才会被接管；身份不明确的旧对象保持不变，需要手动清理。延迟删除会有意保留同名替代 Pod，因此旧镜像可能持续到下一次扫描。
+
+SSH 连接池为每个活跃 Domain 从一条 transport 开始；单条 transport 持续承载较高 channel 负载时，连接池会在后台扩容，最多不超过 `--ssh-max-connections-per-domain`。扩容期间请求继续使用已有 transport，空闲 transport 会自动回收。
 
 !!! tip "`--mode` 参数说明"
     - `cluster`：仅运行集群级 Agent，管理集群范围内的资源

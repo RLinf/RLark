@@ -185,21 +185,27 @@ func (a *containerNetworkAdapter) GetContainerNetworkDial(...) (utils.Dial, erro
         return dialer.DialContext(ctx, "tcp", net.JoinHostPort(targetPod.LocalIP, "5700"))
     }
     // 2. 跨集群 → SSH 隧道
-    return a.sshDialer.DialContext(ctx, domainID, sshAddr, cert, key, target)
+    dialer := a.sshDialerManager.GetDialer(sshdialer.DomainInfo{
+        ID: domainID, SSHAddress: sshAddr, Certificate: cert, PrivateKey: key,
+    })
+    return dialer.DialContext(ctx, "tcp", target)
 }
 ```
 
-### 4.5 SSHDialer
+### 4.5 SSH Dialer Manager
 
-**关键文件**：[container/ssh\_dialer.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/agent/container/ssh_dialer.go)
+**关键包**：[network/sshdialer](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/network/sshdialer)
 
-按 Domain 维护的 SSH 连接池，设计要点：
+`DialerManager` 维护所有 Domain 的连接池，`GetDialer(DomainInfo)` 返回绑定单个 Domain 的拨号器。设计要点：
 
-- 每个 Domain 从一条 SSH 连接开始；现有连接均承载活跃 channel 时按需扩展，默认最多四条
-- 新 channel 选择负载最低的连接，空闲物理连接由后台 GC 回收
-- 连接断开时自动重连，重连期间并发请求等待而非各自新建
+- 每个 Domain 在故障恢复时只建立一条共享的多路复用 SSH transport；并发调用者等待同一个有超时上限的握手，避免形成重连风暴
+- 新 channel 选择负载最低的健康连接，空闲物理连接由后台 GC 回收
+- 调用者取消只停止自身等待，不会取消共享恢复，也不会增加 Domain 的重连退避
+- 明确的传输层故障立即关闭；channel 自身超时不会影响其他 channel，keepalive 超时则先等待活跃 channel 排空，再按宽限期强制关闭
 - 重连失败指数退避（1s → 2s → 4s → ... → 30s）
-- 后台 GC 关闭空闲超时连接（默认 24 小时）
+- SSH 握手有硬超时，Manager 关闭时会取消仍在进行的重连
+- 证书、私钥或端点发生变化时推进 Domain generation，并排空旧 generation 的 transport
+- 后台 GC 关闭空闲或超龄连接并回收不活跃的 Domain entry（默认 24 小时）
 - 数据路径上的活跃时间使用原子、限频更新，避免每次读写获取互斥锁
 
 ### 4.6 Embodied Runtime
@@ -238,7 +244,7 @@ sequenceDiagram
     participant SA as Sidecar A
     participant NS as NodeServer A
     participant CNA as ContainerNetworkAdapter
-    participant SD as SSHDialer
+    participant SD as SSH Dialer Manager
     participant SRV as Server
     participant NB as NodeServer B
     participant SB as Sidecar Proxy B

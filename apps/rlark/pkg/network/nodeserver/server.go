@@ -217,8 +217,6 @@ func (s *NodeServer[C]) closeConnections() {
 // handleConnection 处理来自本地进程的连接请求，读取目标地址并通过 dialer 连接到目标。
 func (s *NodeServer[C]) handleConnection(ctx context.Context, conn *utils.WrapConn, cred C) {
 	logger := log.FromContext(ctx)
-	ctx, cancel := context.WithTimeout(ctx, time.Second*30)
-	defer cancel()
 
 	metrics.IncActive()
 	defer metrics.DecActive()
@@ -257,7 +255,9 @@ func (s *NodeServer[C]) handleConnection(ctx context.Context, conn *utils.WrapCo
 			logger.Error(nil, "Failed to get target", "host", host, "err", err)
 			return
 		}
-		conn2, err = dial(ctx)
+		dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		conn2, err = dial(dialCtx)
+		cancel()
 		if err != nil {
 			logger.Error(nil, "Failed to connect to target", "host", host, "port", port, "err", err)
 			return

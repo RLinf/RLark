@@ -90,3 +90,28 @@ func TestEnsureUIAuthSecretInKubernetes(t *testing.T) {
 		t.Fatal("existing UI auth secret was changed")
 	}
 }
+
+func TestEnsureUIAuthSecretInKubernetesRepairsMissingFields(t *testing.T) {
+	ctx := context.Background()
+	signingKey := []byte("01234567890123456789012345678901")
+	client := kubernetesfake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: common.UIAuthSecretName, Namespace: constants.Namespace},
+		Data: map[string][]byte{
+			common.UIAuthJWTSigningKey: signingKey,
+		},
+	})
+
+	if err := ensureUIAuthSecretInKubernetes(ctx, client, constants.Namespace); err != nil {
+		t.Fatalf("ensureUIAuthSecretInKubernetes() error = %v", err)
+	}
+	secret, err := client.CoreV1().Secrets(constants.Namespace).Get(ctx, common.UIAuthSecretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get repaired UI auth secret: %v", err)
+	}
+	if len(secret.Data[common.UIAuthAdminPasswordKey]) != 16 || len(secret.Data[common.UIAuthUserPasswordKey]) != 16 {
+		t.Fatalf("missing passwords were not repaired: %#v", secret.Data)
+	}
+	if string(secret.Data[common.UIAuthJWTSigningKey]) != string(signingKey) {
+		t.Fatal("valid JWT signing key was changed")
+	}
+}
