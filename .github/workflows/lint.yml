@@ -75,3 +75,17 @@ jobs:
         with:
           args: --offline --no-progress --root-dir "${{ github.workspace }}" 'apps/rlark/docs/**/*.md'
           lycheeVersion: v0.24.2
+
+      - name: Build Chinese Read the Docs output
+        env:
+          READTHEDOCS_CANONICAL_URL: https://rlark.readthedocs.io/zh-cn/latest/
+          READTHEDOCS_LANGUAGE: zh-cn
+          READTHEDOCS_VERSION: latest
+        run: |
+          python apps/rlark/docs/rtd_patch.py
+          mkdocs build --strict --config-file apps/rlark/mkdocs.yml --site-dir "$GITHUB_WORKSPACE/site-rtd-zh"
+          grep -F 'src="images/logo-zh.png"' site-rtd-zh/index.html
+          grep -F 'src="images/architecture-zh.svg"' site-rtd-zh/index.html
+          grep -F 'src="../images/architecture-zh.svg"' site-rtd-zh/architecture/index.html
+          test -f site-rtd-zh/images/logo-zh.png
+          test -f site-rtd-zh/images/architecture-zh.svg

@@ -2,6 +2,7 @@
 
 import os
 import re
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 
@@ -60,5 +61,21 @@ extra:
 
 with open(config_path, "w", encoding="utf-8") as config_file:
     config_file.write(content)
+
+if lang == "zh":
+    zh_docs = Path("apps/rlark/docs/zh")
+    for doc_path in zh_docs.rglob("*.md"):
+        relative_depth = len(doc_path.relative_to(zh_docs).parent.parts)
+        source_prefix = "../" * (relative_depth + 1) + "images/"
+        output_prefix = "../" * relative_depth + "images/"
+
+        doc_content = doc_path.read_text(encoding="utf-8")
+        patched_content = re.sub(
+            rf"(?P<attribute>\bsrc\s*=\s*[\"']){re.escape(source_prefix)}",
+            rf"\g<attribute>{output_prefix}",
+            doc_content,
+        )
+        if patched_content != doc_content:
+            doc_path.write_text(patched_content, encoding="utf-8")
 
 print(f"[i18n] build_only_locale={lang}")
