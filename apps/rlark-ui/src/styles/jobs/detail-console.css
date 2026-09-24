@@ -1,0 +1,393 @@
+.terminal-page {
+  width: 100vw;
+  height: 100vh;
+  padding: 12px;
+  box-sizing: border-box;
+  background: #101020;
+}
+
+.terminal-page-panel {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #30334d;
+  border-radius: 12px;
+  background: #1a1a2e;
+  box-shadow: 0 12px 36px rgb(0 0 0 / 25%);
+}
+
+.terminal-toolbar {
+  flex: 0 0 auto;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #30334d;
+  background: #17182a;
+}
+
+.terminal-identity,
+.terminal-actions,
+.terminal-title span {
+  display: flex;
+  align-items: center;
+}
+
+.terminal-identity {
+  min-width: 0;
+  gap: 10px;
+}
+
+.terminal-app-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #3c4263;
+  border-radius: 9px;
+  color: #9dacff;
+  background: #22243b;
+}
+
+.terminal-title {
+  min-width: 0;
+}
+
+.terminal-title strong {
+  display: block;
+  overflow: hidden;
+  color: #f7f8ff;
+  font:
+    650 14px/1.35 Menlo,
+    Monaco,
+    "Courier New",
+    monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-title small {
+  display: block;
+  overflow: hidden;
+  margin-bottom: 1px;
+  color: #8f96b3;
+  font-size: 10px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-title span {
+  gap: 5px;
+  margin-top: 2px;
+  color: #9da3bd;
+  font-size: 11px;
+}
+
+.terminal-worker-status {
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: #d9dcf0;
+  background: #30334a;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.terminal-worker-status.running,
+.terminal-worker-status.online,
+.terminal-worker-status.succeeded {
+  color: #72e4af;
+  background: rgb(61 220 151 / 12%);
+}
+
+.terminal-worker-status.failed,
+.terminal-worker-status.offline {
+  color: #ff8797;
+  background: rgb(255 102 122 / 12%);
+}
+
+.terminal-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f3bd45;
+}
+
+.terminal-status-dot.connected {
+  background: #3ddc97;
+}
+
+.terminal-status-dot.disconnected {
+  background: #ff667a;
+}
+
+.terminal-actions {
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.terminal-action-button,
+.terminal-download-submit {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #3c4263;
+  border-radius: 8px;
+  color: #e7e9f5;
+  background: #22243b;
+  cursor: pointer;
+}
+
+.terminal-action-button {
+  padding: 0 11px;
+  font-size: 12px;
+}
+
+.terminal-action-button:hover,
+.terminal-action-button.active {
+  border-color: #6574dc;
+  color: #fff;
+  background: #30365d;
+}
+
+.terminal-download-bar {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #30334d;
+  background: #151627;
+}
+
+.terminal-download-bar input {
+  min-width: 0;
+  height: 34px;
+  flex: 1;
+  box-sizing: border-box;
+  border: 1px solid #3c4263;
+  border-radius: 8px;
+  outline: none;
+  padding: 0 11px;
+  color: #f1f2f8;
+  background: #1d1f34;
+  font:
+    12px Menlo,
+    Monaco,
+    "Courier New",
+    monospace;
+}
+
+.terminal-download-bar input:focus {
+  border-color: #7081f4;
+  box-shadow: 0 0 0 2px rgb(112 129 244 / 18%);
+}
+
+.terminal-download-submit {
+  min-width: 62px;
+  padding: 0 14px;
+}
+
+.terminal-download-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.terminal-transfer-status {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border-bottom: 1px solid #30334d;
+  color: #8ed0ff;
+  background: #181a2d;
+  font-size: 11px;
+}
+
+.terminal-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #1a1a2e;
+  border-radius: 0 0 10px 10px;
+}
+
+.terminal-page-error {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  color: #f0f0fa;
+  background: #101020;
+}
+
+.terminal-container {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.terminal-container .xterm {
+  height: 100%;
+}
+
+.terminal-container .xterm-viewport {
+  background-color: #1a1a2e !important;
+}
+
+.ssh-desc {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ssh-command-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.ssh-command-box code {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.theme-dark .ssh-command-box {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.theme-dark .ssh-command-box code {
+  color: #e2e8f0;
+}
+
+.system-config-ssh-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: #24324a;
+  background: #f4f7fb;
+}
+
+.system-config-ssh-preview code {
+  min-width: 0;
+  color: inherit;
+  background: transparent;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: break-all;
+}
+
+.system-config-copy-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(79, 70, 229, 0.22);
+  border-radius: 7px;
+  padding: 6px 9px;
+  color: #4f46e5;
+  background: rgba(79, 70, 229, 0.07);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.system-config-copy-button:hover {
+  border-color: rgba(79, 70, 229, 0.4);
+  background: rgba(79, 70, 229, 0.13);
+}
+
+.system-config-page .section-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: none;
+}
+
+.system-config-page .section-actions .primary-button,
+.system-config-page .section-actions .secondary-button {
+  height: 40px;
+  min-width: 94px;
+  justify-content: center;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.system-config-page .section-actions .secondary-button:hover:not(:disabled) {
+  border-color: rgba(124, 58, 237, 0.3);
+  color: var(--blue);
+  background: #faf8ff;
+}
+
+.system-config-page .section-actions .primary-button:hover:not(:disabled) {
+  box-shadow: 0 12px 26px rgba(124, 58, 237, 0.32);
+  transform: translateY(-1px);
+}
+
+.system-config-page .section-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  box-shadow: none;
+  transform: none;
+}
+
+.theme-dark .system-config-ssh-preview {
+  border-color: #33445e;
+  color: #dbeafe;
+  background: #0b1320;
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.04);
+}
+
+.theme-dark .system-config-copy-button {
+  border-color: rgba(147, 197, 253, 0.25);
+  color: #bfdbfe;
+  background: rgba(59, 130, 246, 0.12);
+}
+
+@media (max-width: 620px) {
+  .system-config-page .section-heading {
+    flex-direction: column;
+  }
+
+  .system-config-page .section-actions {
+    width: 100%;
+  }
+
+  .system-config-page .section-actions .primary-button,
+  .system-config-page .section-actions .secondary-button {
+    flex: 1 1 0;
+  }
+
+  .system-config-ssh-preview {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .system-config-copy-button {
+    align-self: flex-end;
+  }
+}

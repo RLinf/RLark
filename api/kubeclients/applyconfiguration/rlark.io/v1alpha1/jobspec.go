@@ -24,6 +24,7 @@ type JobSpecApplyConfiguration struct {
 	Stopped      *bool                               `json:"stopped,omitempty"`
 	Tasks        []JobTaskTemplateApplyConfiguration `json:"tasks,omitempty"`
 	SSHPublicKey *string                             `json:"sshPublicKey,omitempty"`
+	Tags         []JobTagApplyConfiguration          `json:"tags,omitempty"`
 }
 
 // JobSpecApplyConfiguration constructs a declarative configuration of the JobSpec type for use with
@@ -66,5 +67,18 @@ func (b *JobSpecApplyConfiguration) WithTasks(values ...*JobTaskTemplateApplyCon
 // If called multiple times, the SSHPublicKey field is set to the value of the last call.
 func (b *JobSpecApplyConfiguration) WithSSHPublicKey(value string) *JobSpecApplyConfiguration {
 	b.SSHPublicKey = &value
+	return b
+}
+
+// WithTags adds the given value to the Tags field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Tags field.
+func (b *JobSpecApplyConfiguration) WithTags(values ...*JobTagApplyConfiguration) *JobSpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithTags")
+		}
+		b.Tags = append(b.Tags, *values[i])
+	}
 	return b
 }

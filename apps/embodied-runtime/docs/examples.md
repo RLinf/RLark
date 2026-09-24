@@ -19,6 +19,8 @@ End-to-end deployment and usage walkthroughs for the most common embodied-runtim
   - [R1 — USB robot via host device passthrough](#r1--usb-robot-via-host-device-passthrough)
   - [R2 — Network robot via host macvlan](#r2--network-robot-via-host-macvlan)
   - [R3 — ROS-managed robot](#r3--ros-managed-robot)
+- [Unsupported devices](#unsupported-devices)
+  - [U1 — Access an unsupported device through the host network](#u1--access-an-unsupported-device-through-the-host-network)
 - [Combined — robot + camera on one node](#combined--robot--camera-on-one-node)
 - [Notes](#notes)
   - [ROS isolation](#ros-isolation)
@@ -66,8 +68,9 @@ End-to-end deployment and usage walkthroughs for the most common embodied-runtim
 | R1 | USB robot direct | `host_devices` | none | open `/dev/ttyUSBx` directly |
 | R2 | Network robot via macvlan | `host_macvlans` + webhook | none | reach robot by IP over macvlan |
 | R3 | ROS-managed robot | `ros` / `ros2` (pod mode) | ros[-2]-controller | `rosctr` CLI / `RobotClient` SDK / REST |
+| U1 | Unsupported network device | none | none | use a vendor SDK or protocol directly through `hostNetwork` |
 
-In every scenario the workload pod requests `rlinf.io/device` (or `rlinf.io/device-<model>` when `config.model` is set). The device plugin's `Allocate` then injects:
+C1–R3 use embodied-runtime's native capabilities. The workload pod requests `rlinf.io/device` (or `rlinf.io/device-<model>` when `config.model` is set), and the device plugin's `Allocate` then injects:
 
 - The socket directory `/var/run/rlark` (read-only) — controller gRPC sockets.
 - The CLI directory `/opt/rlinf/bin` (read-only) — `rosctr`, `camctr`.
@@ -647,6 +650,41 @@ kubectl exec -it ros2-task -- /opt/rlinf/bin/rosctr env franka-robot-1   # shows
 ```
 
 > ROS 2 DDS discovery relies on IP multicast. See [ROS 2 multicast](#ros-2-multicast) before running ROS 2 across multiple pods or nodes.
+
+---
+
+## Unsupported devices
+
+### U1 — Access an unsupported device through the host network
+
+**When to use.** embodied-runtime does not yet provide a controller, device model, or SDK for the hardware, but the device is reachable from the host network and the workload image already contains the vendor SDK, driver, or protocol client. This is a compatibility path until native support is available.
+
+Set `hostNetwork: true` on the workload pod and use a `nodeSelector` to place it on a node that can reach the device:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unsupported-device-task
+  namespace: default
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeSelector:
+    kubernetes.io/hostname: worker-1
+  containers:
+    - name: app
+      image: registry.example.com/vendor/device-sdk:latest
+      command: ["sh", "-c", "./device-client --address 192.168.10.20"]
+  tolerations:
+    - key: rlinf.io/robot
+      operator: Exists
+      effect: NoSchedule
+```
+
+This pod does not request `rlinf.io/device` and does not receive embodied-runtime device discovery, resource isolation, controllers, CLIs, SDKs, or environment injection. The workload image is responsible for device drivers, connection settings, and lifecycle management.
+
+`hostNetwork` shares the host network namespace, which can cause port conflicts and reduces network isolation. Use it only on trusted data planes and dedicated device nodes, and constrain scheduling with node labels, taints, and tolerations. Prefer the native `host_devices`, `host_macvlans`, ROS, or Camera controller path whenever it supports the device.
 
 ---
 

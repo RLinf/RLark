@@ -212,6 +212,102 @@ func registerAccessors(client versioned.Interface) map[string]*resourceAccessor 
 
 // --- Generic Kubernetes client handlers using resourceAccessor ---
 
+func (g *Gateway) handleListJobsKube(c *gin.Context) {
+	a, ok := g.accessors["jobs"]
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown resource: jobs"})
+		return
+	}
+
+	opts := metav1.ListOptions{}
+	if limit := c.Query("limit"); limit != "" {
+		if n, err := strconv.Atoi(limit); err == nil {
+			opts.Limit = int64(n)
+		}
+	}
+	if cont := c.Query("continue"); cont != "" {
+		opts.Continue = cont
+	}
+	if fs := c.Query("fieldSelector"); fs != "" {
+		opts.FieldSelector = fs
+	}
+	if ls := c.Query("labelSelector"); ls != "" {
+		opts.LabelSelector = ls
+	}
+
+	result, err := a.list(c.Request.Context(), c.Query("namespace"), opts)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	jobs := result.(*rlarkiov1alpha1.JobList)
+	selectors := parseTagSelectors(c.Query("tagSelector"))
+	if len(selectors) > 0 {
+		items := jobs.Items[:0]
+		for _, job := range jobs.Items {
+			if jobMatchesTagSelectors(job, selectors) {
+				items = append(items, job)
+			}
+		}
+		jobs.Items = items
+	}
+	c.JSON(http.StatusOK, jobs)
+}
+
+func (g *Gateway) handleListJobTagsKube(c *gin.Context) {
+	a, ok := g.accessors["jobs"]
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown resource: jobs"})
+		return
+	}
+	result, err := a.list(c.Request.Context(), c.Query("namespace"), metav1.ListOptions{})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	tags := collectJobTags(result.(*rlarkiov1alpha1.JobList).Items)
+	c.JSON(http.StatusOK, gin.H{"items": tags})
+}
+
+func parseTagSelectors(raw string) map[string]map[string]struct{} {
+	selectors := make(map[string]map[string]struct{})
+	for _, pair := range strings.Split(raw, ",") {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			continue
+		}
+		if selectors[parts[0]] == nil {
+			selectors[parts[0]] = make(map[string]struct{})
+		}
+		selectors[parts[0]][parts[1]] = struct{}{}
+	}
+	return selectors
+}
+
+func jobMatchesTagSelectors(job rlarkiov1alpha1.Job, selectors map[string]map[string]struct{}) bool {
+	for key, values := range selectors {
+		matched := false
+		for _, tag := range job.Spec.Tags {
+			if tag.Key != key {
+				continue
+			}
+			for _, value := range tag.Values {
+				if _, ok := values[value]; ok {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
 func (g *Gateway) handleListKube(c *gin.Context, resource string) {
 	a, ok := g.accessors[resource]
 	if !ok {

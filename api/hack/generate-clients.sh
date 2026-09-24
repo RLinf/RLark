@@ -29,7 +29,7 @@ set -o pipefail
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 # Pin code-generator version to match k8s.io/apimachinery in go.mod
-export KUBE_CODEGEN_TAG="v0.36.1"
+export KUBE_CODEGEN_TAG="v0.36.3"
 
 # source the code-gen helpers
 source "${SCRIPT_ROOT}/hack/kube_codegen.sh"

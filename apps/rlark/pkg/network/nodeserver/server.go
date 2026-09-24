@@ -2,14 +2,17 @@ package nodeserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-logr/logr"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
@@ -38,6 +41,14 @@ type NodeServer[C PodCred] struct {
 	marshalCred        func(C) (string, error)
 	unmarshalCred      func(string) (C, error)
 	localServiceDialer utils.Dial
+
+	connectionsMu sync.Mutex
+	connections   map[*utils.WrapConn]net.Conn
+	connectionsWG sync.WaitGroup
+}
+
+type Lifecycle interface {
+	SetReady(bool)
 }
 
 // NewNodeServer creates a new NodeServer.
@@ -53,16 +64,14 @@ func NewNodeServer[C PodCred](
 		getHosts:      getHosts,
 		marshalCred:   marshalCred,
 		unmarshalCred: unmarshalCred,
+		connections:   make(map[*utils.WrapConn]net.Conn),
 	}
 }
 
 func (s *NodeServer[C]) startLocalService(ctx context.Context) error {
 	l, d := utils.NetPipeWithBuffer(65536)
 	s.localServiceDialer = d
-	r := gin.New()
-	r.Use(gin.Recovery())
-	r.GET("/get_ip", s.handleGetIP)
-	r.GET("/get_hosts", s.handleGetHosts)
+	r := s.localServiceRouter()
 
 	srv := http.Server{Handler: r}
 	go func() {
@@ -71,27 +80,53 @@ func (s *NodeServer[C]) startLocalService(ctx context.Context) error {
 	return nil
 }
 
-// Run runs the component.
-func (s *NodeServer[C]) Run(ctx context.Context) error {
+func (s *NodeServer[C]) localServiceRouter() http.Handler {
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.GET("/get_ip", s.handleGetIP)
+	r.GET("/get_hosts", s.handleGetHosts)
+	r.GET("/watch_hosts", s.handleWatchHosts)
+	return r
+}
+
+// Run starts the instance listener, publishes the stable socket entry, and
+// marks the lifecycle ready only after all dependencies have initialized.
+func (s *NodeServer[C]) Run(ctx context.Context, lifecycle Lifecycle) error {
 	logger := log.FromContext(ctx)
 	if err := s.startLocalService(ctx); err != nil {
 		return fmt.Errorf("start local service: %w", err)
 	}
-	l, err := s.config.Listen()
+	l, instanceAddress, err := s.config.Listen()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = l.Close() }()
+	defer func() {
+		lifecycle.SetReady(false)
+		_ = l.Close()
+		s.config.CleanupSocket(instanceAddress)
+	}()
+	if err := s.config.Publish(instanceAddress); err != nil {
+		return err
+	}
+	lifecycle.SetReady(true)
+	go func() {
+		<-ctx.Done()
+		lifecycle.SetReady(false)
+		_ = l.Close()
+	}()
 
-	logger.Info("Node server listening", "address", s.config.UnixSocketAddress)
+	logger.Info("Node server listening", "address", instanceAddress, "stableAddress", s.config.UnixSocketAddress)
 
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return s.drainConnections(logger)
 		default:
 			conn, err := l.Accept()
 			if err != nil {
+				if ctx.Err() != nil {
+					return s.drainConnections(logger)
+				}
 				return err
 			}
 			pid, err := GetPeerProcess(conn)
@@ -107,8 +142,75 @@ func (s *NodeServer[C]) Run(ctx context.Context) error {
 				continue
 			}
 			metrics.IncConnections()
-			go s.handleConnection(ctx, utils.NewWrapConn(conn), cred)
+			wrappedConn := utils.NewWrapConn(conn)
+			s.trackConnection(wrappedConn)
+			go func() {
+				defer s.untrackConnection(wrappedConn)
+				s.handleConnection(context.Background(), wrappedConn, cred)
+			}()
 		}
+	}
+}
+
+func (s *NodeServer[C]) trackConnection(conn *utils.WrapConn) {
+	s.connectionsMu.Lock()
+	s.connections[conn] = nil
+	s.connectionsWG.Add(1)
+	s.connectionsMu.Unlock()
+}
+
+func (s *NodeServer[C]) setUpstreamConnection(conn *utils.WrapConn, upstream net.Conn) {
+	s.connectionsMu.Lock()
+	if _, ok := s.connections[conn]; ok {
+		s.connections[conn] = upstream
+	}
+	s.connectionsMu.Unlock()
+}
+
+func (s *NodeServer[C]) untrackConnection(conn *utils.WrapConn) {
+	s.connectionsMu.Lock()
+	delete(s.connections, conn)
+	s.connectionsMu.Unlock()
+	s.connectionsWG.Done()
+}
+
+func (s *NodeServer[C]) drainConnections(logger logr.Logger) error {
+	drained := make(chan struct{})
+	go func() {
+		s.connectionsWG.Wait()
+		close(drained)
+	}()
+
+	if s.config.DrainTimeout <= 0 {
+		<-drained
+		return nil
+	}
+
+	timer := time.NewTimer(s.config.DrainTimeout)
+	defer timer.Stop()
+	select {
+	case <-drained:
+		return nil
+	case <-timer.C:
+		logger.Info("Node server drain timed out", "timeout", s.config.DrainTimeout)
+		s.closeConnections()
+		<-drained
+		return nil
+	}
+}
+
+func (s *NodeServer[C]) closeConnections() {
+	s.connectionsMu.Lock()
+	connections := make([]net.Conn, 0, len(s.connections)*2)
+	for conn, upstream := range s.connections {
+		connections = append(connections, conn)
+		if upstream != nil {
+			connections = append(connections, upstream)
+		}
+	}
+	s.connectionsMu.Unlock()
+	for _, conn := range connections {
+		_ = conn.Close()
 	}
 }
 
@@ -173,32 +275,15 @@ func (s *NodeServer[C]) handleConnection(ctx context.Context, conn *utils.WrapCo
 			return
 		}
 	}
+	s.setUpstreamConnection(conn, conn2)
 
-	// 记录结束方向和原因,用于定位"谁在断连接"。
-	type copyResult struct {
-		direction string
-		err       error
+	err1, err2 := utils.RelayConnections(conn, conn2, "sidecar", "upstream")
+	if err1 != nil {
+		logger.Error(err1, "Error relaying connection", "host", host, "port", port)
 	}
-	resultCh := make(chan copyResult, 2)
-	go func() {
-		_, err := io.Copy(conn2, conn) // sidecar → 上游
-		resultCh <- copyResult{direction: "sidecar->upstream", err: err}
-	}()
-	go func() {
-		_, err := io.Copy(conn, conn2) // 上游 → sidecar
-		resultCh <- copyResult{direction: "upstream->sidecar", err: err}
-	}()
-
-	for range 2 {
-		result := <-resultCh
-		logger.Info("Forwarding connection closing",
-			"host", host, "port", port,
-			"closedBy", result.direction,
-			"err", result.err,
-			"errType", fmt.Sprintf("%T", result.err),
-		)
+	if err2 != nil {
+		logger.Error(err2, "Error relaying connection", "host", host, "port", port)
 	}
-	close(resultCh)
 }
 
 func (s *NodeServer[C]) handleGetIP(ctx *gin.Context) {
@@ -233,4 +318,47 @@ func (s *NodeServer[C]) handleGetHosts(ctx *gin.Context) {
 		return
 	}
 	ctx.JSON(http.StatusOK, hosts)
+}
+
+func (s *NodeServer[C]) handleWatchHosts(ctx *gin.Context) {
+	cred, err := s.unmarshalCred(ctx.Request.RemoteAddr)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	version := ctx.Query("version")
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	timeout := time.NewTimer(25 * time.Second)
+	defer timeout.Stop()
+
+	for {
+		hosts, err := s.getHosts(ctx.Request.Context(), cred)
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		currentVersion := hostsVersion(hosts)
+		if currentVersion != version {
+			ctx.Header("ETag", currentVersion)
+			ctx.JSON(http.StatusOK, hosts)
+			return
+		}
+
+		select {
+		case <-ctx.Request.Context().Done():
+			return
+		case <-timeout.C:
+			ctx.Status(http.StatusNoContent)
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func hostsVersion(hosts map[string]string) string {
+	data, _ := json.Marshal(hosts)
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum)
 }

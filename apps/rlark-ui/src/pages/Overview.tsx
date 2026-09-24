@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { activity, type Cluster, type Job, type Phase } from "../data";
 import type { Copy } from "../i18n";
-import type { CRDJob, CRDNode, Page, ResourceRow } from "../types";
+import type { CRDNode, Page, ResourceRow } from "../types";
 import { useAutoRefresh } from "../hooks";
 import { crdToJob } from "../utils/crd";
 import {
@@ -21,6 +21,7 @@ import {
 } from "../utils/nodes";
 import {
   MetricCard,
+  RefreshOverlay,
   ResourceDistribution,
   StatusBadge,
 } from "../components/shared";
@@ -46,21 +47,14 @@ export function Overview({
   const isZh = c.nav.overview === "总览";
 
   const { refresh } = useAutoRefresh(async () => {
-    const [clustersRes, nodesRes, jobsRes] = await Promise.all([
-      fetch("/api/v1/clusters")
-        .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .catch(() => ({ data: [] })),
-      fetch("/api/v1/rlinf.io/v1alpha1/nodes")
-        .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .catch(() => ({ items: [] })),
-      fetch("/api/v1/rlinf.io/v1alpha1/jobs")
-        .then((r) => (r.ok ? r.json() : Promise.reject()))
-        .catch(() => ({ items: [] })),
+    const [clusters, nodes, jobs] = await Promise.all([
+      clustersApi.list<Cluster>().catch(() => []),
+      nodesApi.list().catch(() => []),
+      jobsApi.list().catch(() => []),
     ]);
-    setRealClusters(clustersRes.data ?? []);
-    setRealNodes(nodesRes.items ?? []);
-    const jobItems: CRDJob[] = jobsRes.items ?? [];
-    setRealJobs(jobItems.map(crdToJob));
+    setRealClusters(clusters);
+    setRealNodes(nodes);
+    setRealJobs(jobs.map(crdToJob));
   }, 15000);
 
   const handleRefresh = async () => {
@@ -158,13 +152,32 @@ export function Overview({
 
   const robotNodes = displayNodes.filter((n) => hasNodeCategory(n, "robot"));
   return (
-    <div className="page-content overview-page">
+    <div
+      className={`page-content resource-page overview-page refreshable-region page-refresh-region${refreshing ? " is-refreshing" : ""}`}
+      aria-busy={refreshing}
+    >
       <div className="section-heading">
         <div>
           <span className="eyebrow">{c.overview.eyebrow}</span>
           <h2>{c.overview.title}</h2>
           <p>{c.overview.desc}</p>
         </div>
+        <button
+          className="secondary-button"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          aria-busy={refreshing}
+        >
+          <RefreshCw
+            size={16}
+            className={refreshing ? "job-action-loading" : ""}
+          />
+          {refreshing
+            ? isZh
+              ? "刷新中..."
+              : "Refreshing..."
+            : c.common.refresh}
+        </button>
       </div>
       <section className="metric-grid platform-metrics">
         <MetricCard
@@ -222,7 +235,7 @@ export function Overview({
               <ArrowRight size={14} />
             </button>
           </div>
-          <ResourceDistribution copy={c} rows={resourceRows} />
+          <ResourceDistribution rows={resourceRows} />
         </div>
         <div className="panel workload-panel">
           <div className="panel-title">
@@ -317,19 +330,6 @@ export function Overview({
               <span>{c.overview.recent}</span>
               <h3>{c.common.production}</h3>
             </div>
-            <button
-              className="icon-button small"
-              onClick={handleRefresh}
-              disabled={refreshing}
-              aria-busy={refreshing}
-              aria-label={isZh ? "刷新" : "Refresh"}
-              title={isZh ? "刷新" : "Refresh"}
-            >
-              <RefreshCw
-                size={15}
-                className={refreshing ? "job-action-loading" : ""}
-              />
-            </button>
           </div>
           <div className="activity-list">
             {activity.length === 0 ? (
@@ -356,6 +356,11 @@ export function Overview({
           </div>
         </div>
       </section>
+      <RefreshOverlay
+        visible={refreshing}
+        label={isZh ? "正在刷新总览数据" : "Refreshing overview data"}
+      />
     </div>
   );
 }
+import { clustersApi, jobsApi, nodesApi } from "../backend";

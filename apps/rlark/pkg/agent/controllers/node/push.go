@@ -2,6 +2,10 @@ package node
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -95,13 +99,24 @@ func (r *pushNodeReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 	}
 
 	var podList corev1.PodList
-	if err := r.c.LocalKubeClient.List(ctx, &podList); err != nil {
+	localCachedClient := r.c.LocalKubeCachedClient
+	if localCachedClient == nil {
+		localCachedClient = r.c.LocalKubeClient
+	}
+	if err := localCachedClient.List(ctx, &podList, client.MatchingFields{podNodeNameField: k8sNode.Name}); err != nil {
 		logger.Error(err, "failed to list local Pods for node resource usage")
 		return reconcile.Result{RequeueAfter: HeartbeatInterval}, err
 	}
 
 	desiredNode := r.buildRLarkNodeFromK8sNode(&k8sNode, podList.Items)
-	return r.updateManagementNode(ctx, logger, desiredNode)
+	storage, err := r.nodeStorageStatus(ctx, k8sNode.Name)
+	storageCollected := err == nil && storage != nil
+	if err != nil {
+		logger.Error(err, "failed to get kubelet storage stats")
+	} else {
+		desiredNode.Status.Storage = storage
+	}
+	return r.updateManagementNode(ctx, logger, desiredNode, storageCollected)
 }
 
 func (r *pushNodeReconciler) buildRLarkNodeFromK8sNode(k8sNode *corev1.Node, pods []corev1.Pod) *rlarkv1alpha1.Node {
@@ -145,6 +160,86 @@ func (r *pushNodeReconciler) buildRLarkNodeFromK8sNode(k8sNode *corev1.Node, pod
 			},
 		},
 	}
+}
+
+type nodeFSStats struct {
+	CapacityBytes  *uint64 `json:"capacityBytes"`
+	UsedBytes      *uint64 `json:"usedBytes"`
+	AvailableBytes *uint64 `json:"availableBytes"`
+}
+
+type nodeStatsSummary struct {
+	Node struct {
+		FS      *nodeFSStats `json:"fs"`
+		Runtime *struct {
+			ImageFS *nodeFSStats `json:"imageFs"`
+		} `json:"runtime"`
+	} `json:"node"`
+}
+
+func (r *pushNodeReconciler) nodeStorageStatus(ctx context.Context, nodeName string) (*rlarkv1alpha1.NodeStorageStatus, error) {
+	if r.c.LocalKubeHTTP == nil || r.c.LocalKubeAPIHost == "" {
+		return nil, nil
+	}
+	endpoint, err := url.JoinPath(r.c.LocalKubeAPIHost, "api", "v1", "nodes", nodeName, "proxy", "stats", "summary")
+	if err != nil {
+		return nil, fmt.Errorf("build stats summary URL: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create stats summary request: %w", err)
+	}
+	resp, err := r.c.LocalKubeHTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request stats summary: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("request stats summary: %s", resp.Status)
+	}
+	var summary nodeStatsSummary
+	if err := json.NewDecoder(resp.Body).Decode(&summary); err != nil {
+		return nil, fmt.Errorf("decode stats summary: %w", err)
+	}
+
+	filesystems := []*nodeFSStats{summary.Node.FS}
+	if summary.Node.Runtime != nil {
+		filesystems = append(filesystems, summary.Node.Runtime.ImageFS)
+	}
+
+	storage := &rlarkv1alpha1.NodeStorageStatus{}
+	seen := make(map[[2]uint64]struct{})
+	collected := false
+	for _, fs := range filesystems {
+		if fs == nil || fs.CapacityBytes == nil || fs.AvailableBytes == nil {
+			continue
+		}
+
+		// nodefs and imagefs can refer to the same underlying filesystem. In
+		// that case their capacity and available bytes are identical, so only
+		// count the filesystem once. A dedicated containerd image filesystem
+		// is aggregated with nodefs instead.
+		identity := [2]uint64{*fs.CapacityBytes, *fs.AvailableBytes}
+		if _, exists := seen[identity]; exists {
+			continue
+		}
+		seen[identity] = struct{}{}
+
+		capacity := int64(*fs.CapacityBytes)
+		available := int64(*fs.AvailableBytes)
+		used := capacity - available
+		if fs.UsedBytes != nil {
+			used = int64(*fs.UsedBytes)
+		}
+		storage.CapacityBytes += capacity
+		storage.UsedBytes += used
+		storage.AvailableBytes += available
+		collected = true
+	}
+	if !collected {
+		return nil, nil
+	}
+	return storage, nil
 }
 
 func diskPressure(node *corev1.Node) *bool {
@@ -234,7 +329,7 @@ func (r *pushNodeReconciler) getPhase(k8sNode *corev1.Node) rlarkv1alpha1.NodePh
 	return rlarkv1alpha1.NodeOffline
 }
 
-func (r *pushNodeReconciler) updateManagementNode(ctx context.Context, logger logr.Logger, desiredNode *rlarkv1alpha1.Node) (reconcile.Result, error) {
+func (r *pushNodeReconciler) updateManagementNode(ctx context.Context, logger logr.Logger, desiredNode *rlarkv1alpha1.Node, storageCollected bool) (reconcile.Result, error) {
 	var mgmtNode rlarkv1alpha1.Node
 	err := r.c.ManagementClient.Get(ctx, types.NamespacedName{Name: desiredNode.Name, Namespace: desiredNode.Namespace}, &mgmtNode)
 	if err != nil && client.IgnoreNotFound(err) != nil {
@@ -271,6 +366,11 @@ func (r *pushNodeReconciler) updateManagementNode(ctx context.Context, logger lo
 	//   - events: owned by the node events watcher (nodeevents.Watcher)
 	desiredNode.Status.PullProgress = mgmtNode.Status.PullProgress
 	desiredNode.Status.Events = mgmtNode.Status.Events
+	if !storageCollected {
+		// Keep the last successful nodefs/imagefs result when kubelet stats are
+		// unavailable or incomplete during this reconciliation.
+		desiredNode.Status.Storage = mgmtNode.Status.Storage
+	}
 	mgmtNode.Status = desiredNode.Status
 	if err := r.c.ManagementClient.Status().Update(ctx, &mgmtNode); err != nil {
 		logger.Error(err, "failed to update management Node status")

@@ -1,11 +1,33 @@
-import type { Job, JobType, Phase } from "../data";
+import type { Job, JobTag, JobType, Phase } from "../data";
 import type { CRDJob, CRDJobTask, CRDWorkflow } from "../types";
+
+// 生成稳定的 tag id：用 key:value 组合哈希，保证同一 CRD 多次转换得到相同 id。
+function tagId(key: string, value: string): string {
+  const s = `${key}|${value}`;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return `tag-${key.replace(/[^a-zA-Z0-9]/g, "_")}-${(h >>> 0)
+    .toString(16)
+    .padStart(8, "0")}`;
+}
+
+function storageGi(quantity?: string): number {
+  const match = quantity?.match(/^(\d+)(?:Gi)?$/);
+  return match ? Number(match[1]) : 10;
+}
 
 export function crdToJob(crd: CRDJob): Job {
   const tasks = crd.spec.tasks ?? [];
   const container =
     tasks[0]?.kubernetes?.workload?.template.spec.containers?.[0];
-  const phase = (crd.status?.phase ?? "Pending") as Phase;
+  const phase = (
+    crd.metadata.deletionTimestamp
+      ? "Deleting"
+      : (crd.status?.phase ?? "Pending")
+  ) as Phase;
   const allTaskStatuses = crd.status?.tasks ?? [];
   const runningTasks = allTaskStatuses.filter(
     (t) => t.phase === "Running",
@@ -44,6 +66,16 @@ export function crdToJob(crd: CRDJob): Job {
       const vol = t.kubernetes?.workload?.template.spec.volumes?.find(
         (v) => v.name === vm.name,
       );
+      if (vol?.ephemeral) {
+        const spec = vol.ephemeral.volumeClaimTemplate.spec;
+        return {
+          type: "storage" as const,
+          objectStorage: spec.storageClassName ?? "",
+          mountPath: vm.mountPath,
+          hostPath: "",
+          pvcSizeGb: storageGi(spec.resources?.requests?.storage),
+        };
+      }
       if (vol?.persistentVolumeClaim) {
         const claimName = vol.persistentVolumeClaim.claimName;
         const storageClass =
@@ -78,7 +110,6 @@ export function crdToJob(crd: CRDJob): Job {
       prepareScript: t.prepareScript ?? "",
       env: taskEnv,
       mounts: taskMounts,
-      pvcStorageMap: t.kubernetes?.workload?.pvcStorageMap,
     };
   });
   const env =
@@ -92,6 +123,16 @@ export function crdToJob(crd: CRDJob): Job {
     const vol = tasks[0]?.kubernetes?.workload?.template.spec.volumes?.find(
       (v) => v.name === vm.name,
     );
+    if (vol?.ephemeral) {
+      const spec = vol.ephemeral.volumeClaimTemplate.spec;
+      return {
+        type: "storage" as const,
+        objectStorage: spec.storageClassName ?? "",
+        mountPath: vm.mountPath,
+        hostPath: "",
+        pvcSizeGb: storageGi(spec.resources?.requests?.storage),
+      };
+    }
     if (vol?.persistentVolumeClaim) {
       const claimName = vol.persistentVolumeClaim.claimName;
       const storageClass =
@@ -149,6 +190,19 @@ export function crdToJob(crd: CRDJob): Job {
     stopped: crd.spec.stopped ?? false,
     domain: crd.spec.domain ?? "",
     sshPublicKey: crd.spec.sshPublicKey ?? "",
+    tags:
+      crd.spec.tags && crd.spec.tags.length > 0
+        ? crd.spec.tags.flatMap((tag) => {
+            // 兼容旧格式 {key, value} 与新格式 {key, values[]}
+            const values =
+              tag.values ?? (tag.value !== undefined ? [tag.value] : []);
+            return values.map((value): JobTag => ({
+              id: tagId(tag.key, value),
+              key: tag.key,
+              value,
+            }));
+          })
+        : [],
     resources,
     taskStatuses: allTaskStatuses,
   };
@@ -169,7 +223,12 @@ export function mapRoleToJobType(tasks: CRDJobTask[]): JobType {
 export function crdToWorkflow(crd: CRDWorkflow) {
   const jobs = crd.status?.jobs ?? [];
   const running = jobs.filter((j) => j.phase === "Running").length;
-  const phase = crd.status?.phase ?? "Pending";
+  const phase = crd.metadata.deletionTimestamp
+    ? "Deleting"
+    : crd.spec.stopped &&
+        (crd.status?.phase === "Pending" || crd.status?.phase === "Running")
+      ? "Stopping"
+      : (crd.status?.phase ?? "Pending");
   return {
     name: crd.metadata.name,
     phase: phase as Phase,
@@ -178,5 +237,6 @@ export function crdToWorkflow(crd: CRDWorkflow) {
     created: crd.metadata.creationTimestamp ?? "—",
     templates: crd.spec.jobTemplates,
     jobStatuses: jobs,
+    stopped: crd.spec.stopped ?? false,
   };
 }

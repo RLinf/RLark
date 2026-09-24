@@ -9,9 +9,9 @@ if [ -n "$WAIT_NETWORK_SCRIPT" ]; then
 fi
 
 # Phase 0: Inject SSH public key into authorized_keys
-if [ -n "$RLARK_SSH_PUBLIC_KEY" ] && [ -x /sshd/rlark-sshd ]; then
-    nohup /sshd/rlark-sshd -port 2222 > /tmp/rlark-sshd.log 2>&1 &
-    echo "rlark-sshd started on port 2222"
+if [ -n "$RLARK_SSH_PUBLIC_KEY" ] && [ -x /rlark-tools/rlark-tools ]; then
+    nohup /rlark-tools/rlark-tools sshd -port 2222 > /tmp/rlark-sshd.log 2>&1 &
+    echo "rlark-tools sshd started on port 2222"
 elif [ -n "$RLARK_SSH_PUBLIC_KEY" ]; then
     mkdir -p ~/.ssh && chmod 700 ~/.ssh
     echo "$RLARK_SSH_PUBLIC_KEY" >> ~/.ssh/authorized_keys
@@ -57,6 +57,14 @@ if command -v getent >/dev/null 2>&1; then
       sleep 1
   done
 fi
+
+# Extend health-check / heartbeat timeouts so that the cluster survives
+# transient network interruptions (e.g. node-agent restarts) without Ray
+# marking nodes dead prematurely.
+export RAY_health_check_period_ms="${RAY_health_check_period_ms:-5000}"
+export RAY_health_check_timeout_ms="${RAY_health_check_timeout_ms:-15000}"
+export RAY_health_check_failure_threshold="${RAY_health_check_failure_threshold:-30}"
+export RAY_num_heartbeats_timeout="${RAY_num_heartbeats_timeout:-60}"
 
 ray start --address="${HEAD_IP:-$RLARK_HEAD_ADDRESS}:${RLARK_RAY_PORT}" --temp-dir $TEMP_DIR --block &
 RAY_WORKER_PID=$!

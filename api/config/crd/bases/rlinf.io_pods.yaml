@@ -76,6 +76,12 @@ spec:
               node:
                 type: string
               phase:
+                enum:
+                - Pending
+                - Running
+                - Succeeded
+                - Failed
+                - Unknown
                 type: string
             type: object
         type: object

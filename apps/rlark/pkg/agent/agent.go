@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
+	"sync/atomic"
 
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/kubernetes"
@@ -32,6 +34,9 @@ type Agent struct {
 
 	localListener net.Listener
 	localDialer   utils.Dial
+	ready         atomic.Bool
+	drainMu       sync.Mutex
+	drain         context.CancelFunc
 }
 
 // NewAgent creates a new Agent.
@@ -41,9 +46,35 @@ func NewAgent(config Config) *Agent {
 	}
 }
 
+func (a *Agent) SetReady(ready bool) {
+	a.ready.Store(ready)
+}
+
+func (a *Agent) startDrain() {
+	a.ready.Store(false)
+	a.drainMu.Lock()
+	drain := a.drain
+	a.drainMu.Unlock()
+	if drain != nil {
+		drain()
+	}
+}
+
 func (a *Agent) init(ctx context.Context) error {
 	_ = ctx
 	var err error
+	if err := a.config.ControllerConcurrency.Validate(); err != nil {
+		return fmt.Errorf("validate controller concurrency: %w", err)
+	}
+	if a.config.PodOrphanSweepInterval <= 0 {
+		return fmt.Errorf("pod orphan sweep interval must be positive")
+	}
+	if a.config.PodOrphanSweepPageSize <= 0 {
+		return fmt.Errorf("pod orphan sweep page size must be positive")
+	}
+	if a.config.PodStaleTTL <= 0 {
+		return fmt.Errorf("pod stale TTL must be positive")
+	}
 
 	// Initialize server client
 	a.serverClient, err = server.NewClientFromConfig(a.config.ClientConfig)
@@ -101,6 +132,17 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.init(ctx); err != nil {
 		return err
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	a.drainMu.Lock()
+	a.drain = cancel
+	a.drainMu.Unlock()
+	defer func() {
+		a.ready.Store(false)
+		a.drainMu.Lock()
+		a.drain = nil
+		a.drainMu.Unlock()
+		cancel()
+	}()
 
 	var eg errgroup.Group
 

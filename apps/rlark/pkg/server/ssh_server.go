@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
+	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 	gossh "golang.org/x/crypto/ssh"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,7 +19,6 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
-	"github.com/rlinf/rlark/apps/rlark/pkg/server/reverseproxy"
 )
 
 func (s *Server) runSSHServer(ctx context.Context) error {
@@ -230,7 +230,7 @@ func (s *Server) handleSSHChannel(srv *ssh.Server, conn *gossh.ServerConn, newCh
 		return
 	}
 	defer func() { _ = c.Close() }()
-	reverseproxy.PipeConnections(ch, c)
+	utils.RelayStreams(ch, c)
 }
 
 func (s *Server) authenticateUserKey(username string, key gossh.PublicKey) (string, error) {
@@ -260,7 +260,7 @@ func (s *Server) authenticateUserKeyFromSecret(username string, key gossh.Public
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	secret, err := s.kubeClient.CoreV1().Secrets(common.SecretNamespace).Get(ctx, common.SSHUserKeySecretName, metav1.GetOptions{})
+	secret, err := s.kubeClient.CoreV1().Secrets(s.config.KubeClientConfig.DefaultNamespace()).Get(ctx, common.SSHUserKeySecretName, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
 			return "", nil

@@ -13,10 +13,6 @@ hide:
   <img src="https://img.shields.io/badge/Kubernetes-kcp-326CE5?logo=kubernetes&style=flat-square" alt="Kubernetes" />
 </div>
 
-<div align="center" markdown>
-  <a href="https://rlark.readthedocs.io/en/latest/"><img src="https://img.shields.io/badge/English-EN-4051b5?style=flat-square" alt="English" /></a>
-  <img src="https://img.shields.io/badge/中文-中文-e91e63?style=flat-square" alt="中文" />
-</div>
 
 <h1 align="center">
   <sub>RLark 具身智能云原生纳管平台</sub>
@@ -30,18 +26,20 @@ hide:
 
 ## 核心能力
 
-- **具身智能工作负载编排**：从云端 GPU 训练（RL/LLM）到端侧部署，统一的声明式 Job/Workflow/Task 抽象覆盖全链路
+- **具身智能工作负载编排**：从云端 GPU 训练（RL/LLM）到端侧部署，统一的声明式 Job/Task 抽象覆盖全链路
 - **多运行时数据面**：基于 Kubernetes 统一纳管云端 GPU 集群与端侧设备，覆盖训练到具身设备部署的完整链路；面向不适合部署 Kubernetes 的轻量端侧场景，后续将扩展 Docker 和 Raw 运行时支持
 - **跨集群资源抽象**：通过 Domain 和 Node CRD 统一管理多地 GPU 集群和端侧设备，控制面运行在 kcp 之上
-- **声明式训练任务**：多层抽象，支持 DAG 编排的训练流水线，声明式定义 Ray 集群
+- **声明式训练任务**：基于 Job/Task 的多角色编排，支持声明式定义 Ray 集群
 - **跨集群 Pod 网络**：基于 TUN 设备 + gVisor 协议栈 + SSH 隧道的虚拟网络，Pod 跨集群通信无需 NAT 穿透
 - **证书体系**：X.509 + SSH 双层证书，支持 Agent 接入、Domain 范围的跨集群转发鉴权、用户 SSH 登录鉴权
 - **可观测性**：Prometheus 指标暴露、Pod 日志实时查询、Web 管理界面
 
 ## 架构概览
 
+下图是控制面和数据面主要组件的简化视图。
+
 <div style="max-width: 85%; margin: 0 auto;">
-  <img src="../images/architecture.png" alt="系统架构" style="width: 100%;">
+  <img src="../images/architecture-zh.svg" alt="系统架构" style="width: 100%;">
 </div>
 
 ## 快速开始

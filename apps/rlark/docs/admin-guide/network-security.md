@@ -6,6 +6,8 @@ A Domain groups virtual addresses and scopes cross-cluster forwarding. Each Doma
 
 ### Creating a Domain
 
+> **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
+
 ![Domain Management](../images/ui/domain-ui.png)
 
 - Administrator Console → Domain Management → Create Domain

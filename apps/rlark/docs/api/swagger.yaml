@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
-  title: RLark Gateway CRD API
+  title: RLark Gateway CRD API Subset
   description: >-
-    Kubernetes-style API for rlinf.io resources. The Gateway login endpoint
+    A maintained subset of routes registered by the RLark Gateway, focused on CRD operations and selected supporting endpoints; this is not a complete Gateway specification. The Gateway login endpoint
     does not issue a token or establish a session, and these routes currently
     do not enforce the UI login result. Deploy the Gateway only on a trusted
     network or behind an authenticated access-control layer. Domain resources
@@ -27,23 +27,39 @@ tags:
     description: Namespaced Node resources
   - name: Task
     description: Namespaced Task resources
-  - name: Workflow
-    description: Cluster-scoped Workflow resources
+  - name: Image
+    description: Images referenced by Jobs and Tasks
+  - name: Observability
+    description: Gateway Prometheus metrics
 
 paths:
   /api/v1/images:
     get:
       tags: [Image]
-      summary: List recently used images
-      description: Returns up to ten images used by the most recent jobs, ordered by last use time.
+      summary: List used images
+      description: Returns images referenced by current Jobs and Tasks, with usage counts and last-used timestamps.
       operationId: listImages
       responses:
         '200':
-          description: OK
+          description: Image usage records
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ImageUsageList'
+
+  /metrics:
+    get:
+      tags: [Observability]
+      summary: Get Gateway metrics
+      description: Returns Gateway metrics in the Prometheus text exposition format.
+      operationId: readGatewayMetrics
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
 
   # ─── Job Collection ───────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/jobs:
@@ -202,39 +218,81 @@ paths:
         '404':
           description: Not Found
 
-  # ─── Job Logs (not yet implemented) ──────────────────────────────
+  # ─── Job Logs ────────────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs:
     get:
       tags: [Job]
       summary: Get Job logs
-      description: Get logs for a Job resource. Not yet implemented.
+      description: >-
+        Queries the configured backend when from is supplied. If no backend is
+        configured, no from value is supplied, or the backend query fails, the
+        handler falls back to current Pod logs.
       operationId: readJobLogs
       parameters:
         - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/logFrom'
+        - $ref: '#/components/parameters/logTo'
+        - $ref: '#/components/parameters/logTask'
+        - $ref: '#/components/parameters/logPod'
+        - name: query
+          in: query
+          description: Raw backend-specific log query.
+          schema: {type: string}
+        - name: cursor
+          in: query
+          description: Backend pagination cursor returned as nextCursor.
+          schema: {type: string}
+        - name: order
+          in: query
+          description: Use asc for ascending backend results; all other values are descending.
+          schema: {type: string, default: desc}
       responses:
         '200':
-          description: OK
-        '404':
-          description: Not Found
-        '501':
-          description: Not Implemented
+          description: Backend log entries or Pod-log fallback
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/BackendLogResponse'
+                  - $ref: '#/components/schemas/PodLogResponse'
+        '500':
+          description: Failed to list Tasks for the Pod fallback
+
+  /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs/label-values:
+    get:
+      tags: [Job]
+      summary: List Job log label values
+      description: Returns unique values for a backend log label; label defaults to pod. Returns an empty values array when no backend is configured.
+      operationId: listJobLogLabelValues
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - name: label
+          in: query
+          schema: {type: string, default: pod}
+        - $ref: '#/components/parameters/logFrom'
+        - $ref: '#/components/parameters/logTo'
+        - $ref: '#/components/parameters/logTask'
+        - $ref: '#/components/parameters/logPod'
+      responses:
+        '200':
+          description: Unique label values
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogLabelValuesResponse'
+        '500':
+          description: Log backend query failed
 
   # ─── Job Metrics (not yet implemented) ───────────────────────────
   /api/v1/rlinf.io/v1alpha1/jobs/{name}/metrics:
     get:
       tags: [Job]
       summary: Get Job metrics
-      description: Get metrics for a Job resource. Not yet implemented.
+      description: This registered route is not implemented and always returns HTTP 501.
       operationId: readJobMetrics
       parameters:
         - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
       responses:
-        '200':
-          description: OK
-        '404':
-          description: Not Found
         '501':
           description: Not Implemented
 
@@ -564,163 +622,6 @@ paths:
         '404':
           description: Not Found
 
-  # ─── Workflow Collection ─────────────────────────────────────────
-  /api/v1/rlinf.io/v1alpha1/workflows:
-    get:
-      tags: [Workflow]
-      summary: List workflows
-      description: List workflows resources.
-      operationId: listWorkflow
-      parameters:
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/continue'
-        - $ref: '#/components/parameters/limit'
-        - $ref: '#/components/parameters/fieldSelector'
-        - $ref: '#/components/parameters/labelSelector'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/WorkflowList'
-
-    post:
-      tags: [Workflow]
-      summary: Create a Workflow
-      description: Create a Workflow resource.
-      operationId: createWorkflow
-      parameters:
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/dryRun'
-        - $ref: '#/components/parameters/fieldManager'
-        - $ref: '#/components/parameters/fieldValidation'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Workflow'
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workflow'
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workflow'
-
-  # ─── Workflow Named ──────────────────────────────────────────────
-  /api/v1/rlinf.io/v1alpha1/workflows/{name}:
-    get:
-      tags: [Workflow]
-      summary: Get a Workflow
-      description: Get a Workflow resource.
-      operationId: readWorkflow
-      parameters:
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workflow'
-        '404':
-          description: Not Found
-
-    put:
-      tags: [Workflow]
-      summary: Replace a Workflow
-      description: Replace a Workflow resource.
-      operationId: replaceWorkflow
-      parameters:
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/fieldManager'
-        - $ref: '#/components/parameters/fieldValidation'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Workflow'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workflow'
-        '404':
-          description: Not Found
-
-    patch:
-      tags: [Workflow]
-      summary: Patch a Workflow
-      description: Patch a Workflow resource.
-      operationId: patchWorkflow
-      parameters:
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-        - $ref: '#/components/parameters/fieldManager'
-        - $ref: '#/components/parameters/fieldValidation'
-        - $ref: '#/components/parameters/force'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Workflow'
-          application/strategic-merge-patch+json:
-            schema:
-              $ref: '#/components/schemas/Workflow'
-          application/merge-patch+json:
-            schema:
-              $ref: '#/components/schemas/Workflow'
-          application/json-patch+json:
-            schema:
-              $ref: '#/components/schemas/JSONPatch'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workflow'
-        '404':
-          description: Not Found
-
-    delete:
-      tags: [Workflow]
-      summary: Delete a Workflow
-      description: Delete a Workflow resource.
-      operationId: deleteWorkflow
-      parameters:
-        - $ref: '#/components/parameters/name'
-        - $ref: '#/components/parameters/pretty'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-        '404':
-          description: Not Found
-
 components:
   parameters:
     name:
@@ -808,7 +709,94 @@ components:
       schema:
         type: boolean
 
+    logFrom:
+      name: from
+      in: query
+      description: RFC 3339 start time. Its presence enables a configured backend query.
+      schema:
+        type: string
+        format: date-time
+
+    logTo:
+      name: to
+      in: query
+      description: RFC 3339 end time; the backend query defaults to the current time when omitted.
+      schema:
+        type: string
+        format: date-time
+
+    logTask:
+      name: task
+      in: query
+      description: Filter backend logs or label values by task label.
+      schema:
+        type: string
+
+    logPod:
+      name: pod
+      in: query
+      description: Filter backend logs or label values by pod label.
+      schema:
+        type: string
+
   schemas:
+    LogEntry:
+      type: object
+      additionalProperties: true
+      description: A backend-specific structured log entry.
+
+    BackendLogResponse:
+      type: object
+      required: [source, entries, hasMore, nextCursor]
+      properties:
+        source:
+          type: string
+          enum: [backend]
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogEntry'
+        hasMore:
+          type: boolean
+        nextCursor:
+          type: string
+
+    PodLogInfo:
+      type: object
+      required: [taskName, podName, phase, node, logs]
+      properties:
+        taskName:
+          type: string
+        podName:
+          type: string
+        phase:
+          type: string
+        node:
+          type: string
+        logs:
+          type: string
+
+    PodLogResponse:
+      type: object
+      required: [source, pods]
+      properties:
+        source:
+          type: string
+          enum: [pod]
+        pods:
+          type: array
+          items:
+            $ref: '#/components/schemas/PodLogInfo'
+
+    LogLabelValuesResponse:
+      type: object
+      required: [values]
+      properties:
+        values:
+          type: array
+          items:
+            type: string
+
     ImageUsage:
       type: object
       required: [image, useCount, lastUsedAt]
@@ -1383,96 +1371,3 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Task'
-
-    # ─── Workflow Schemas ──────────────────────────────────────────
-    Workflow:
-      type: object
-      required:
-        - apiVersion
-        - kind
-      properties:
-        apiVersion:
-          type: string
-          enum:
-            - rlinf.io/v1alpha1
-        kind:
-          type: string
-          enum:
-            - Workflow
-        metadata:
-          $ref: '#/components/schemas/ObjectMeta'
-        spec:
-          $ref: '#/components/schemas/WorkflowSpec'
-        status:
-          $ref: '#/components/schemas/WorkflowStatus'
-
-    WorkflowSpec:
-      type: object
-      properties:
-        jobTemplates:
-          type: array
-          items:
-            $ref: '#/components/schemas/WorkflowJobTemplate'
-
-    WorkflowJobTemplate:
-      type: object
-      properties:
-        dependencies:
-          type: array
-          items:
-            type: string
-        name:
-          type: string
-        spec:
-          $ref: '#/components/schemas/JobSpec'
-
-    WorkflowStatus:
-      type: object
-      properties:
-        conditions:
-          type: array
-          items:
-            $ref: '#/components/schemas/Condition'
-        endTime:
-          type: string
-          format: date-time
-        jobs:
-          type: array
-          items:
-            $ref: '#/components/schemas/WorkflowJobStatus'
-        phase:
-          type: string
-        startTime:
-          type: string
-          format: date-time
-
-    WorkflowJobStatus:
-      type: object
-      properties:
-        message:
-          type: string
-        name:
-          type: string
-        phase:
-          type: string
-
-    WorkflowList:
-      type: object
-      required:
-        - apiVersion
-        - kind
-      properties:
-        apiVersion:
-          type: string
-          enum:
-            - rlinf.io/v1alpha1
-        kind:
-          type: string
-          enum:
-            - WorkflowList
-        metadata:
-          $ref: '#/components/schemas/ListMeta'
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Workflow'

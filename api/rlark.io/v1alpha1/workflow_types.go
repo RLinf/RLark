@@ -2,11 +2,14 @@ package v1alpha1
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+// +kubebuilder:validation:Enum=Pending;Running;Stopping;Stopped;Succeeded;Failed
 type WorkflowPhase string
 
 const (
 	WorkflowPhasePending   WorkflowPhase = "Pending"
 	WorkflowPhaseRunning   WorkflowPhase = "Running"
+	WorkflowPhaseStopping  WorkflowPhase = "Stopping"
+	WorkflowPhaseStopped   WorkflowPhase = "Stopped"
 	WorkflowPhaseSucceeded WorkflowPhase = "Succeeded"
 	WorkflowPhaseFailed    WorkflowPhase = "Failed"
 )
@@ -19,6 +22,7 @@ type WorkflowJobTemplate struct {
 
 type WorkflowSpec struct {
 	JobTemplates []WorkflowJobTemplate `json:"jobTemplates,omitempty"`
+	Stopped      bool                  `json:"stopped,omitempty"`
 }
 
 type WorkflowJobStatus struct {

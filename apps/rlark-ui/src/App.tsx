@@ -4,7 +4,12 @@ import type { Job } from "./data";
 import { copy, type Lang, type Theme } from "./i18n";
 import { navItems } from "./constants";
 import type { Page } from "./types";
-import { useIsAdminPath, parseRoute } from "./utils/route";
+import {
+  filesPath,
+  hasTerminalSession,
+  parseRoute,
+  useIsAdminPath,
+} from "./utils/route";
 import { Logo, Header, PlatformFooter } from "./components/shared";
 import { TerminalPage } from "./components/terminal";
 import { Overview } from "./pages/Overview";
@@ -22,6 +27,7 @@ import { UserLogin } from "./pages/Login";
 import { SSHKeysPage } from "./pages/SSHKeys";
 import { AdminApp } from "./admin/AdminApp";
 import { useBackendMode, usePersistentState } from "./hooks";
+import { clearAuthSession, hasAuthSession, UNAUTHORIZED_EVENT } from "./api";
 
 type NavigateOptions = {
   replace?: boolean;
@@ -52,9 +58,12 @@ export default function App() {
   const [userLoggedIn, setUserLoggedIn] = useState(
     () =>
       import.meta.env.DEV ||
-      (typeof sessionStorage !== "undefined" &&
-        sessionStorage.getItem("rlark-user-auth") === "1"),
+      (typeof sessionStorage !== "undefined" && hasAuthSession()),
   );
+  const terminalLoggedIn =
+    import.meta.env.DEV ||
+    (typeof sessionStorage !== "undefined" &&
+      hasTerminalSession(sessionStorage));
   const [userName, setUserName] = useState(
     () => sessionStorage.getItem("rlark-user-name") || "user",
   );
@@ -111,13 +120,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const onUnauthorized = () => setUserLoggedIn(false);
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
+
+  useEffect(() => {
     if (!jobSubmitNotice) return;
     const timer = window.setTimeout(() => setJobSubmitNotice(""), 4000);
     return () => window.clearTimeout(timer);
   }, [jobSubmitNotice]);
 
   if (isAdmin) return <AdminApp />;
-  if (!userLoggedIn) {
+  if (!userLoggedIn && !(isTerminal && terminalLoggedIn)) {
     return (
       <UserLogin
         onLogin={(name) => {
@@ -253,8 +268,7 @@ export default function App() {
           userName={userName}
           onCreate={() => setCreateOpen(true)}
           onLogout={() => {
-            sessionStorage.removeItem("rlark-user-auth");
-            sessionStorage.removeItem("rlark-user-name");
+            clearAuthSession();
             setUserLoggedIn(false);
           }}
         />
@@ -339,6 +353,9 @@ export default function App() {
               navigate("storageClass", name, { replace: !name })
             }
             onCreate={() => setStorageCreateOpen(true)}
+            onBrowseFiles={(cluster, storageClass) =>
+              window.open(filesPath(cluster, storageClass), "_blank")
+            }
             refreshKey={storageRefreshKey}
           />
         )}
@@ -362,7 +379,7 @@ export default function App() {
             onJobClick={(name) => navigate("jobs", name)}
           />
         )}
-        {page === "ssh-keys" && <SSHKeysPage copy={c} />}
+        {page === "ssh-keys" && <SSHKeysPage copy={c} userName={userName} />}
         <PlatformFooter />
       </main>
       {createOpen && (

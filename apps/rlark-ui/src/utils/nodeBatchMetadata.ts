@@ -50,7 +50,10 @@ export function updateNodeCategoryLabels(
   });
   (["cloud", "edge", "robot"] as const).forEach((category) => {
     if (categories.includes(category)) {
-      next[`rlark.io/node-category-${category}`] = "true";
+      const key = `rlark.io/node-category-${category}`;
+      next[key] = "true";
+      // 写回新值的 key 不能再标记为 removed，否则调用方会在 patch 里把它置 null 覆盖掉
+      removedKeys.delete(key);
     }
   });
   return { labels: next, removedKeys };

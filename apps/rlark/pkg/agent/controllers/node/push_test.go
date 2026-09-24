@@ -1,12 +1,65 @@
 package node
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/base"
 )
+
+func TestReconcileListsOnlyPodsOnCurrentNode(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	local := fake.NewClientBuilder().WithScheme(scheme).
+		WithIndex(&corev1.Pod{}, podNodeNameField, func(obj client.Object) []string {
+			pod := obj.(*corev1.Pod)
+			if pod.Spec.NodeName == "" {
+				return nil
+			}
+			return []string{pod.Spec.NodeName}
+		}).
+		WithObjects(
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}},
+			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}, Spec: corev1.PodSpec{NodeName: "node-a", Containers: []corev1.Container{{Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")}}}}}},
+			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}, Spec: corev1.PodSpec{NodeName: "node-b", Containers: []corev1.Container{{Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("8")}}}}}},
+		).Build()
+	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&rlarkv1alpha1.Node{}).Build()
+	r := &pushNodeReconciler{c: &Controller{Controller: base.Controller{
+		LocalKubeClient:     local,
+		ManagementClient:    management,
+		ManagementNamespace: "cluster-a",
+		AgentType:           string(rlarkv1alpha1.AgentTypeKubernetes),
+	}}}
+
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "node-a"}}); err != nil {
+		t.Fatal(err)
+	}
+	var node rlarkv1alpha1.Node
+	if err := management.Get(context.Background(), types.NamespacedName{Name: "node-a", Namespace: "cluster-a"}, &node); err != nil {
+		t.Fatal(err)
+	}
+	if cpu := node.Status.Used.Cpu().String(); cpu != "1" {
+		t.Fatalf("reported CPU requests = %s, want 1", cpu)
+	}
+}
 
 func TestMergeManagementNodeMetadata(t *testing.T) {
 	managementLabels := map[string]string{
@@ -86,6 +139,79 @@ func TestRequestedResourcesForNode(t *testing.T) {
 	}
 	if gpu := got[corev1.ResourceName("nvidia.com/gpu")]; gpu.String() != "1" {
 		t.Fatalf("gpu requests = %s, want 1", gpu.String())
+	}
+}
+
+func TestNodeStorageStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		response   string
+		statusCode int
+		want       [3]int64
+		wantNil    bool
+		wantErr    bool
+	}{
+		{
+			name:       "node filesystem",
+			statusCode: http.StatusOK,
+			response:   `{"node":{"fs":{"capacityBytes":1000,"usedBytes":900,"availableBytes":100}}}`,
+			want:       [3]int64{1000, 900, 100},
+		},
+		{
+			name:       "derives used bytes",
+			statusCode: http.StatusOK,
+			response:   `{"node":{"fs":{"capacityBytes":1000,"availableBytes":250}}}`,
+			want:       [3]int64{1000, 750, 250},
+		},
+		{
+			name:       "deduplicates shared image filesystem",
+			statusCode: http.StatusOK,
+			response:   `{"node":{"fs":{"capacityBytes":1000,"usedBytes":600,"availableBytes":400},"runtime":{"imageFs":{"capacityBytes":1000,"usedBytes":300,"availableBytes":400}}}}`,
+			want:       [3]int64{1000, 600, 400},
+		},
+		{
+			name:       "aggregates dedicated image filesystem",
+			statusCode: http.StatusOK,
+			response:   `{"node":{"fs":{"capacityBytes":1000,"usedBytes":600,"availableBytes":400},"runtime":{"imageFs":{"capacityBytes":500,"usedBytes":450,"availableBytes":50}}}}`,
+			want:       [3]int64{1500, 1050, 450},
+		},
+		{name: "missing filesystem", statusCode: http.StatusOK, response: `{"node":{}}`, wantNil: true},
+		{name: "invalid response", statusCode: http.StatusOK, response: `{`, wantErr: true},
+		{name: "http error", statusCode: http.StatusServiceUnavailable, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.URL.Path != "/api/v1/nodes/gpu20/proxy/stats/summary" {
+					t.Fatalf("request path = %s", req.URL.Path)
+				}
+				w.WriteHeader(tt.statusCode)
+				_, _ = w.Write([]byte(tt.response))
+			}))
+			defer server.Close()
+
+			reconciler := &pushNodeReconciler{c: &Controller{Controller: base.Controller{
+				LocalKubeHTTP:    server.Client(),
+				LocalKubeAPIHost: server.URL,
+			}}}
+			got, err := reconciler.nodeStorageStatus(context.Background(), "gpu20")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("nodeStorageStatus() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if tt.wantNil {
+				if got != nil {
+					t.Fatalf("nodeStorageStatus() = %#v, want nil", got)
+				}
+				return
+			}
+			if got == nil || [3]int64{got.CapacityBytes, got.UsedBytes, got.AvailableBytes} != tt.want {
+				t.Fatalf("nodeStorageStatus() = %#v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

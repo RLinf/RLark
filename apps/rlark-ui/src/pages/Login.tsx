@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { AlertCircle, ArrowRight, Eye, EyeOff } from "lucide-react";
+import { storeAuthSession } from "../api";
+import { authApi } from "../backend";
 
 export function UserLogin({
   onLogin,
@@ -26,27 +28,19 @@ export function UserLogin({
     }
     setLoading(true);
     setError("");
-    fetch("/api/v1/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: username.trim(), password }),
-    })
-      .then((resp) =>
-        resp.ok
-          ? resp.json()
-          : Promise.reject(
-              new Error(
-                resp.status === 401 ? "账号或密码错误" : `HTTP ${resp.status}`,
-              ),
-            ),
-      )
-      .then(() => {
+    authApi
+      .login(username.trim(), password)
+      .then((result) => {
+        if (!result.token || result.role !== "user") {
+          throw new Error("登录响应无效");
+        }
+        storeAuthSession(result.token, result.role);
         sessionStorage.setItem("rlark-user-auth", "1");
         sessionStorage.setItem("rlark-user-name", username.trim());
         onLogin(username.trim());
       })
       .catch((err) => {
-        setError(err.message);
+        setError(err.status === 401 ? "账号或密码错误" : err.message);
         setLoading(false);
       });
   };

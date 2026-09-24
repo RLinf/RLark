@@ -10,7 +10,7 @@ The production control plane consists of the following components:
 | PostgreSQL | Optional persistent storage when the top-level `db` block is configured | 5432 |
 | rlark-server | Certificate management, Agent tunnels, SSH, health, and metrics | 8443 (HTTPS/WSS), 2222 (SSH), 8888 (internal HTTP) |
 | rlark-gateway | REST API gateway for the console and CLI | 8090 |
-| rlark-controller-manager | Job/Workflow/Domain reconciliation | 8080 (metrics), 8081 (health) |
+| rlark-controller-manager | Job/Domain reconciliation | 8080 (metrics), 8081 (health) |
 | rlark-ui | Web management console and `/api/` reverse proxy | 80 |
 
 The standalone Gateway binary defaults to `:8080`; `rlarkadm` overrides it to `:8090`.

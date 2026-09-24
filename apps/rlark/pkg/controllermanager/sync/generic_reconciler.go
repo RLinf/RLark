@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -16,6 +17,7 @@ type genericReconciler[T client.Object] struct {
 	db      *bun.DB
 	handler Handler
 	newObj  func() T
+	syncFn  func(context.Context, T) error
 }
 
 func (r *genericReconciler[T]) saveToDatabase(ctx context.Context, m db.ResourceModel) error {
@@ -67,16 +69,46 @@ func (r *genericReconciler[T]) handleFinalizer(ctx context.Context, obj T) error
 	return r.client.Update(ctx, obj)
 }
 
+func (r *genericReconciler[T]) ensureFinalizer(ctx context.Context, obj T) error {
+	if slices.Contains(obj.GetFinalizers(), SyncFinalizer) {
+		return nil
+	}
+	obj.SetFinalizers(append(obj.GetFinalizers(), SyncFinalizer))
+	return r.client.Update(ctx, obj)
+}
+
+func (r *genericReconciler[T]) removeFinalizer(ctx context.Context, obj T) error {
+	if !slices.Contains(obj.GetFinalizers(), SyncFinalizer) {
+		return nil
+	}
+	finalizers := slices.Clone(obj.GetFinalizers())
+	obj.SetFinalizers(slices.DeleteFunc(finalizers, func(finalizer string) bool {
+		return finalizer == SyncFinalizer
+	}))
+	return r.client.Update(ctx, obj)
+}
+
 // Reconcile reconciles the resource.
 func (r *genericReconciler[T]) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := r.newObj()
 	if err := r.client.Get(ctx, req.NamespacedName, obj); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if err := r.syncResource(ctx, obj); err != nil {
+	if r.handler != nil && !r.handler.ShouldSyncObject(obj) {
+		return ctrl.Result{}, r.removeFinalizer(ctx, obj)
+	}
+	syncResource := r.syncResource
+	if r.syncFn != nil {
+		syncResource = r.syncFn
+	}
+	if err := syncResource(ctx, obj); err != nil {
 		return ctrl.Result{}, err
 	}
-	if obj.GetDeletionTimestamp() != nil {
+	if obj.GetDeletionTimestamp() == nil {
+		if err := r.ensureFinalizer(ctx, obj); err != nil {
+			return ctrl.Result{}, err
+		}
+	} else {
 		if err := r.handleFinalizer(ctx, obj); err != nil {
 			return ctrl.Result{}, err
 		}

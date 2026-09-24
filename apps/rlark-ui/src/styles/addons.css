@@ -1,0 +1,250 @@
+/* --- Addon Page --- */
+.addon-catalog-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.addon-card {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfcff;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.addon-card:hover {
+  border-color: var(--blue);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.addon-card.selected {
+  border-color: var(--blue);
+  background: #f0ecff;
+}
+
+.addon-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.addon-card-header strong {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.addon-card-version {
+  font-size: 11px;
+  color: #7f8897;
+  background: #eef1f6;
+  padding: 2px 7px;
+  border-radius: 999px;
+  margin-left: 6px;
+}
+
+.addon-card-desc {
+  font-size: 12px;
+  color: #7f8897;
+  line-height: 1.5;
+  margin: 0 0 8px;
+}
+
+.addon-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.addon-card-category {
+  font-size: 11px;
+  color: #6366f1;
+  background: #eef0ff;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.addon-detail-panel {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfcff;
+  min-height: 200px;
+}
+
+.addon-installed-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.addon-installed-table th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--line);
+  font-weight: 600;
+  color: #7f8897;
+  font-size: 12px;
+}
+
+.addon-installed-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid #f0f1f4;
+  color: var(--text);
+}
+
+.addon-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family:
+    "SF Mono", "Fira Code", "Cascadia Code", Menlo, Consolas, monospace;
+  resize: vertical;
+  line-height: 1.5;
+  background: #fff;
+  color: var(--text);
+  box-sizing: border-box;
+}
+
+.addon-textarea::placeholder {
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.addon-textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+/* Addon drawer */
+.addon-drawer-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+}
+
+.addon-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 460px;
+  max-width: 90vw;
+  height: 100vh;
+  background: #fff;
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);
+}
+
+.addon-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.addon-drawer-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.addon-drawer-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.addon-drawer-close:hover {
+  background: #f0f1f4;
+  color: var(--text);
+}
+
+.theme-dark .addon-card,
+.theme-dark .addon-detail-panel {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.theme-dark .addon-card:hover {
+  border-color: #7c8cff;
+  background: #172238;
+  box-shadow: none;
+}
+
+.theme-dark .addon-card.selected {
+  border-color: #7c8cff;
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.theme-dark .addon-card-header strong,
+.theme-dark .addon-installed-table td {
+  color: var(--ink);
+}
+
+.theme-dark .addon-card-version {
+  color: #aab5c7;
+  background: #202c40;
+}
+
+.theme-dark .addon-card-desc {
+  color: #9ca8ba;
+}
+
+.theme-dark .addon-card-category {
+  color: #b9c2ff;
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.theme-dark .addon-installed-table th,
+.theme-dark .addon-installed-table td {
+  border-color: var(--line);
+}
+
+.theme-dark .addon-textarea,
+.theme-dark .addon-drawer {
+  border-color: var(--line);
+  color: var(--ink);
+  background: var(--panel);
+}
+
+.theme-dark .addon-drawer-close:hover {
+  color: var(--ink);
+  background: #202c40;
+}
+
+.addon-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.addon-drawer-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}

@@ -1,0 +1,509 @@
+/* Storage class creation dialog */
+.storage-create-backdrop {
+  padding: 24px;
+  align-items: center;
+  justify-content: center;
+}
+
+.storage-create-modal {
+  width: min(920px, calc(100vw - 48px));
+  max-height: min(860px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 20px;
+}
+
+.storage-create-head {
+  padding: 22px 26px;
+  flex: none;
+}
+
+.storage-create-head > div:first-child {
+  min-width: 0;
+}
+
+.storage-create-head h2 {
+  margin: 6px 0 4px;
+  font-size: 22px;
+}
+
+.storage-create-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.storage-create-close {
+  flex: none;
+  font-size: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+}
+
+.storage-create-form {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 26px 0;
+  display: grid;
+  gap: 16px;
+  background: var(--canvas);
+}
+
+.storage-create-form .form-section {
+  margin: 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.storage-create-form .form-section > strong {
+  display: block;
+  margin-bottom: 14px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.storage-create-form .form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.storage-create-form label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.storage-create-form input:not([type="checkbox"]),
+.storage-create-form select,
+.storage-create-form textarea {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.storage-create-form input:not([type="checkbox"]),
+.storage-create-form select {
+  height: 42px;
+  padding: 0 12px;
+}
+
+.storage-create-form textarea {
+  min-height: 92px;
+  padding: 11px 12px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.storage-cluster-picker {
+  position: relative;
+  display: grid;
+  gap: 0;
+  width: 100%;
+}
+
+.storage-cluster-select {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.storage-cluster-select.open,
+.storage-cluster-select:focus-visible {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+  outline: 0;
+}
+
+.storage-cluster-select span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-cluster-select strong {
+  min-width: 0;
+  margin-top: 2px;
+  display: block;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-cluster-select svg {
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.storage-cluster-select.open svg {
+  transform: rotate(90deg);
+}
+
+.storage-cluster-dropdown {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 18px 50px rgba(13, 22, 38, 0.16);
+  padding: 10px;
+}
+
+.storage-cluster-picker-search {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.storage-cluster-picker-search svg {
+  justify-self: center;
+  color: var(--muted);
+}
+
+.storage-create-form
+  .storage-cluster-picker-search
+  input:not([type="checkbox"]) {
+  height: 36px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 8px 0 0;
+  box-shadow: none;
+}
+
+.storage-cluster-picker-search small {
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.storage-cluster-picker-options {
+  display: grid;
+  gap: 2px;
+  max-height: 188px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+
+.storage-cluster-select-all,
+.storage-cluster-picker-options label {
+  min-width: 0;
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 8px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.storage-cluster-select-all {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  width: 100%;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.storage-cluster-picker-options label {
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.storage-cluster-select-all:hover,
+.storage-cluster-picker-options label:hover,
+.storage-cluster-picker-options label.active {
+  background: #f4f7fb;
+}
+
+.storage-cluster-select-all input,
+.storage-cluster-picker-options input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+
+.storage-cluster-picker-options label > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.storage-cluster-picker-options strong {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-cluster-picker-options small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-cluster-picker-options p {
+  margin: 0;
+  padding: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.storage-cluster-select-all em {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.storage-create-form input:focus,
+.storage-create-form select:focus,
+.storage-create-form textarea:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+}
+
+.storage-create-form .form-grid > label:has(> input[type="checkbox"]) {
+  min-height: 42px;
+  margin-top: 18px;
+  padding: 0 12px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--canvas);
+}
+
+.storage-create-form input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+
+.registry-cluster-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.storage-create-form .registry-cluster-options label {
+  min-width: 0;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--canvas);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    box-shadow 0.15s;
+}
+
+.storage-create-form .registry-cluster-options label:hover,
+.storage-create-form .registry-cluster-options label.active {
+  border-color: var(--blue);
+  background: rgba(124, 58, 237, 0.06);
+}
+
+.storage-create-form .registry-cluster-options label:focus-within {
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+}
+
+.registry-cluster-options label > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.registry-cluster-options strong,
+.registry-cluster-options small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.registry-cluster-options strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.registry-cluster-options small,
+.registry-cluster-options p {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.registry-cluster-options p {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px 0;
+}
+
+.storage-create-form .error-text {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(239, 90, 122, 0.25);
+  border-radius: 10px;
+  background: rgba(239, 90, 122, 0.08);
+  color: var(--red);
+  font-size: 12px;
+}
+
+.storage-create-form .form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 -26px;
+  padding: 16px 26px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.theme-dark .storage-create-form {
+  background: #0f1623;
+}
+
+.theme-dark .storage-create-form .form-section,
+.theme-dark .storage-create-form input:not([type="checkbox"]),
+.theme-dark .storage-create-form select,
+.theme-dark .storage-create-form textarea {
+  background: #151d2b;
+  border-color: #33425b;
+  color: #e6edf7;
+}
+
+.theme-dark
+  .storage-create-form
+  .form-grid
+  > label:has(> input[type="checkbox"]) {
+  background: #111a29;
+  border-color: #33425b;
+}
+
+.theme-dark .storage-cluster-select,
+.theme-dark .storage-cluster-dropdown,
+.theme-dark .storage-cluster-picker-search,
+.theme-dark .storage-cluster-select-all,
+.theme-dark .storage-cluster-picker-options label {
+  background: #111a29;
+  border-color: #33425b;
+  color: #e6edf7;
+}
+
+.theme-dark
+  .storage-create-form
+  .storage-cluster-picker-search
+  input:not([type="checkbox"]) {
+  background: transparent;
+  border-color: transparent;
+  color: #e6edf7;
+}
+
+.theme-dark .storage-cluster-select-all:hover,
+.theme-dark .storage-cluster-picker-options label:hover,
+.theme-dark .storage-cluster-picker-options label.active {
+  background: rgba(139, 92, 246, 0.16);
+}
+
+@media (max-width: 760px) {
+  .storage-create-backdrop {
+    padding: 12px;
+  }
+
+  .storage-create-modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+  }
+
+  .storage-create-head,
+  .storage-create-form {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .storage-create-form .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .storage-cluster-dropdown {
+    position: static;
+    margin-top: 6px;
+  }
+
+  .storage-create-form .form-actions {
+    margin-left: -16px;
+    margin-right: -16px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}

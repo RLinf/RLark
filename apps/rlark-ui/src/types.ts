@@ -48,7 +48,9 @@ export interface ClusterSummary {
 export interface CRDWorkload {
   kind: string;
   replicas: number;
+  /** @deprecated Use template.spec.volumes[].ephemeral.volumeClaimTemplate. */
   pvcStorageMap?: Record<string, string>;
+  /** @deprecated Use template.spec.volumes[].ephemeral.volumeClaimTemplate. */
   pvcSizeGbMap?: Record<string, number>;
   template: {
     spec: {
@@ -66,6 +68,17 @@ export interface CRDWorkload {
         name: string;
         hostPath?: { path: string };
         persistentVolumeClaim?: { claimName: string };
+        ephemeral?: {
+          volumeClaimTemplate: {
+            spec: {
+              accessModes?: string[];
+              storageClassName?: string;
+              resources?: {
+                requests?: Record<string, string>;
+              };
+            };
+          };
+        };
       }>;
     };
   };
@@ -89,6 +102,7 @@ export interface CRDTask {
   metadata: {
     name: string;
     namespace?: string;
+    annotations?: Record<string, string>;
   };
   spec?: {
     kubernetes?: {
@@ -97,6 +111,26 @@ export interface CRDTask {
   };
   status?: {
     observedNodes?: string[];
+    tensorBoardProxy?: string;
+    pullProgress?: PullProgressEntry[];
+    events?: NodeEventEntry[];
+  };
+}
+
+export interface CRDPod {
+  metadata?: { name?: string; namespace?: string };
+  spec?: {
+    taskName?: string;
+    taskNamespace?: string;
+    podName?: string;
+    podNamespace?: string;
+    domain?: string;
+  };
+  status?: {
+    phase?: string;
+    node?: string;
+    ip?: string;
+    message?: string;
   };
 }
 
@@ -106,6 +140,7 @@ export interface CRDJob {
   metadata: {
     name: string;
     creationTimestamp?: string;
+    deletionTimestamp?: string;
     labels?: Record<string, string>;
     annotations?: Record<string, string>;
   };
@@ -114,6 +149,12 @@ export interface CRDJob {
     stopped?: boolean;
     sshPublicKey?: string;
     tasks: CRDJobTask[];
+    // 后端可能仍返回旧格式 {key, value}；新格式是 {key, values[]}
+    tags?: Array<{
+      key: string;
+      values?: string[];
+      value?: string;
+    }>;
   };
   status?: {
     phase: string;
@@ -152,8 +193,12 @@ export interface CRDWorkflowJobTemplate {
 export interface CRDWorkflow {
   apiVersion: string;
   kind: string;
-  metadata: { name: string; creationTimestamp?: string };
-  spec: { jobTemplates: CRDWorkflowJobTemplate[] };
+  metadata: {
+    name: string;
+    creationTimestamp?: string;
+    deletionTimestamp?: string;
+  };
+  spec: { jobTemplates: CRDWorkflowJobTemplate[]; stopped?: boolean };
   status?: {
     phase: string;
     jobs?: Array<{ name: string; phase: string; message: string }>;
@@ -191,10 +236,8 @@ export interface RoleResource {
     objectStorage: string;
     mountPath: string;
     hostPath: string;
-    pvcSizeGb: number;
+    pvcSizeGb: number | "";
   }>;
-  pvcStorageMap?: Record<string, string>;
-  pvcSizeGbMap?: Record<string, number>;
 }
 
 export interface WorkflowJobDef {
@@ -283,6 +326,11 @@ export interface CRDNode {
     };
     addresses?: Array<{ type: string; address: string }>;
     diskPressure?: boolean;
+    storage?: {
+      capacityBytes?: number;
+      usedBytes?: number;
+      availableBytes?: number;
+    };
     allocatable?: Record<string, string>;
     capacity?: Record<string, string>;
     used?: Record<string, string>;

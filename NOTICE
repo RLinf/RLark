@@ -12,7 +12,6 @@ This product includes software developed by third parties:
 - Bun ORM (https://github.com/uptrace/bun) - BSD 2-Clause License
 - React (https://github.com/facebook/react) - MIT License
 - gVisor (https://github.com/google/gvisor) - Apache License 2.0
-- remotedialer (https://github.com/rancher/remotedialer) - Apache License 2.0
 - RClone (https://github.com/rclone/rclone) - MIT License
 
 For full license texts of third-party dependencies, see the respective

@@ -24,7 +24,7 @@ GATEWAY_BIN           := gateway
 AGENT_BIN             := agent
 NETWORK_SIDECAR_BIN   := network-sidecar
 RLARKADM_BIN          := rlarkadm
-SSHD_BIN              := rlark-sshd
+RLARK_TOOLS_BIN       := rlark-tools
 
 ##@ Lint & format
 
@@ -43,7 +43,7 @@ fmt: ## Format Go (gofmt)
 
 .PHONY: all build
 all: build ## Build all binaries (default)
-build: $(SERVER_BIN) $(CONTROLLER_MANAGER_BIN) $(GATEWAY_BIN) $(AGENT_BIN) $(NETWORK_SIDECAR_BIN) $(RLARKADM_BIN) $(SSHD_BIN) ## Build all binaries
+build: $(SERVER_BIN) $(CONTROLLER_MANAGER_BIN) $(GATEWAY_BIN) $(AGENT_BIN) $(NETWORK_SIDECAR_BIN) $(RLARKADM_BIN) $(RLARK_TOOLS_BIN) ## Build all binaries
 
 .PHONY: $(SERVER_BIN)
 $(SERVER_BIN): ## Build server binary
@@ -69,9 +69,9 @@ $(NETWORK_SIDECAR_BIN): ## Build network-sidecar binary
 $(RLARKADM_BIN): ## Build rlarkadm binary
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o bin/$@ ./cmd/$@
 
-.PHONY: $(SSHD_BIN)
-$(SSHD_BIN): ## Build rlark-sshd binary
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o bin/$@ ./cmd/sshd
+.PHONY: $(RLARK_TOOLS_BIN)
+$(RLARK_TOOLS_BIN): ## Build rlark-tools binary
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o bin/$@ ./cmd/rlark-tools
 
 .PHONY: vet test clean
 vet: ## Run go vet

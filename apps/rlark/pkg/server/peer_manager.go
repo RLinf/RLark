@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
+	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/leaderelection"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 )
@@ -67,34 +67,21 @@ func (s *Server) runBroadcaster(ctx context.Context) error {
 
 	id := ServerPeerPrefix + common.Hostname("node")
 	ip := common.PodIP("localhost") + "/" + s.dialerFactory.GetPeerID() + "/" + s.dialerFactory.GetPeerToken()
-	rl, err := resourcelock.New(
-		resourcelock.LeasesResourceLock,
-		s.config.KubeClientConfig.DefaultNamespace(),
-		id,
-		s.kubeClient.CoreV1(),
-		s.kubeClient.CoordinationV1(),
-		resourcelock.ResourceLockConfig{
-			Identity: ip,
+	leConfig := configs.DefaultLeaderElectionConfig()
+	leConfig.Key = id
+	leConfig.Identity = ip
+	electionConfig, err := leConfig.Build(s.kubeClient, s.config.KubeClientConfig.DefaultNamespace(), leaderelection.LeaderCallbacks{
+		OnStartedLeading: func(ctx context.Context) {
+			s.peerBroadcasted.Store(true)
+			<-ctx.Done()
 		},
-	)
-	if err != nil {
-		return fmt.Errorf("create resource lock: %w", err)
-	}
-
-	le, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
-		Lock:          rl,
-		LeaseDuration: time.Second * 30,
-		RenewDeadline: time.Second * 10,
-		RetryPeriod:   time.Second * 5,
-		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(ctx context.Context) {
-				s.peerBroadcasted = true
-				<-ctx.Done()
-			},
-			OnStoppedLeading: func() {},
-			OnNewLeader:      func(identity string) {},
-		},
+		OnStoppedLeading: func() {},
+		OnNewLeader:      func(identity string) {},
 	})
+	if err != nil {
+		return fmt.Errorf("build leader election config: %w", err)
+	}
+	le, err := leaderelection.NewLeaderElector(electionConfig)
 	if err != nil {
 		return fmt.Errorf("create leader elector: %w", err)
 	}

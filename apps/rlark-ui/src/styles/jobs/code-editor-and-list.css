@@ -1,0 +1,998 @@
+.code-editor-shell {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #3c3c3c;
+  border-radius: 10px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.code-editor-header {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 11px;
+  border-bottom: 1px solid #333333;
+  background: #252526;
+}
+
+.code-editor-header span,
+.code-editor-header em {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1;
+}
+
+.code-editor-header span {
+  overflow: hidden;
+  color: #cccccc;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.code-editor-header span svg {
+  flex: 0 0 auto;
+  color: #4ec9b0;
+}
+
+.code-editor-header em {
+  flex: 0 0 auto;
+  color: #858585;
+}
+
+.code-editor-body {
+  position: relative;
+  min-width: 0;
+  background: #1e1e1e;
+  overflow: hidden;
+}
+
+.code-editor-lines {
+  position: absolute;
+  z-index: 3;
+  top: 12px;
+  left: 0;
+  width: 42px;
+  display: flex;
+  flex-direction: column;
+  color: #858585;
+  font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 20px;
+  text-align: right;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.code-editor-lines span {
+  height: 20px;
+  padding-right: 10px;
+}
+
+.code-editor-body::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  bottom: 0;
+  left: 42px;
+  border-left: 1px solid #2b2b2b;
+  pointer-events: none;
+}
+
+.code-editor-body textarea,
+.code-editor-viewer pre,
+.code-editor-highlight,
+.job-config-summary .code-editor-viewer pre {
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px 12px 54px;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 20px;
+  tab-size: 4;
+  white-space: pre;
+  word-break: normal;
+  overflow: auto;
+  box-shadow: none;
+  scrollbar-color: #424242 #1e1e1e;
+}
+
+.code-editor-highlight {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  pointer-events: none;
+  color: #d4d4d4;
+  will-change: transform;
+}
+
+.code-editor-highlight code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  color: inherit;
+  font: inherit;
+}
+
+.code-editor-highlight-line {
+  display: inline;
+}
+
+.code-token-keyword {
+  color: #c586c0;
+  font-weight: 700;
+}
+
+.code-token-flag {
+  color: #9cdcfe;
+}
+
+.code-token-value {
+  color: #ce9178;
+}
+
+.code-editor-body textarea {
+  position: relative;
+  z-index: 2;
+  display: block;
+  resize: vertical;
+  caret-color: #ffffff;
+  color: #d4d4d4;
+  background: transparent;
+}
+
+.code-editor-body textarea::placeholder {
+  color: #6a6a6a;
+  opacity: 1;
+}
+
+.code-editor-body textarea::selection,
+.code-editor-viewer code::selection {
+  background: #264f78;
+}
+
+.code-editor-input:focus-within {
+  border-color: #007acc;
+  box-shadow:
+    0 0 0 2px rgba(0, 122, 204, 0.22),
+    0 8px 20px rgba(15, 23, 42, 0.16);
+}
+
+.code-editor-viewer {
+  margin-top: 7px;
+  box-shadow: none;
+}
+
+.code-editor-viewer pre,
+.job-config-summary .code-editor-viewer pre {
+  max-height: 260px;
+}
+
+.code-editor-viewer pre code,
+.job-config-summary .code-editor-viewer pre code {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  white-space: inherit;
+}
+
+.env-row {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr 32px;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: start;
+}
+
+.device-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 32px;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.device-row select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 11px;
+  color: #27303d;
+  outline: 0;
+  font-size: 12px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.device-row input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 11px;
+  color: #27303d;
+  outline: 0;
+  font-size: 12px;
+  background: #fff;
+}
+
+.theme-dark .device-row select,
+.theme-dark .device-row input {
+  background: #151d2b;
+  color: #c4cbd6;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.mount-row {
+  display: grid;
+  grid-template-columns:
+    auto minmax(0, 1fr) minmax(0, 1fr) minmax(140px, 0.45fr)
+    32px;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: start;
+}
+
+.mount-size-field {
+  max-width: 240px;
+}
+
+.mount-field-box {
+  min-width: 0;
+  height: 40px;
+  display: grid;
+  grid-template-columns: minmax(88px, 0.34fr) minmax(0, 1fr);
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.mount-field-box > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 10px;
+  border-right: 1px solid var(--line);
+  background: #f3f6fb;
+  color: var(--muted, #8a94a6);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.mount-type-toggle {
+  display: inline-flex;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.mount-type-toggle button {
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--muted, #8a94a6);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mount-type-toggle button.active {
+  background: var(--blue, #6366f1);
+  color: #fff;
+}
+
+.theme-dark .mount-type-toggle {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.theme-dark .mount-type-toggle button {
+  color: #8a94a6;
+}
+
+.theme-dark .mount-type-toggle button.active {
+  background: var(--blue, #6366f1);
+  color: #fff;
+}
+
+.mount-row select,
+.env-row select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 11px;
+  color: #27303d;
+  outline: 0;
+  font-size: 12px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.mount-row input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 11px;
+  color: #27303d;
+  outline: 0;
+  font-size: 12px;
+  background: #fff;
+}
+
+.mount-row .mount-field-box select,
+.mount-row .mount-field-box input {
+  min-height: 0;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.theme-dark .mount-row select,
+.theme-dark .mount-row input,
+.theme-dark .env-row select {
+  background: #151d2b;
+  border-color: var(--line);
+  color: #d8e0ee;
+}
+
+.theme-dark .mount-field-box {
+  background: #151d2b;
+  border-color: var(--line);
+}
+
+.theme-dark .mount-field-box > span {
+  background: #111a29;
+  border-color: var(--line);
+  color: #9ca8ba;
+}
+
+.theme-dark .mount-row .mount-field-box select,
+.theme-dark .mount-row .mount-field-box input {
+  background: transparent;
+}
+
+.env-row input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 11px;
+  color: #27303d;
+  outline: 0;
+  font-size: 12px;
+  background: #fff;
+}
+
+.theme-dark .subpage-tabs button,
+.theme-dark .job-config-summary > div,
+.theme-dark .form-section,
+.theme-dark .ssh-key-select-list,
+.theme-dark .role-template.selectable button,
+.theme-dark .env-row input {
+  background: #151d2b;
+  border-color: var(--line);
+  color: #d8e0ee;
+}
+
+.theme-dark .job-config-summary strong,
+.theme-dark .form-section-head strong,
+.theme-dark .role-resource-card > strong {
+  color: #f5f7fb;
+}
+
+.theme-dark .job-config-summary code,
+.theme-dark .job-config-summary pre {
+  background: #101827;
+  color: #d7e4f6;
+}
+
+.theme-dark .job-config-summary .code-editor-viewer pre {
+  background: #1e1e1e;
+  color: #d4d4d4;
+}
+
+.theme-dark .job-config-summary .code-editor-viewer pre code {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.theme-dark .subpage-tabs button.active,
+.theme-dark .role-template.selectable button.active {
+  background: rgba(167, 139, 250, 0.16);
+  border-color: #5b21b6;
+  color: #c4b5fd;
+}
+
+.jobs-table-panel .link-cell {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+}
+
+.jobs-table-panel .link-cell strong {
+  display: block;
+  color: var(--blue);
+  font-size: 13px;
+}
+
+.jobs-table-panel th:first-child,
+.jobs-table-panel td:first-child {
+  width: 240px;
+  min-width: 240px;
+}
+
+.job-id-cell-wrap {
+  display: grid;
+  gap: 3px;
+}
+
+.jobs-table-panel .job-id-cell {
+  width: 100%;
+  min-width: 0;
+}
+
+.jobs-table-panel .job-id-cell strong,
+.jobs-table-panel .job-id-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-id-copy {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #7a8494;
+  font-size: 11px;
+}
+
+.job-id-copy:hover {
+  color: var(--blue);
+}
+
+.job-id-copy small {
+  color: inherit;
+  font-size: inherit;
+}
+
+.job-detail-resource-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.jobs-table-panel .job-id-cell strong {
+  line-height: 1.35;
+}
+
+.jobs-table-panel .job-id-cell.is-long strong {
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.jobs-table-panel .link-cell small {
+  display: block;
+  color: #98a1af;
+  font-size: 10px;
+  margin-top: 3px;
+}
+
+.inline-code {
+  display: inline-block;
+  padding: 5px 7px;
+  border-radius: 8px;
+  background: #f0f4fa;
+  color: #26313f;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+}
+
+.back-button {
+  margin-bottom: 10px;
+}
+
+.create-stepper {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfcfe;
+}
+
+.create-stepper button {
+  position: relative;
+  height: 44px;
+  border: 0;
+  background: transparent;
+  color: #8792a1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.create-stepper button:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  right: -25%;
+  width: 50%;
+  height: 2px;
+  background: #dfe6ef;
+  z-index: 0;
+}
+
+.create-stepper span {
+  position: relative;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #e8edf4;
+  color: #8792a1;
+}
+
+.create-stepper button.active {
+  color: var(--blue);
+}
+
+.create-stepper button.active span,
+.create-stepper button.active:not(:last-child)::after {
+  background: var(--blue);
+  color: #fff;
+}
+
+.yaml-preview {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  overflow: hidden;
+  background: #fbfcfe;
+}
+
+.yaml-preview > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.yaml-preview strong {
+  color: #202733;
+}
+
+.yaml-preview small {
+  color: #7f8998;
+}
+
+.yaml-preview pre {
+  margin: 0;
+  padding: 18px;
+  max-height: 430px;
+  overflow: auto;
+  background: #101827;
+  color: #d7e4f6;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.theme-dark .inline-code,
+.theme-dark .create-stepper,
+.theme-dark .yaml-preview {
+  background: #151d2b;
+  border-color: var(--line);
+}
+
+.theme-dark .inline-code {
+  color: #d9e2f0;
+}
+
+.theme-dark .yaml-preview strong {
+  color: #f5f7fb;
+}
+
+.theme-dark .yaml-preview small,
+.theme-dark .jobs-table-panel .link-cell small {
+  color: #9ca8ba;
+}
+
+.theme-dark .resource-row,
+.theme-dark .cluster-models > div,
+.theme-dark .robot-state-list > div,
+.theme-dark .cluster-pill,
+.theme-dark .role-template,
+.theme-dark .worker-table,
+.theme-dark .job-worker-main,
+.theme-dark .job-worker-side,
+.theme-dark .job-detail-summary-card,
+.theme-dark .job-detail-summary-section,
+.theme-dark .worker-role-strip > div,
+.theme-dark .worker-primary-panel,
+.theme-dark .job-observe-panel,
+.theme-dark .worker-detail-grid > div,
+.theme-dark .pod-subtable,
+.theme-dark .worker-ssh-access,
+.theme-dark .empty-inline,
+.theme-dark .worker-metric-card {
+  background: #151d2b;
+  border-color: var(--line);
+}
+
+.theme-dark .resource-row strong,
+.theme-dark .cluster-models strong,
+.theme-dark .robot-state-list strong,
+.theme-dark .cluster-pill strong,
+.theme-dark .resource-row b,
+.theme-dark .job-worker-main h3,
+.theme-dark .job-detail-summary-head h2,
+.theme-dark .job-detail-summary-section h3,
+.theme-dark .job-worker-side strong,
+.theme-dark .worker-role-strip strong,
+.theme-dark .worker-panel-head h3,
+.theme-dark .observe-panel-head h3,
+.theme-dark .worker-node-cell strong,
+.theme-dark .worker-detail-grid strong,
+.theme-dark .worker-metric-card > div strong,
+.theme-dark .worker-metric-card label span {
+  color: #f5f7fb;
+}
+
+.theme-dark .resource-row small,
+.theme-dark .cluster-models span,
+.theme-dark .robot-state-list small,
+.theme-dark .cluster-pill small,
+.theme-dark .job-worker-main p,
+.theme-dark .job-detail-summary-head p,
+.theme-dark .job-detail-summary-status small,
+.theme-dark .job-worker-side span,
+.theme-dark .job-worker-side small,
+.theme-dark .worker-role-strip span,
+.theme-dark .worker-role-strip small,
+.theme-dark .worker-panel-head small,
+.theme-dark .worker-node-cell small,
+.theme-dark .worker-detail-grid span,
+.theme-dark .worker-ssh-access span,
+.theme-dark .worker-metric-card label,
+.theme-dark .worker-metric-card small,
+.theme-dark .empty-inline {
+  color: #9ca8ba;
+}
+
+.theme-dark .worker-ssh-access code {
+  color: #d7e4f6;
+}
+
+.theme-dark .pod-subtable {
+  background: #111a29;
+}
+
+.theme-dark .pod-subtable th {
+  background: #151d2b;
+  color: #9ca8ba;
+}
+
+.theme-dark .pod-subtable td {
+  background: #172235;
+  border-color: var(--line);
+  color: #d7e4f6;
+}
+
+.theme-dark .pod-subtable tbody tr:nth-child(even) td {
+  background: #141f31;
+}
+
+.theme-dark .pod-subtable tbody tr:hover td {
+  background: #1d2a3f;
+}
+
+.theme-dark .pod-subtable .inline-code {
+  background: #101827;
+  color: #d7e4f6;
+}
+
+.theme-dark .job-worker-side code,
+.theme-dark .worker-resource-cell span {
+  background: #111a29;
+  color: #d7e4f6;
+}
+
+.theme-dark .role-worker-group,
+.theme-dark .worker-access-card,
+.theme-dark .config-section,
+.theme-dark .config-kv-card,
+.theme-dark .config-value-list,
+.theme-dark .role-config-card,
+.theme-dark .role-runtime-config,
+.theme-dark .role-runtime-facts {
+  background: #151d2b;
+  border-color: var(--line);
+}
+
+.theme-dark .role-runtime-tabs button,
+.theme-dark .role-runtime-meta span {
+  background: #111a29;
+  border-color: var(--line);
+}
+
+.theme-dark .role-runtime-tabs button.active {
+  background: #202b3d;
+  border-color: #5b4a93;
+  color: #c4b5fd;
+}
+
+.theme-dark .role-runtime-heading strong,
+.theme-dark .role-runtime-facts strong,
+.theme-dark .role-runtime-facts code {
+  color: #f5f7fb;
+}
+
+.theme-dark .role-runtime-image code {
+  background: #111a29;
+  border-color: var(--line);
+  color: #d7e4f6;
+}
+
+.theme-dark .role-runtime-summary {
+  background: #111a29;
+  border-color: var(--line);
+}
+
+.theme-dark .role-runtime-resource-summary strong {
+  background: #151d2b;
+  border-color: var(--line);
+  color: #f5f7fb;
+}
+
+.theme-dark .sub-tabs,
+.theme-dark .metrics-scope-toggle,
+.theme-dark .worker-filter-bar,
+.theme-dark .metrics-filter-bar select,
+.theme-dark .worker-filter-bar select,
+.theme-dark .time-series-card,
+.theme-dark .public-config-card,
+.theme-dark .task-summary-metric,
+.theme-dark .log-list,
+.theme-dark .log-search-field,
+.theme-dark .stream-toggle,
+.theme-dark .worker-table-actions .icon-button {
+  background: #151d2b;
+  border-color: var(--line);
+}
+
+.theme-dark .job-detail-summary-section,
+.theme-dark .task-summary-metric {
+  background: #111a29;
+}
+
+.theme-dark .sub-tabs button.active,
+.theme-dark .metrics-scope-toggle button.active {
+  background: #202b3d;
+  color: #c4b5fd;
+}
+
+.theme-dark .worker-total-count,
+.theme-dark .node-kind-chip {
+  background: #202b3d;
+  color: #c4b5fd;
+}
+
+.theme-dark .log-list-row p,
+.theme-dark .metrics-source-label {
+  color: #c7d1df;
+}
+
+.theme-dark .log-list-head {
+  border-color: var(--line);
+  background: #111a29;
+}
+
+.theme-dark .metrics-integration-state {
+  background: #111a29;
+}
+
+.theme-dark .metrics-integration-icon {
+  background: #202b3d;
+}
+
+.theme-dark .copyable-code-block,
+.theme-dark .public-card-head a,
+.theme-dark .worker-filter-bar,
+.theme-dark .log-search-field {
+  background: #111a29;
+}
+
+.theme-dark .copyable-code-block > div {
+  border-color: var(--line);
+}
+
+.theme-dark .copyable-code-block code {
+  color: #d7e4f6;
+}
+
+.theme-dark .command-code-block {
+  background: #111a29;
+  border-color: var(--line);
+}
+
+.theme-dark .command-code-block .icon-button {
+  background: #151d2b;
+}
+
+.theme-dark .command-line-number {
+  border-color: var(--line);
+  color: #6f7d91;
+}
+
+.theme-dark .command-line-content {
+  color: #d7e4f6;
+}
+
+.theme-dark .command-token-keyword {
+  color: #c4b5fd;
+}
+
+.theme-dark .command-token-flag {
+  color: #93c5fd;
+}
+
+.theme-dark .command-token-value {
+  color: #6ee7b7;
+}
+
+.theme-dark .public-command-card,
+.theme-dark .public-basic-config-card,
+.theme-dark .public-compact-config-card,
+.theme-dark .role-runtime-command-card,
+.theme-dark .role-runtime-table-card,
+.theme-dark .role-runtime-selector-card,
+.theme-dark .worker-ssh-inline {
+  background: #151d2b;
+  border-color: var(--line);
+}
+
+.theme-dark .public-basic-config-list div,
+.theme-dark .public-compact-config-table th,
+.theme-dark .role-runtime-command-card > span,
+.theme-dark .role-runtime-table-card th,
+.theme-dark .role-runtime-selector-card > span,
+.theme-dark .role-runtime-selector-card p,
+.theme-dark .public-config-table th {
+  background: #111a29;
+  border-color: var(--line);
+}
+
+.theme-dark .public-basic-config-list div {
+  background: transparent;
+}
+
+.theme-dark .public-basic-config-list {
+  border-color: var(--line);
+}
+
+.theme-dark .public-basic-config-list span {
+  background: #111a29;
+  border-color: var(--line);
+  color: #9ca8ba;
+}
+
+.theme-dark .public-basic-config-list code {
+  border-color: var(--line);
+  background: transparent;
+}
+
+.theme-dark .public-basic-config-list code,
+.theme-dark .public-compact-config-table code,
+.theme-dark .role-runtime-table-card code,
+.theme-dark .role-runtime-selector-card code,
+.theme-dark .worker-ssh-inline code {
+  color: #d7e4f6;
+}
+
+.theme-dark .role-runtime-table-card td {
+  background: #172235;
+  border-color: var(--line);
+}
+
+.theme-dark .role-runtime-table-card tbody tr:nth-child(even) td {
+  background: #141f31;
+}
+
+.theme-dark .role-runtime-table-card code,
+.theme-dark .role-runtime-selector-card code {
+  background: #101827;
+}
+
+.theme-dark .role-runtime-selector-card code {
+  border-color: var(--line);
+  background: #111a29;
+  color: #d7e4f6;
+}
+
+.theme-dark .role-runtime-selector-card b {
+  background: #202b3d;
+  color: #9ca8ba;
+}
+
+.theme-dark .role-worker-group-head,
+.theme-dark .config-section-head {
+  background: #192333;
+  border-color: var(--line);
+}
+
+.theme-dark .role-worker-group-head > div > strong,
+.theme-dark .role-worker-resource-summary strong,
+.theme-dark .worker-access-head strong,
+.theme-dark .worker-access-meta b,
+.theme-dark .config-section-head h3,
+.theme-dark .config-kv-card strong,
+.theme-dark .role-config-head strong,
+.theme-dark .role-config-facts dd {
+  color: #f5f7fb;
+}
+
+.theme-dark .role-worker-group-head small,
+.theme-dark .role-worker-resource-summary span,
+.theme-dark .role-worker-resource-summary small,
+.theme-dark .worker-access-head small,
+.theme-dark .worker-access-meta span,
+.theme-dark .config-section-head small,
+.theme-dark .config-kv-card > span,
+.theme-dark .config-kv-card small,
+.theme-dark .config-command > span,
+.theme-dark .config-value-list > span,
+.theme-dark .config-value-list small,
+.theme-dark .role-config-facts dt {
+  color: #9ca8ba;
+}
+
+.theme-dark .worker-access-meta span,
+.theme-dark .config-value-list code {
+  background: #111a29;
+  color: #d7e4f6;
+}
+
+.theme-dark .config-ssh-card code,
+.theme-dark .role-config-facts code {
+  color: #cbd5e1;
+}

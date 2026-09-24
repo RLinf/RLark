@@ -1,9 +1,115 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  formatResourceQuantity,
+  getNodeDiskUsage,
   getNodeResourceSummary,
+  getResourceUsagePercent,
+  isDiskUsageWarning,
   selectDeviceResourceKey,
 } from "../dist/test/utils/nodeResources.js";
+
+test("formats Kubernetes binary quantities without inflating them", () => {
+  assert.equal(
+    formatResourceQuantity("ephemeral-storage", "3748906852Ki"),
+    "3575 GiB",
+  );
+  assert.equal(formatResourceQuantity("memory", "1Gi"), "1.0 GiB");
+  assert.equal(formatResourceQuantity("memory", "1000M"), "0.9 GiB");
+});
+
+test("calculates disk usage against allocatable capacity", () => {
+  assert.equal(
+    getResourceUsagePercent("ephemeral-storage", "90Gi", "100Gi"),
+    90,
+  );
+  assert.equal(
+    getResourceUsagePercent("ephemeral-storage", "89%", "100Gi"),
+    89,
+  );
+});
+
+test("warns when real disk usage reaches ninety percent", () => {
+  const node = {
+    metadata: { name: "disk-warning" },
+    spec: {},
+    status: {
+      storage: {
+        capacityBytes: 1000,
+        usedBytes: 900,
+        availableBytes: 100,
+      },
+    },
+  };
+  assert.equal(isDiskUsageWarning(node), true);
+  node.status.storage.usedBytes = 899;
+  node.status.storage.availableBytes = 100;
+  assert.equal(isDiskUsageWarning(node), true);
+  node.status.storage.usedBytes = 894;
+  node.status.storage.availableBytes = 106;
+  assert.equal(isDiskUsageWarning(node), false);
+});
+
+test("keeps disk usage below one hundred percent while space remains", () => {
+  const usage = getNodeDiskUsage({
+    metadata: { name: "nearly-full" },
+    spec: {},
+    status: {
+      storage: {
+        capacityBytes: 3838880616448,
+        usedBytes: 3827780616448,
+        availableBytes: 11100000000,
+      },
+    },
+  });
+  assert.equal(usage?.percent, 99);
+});
+
+test("uses available bytes as the source of truth for disk percentage", () => {
+  const usage = getNodeDiskUsage({
+    metadata: { name: "inconsistent-stats" },
+    spec: {},
+    status: {
+      storage: {
+        capacityBytes: 1000,
+        usedBytes: 1000,
+        availableBytes: 100,
+      },
+    },
+  });
+  assert.equal(usage?.percent, 90);
+});
+
+test("shows one hundred percent only when no disk space remains", () => {
+  const usage = getNodeDiskUsage({
+    metadata: { name: "full" },
+    spec: {},
+    status: {
+      storage: {
+        capacityBytes: 1000,
+        usedBytes: 1000,
+        availableBytes: 0,
+      },
+    },
+  });
+  assert.equal(usage?.percent, 100);
+});
+
+test("warns whenever kubelet reports disk pressure", () => {
+  const node = {
+    metadata: { name: "disk-pressure" },
+    spec: {},
+    status: {
+      diskPressure: true,
+      storage: {
+        capacityBytes: 1000,
+        usedBytes: 100,
+        availableBytes: 900,
+      },
+    },
+  };
+  assert.equal(isDiskUsageWarning(node), true);
+});
 
 test("prefers a positive modeled device resource over zero-capacity keys", () => {
   const capacity = {

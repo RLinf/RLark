@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -34,7 +35,7 @@ func TestNewIPPool_Allocate(t *testing.T) {
 }
 
 func TestNewIPPool_Allocate_31(t *testing.T) {
-	pool, err := NewIPPool("10.0.0.0/31")
+	pool, err := NewIPPool("10.0.0.2/31")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -43,20 +44,39 @@ func TestNewIPPool_Allocate_31(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ip1 != "10.0.0.0" {
-		t.Fatalf("expected 10.0.0.0, got %s", ip1)
+	if ip1 != "10.0.0.2" {
+		t.Fatalf("expected 10.0.0.2, got %s", ip1)
 	}
 
 	ip2, err := pool.Allocate()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ip2 != "10.0.0.1" {
-		t.Fatalf("expected 10.0.0.1, got %s", ip2)
+	if ip2 != "10.0.0.3" {
+		t.Fatalf("expected 10.0.0.3, got %s", ip2)
 	}
 
 	_, err = pool.Allocate()
 	if err == nil {
+		t.Fatal("expected error (pool exhausted), got nil")
+	}
+}
+
+func TestNewIPPool_Allocate_31EndingAtZero(t *testing.T) {
+	pool, err := NewIPPool("10.0.1.0/31")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	ip, err := pool.Allocate()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ip != "10.0.1.1" {
+		t.Fatalf("expected 10.0.1.1, got %s", ip)
+	}
+
+	if _, err = pool.Allocate(); err == nil {
 		t.Fatal("expected error (pool exhausted), got nil")
 	}
 }
@@ -78,6 +98,20 @@ func TestNewIPPool_Allocate_32(t *testing.T) {
 	_, err = pool.Allocate()
 	if err == nil {
 		t.Fatal("expected error (pool exhausted), got nil")
+	}
+}
+
+func TestNewIPPool_Allocate_32EndingAtZeroOr255(t *testing.T) {
+	for _, cidr := range []string{"10.0.0.0/32", "10.0.0.255/32"} {
+		t.Run(cidr, func(t *testing.T) {
+			pool, err := NewIPPool(cidr)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if _, err = pool.Allocate(); err == nil {
+				t.Fatal("expected error (pool exhausted), got nil")
+			}
+		})
 	}
 }
 
@@ -162,6 +196,25 @@ func TestNewIPPool_AllocateSequential(t *testing.T) {
 	_, err = pool.Allocate()
 	if err == nil {
 		t.Fatal("expected error (pool exhausted), got nil")
+	}
+}
+
+func TestNewIPPool_AllocateSkipsZeroAnd255Across24Boundary(t *testing.T) {
+	pool, err := NewIPPool("10.244.0.0/23")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for i := 1; i <= 254; i++ {
+		pool.MarkAllocated(fmt.Sprintf("10.244.0.%d", i))
+	}
+
+	ip, err := pool.Allocate()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ip != "10.244.1.1" {
+		t.Fatalf("expected 10.244.1.1 after skipping .255 and .0, got %s", ip)
 	}
 }
 

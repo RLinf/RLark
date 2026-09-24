@@ -3,6 +3,7 @@ package gateway
 import (
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,6 +40,43 @@ type ClusterDetail struct {
 	Nodes []rlarkv1alpha1.Node `json:"nodes"`
 }
 
+// nodeCategories 返回节点所属的分类集合，支持两种 label 形式：
+// 1. 枚举值：rlark.io/node-category = "cloud,edge"（逗号分隔）
+// 2. 布尔位：rlark.io/node-category-cloud = "true"（前端批量编辑使用）
+// 两者任一命中即返回对应分类，去重后返回。
+func nodeCategories(node rlarkv1alpha1.Node) []rlarkv1alpha1.NodeCategory {
+	seen := make(map[rlarkv1alpha1.NodeCategory]struct{})
+	var result []rlarkv1alpha1.NodeCategory
+	add := func(c rlarkv1alpha1.NodeCategory) {
+		if _, ok := seen[c]; !ok {
+			seen[c] = struct{}{}
+			result = append(result, c)
+		}
+	}
+	if v := node.Labels[rlarkv1alpha1.LabelNodeCategory]; v != "" {
+		for _, part := range strings.Split(v, ",") {
+			switch rlarkv1alpha1.NodeCategory(strings.TrimSpace(part)) {
+			case rlarkv1alpha1.NodeCategoryCloud:
+				add(rlarkv1alpha1.NodeCategoryCloud)
+			case rlarkv1alpha1.NodeCategoryEdge:
+				add(rlarkv1alpha1.NodeCategoryEdge)
+			case rlarkv1alpha1.NodeCategoryRobot:
+				add(rlarkv1alpha1.NodeCategoryRobot)
+			}
+		}
+	}
+	for _, c := range []rlarkv1alpha1.NodeCategory{
+		rlarkv1alpha1.NodeCategoryCloud,
+		rlarkv1alpha1.NodeCategoryEdge,
+		rlarkv1alpha1.NodeCategoryRobot,
+	} {
+		if node.Labels[rlarkv1alpha1.LabelNodeCategory+"-"+string(c)] == "true" {
+			add(c)
+		}
+	}
+	return result
+}
+
 func buildClusterInfo(clusterID string, nodes []rlarkv1alpha1.Node) ClusterInfo {
 	info := ClusterInfo{
 		ID:          clusterID,
@@ -58,18 +96,20 @@ func buildClusterInfo(clusterID string, nodes []rlarkv1alpha1.Node) ClusterInfo 
 			info.OfflineNodes++
 		}
 
-		switch node.Labels[rlarkv1alpha1.LabelNodeCategory] {
-		case string(rlarkv1alpha1.NodeCategoryCloud):
-			info.CloudNodes++
-			if model := node.Labels["rlark.io/model"]; model != "" {
-				gpuModels[model] = struct{}{}
-			}
-		case string(rlarkv1alpha1.NodeCategoryEdge):
-			info.EmbodiedNodes++
-		case string(rlarkv1alpha1.NodeCategoryRobot):
-			info.Robots++
-			if model := node.Labels["rlark.io/model"]; model != "" {
-				robotModels[model] = struct{}{}
+		for _, category := range nodeCategories(node) {
+			switch category {
+			case rlarkv1alpha1.NodeCategoryCloud:
+				info.CloudNodes++
+				if model := node.Labels["rlark.io/model"]; model != "" {
+					gpuModels[model] = struct{}{}
+				}
+			case rlarkv1alpha1.NodeCategoryEdge:
+				info.EmbodiedNodes++
+			case rlarkv1alpha1.NodeCategoryRobot:
+				info.Robots++
+				if model := node.Labels["rlark.io/model"]; model != "" {
+					robotModels[model] = struct{}{}
+				}
 			}
 		}
 
@@ -98,9 +138,11 @@ func buildClusterInfo(clusterID string, nodes []rlarkv1alpha1.Node) ClusterInfo 
 	default:
 		info.Phase = "Degraded"
 	}
-	if info.CloudNodes > 0 && info.EmbodiedNodes == 0 && info.Robots == 0 {
+
+	hybrid := info.TotalNodes != info.CloudNodes+info.EmbodiedNodes+info.Robots // 有无标签的节点则显示为混合集群
+	if info.CloudNodes > 0 && info.EmbodiedNodes == 0 && info.Robots == 0 && !hybrid {
 		info.Type = "Cloud"
-	} else if info.CloudNodes == 0 && (info.EmbodiedNodes > 0 || info.Robots > 0) {
+	} else if info.CloudNodes == 0 && (info.EmbodiedNodes > 0 || info.Robots > 0) && !hybrid {
 		info.Type = "Embodied"
 	} else {
 		info.Type = "Hybrid"

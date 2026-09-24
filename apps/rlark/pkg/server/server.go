@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	gocache "github.com/patrickmn/go-cache"
@@ -16,13 +17,13 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/leaderelection"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
 	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
 	"github.com/rlinf/rlark/api/kubeclients/informers/externalversions"
 	listerv1alpha1 "github.com/rlinf/rlark/api/kubeclients/listers/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
+	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
 	"github.com/rlinf/rlark/apps/rlark/pkg/db"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/server/caches"
@@ -60,7 +61,7 @@ type Server struct {
 	defaultPeerTransport  http.RoundTripper
 
 	// health scope variables
-	peerBroadcasted bool // 第一次广播完成后，才认为服务已经准备好
+	peerBroadcasted atomic.Bool // 第一次广播完成后，才认为服务已经准备好
 }
 
 // NewServer creates a new Server instance with the provided configuration.
@@ -130,45 +131,13 @@ func (s *Server) init(ctx context.Context) error {
 
 	// 3. 通过 Kubernetes Lease 获取操作权，进行数据初始化
 	id := fmt.Sprintf("%s-%d", common.Hostname("node"), os.Getpid())
-	rl, err := resourcelock.New(
-		resourcelock.LeasesResourceLock,
-		s.config.KubeClientConfig.DefaultNamespace(),
-		"rlark-server-init-lock",
-		s.kubeClient.CoreV1(),
-		s.kubeClient.CoordinationV1(),
-		resourcelock.ResourceLockConfig{
-			Identity: id,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("create resource lock: %w", err)
-	}
-	initServerDataErrorCh := make(chan error)
-	defer close(initServerDataErrorCh)
-	le, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
-		Lock:          rl,
-		LeaseDuration: time.Second * 5,
-		RenewDeadline: time.Second * 2,
-		RetryPeriod:   time.Second * 1,
-		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(ctx context.Context) {
-				initServerDataErrorCh <- s.initServerData(ctx)
-				<-ctx.Done()
-			},
-			OnStoppedLeading: func() {},
-			OnNewLeader:      func(identity string) {},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("create leader elector: %w", err)
-	}
-
-	leCtx, leCancel := context.WithCancel(ctx)
-	go le.Run(leCtx)
-
-	err = <-initServerDataErrorCh
-	leCancel()
-	if err != nil {
+	leConfig := configs.DefaultLeaderElectionConfig()
+	leConfig.Key = "rlark-server-init-lock"
+	leConfig.Identity = id
+	leConfig.LeaseDuration = 5 * time.Second
+	leConfig.RenewDeadline = 2 * time.Second
+	leConfig.RetryPeriod = time.Second
+	if err := runLeaderInitialization(ctx, s.kubeClient, s.config.KubeClientConfig.DefaultNamespace(), leConfig, s.initServerData); err != nil {
 		return err
 	}
 
@@ -178,6 +147,34 @@ func (s *Server) init(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func runLeaderInitialization(ctx context.Context, client kubernetes.Interface, defaultNamespace string, config configs.LeaderElectionConfig, initialize func(context.Context) error) error {
+	result := make(chan error, 1)
+	electionConfig, err := config.Build(client, defaultNamespace, leaderelection.LeaderCallbacks{
+		OnStartedLeading: func(ctx context.Context) {
+			result <- initialize(ctx)
+			<-ctx.Done()
+		},
+		OnStoppedLeading: func() {},
+		OnNewLeader:      func(identity string) {},
+	})
+	if err != nil {
+		return fmt.Errorf("build leader election config: %w", err)
+	}
+	elector, err := leaderelection.NewLeaderElector(electionConfig)
+	if err != nil {
+		return fmt.Errorf("create leader elector: %w", err)
+	}
+	electionCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go elector.Run(electionCtx)
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *Server) initKubeClient(ctx context.Context) error {

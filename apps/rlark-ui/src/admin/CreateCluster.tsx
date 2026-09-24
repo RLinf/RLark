@@ -1,36 +1,44 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronRight, Shield } from "lucide-react";
-import type { Copy, Lang } from "../i18n";
+import {
+  Check,
+  ChevronRight,
+  Copy,
+  FileCode2,
+  KeyRound,
+  Server,
+  Shield,
+} from "lucide-react";
+import type { Lang } from "../i18n";
 import type { AgentCertListItem, SignAgentCertResponse } from "../types";
+import {
+  certificatesApi,
+  systemConfigApi,
+  type DeploymentConfig,
+} from "../backend";
+import { buildDeployYaml } from "../utils/deployYaml";
 
-export function CreateClusterPage({
-  copy: c,
-  lang,
-}: {
-  copy: Copy;
-  lang: Lang;
-}) {
+export function CreateClusterPage({ lang }: { lang: Lang }) {
   const [clusterId, setClusterId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<SignAgentCertResponse | null>(null);
   const [copied, setCopied] = useState(false);
   const [certList, setCertList] = useState<AgentCertListItem[]>([]);
-  const [certListLoading, setCertListLoading] = useState(true);
+  const [, setCertListLoading] = useState(true);
   const [expandedCluster, setExpandedCluster] = useState<string | null>(null);
   const [expandedResult, setExpandedResult] =
     useState<SignAgentCertResponse | null>(null);
   const [expandedCopied, setExpandedCopied] = useState(false);
+  const [deploymentConfig, setDeploymentConfig] = useState<DeploymentConfig>(
+    {},
+  );
 
   const zh = lang === "zh";
 
   const fetchCertList = async () => {
     setCertListLoading(true);
     try {
-      const resp = await fetch("/api/v1/certificates/agent");
-      if (resp.ok) {
-        setCertList(await resp.json());
-      }
+      setCertList(await certificatesApi.list());
     } catch {
     } finally {
       setCertListLoading(false);
@@ -39,6 +47,12 @@ export function CreateClusterPage({
 
   useEffect(() => {
     fetchCertList();
+    systemConfigApi
+      .get({ refresh: true })
+      .then((config) => {
+        setDeploymentConfig(config.deployment || {});
+      })
+      .catch(() => {});
   }, []);
 
   const handleSign = async () => {
@@ -47,16 +61,7 @@ export function CreateClusterPage({
     setError("");
     setResult(null);
     try {
-      const resp = await fetch("/api/v1/certificates/agent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cluster_id: clusterId.trim() }),
-      });
-      if (!resp.ok) {
-        const body = await resp.text();
-        throw new Error(`HTTP ${resp.status}: ${body}`);
-      }
-      setResult(await resp.json());
+      setResult(await certificatesApi.sign(clusterId.trim()));
       fetchCertList();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -65,36 +70,7 @@ export function CreateClusterPage({
     }
   };
 
-  const buildDeployYaml = (
-    r: SignAgentCertResponse,
-  ) => `apiVersion: rlark.io/v1alpha1
-kind: DeployConfig
-plane: data
-control-plane-address: ${r.server_addr}
-
-cert:
-  ca-cert: |
-${r.ca_cert
-  .split("\n")
-  .map((l: string) => "    " + l)
-  .join("\n")}
-  agent-cert: |
-${r.agent_cert
-  .split("\n")
-  .map((l: string) => "    " + l)
-  .join("\n")}
-  agent-key: |
-${r.agent_key
-  .split("\n")
-  .map((l: string) => "    " + l)
-  .join("\n")}
-
-kubernetes:
-  kubeconfig: /path/to/kubeconfig.yaml
-  agent-image: rlark-agent:latest
-`;
-
-  const deployYaml = result ? buildDeployYaml(result) : "";
+  const deployYaml = result ? buildDeployYaml(result, deploymentConfig) : "";
 
   const handleCopy = () => {
     navigator.clipboard.writeText(deployYaml).then(() => {
@@ -112,25 +88,23 @@ kubernetes:
     setExpandedCluster(cid);
     setExpandedResult(null);
     try {
-      const resp = await fetch(
-        `/api/v1/certificates/agent/${encodeURIComponent(cid)}`,
-      );
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      setExpandedResult(await resp.json());
+      setExpandedResult(await certificatesApi.get(cid));
     } catch {}
   };
 
   const handleExpandedCopy = () => {
     if (!expandedResult) return;
-    navigator.clipboard.writeText(buildDeployYaml(expandedResult)).then(() => {
-      setExpandedCopied(true);
-      setTimeout(() => setExpandedCopied(false), 2000);
-    });
+    navigator.clipboard
+      .writeText(buildDeployYaml(expandedResult, deploymentConfig))
+      .then(() => {
+        setExpandedCopied(true);
+        setTimeout(() => setExpandedCopied(false), 2000);
+      });
   };
 
   return (
-    <div className="page-content resource-page">
-      <div className="section-heading">
+    <div className="page-content resource-page create-cluster-page">
+      <div className="section-heading create-cluster-heading">
         <div>
           <span className="eyebrow">
             <Shield size={13} />
@@ -145,40 +119,69 @@ kubernetes:
         </div>
       </div>
 
-      <div className="panel cert-panel">
-        <div className="cert-form">
-          <label>
-            <span>{zh ? "集群名称" : "Cluster Name"}</span>
-            <input
-              value={clusterId}
-              onChange={(e) => setClusterId(e.target.value)}
-              placeholder={
-                zh
-                  ? "输入集群名称，例如 my-cluster-01"
-                  : "Enter cluster name, e.g. my-cluster-01"
-              }
-              onKeyDown={(e) => e.key === "Enter" && handleSign()}
-            />
-          </label>
-          <button
-            className="primary-button"
-            onClick={handleSign}
-            disabled={loading || !clusterId.trim()}
-          >
-            {loading
-              ? zh
-                ? "签发中..."
-                : "Signing..."
-              : zh
-                ? "签发证书"
-                : "Sign Certificate"}
-          </button>
-        </div>
+      <div className="cluster-enrollment-flow">
+        <section className="cluster-enrollment-card">
+          <div className="cluster-enrollment-card-head">
+            <span className="cluster-enrollment-step">01</span>
+            <div>
+              <strong>
+                {zh ? "命名并签发身份" : "Name and issue identity"}
+              </strong>
+              <small>
+                {zh
+                  ? "名称会成为集群在控制面中的唯一标识"
+                  : "The name becomes the cluster identity in the control plane"}
+              </small>
+            </div>
+          </div>
+          <div className="cert-form">
+            <label>
+              <span>{zh ? "集群名称" : "Cluster Name"}</span>
+              <input
+                value={clusterId}
+                onChange={(e) => setClusterId(e.target.value)}
+                placeholder={
+                  zh
+                    ? "输入集群名称，例如 my-cluster-01"
+                    : "Enter cluster name, e.g. my-cluster-01"
+                }
+                onKeyDown={(e) => e.key === "Enter" && handleSign()}
+              />
+            </label>
+            <button
+              className="primary-button"
+              onClick={handleSign}
+              disabled={loading || !clusterId.trim()}
+            >
+              {loading
+                ? zh
+                  ? "签发中..."
+                  : "Signing..."
+                : zh
+                  ? "签发证书"
+                  : "Sign Certificate"}
+            </button>
+          </div>
 
-        {error && <div className="cert-error">{error}</div>}
+          {error && <div className="cert-error">{error}</div>}
+          <div className="cluster-enrollment-notes">
+            <span>
+              <KeyRound size={16} />
+              {zh
+                ? "每个集群使用独立证书"
+                : "Dedicated certificate per cluster"}
+            </span>
+            <span>
+              <Server size={16} />
+              {zh
+                ? "生成 Kubernetes Agent 部署配置"
+                : "Generates Kubernetes Agent deployment"}
+            </span>
+          </div>
+        </section>
 
         {result && (
-          <div className="cert-result">
+          <section className="cert-result cluster-enrollment-result">
             <div className="cert-result-header">
               <div>
                 <Check size={18} />
@@ -191,33 +194,39 @@ kubernetes:
                 {zh ? "服务器" : "Server"}: {result.server_addr}
               </small>
             </div>
-            <div className="cert-yaml-block">
+            <div className="cert-yaml-block cluster-yaml-card">
               <div className="cert-yaml-head">
-                <strong>
-                  {zh
-                    ? "部署配置 YAML（可直接复制到 deploy-conf.yaml）"
-                    : "Deploy YAML (copy to deploy-conf.yaml)"}
-                </strong>
+                <div>
+                  <FileCode2 size={16} />
+                  <strong>{zh ? "部署配置 YAML" : "Deployment YAML"}</strong>
+                </div>
                 <button className="secondary-button" onClick={handleCopy}>
+                  <Copy size={14} />
                   {copied ? (zh ? "已复制" : "Copied") : zh ? "复制" : "Copy"}
                 </button>
               </div>
               <pre>{deployYaml}</pre>
             </div>
-          </div>
+          </section>
         )}
       </div>
 
       {certList.length > 0 && (
-        <div className="panel cert-panel" style={{ marginTop: 24 }}>
-          <div className="section-heading" style={{ marginBottom: 16 }}>
+        <section className="signed-clusters-panel">
+          <div className="signed-clusters-heading">
             <div>
               <span className="eyebrow">
                 <Shield size={13} />
                 {zh ? "已签发集群" : "Signed Clusters"}
               </span>
               <h3>{zh ? "已签发集群" : "Signed Clusters"}</h3>
+              <p>
+                {zh
+                  ? "展开集群可重新获取按当前默认值生成的部署 YAML。"
+                  : "Expand a cluster to regenerate deployment YAML with current defaults."}
+              </p>
             </div>
+            <span>{certList.length}</span>
           </div>
           <div className="cert-list">
             {certList.map((item) => (
@@ -229,7 +238,9 @@ kubernetes:
                   }
                   onClick={() => handleExpand(item.cluster_id)}
                 >
-                  <span className="cert-list-dot" />
+                  <span className="cert-list-icon">
+                    <Server size={15} />
+                  </span>
                   <span className="cert-list-name">{item.cluster_id}</span>
                   <small className="cert-list-date">
                     {new Date(item.created_at).toLocaleString(
@@ -245,17 +256,24 @@ kubernetes:
                   />
                 </div>
                 {expandedCluster === item.cluster_id && (
-                  <div className="cert-yaml-block" style={{ marginTop: 8 }}>
+                  <div className="signed-cluster-detail">
                     {expandedResult ? (
-                      <>
+                      <div className="cert-yaml-block cluster-yaml-card signed-cluster-yaml">
                         <div className="cert-yaml-head">
-                          <strong>
-                            {zh ? "部署配置 YAML" : "Deploy YAML"}
-                          </strong>
+                          <div>
+                            <FileCode2 size={16} />
+                            <strong>
+                              {zh ? "部署配置 YAML" : "Deployment YAML"}
+                            </strong>
+                          </div>
                           <button
                             className="secondary-button"
-                            onClick={handleExpandedCopy}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleExpandedCopy();
+                            }}
                           >
+                            <Copy size={14} />
                             {expandedCopied
                               ? zh
                                 ? "已复制"
@@ -265,17 +283,24 @@ kubernetes:
                                 : "Copy"}
                           </button>
                         </div>
-                        <pre>{buildDeployYaml(expandedResult)}</pre>
-                      </>
+                        <pre>
+                          {buildDeployYaml(expandedResult, deploymentConfig)}
+                        </pre>
+                      </div>
                     ) : (
-                      <p className="muted">{zh ? "加载中..." : "Loading..."}</p>
+                      <div className="signed-cluster-loading">
+                        <span />
+                        {zh
+                          ? "正在获取证书与部署配置..."
+                          : "Loading certificate and deployment configuration..."}
+                      </div>
                     )}
                   </div>
                 )}
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
     </div>
   );

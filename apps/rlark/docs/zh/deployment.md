@@ -71,6 +71,17 @@ kubernetes:
 
 ## 3. Kubernetes 部署
 
+默认情况下，`rlarkadm` 会部署 kcp 作为管理 API。如需直接使用目标 Kubernetes 集群，请配置：
+
+```yaml
+kubernetes:
+  management-api: kubernetes
+```
+
+该模式下，`rlarkadm` 会将 RLark CRD 直接安装到目标集群，不部署 kcp 和 etcd。Server、Gateway 和 Controller Manager 使用各自的 ServiceAccount、ClusterRole 和集群内凭据。普通卸载会保留集群级 CRD、RLark 自定义资源和管理 Secret；删除这些数据属于独立的破坏性操作。
+
+使用 kcp 时，`rlarkadm` 会将 Controller Manager 选举 Lease 存放在管理 API 的 `default` 命名空间中；直接使用目标 Kubernetes 集群作为管理 API 时，Lease 存放在控制面工作负载所在的 `rlark-system` 命名空间中。
+
 ### 3.1 控制面部署
 
 ```bash
@@ -170,7 +181,7 @@ volumes:
 |------|--------|------|
 | `--kubeconfig` | `$KUBECONFIG` | 控制面 kubeconfig |
 | `--server-address` | `https://rlark-server.rlark-system.svc:8443` | Server 地址 |
-| `--leader-elect` | `true` | 是否启用 Leader 选举 |
+| `--leader-election` | `true` | 是否启用 Leader 选举 |
 | `--metrics-bind-address` | `:8080` | 指标监听地址 |
 | `--health-probe-bind-address` | `:8081` | `/healthz` 和 `/readyz` 监听地址 |
 
@@ -184,6 +195,8 @@ volumes:
 | `--server-address` | `https://rlark-server.rlark-system.svc:8443` | 用于证书签发的 Server 地址 |
 
 ### 5.4 Agent
+
+可直接使用的数据面清单：[agent-rbac.yaml](../examples/agent-rbac.yaml) 和 [agent-deploy.yaml](../examples/agent-deploy.yaml)。
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
@@ -240,13 +253,20 @@ pkg/addons/catalog/
 │       ├── configmap-template.yaml  # ConfigMap 模板（camera/ROS 控制器配置）
 │       ├── headless-services.yaml   # Camera/ROS 控制器的 Headless Service
 │       └── rbac.yaml       # ClusterRole + ClusterRoleBinding
-└── csi-driver-rclone/
-    ├── addon.yaml          # Addon 元数据（名称、版本、类别：storage）
+├── csi-driver-rclone/
+│   ├── addon.yaml          # Addon 元数据（名称、版本、类别：storage）
+│   └── manifests/
+│       ├── controller.yaml  # CSI Controller Deployment
+│       ├── node.yaml        # CSI Node DaemonSet
+│       ├── configmap.yaml   # RClone 配置
+│       ├── csidriver.yaml   # CSIDriver 资源
+│       └── rbac.yaml        # RBAC 权限
+└── fluent-bit/
+    ├── addon.yaml           # Addon 元数据和日志后端配置
     └── manifests/
-        ├── controller.yaml  # CSI Controller Deployment
-        ├── node.yaml        # CSI Node DaemonSet
-        ├── configmap.yaml   # RClone 配置
-        ├── csidriver.yaml   # CSIDriver 资源
+        ├── daemonset.yaml   # Fluent Bit 日志采集 DaemonSet
+        ├── configmap.yaml   # 输入、过滤和输出配置
+        ├── secret.yaml      # 后端认证信息
         └── rbac.yaml        # RBAC 权限
 ```
 
@@ -254,12 +274,16 @@ pkg/addons/catalog/
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `image` | 设备插件容器镜像 | `rlark/embodied-device-plugin:0.1.0` |
+| `deviceCount` | 每个节点暴露的设备数量 | `"1"` |
+| `robots` | 所有节点共用的全局机器人 YAML 配置 | `""` |
+| `macvlans` | 所有节点共用的全局 MacVlan YAML 配置 | `""` |
+| `nodeOverrides` | 以节点名为键的节点级 YAML 覆盖配置 | `""` |
+| `image` | 设备插件容器镜像 | `rlinf/embodied-runtime:v0.1.0-b4b4d6f8` |
 | `rendererImage` | 节点级配置渲染 initContainer 镜像（yq） | `yq:4.53.2` |
-| `cameraImage` | Camera 控制器容器镜像 | — |
-| `rosImage` | ROS 控制器容器镜像 | — |
-| `nodeSelector` | DaemonSet 调度的节点选择器 | `nvidia.com/gpu=true` |
-| `robotTolerationKey` | 机器人节点的容忍度键 | — |
+| `cameraImage` | Camera 控制器容器镜像 | `rlinf/camera-base:v0.1.0-946787a0` |
+| `rosImage` | ROS 控制器容器镜像 | `rlinf/serl_franka_controllers:v0.1.0-libfranka-0.19.0-frankaros-0.10.2` |
+| `nodeSelector` | DaemonSet 调度的节点选择器 | `""` |
+| `robotTolerationKey` | 机器人节点的容忍度键 | `rlinf.io/robot` |
 
 该 Addon 还会部署两个 Headless Service（`camera-controller-headless` 和 `ros-controller-headless`），用于集群内基于 DNS 的稳定发现 camera 和 ROS 控制器。
 
@@ -267,16 +291,34 @@ pkg/addons/catalog/
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `rcloneImage` | RClone CSI 驱动容器镜像 | `csi-driver-rclone:v0.2.0` |
-| `csiProvisionerImage` | CSI Provisioner sidecar 镜像 | `csi-provisioner:v6.2.0` |
-| `livenessProbeImage` | Liveness Probe sidecar 镜像 | `livenessprobe:v2.18.0` |
-| `nodeDriverRegistrarImage` | Node Driver Registrar sidecar 镜像 | `csi-node-driver-registrar:v2.16.0` |
+| `rcloneImage` | RClone CSI 驱动容器镜像 | `rlinf/csi-rclone/csi-driver-rclone:v0.2.0` |
+| `csiProvisionerImage` | CSI Provisioner sidecar 镜像 | `rlinf/csi-rclone/csi-provisioner:v6.2.0` |
+| `livenessProbeImage` | Liveness Probe sidecar 镜像 | `rlinf/csi-rclone/livenessprobe:v2.18.0` |
+| `nodeDriverRegistrarImage` | Node Driver Registrar sidecar 镜像 | `rlinf/csi-rclone/csi-node-driver-registrar:v2.16.0` |
 | `driverName` | CSI 驱动注册名称 | `rclone.csi.veloxpack.io` |
+| `nodeSelector` | Node DaemonSet 节点选择器，格式为 `label=value` | `""` |
 | `controllerReplicas` | Controller Deployment 副本数 | `1` |
 | `controllerLogLevel` | Controller 日志级别 (0-10) | `5` |
 | `nodeLogLevel` | Node DaemonSet 日志级别 (0-10) | `5` |
 
 RClone CSI 驱动支持通过 RClone 动态配置远程存储（S3、GCS、Azure Blob 等）支持的 PersistentVolume。
+
+`fluent-bit` 的关键可配置参数：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `backend` | 日志后端；目前仅支持 `sls` | `sls` |
+| `endpoint` | 后端地址；SLS 使用 Kafka 接入地址 | `""` |
+| `project` | SLS Project 或后端租户/组织名 | `""` |
+| `logstore` | SLS Logstore 或后端索引名 | `""` |
+| `accessKeyId` | 后端认证 ID | `""` |
+| `accessKeySecret` | 后端认证 Secret | `""` |
+| `clusterId` | 写入日志的 `cluster_id` 标签值 | `""` |
+| `image` | Fluent Bit 容器镜像 | `fluent/fluent-bit:3.1.8` |
+| `cpuLimit` | Fluent Bit CPU 限额 | `200m` |
+| `memoryLimit` | Fluent Bit 内存限额 | `256Mi` |
+
+使用 SLS 时，`endpoint` 填写 `<project>.<endpoint>:<port>`（公网端口 `10012`，私网端口 `10011`），`project` 填写 SLS Project，`logstore` 作为 Kafka topic，并提供具有 SLS 写权限的 AccessKey。DaemonSet 采集 Pod stdout/stderr，并附加 `cluster_id`、`job`、`task`、`pod`、`namespace` 等标签。
 
 ### 6.2 安装 Addon
 
@@ -286,9 +328,9 @@ curl -X POST "http://localhost:8080/api/v1/clusters/agent-beijing/addons" \
   -H "Content-Type: application/json" \
   -d '{
     "addonName": "embodied-runtime-device-plugin",
-    "version": "0.1.0",
+    "version": "v0.1.0",
     "values": {
-      "image": "rlark/embodied-device-plugin:0.1.0"
+      "image": "rlinf/embodied-runtime:v0.1.0-b4b4d6f8"
     }
   }'
 ```
@@ -306,19 +348,19 @@ curl "http://localhost:8080/api/v1/installed-addons"
 curl "http://localhost:8080/api/v1/clusters/agent-beijing/addons"
 
 # 获取 Addon 详情
-curl "http://localhost:8080/api/v1/clusters/agent-beijing/addons/embodied-device-plugin"
+curl "http://localhost:8080/api/v1/clusters/agent-beijing/addons/embodied-runtime-device-plugin"
 
 # 更新 Addon 配置
-curl -X PUT "http://localhost:8080/api/v1/clusters/agent-beijing/addons/embodied-device-plugin" \
+curl -X PUT "http://localhost:8080/api/v1/clusters/agent-beijing/addons/embodied-runtime-device-plugin" \
   -H "Content-Type: application/json" \
   -d '{
     "values": {
-      "image": "rlark/embodied-device-plugin:0.2.0"
+      "image": "rlinf/embodied-runtime:v0.1.0-b4b4d6f8"
     }
   }'
 
 # 卸载 Addon
-curl -X DELETE "http://localhost:8080/api/v1/clusters/agent-beijing/addons/embodied-device-plugin"
+curl -X DELETE "http://localhost:8080/api/v1/clusters/agent-beijing/addons/embodied-runtime-device-plugin"
 ```
 
 ## 7. 存储配置
@@ -393,20 +435,21 @@ curl -X POST "http://localhost:8080/api/v1/certificates/agent" \
 
 ### 9.3 UI 认证
 
-部署时，`rlarkadm` 会在 kcp 集群的 `default` 命名空间自动创建 `rlark-ui-auth` Secret，包含随机生成的 admin 和 user 角色密码：
+部署时，`rlarkadm` 会自动创建包含随机 admin/user 角色密码和 JWT 签名密钥的 `rlark-ui-auth` Secret。使用 kcp 时存放在 kcp 的 `default` 命名空间；直接使用目标 Kubernetes 集群作为管理 API 时存放在 `rlark-system`：
 
 | 键 | 用途 |
 |-----|------|
 | `admin-password` | 管理员角色密码（16 位随机字符） |
 | `user-password` | 用户角色密码（16 位随机字符） |
+| `jwt-signing-key` | 32 字节 HS256 签名密钥；升级已有 Secret 时补齐缺失字段，但不会轮换已有密钥 |
 
-密码会在安装摘要中显示。Web UI 通过 `POST /api/v1/auth/login` 进行认证。
+密码会在安装摘要中显示，签名密钥不会显示。Web UI 通过 `POST /api/v1/auth/login` 认证并获取有过期时间的 JWT。
 
 ## 10. 生产部署与高可用
 
 ### 10.1 当前 `rlarkadm` 能力范围
 
-仓库维护的 `rlarkadm` 示例为每个启用的控制面组件部署 1 个副本。虽然配置支持全局和组件级 `replicas`，RLark 目前没有为 Gateway、Server、kcp、etcd 或 PostgreSQL 提供经过验证的生产高可用拓扑；仅增加副本数不能视为实现了高可用。
+仓库维护的 `rlarkadm` 示例为每个启用的控制面组件部署 1 个副本。kcp 当前限制为单副本：显式设置大于 1 的 `kubernetes.kcp.replicas` 会被拒绝，全局 `replicas` 也不会扩展 kcp。RLark 目前没有为其他组件提供经过验证的生产高可用拓扑；仅增加副本数不能视为实现了高可用。
 
 生产环境默认应沿用维护中的单副本拓扑，除非已独立设计并验证组件拓扑、共享状态、流量路由、故障恢复和存储行为。需要高可用数据服务时，应使用外部托管方案；`rlarkadm` 不会配置 PostgreSQL 主备复制。
 
@@ -490,13 +533,13 @@ kubectl get pods -n rlark-system
 
 1. 检查 Agent 证书是否有效（未过期、由正确 CA 签发）
 2. 检查网络连通性：`curl -k https://<server>:8443`
-3. 检查 Server 日志：`kubectl logs -n rlark-system deployment/server`
+3. 检查 Server 日志：`kubectl logs -n rlark-system deployment/rlark-server`
 
 ### 训练任务无法启动
 
-1. 检查 Node 是否有足够资源：`kubectl get nodes -n rlark-system`
+1. 检查 Node 是否有足够资源：`kubectl describe node <node-name>`
 2. 检查 Task 状态：查询对应 Task CR
-3. 检查 Agent 日志：`kubectl logs -n rlark-system daemonset/agent`
+3. 检查集群 Agent 日志：`kubectl logs -n rlark-system deployment/rlark-agent`
 
 ### 跨集群网络不通
 
@@ -506,109 +549,4 @@ kubectl get pods -n rlark-system
 
 ## 14. 真机设备纳管
 
-rlark 支持纳管带有 GPU 或具身设备（摄像头、机械臂等）的真实物理节点。
-
-### 14.1 架构概览
-
-![Embodied Runtime 架构](../images/embodied-runtime-architecture.svg)
-
-### 14.2 纳管流程
-
-**Step 1：在真机上加入集群**
-
-```bash
-# 在每台真机上安装 containerd/kubelet，加入集群
-# 给节点打上标签，标识设备类型
-kubectl label node robot-01 rlark.io/node-category=robot
-kubectl label node gpu-node-01 rlark.io/node-category=cloud rlark.io/model='NVIDIA H800'
-```
-
-**Step 2：安装 NVIDIA Device Plugin（GPU 节点）**
-
-```bash
-kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/main/deployments/static/nvidia-device-plugin.yml
-```
-
-**Step 3：安装 embodied-runtime Device Plugin（具身设备节点）**
-
-通过 rlark Addon 机制声明式安装：
-
-```bash
-curl -X POST "http://localhost:8080/api/v1/clusters/agent-beijing/addons" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "addonName": "embodied-runtime-device-plugin",
-    "version": "0.1.0",
-    "values": {
-      "nodeSelector": "rlark.io/node-category=robot"
-    }
-  }'
-```
-
-**Step 4：验证设备注册**
-
-```bash
-# 查看节点设备信息
-kubectl describe node robot-01 | grep rlinf.io/device
-
-# 在 Web UI 的 Nodes 页面查看设备型号和空闲量
-```
-
-### 14.3 设备元数据
-
-管理员可以补充节点位置和设备型号元数据，这些信息会显示在 Web UI 中：
-
-```bash
-# 节点位置
-kubectl annotate node robot-01 \
-  rlark.io/ip-location='{"province":"上海市","city":"上海市"}' --overwrite
-
-# 节点型号
-kubectl label node robot-01 rlark.io/model='NVIDIA H800' --overwrite
-```
-
-> 具身设备类型和数量由 Device Plugin 自动上报，无需手动标注。
-
-### 14.4 编写使用真机设备的 Job
-
-在 Job 的 Task 中通过 `nodeSelector` 和 `resources` 指定设备需求：
-
-```json
-{
-  "tasks": [{
-    "name": "robot-trainer",
-    "nodeSelector": {
-      "rlark.io/cluster-id": "rlark-agent-beijing",
-      "rlark.io/node-category": "robot"
-    },
-    "kubernetes": {
-      "workload": {
-        "template": {
-          "spec": {
-            "containers": [{
-              "name": "trainer",
-              "image": "my-training-image:latest",
-              "resources": {
-                "limits": {
-                  "rlinf.io/device": "1",
-                  "rlinf.io/device-camera": "1"
-                }
-              }
-            }]
-          }
-        }
-      }
-    }
-  }]
-}
-```
-
-### 14.5 设备资源类型
-
-| 设备 | 资源名 | 上报方式 |
-|------|--------|---------|
-| NVIDIA GPU | `nvidia.com/gpu` | NVIDIA Device Plugin |
-| 摄像头 | `rlinf.io/device-camera` | embodied-runtime Device Plugin |
-| ROS 控制器 | `rlinf.io/device-ros` | embodied-runtime Device Plugin |
-| ROS2 控制器 | `rlinf.io/device-ros2` | embodied-runtime Device Plugin |
-| 通用具身设备 | `rlinf.io/device-<model>` | embodied-runtime Device Plugin |
+有关 GPU 节点、机器人、摄像头及其他物理设备的完整纳管流程、Embodied Runtime 配置和设备任务提交方式，请参阅[具身设备纳管指南](admin-guide/embodied-runtime.md)。

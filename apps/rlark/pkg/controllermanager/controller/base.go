@@ -2,8 +2,10 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -17,6 +19,12 @@ type Reconciler interface {
 	ReconcileStateMachine(ctx context.Context, obj client.Object) (bool, error)
 	IsTerminal(obj client.Object) bool
 }
+
+// ErrRequeueAfterChildCleanup asks the generic reconciler to retry after a
+// child resource has had time to finish stopping or deletion.
+var ErrRequeueAfterChildCleanup = errors.New("requeue after child cleanup")
+
+const ChildCleanupRequeue = time.Second
 
 // ReconcileWith reconciles the resource.
 func ReconcileWith(
@@ -40,14 +48,24 @@ func ReconcileWith(
 
 	changed, err := r.ReconcileStateMachine(ctx, obj)
 	if err != nil {
+		if errors.Is(err, ErrRequeueAfterChildCleanup) {
+			if changed {
+				if err := r.Status().Update(ctx, obj); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			return ctrl.Result{RequeueAfter: ChildCleanupRequeue}, nil
+		}
 		logger.Error(err, "reconcile failed")
 		return ctrl.Result{}, err
 	}
 
 	if changed {
 		if err := r.Status().Update(ctx, obj); err != nil {
-			logger.V(1).Info("status update conflict, requeuing", "error", err.Error())
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			if apierrors.IsConflict(err) {
+				logger.V(1).Info("status update conflict", "error", err.Error())
+			}
+			return ctrl.Result{}, err
 		}
 	}
 

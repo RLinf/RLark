@@ -4,6 +4,7 @@ import (
 	"github.com/uptrace/bun"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	controllerconfig "sigs.k8s.io/controller-runtime/pkg/controller"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/db"
@@ -26,7 +27,7 @@ func newJobSyncHandler() Handler {
 
 // JobReconciler reconciles Job resources.
 type JobReconciler struct {
-	config Config
+	maxConcurrentReconciles int
 	*genericReconciler[*rlarkv1alpha1.Job]
 }
 
@@ -35,9 +36,9 @@ type JobReconciler struct {
 // +kubebuilder:rbac:groups=rlinf.io,resources=jobs/finalizers,verbs=update
 
 // NewJobReconciler creates a new JobReconciler.
-func NewJobReconciler(config Config, client client.Client, db *bun.DB) *JobReconciler {
+func NewJobReconciler(maxConcurrentReconciles int, client client.Client, db *bun.DB) *JobReconciler {
 	return &JobReconciler{
-		config: config,
+		maxConcurrentReconciles: maxConcurrentReconciles,
 		genericReconciler: &genericReconciler[*rlarkv1alpha1.Job]{
 			client:  client,
 			db:      db,
@@ -51,7 +52,7 @@ func NewJobReconciler(config Config, client client.Client, db *bun.DB) *JobRecon
 func (r *JobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&rlarkv1alpha1.Job{}).
-		WithOptions(r.config.ToControllerOptions()).
+		WithOptions(controllerconfig.Options{MaxConcurrentReconciles: r.maxConcurrentReconciles}).
 		Named("job-sync").
 		Complete(r)
 }

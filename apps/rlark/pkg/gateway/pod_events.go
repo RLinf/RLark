@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
@@ -41,7 +42,31 @@ func (g *Gateway) handlePodEvents(c *gin.Context) {
 		return
 	}
 
-	selector := url.QueryEscape("involvedObject.kind=Pod,involvedObject.name=" + pod.Spec.PodName)
+	podPath := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s",
+		url.PathEscape(pod.Spec.PodNamespace), url.PathEscape(pod.Spec.PodName))
+	podResp, err := g.proxyKubeRequest(ctx, http.MethodGet, agentID, podPath, nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("fetch pod: %v", err)})
+		return
+	}
+	podBody, readErr := io.ReadAll(podResp.Body)
+	_ = podResp.Body.Close()
+	if readErr != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("read pod: %v", readErr)})
+		return
+	}
+	if podResp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("agent returned HTTP %d", podResp.StatusCode)})
+		return
+	}
+	var dataPlanePod corev1.Pod
+	if err := json.Unmarshal(podBody, &dataPlanePod); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("decode pod: %v", err)})
+		return
+	}
+
+	selector := url.QueryEscape(fmt.Sprintf("involvedObject.kind=Pod,involvedObject.name=%s,involvedObject.uid=%s",
+		pod.Spec.PodName, dataPlanePod.UID))
 	kubePath := fmt.Sprintf("/api/v1/namespaces/%s/events?fieldSelector=%s",
 		url.PathEscape(pod.Spec.PodNamespace), selector)
 	resp, err := g.proxyKubeRequest(ctx, http.MethodGet, agentID, kubePath, nil)
@@ -65,13 +90,16 @@ func (g *Gateway) handlePodEvents(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("decode pod events: %v", err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"events": relevantPodEvents(list.Items)})
+	c.JSON(http.StatusOK, gin.H{"events": relevantPodEvents(list.Items, dataPlanePod.UID)})
 }
 
-func relevantPodEvents(events []corev1.Event) []rlarkv1alpha1.NodeEvent {
+func relevantPodEvents(events []corev1.Event, podUID types.UID) []rlarkv1alpha1.NodeEvent {
 	result := make([]rlarkv1alpha1.NodeEvent, 0, len(events))
 	for i := range events {
 		event := &events[i]
+		if event.InvolvedObject.UID != podUID {
+			continue
+		}
 		if event.Type != corev1.EventTypeWarning &&
 			(event.Type != corev1.EventTypeNormal ||
 				(event.Reason != "Pulling" && event.Reason != "Pulled")) {

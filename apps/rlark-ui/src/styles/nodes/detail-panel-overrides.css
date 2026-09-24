@@ -1,0 +1,126 @@
+.node-detail-panel {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.node-resource-detail {
+  position: sticky;
+  top: 88px;
+  scroll-margin-top: 88px;
+}
+
+.node-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.node-detail-header .node-status-ring {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--skyblue-bg);
+  color: var(--blue);
+  flex-shrink: 0;
+}
+
+.node-detail-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.node-detail-header small {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #8e97a6;
+}
+
+.node-detail-header .icon-button {
+  margin-left: auto;
+}
+
+.node-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+.node-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.node-detail-scroll {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.node-detail-label {
+  font-size: 12px;
+  color: #8e97a6;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.node-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.node-detail-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.node-detail-grid strong {
+  font-size: 14px;
+}
+
+.node-resource-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.node-resource-table th {
+  text-align: left;
+  padding: 3px 10px;
+  height: auto;
+  font-size: 11px;
+  color: #8e97a6;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+
+.node-resource-table td {
+  padding: 2px 10px;
+  height: auto;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--line);
+}
+
+.theme-dark .node-row:hover,
+.theme-dark .node-row.selected {
+  background: rgba(54, 124, 232, 0.12);
+}
+
+.theme-dark .node-detail-grid strong {
+  color: var(--text);
+}

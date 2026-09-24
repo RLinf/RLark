@@ -50,6 +50,11 @@ type Gateway struct {
 	images   map[string]imageUsage
 
 	serverTransport *http.Transport
+	jwtSigningKey   []byte
+}
+
+func (g *Gateway) managementNamespace() string {
+	return g.config.KubeClientConfig.DefaultNamespace()
 }
 
 // NewGateway creates a Gateway with database-backed stores for read operations
@@ -94,6 +99,9 @@ func (g *Gateway) init(ctx context.Context) error {
 	g.rawClient, err = kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("create raw Kubernetes client: %w", err)
+	}
+	if err := g.loadJWTSigningKey(ctx); err != nil {
+		return fmt.Errorf("load JWT signing key: %w", err)
 	}
 
 	// init pod informer/lister for cached Pod lookups (used by the

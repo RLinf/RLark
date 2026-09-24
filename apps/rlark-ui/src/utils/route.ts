@@ -1,14 +1,69 @@
 import { useEffect, useState } from "react";
 import type { Page } from "../types";
 
+export type AdminRoute = { page: string; sub: string };
+
+const adminPages = new Set([
+  "dashboard",
+  "clusters-list",
+  "create-cluster",
+  "clusters-nodes",
+  "addons",
+  "jobs",
+  "domains",
+  "api",
+  "config",
+  "storageClass",
+  "files",
+  "image-registries",
+  "ssh-keys",
+]);
+
+export function isAdminPath(pathname: string) {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
+}
+
+export function parseAdminRoute(
+  pathname = window.location.pathname,
+): AdminRoute {
+  const parts = pathname
+    .replace(/^\/admin\/?/, "")
+    .replace(/\/+$/, "")
+    .split("/")
+    .filter(Boolean);
+  const page = adminPages.has(parts[0])
+    ? parts[0]
+    : parts.length > 0
+      ? "clusters-nodes"
+      : "dashboard";
+  const subParts = adminPages.has(parts[0]) ? parts.slice(1) : parts;
+  return {
+    page,
+    sub: subParts.length > 0 ? decodeURIComponent(subParts.join("/")) : "",
+  };
+}
+
+export function filesPath(
+  cluster: string,
+  storageClass: string,
+  admin = false,
+) {
+  const prefix = admin ? "/admin/files" : "/files";
+  return `${prefix}/${encodeURIComponent(cluster)}/${encodeURIComponent(storageClass)}`;
+}
+
+export function hasTerminalSession(storage: Pick<Storage, "getItem">) {
+  return Boolean(storage.getItem("rlark-auth-token"));
+}
+
 export function useIsAdminPath() {
   const [isAdmin, setIsAdmin] = useState(() => {
     if (typeof window === "undefined") return false;
-    return window.location.pathname.startsWith("/admin");
+    return isAdminPath(window.location.pathname);
   });
   useEffect(() => {
     const onPop = () => {
-      setIsAdmin(window.location.pathname.startsWith("/admin"));
+      setIsAdmin(isAdminPath(window.location.pathname));
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);

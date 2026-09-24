@@ -60,6 +60,18 @@ test("removes deselected categories from a multi-category node", () => {
   assert.equal(result.removedKeys.has("rlark.io/node-category-robot"), true);
 });
 
+test("selected category must NOT appear in removedKeys (regression: patch would null out the new value)", () => {
+  const result = updateNodeCategoryLabels({}, ["cloud"]);
+  assert.equal(result.labels["rlark.io/node-category-cloud"], "true");
+  // 关键断言：新写入的 key 不能同时出现在 removedKeys 里，
+  // 否则调用方在 merge-patch 里会把它置 null 把刚写入的 "true" 覆盖掉。
+  assert.equal(result.removedKeys.has("rlark.io/node-category-cloud"), false);
+  // 未选中的仍应被标记删除
+  assert.equal(result.removedKeys.has("rlark.io/node-category-edge"), true);
+  assert.equal(result.removedKeys.has("rlark.io/node-category-robot"), true);
+  assert.equal(result.removedKeys.has("rlark.io/node-category"), true);
+});
+
 test("detects labels removed in the detail editor", () => {
   assert.deepEqual(
     getRemovedLabelKeys({ zone: "a", team: "robot" }, { zone: "a" }),

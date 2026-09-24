@@ -13,6 +13,9 @@ import (
 const (
 	EventInit             = "init"
 	EventStart            = "start"
+	EventStop             = "stop"
+	EventAllJobsStopped   = "all-jobs-stopped"
+	EventResume           = "resume"
 	EventAllJobsSucceeded = "all-jobs-succeeded"
 	EventAnyJobFailed     = "any-job-failed"
 )
@@ -27,6 +30,27 @@ var workflowEvents = fsm.Events{
 		Name: EventStart,
 		Src:  []string{string(rlarkv1alpha1.WorkflowPhasePending)},
 		Dst:  string(rlarkv1alpha1.WorkflowPhaseRunning),
+	},
+	{
+		Name: EventStop,
+		Src: []string{
+			string(rlarkv1alpha1.WorkflowPhasePending),
+			string(rlarkv1alpha1.WorkflowPhaseRunning),
+		},
+		Dst: string(rlarkv1alpha1.WorkflowPhaseStopping),
+	},
+	{
+		Name: EventAllJobsStopped,
+		Src:  []string{string(rlarkv1alpha1.WorkflowPhaseStopping)},
+		Dst:  string(rlarkv1alpha1.WorkflowPhaseStopped),
+	},
+	{
+		Name: EventResume,
+		Src: []string{
+			string(rlarkv1alpha1.WorkflowPhaseStopping),
+			string(rlarkv1alpha1.WorkflowPhaseStopped),
+		},
+		Dst: string(rlarkv1alpha1.WorkflowPhasePending),
 	},
 	{
 		Name: EventAllJobsSucceeded,
@@ -48,19 +72,20 @@ func newWorkflowStateMachine() *fsm.FSM {
 		},
 		"enter_" + string(rlarkv1alpha1.WorkflowPhasePending): func(ctx context.Context, e *fsm.Event) {
 			wf := e.Args[0].(*rlarkv1alpha1.Workflow)
-			if wf.Status.Jobs == nil {
-				wf.Status.Jobs = make([]rlarkv1alpha1.WorkflowJobStatus, 0, len(wf.Spec.JobTemplates))
-				for _, jt := range wf.Spec.JobTemplates {
-					wf.Status.Jobs = append(wf.Status.Jobs, rlarkv1alpha1.WorkflowJobStatus{
-						Name: jt.Name,
-					})
-				}
+			if e.Src != "" {
+				now := metav1.Now()
+				wf.Status.StartTime = &now
+				wf.Status.EndTime = nil
 			}
+			syncJobStatusSnapshot(wf)
 		},
 		"enter_" + string(rlarkv1alpha1.WorkflowPhaseRunning): func(ctx context.Context, e *fsm.Event) {
 			wf := e.Args[0].(*rlarkv1alpha1.Workflow)
-			now := metav1.Now()
-			wf.Status.StartTime = &now
+			if wf.Status.StartTime == nil {
+				now := metav1.Now()
+				wf.Status.StartTime = &now
+			}
+			wf.Status.EndTime = nil
 		},
 		"enter_" + string(rlarkv1alpha1.WorkflowPhaseSucceeded): func(ctx context.Context, e *fsm.Event) {
 			wf := e.Args[0].(*rlarkv1alpha1.Workflow)

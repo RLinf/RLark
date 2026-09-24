@@ -93,7 +93,7 @@ services:
       - "/rlark-controller-manager"
       - "--kubeconfig=/etc/rlark/kubeconfig.yaml"
       - "--server-address=https://rlark-server:8443"
-      - "--leader-elect=false"
+      - "--leader-election=false"
       - "--metrics-bind-address=:0"
       - "--health-probe-bind-address=:0"
       - "--db-config=/etc/rlark/db-config.yaml"

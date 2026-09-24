@@ -7,7 +7,7 @@ RLark supports two storage types for training jobs:
 | Type | Use Case | Lifecycle |
 |------|----------|-----------|
 | Host Directory | Data already on the node, high I/O | Job lifecycle actions do not delete data |
-| Object Storage (PVC) | Shared data within a Job run | Stop/restart/delete removes task PVCs; start/restart creates empty PVCs |
+| Object Storage (ephemeral PVC) | Remote storage within one Pod run | Kubernetes creates and removes the PVC with its Pod |
 
 ## Host Directory
 
@@ -17,10 +17,18 @@ RLark supports two storage types for training jobs:
 
 ## Object Storage
 
-- Uses Kubernetes StorageClass and PVC
-- PVC is auto-created with 10Gi request
+- Uses a Kubernetes generic ephemeral volume and StorageClass
+- Each PVC mount defaults to a 10Gi request; the configurable size range is 1–200Gi
 - Select cluster first, then available StorageClasses appear in the dropdown
-- Multiple workers can share the same PVC (be aware of RWO access mode limitations)
+- Each worker Pod receives its own PVC
+
+## Managing Storage Classes
+
+Open **Storage** to review object-storage configurations, associated clusters, providers, and buckets. Create the required storage class before configuring a PVC mount for a Worker.
+
+> **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
+
+![Storage management](../images/ui/storage-file-browser.png)
 
 ## Using Storage in a Training Job
 
@@ -29,8 +37,6 @@ When creating a job, in the Worker configuration step:
 2. Enter the source path (for hostPath) or select StorageClass (for PVC)
 3. Enter the container mount path
 4. Your training code reads/writes to the mount path
-
-![Storage file browser](../images/ui/storage-file-browser.png)
 
 ## Checking Read/Write
 
@@ -43,9 +49,9 @@ Verify the storage chain:
 
 ## Lifecycle
 
-- Stop or restart: task PVCs are deleted; hostPath data is preserved
-- Start or restart: new empty task PVCs are created
-- Delete: task PVCs are deleted; hostPath data is preserved
+- Stop or restart: deleting worker Pods also deletes their ephemeral PVCs; hostPath data is preserved
+- Start or restart: Kubernetes creates new ephemeral PVCs for the new Pods
+- Delete: deleting worker Pods also deletes their ephemeral PVCs; hostPath data is preserved
 
 ## API Equivalent
 

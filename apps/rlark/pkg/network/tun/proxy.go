@@ -1,7 +1,6 @@
 package tun
 
 import (
-	"io"
 	"net"
 
 	"gvisor.dev/gvisor/pkg/tcpip/header"
@@ -81,11 +80,8 @@ func (p *Proxy) handleConnection(conn *utils.WrapConn) {
 
 // handleTCP 在客户端 TCP 连接和目标 TCP 地址之间做双向数据转发。
 //
-// 使用两个 io.Copy 实现全双工转发：
-//   - 一个 goroutine 负责 client → target
-//   - 主 goroutine 负责 target → client
-//
-// 当任意方向拷贝结束，函数返回，defer 关闭的 target 连接会终止另一侧的 goroutine。
+// 两个方向并发转发；任一方向结束后，为两端设置读取截止时间，等待另一方向
+// 完成。两个方向均结束后返回，并由 defer 关闭目标连接。
 func (p *Proxy) handleTCP(conn *utils.WrapConn, host, port string) {
 	logger := log.GetLogger()
 	tunConn, err := net.Dial("tcp", net.JoinHostPort(host, port))
@@ -95,10 +91,7 @@ func (p *Proxy) handleTCP(conn *utils.WrapConn, host, port string) {
 	}
 	defer func() { _ = tunConn.Close() }()
 
-	go func() {
-		_, _ = io.Copy(tunConn, conn)
-	}()
-	_, _ = io.Copy(conn, tunConn)
+	_, _ = utils.RelayConnections(tunConn, conn, "target", "client")
 }
 
 // handleUDP 在客户端 TCP 连接和目标 UDP 地址之间做双向帧转发。

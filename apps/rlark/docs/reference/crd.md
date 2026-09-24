@@ -1,6 +1,8 @@
 # CRD Schema Reference
 
-Kubernetes resource operations and schemas generated from the current CRD manifests. This is not the RLark Gateway HTTP API reference.
+> **Generated file:** This page is generated from `api/config/crd/bases` by `apps/rlark/cmd/crd-api-docgen`. Do not edit it manually; run `make generate-crd-schema-docs` instead.
+
+Kubernetes resource operations and schemas generated from the current CRD manifests. This is not the RLark Gateway HTTP API reference. Descriptions are copied from source schemas, may retain their original language, and are shortened for readability.
 
 ## Addon
 
@@ -760,6 +762,10 @@ Responses:
   - `domain`: `string`, optional
   - `sshPublicKey`: `string`, optional
   - `stopped`: `boolean`, optional
+  - `tags`: `array`, optional
+    - `items`: `object`, optional - JobTag 表示一个任务标签，由 key 和 value 组成。 key 和 value 长度均不超过 10 个字符；一个任务最多 10 个标签； 同一个 key 可添加多个不同 value（最多 10 个）。
+      - `key`: `string`, required
+      - `value`: `string`, required
   - `tasks`: `array`, optional
     - `items`: `object`, optional
       - `agentType`: `string`, optional
@@ -1013,6 +1019,10 @@ Responses:
       - `status`: `string`, required
       - `total`: `integer`, required
   - `reason`: `string`, optional
+  - `storage`: `object`, optional - NodeStorageStatus reports kubelet filesystem usage in bytes.
+    - `availableBytes`: `integer`, optional
+    - `capacityBytes`: `integer`, optional
+    - `usedBytes`: `integer`, optional
   - `used`: `object`, optional - ResourceList is a set of (resource name, quantity) pairs.
 
 ## Pod
@@ -1208,7 +1218,7 @@ Responses:
   - `ip`: `string`, optional
   - `message`: `string`, optional
   - `node`: `string`, optional
-  - `phase`: `string`, optional
+  - `phase`: `string`, optional, enum=Pending,Running,Succeeded,Failed,Unknown
 
 ## Task
 
@@ -1403,8 +1413,8 @@ Responses:
   - `kubernetes`: `object`, optional
     - `workload`: `object`, optional
       - `kind`: `string`, optional
-      - `pvcSizeGbMap`: `object`, optional
-      - `pvcStorageMap`: `object`, optional
+      - `pvcSizeGbMap`: `object`, optional - Deprecated: use Template.Spec.Volumes[].Ephemeral.VolumeClaimTemplate.Spec.Resources.Requests instead.
+      - `pvcStorageMap`: `object`, optional - Deprecated: use Template.Spec.Volumes[].Ephemeral.VolumeClaimTemplate.Spec.StorageClassName instead.
       - `replicas`: `integer`, optional
       - `template`: `object`, optional - PodTemplateSpec describes the data a pod should have when created from a template
   - `nodeSelector`: `object`, optional
@@ -1452,200 +1462,3 @@ Responses:
   - `retryCount`: `integer`, optional
   - `startTime`: `string`, optional
   - `tensorBoardProxy`: `string`, optional
-
-## Workflow
-
-- Group: `rlinf.io`
-- Version: `v1alpha1`
-- Scope: `Cluster`
-- Resource: `workflows`
-
-### Operations
-
-#### `GET /api/v1/rlinf.io/v1alpha1/workflows`
-
-List workflows resources.
-
-Parameters:
-- `pretty` (query, optional)
-- `continue` (query, optional)
-- `limit` (query, optional)
-- `fieldSelector` (query, optional)
-- `labelSelector` (query, optional)
-
-Responses:
-- `200` OK → `WorkflowList`
-- `401` Unauthorized
-
-#### `POST /api/v1/rlinf.io/v1alpha1/workflows`
-
-Create a Workflow resource.
-
-Parameters:
-- `pretty` (query, optional)
-- `dryRun` (query, optional)
-- `fieldManager` (query, optional)
-- `fieldValidation` (query, optional)
-
-Request body: `Workflow`
-
-Responses:
-- `201` Created → `Workflow`
-- `202` Accepted → `Workflow`
-- `401` Unauthorized
-
-#### `DELETE /api/v1/rlinf.io/v1alpha1/workflows`
-
-Delete a collection of workflows resources.
-
-Parameters:
-- `pretty` (query, optional)
-- `continue` (query, optional)
-- `limit` (query, optional)
-- `fieldSelector` (query, optional)
-- `labelSelector` (query, optional)
-
-Responses:
-- `200` OK → `Status`
-- `401` Unauthorized
-
-#### `GET /api/v1/rlinf.io/v1alpha1/workflows/{name}`
-
-Get a Workflow resource.
-
-Parameters:
-- `name` (path)
-- `pretty` (query, optional)
-
-Responses:
-- `200` OK → `Workflow`
-- `401` Unauthorized
-- `404` Not Found
-
-#### `PUT /api/v1/rlinf.io/v1alpha1/workflows/{name}`
-
-Replace a Workflow resource.
-
-Parameters:
-- `name` (path)
-- `pretty` (query, optional)
-- `fieldManager` (query, optional)
-- `fieldValidation` (query, optional)
-
-Request body: `Workflow`
-
-Responses:
-- `200` OK → `Workflow`
-- `401` Unauthorized
-- `404` Not Found
-
-#### `PATCH /api/v1/rlinf.io/v1alpha1/workflows/{name}`
-
-Patch a Workflow resource.
-
-Parameters:
-- `name` (path)
-- `pretty` (query, optional)
-- `fieldManager` (query, optional)
-- `fieldValidation` (query, optional)
-- `force` (query, optional)
-
-Request body: `Workflow`
-
-Responses:
-- `200` OK → `Workflow`
-- `401` Unauthorized
-- `404` Not Found
-
-#### `DELETE /api/v1/rlinf.io/v1alpha1/workflows/{name}`
-
-Delete a Workflow resource.
-
-Parameters:
-- `name` (path)
-- `pretty` (query, optional)
-
-Responses:
-- `200` OK → `Status`
-- `202` Accepted → `Status`
-- `401` Unauthorized
-- `404` Not Found
-
-#### `GET /api/v1/rlinf.io/v1alpha1/workflows/{name}/status`
-
-Get the status subresource for Workflow.
-
-Parameters:
-- `name` (path)
-- `pretty` (query, optional)
-
-Responses:
-- `200` OK → `Workflow`
-- `401` Unauthorized
-- `404` Not Found
-
-#### `PUT /api/v1/rlinf.io/v1alpha1/workflows/{name}/status`
-
-Replace the status subresource for Workflow.
-
-Parameters:
-- `name` (path)
-- `pretty` (query, optional)
-- `fieldManager` (query, optional)
-- `fieldValidation` (query, optional)
-
-Request body: `Workflow`
-
-Responses:
-- `200` OK → `Workflow`
-- `202` Accepted → `Workflow`
-- `401` Unauthorized
-- `404` Not Found
-
-#### `PATCH /api/v1/rlinf.io/v1alpha1/workflows/{name}/status`
-
-Patch the status subresource for Workflow.
-
-Parameters:
-- `name` (path)
-- `pretty` (query, optional)
-- `fieldManager` (query, optional)
-- `fieldValidation` (query, optional)
-- `force` (query, optional)
-
-Request body: `Workflow`
-
-Responses:
-- `200` OK → `Workflow`
-- `202` Accepted → `Workflow`
-- `401` Unauthorized
-- `404` Not Found
-
-### Request Schema
-
-- `apiVersion`: `string`, optional - APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schema...
-- `kind`: `string`, optional - Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoin...
-- `metadata`: `object`, optional
-- `spec`: `object`, optional
-  - `jobTemplates`: `array`, optional
-    - `items`: `object`, optional
-      - `dependencies`: `array`, optional
-      - `name`: `string`, optional
-      - `spec`: `object`, optional
-- `status`: `object`, optional
-  - `conditions`: `array`, optional
-    - `items`: `object`, optional - Condition contains details for one aspect of the current state of this API Resource.
-      - `lastTransitionTime`: `string`, required - lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the un...
-      - `message`: `string`, required - message is a human readable message indicating details about the transition. This may be an empty string.
-      - `observedGeneration`: `integer`, optional - observedGeneration represents the .metadata.generation that the condition was set based upon. For instance, if .metad...
-      - `reason`: `string`, required - reason contains a programmatic identifier indicating the reason for the condition's last transition. Producers of spe...
-      - `status`: `string`, required, enum=True,False,Unknown - status of the condition, one of True, False, Unknown.
-      - `type`: `string`, required - type of condition in CamelCase or in foo.example.com/CamelCase.
-  - `endTime`: `string`, optional
-  - `jobs`: `array`, optional
-    - `items`: `object`, optional
-      - `message`: `string`, optional
-      - `name`: `string`, optional
-      - `phase`: `string`, optional
-  - `phase`: `string`, optional
-  - `startTime`: `string`, optional

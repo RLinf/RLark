@@ -40,6 +40,8 @@ type TaskSpecApplyConfiguration struct {
 	RunScript *string `json:"runScript,omitempty"`
 	// Ray 集群就绪后执行的脚本（仅 head 节点）
 	SSHPublicKey *string `json:"sshPublicKey,omitempty"`
+	// 注入到 Pod authorized_keys 的 SSH 公钥
+	Tags []JobTagApplyConfiguration `json:"tags,omitempty"`
 }
 
 // TaskSpecApplyConfiguration constructs a declarative configuration of the TaskSpec type for use with
@@ -147,5 +149,18 @@ func (b *TaskSpecApplyConfiguration) WithRunScript(value string) *TaskSpecApplyC
 // If called multiple times, the SSHPublicKey field is set to the value of the last call.
 func (b *TaskSpecApplyConfiguration) WithSSHPublicKey(value string) *TaskSpecApplyConfiguration {
 	b.SSHPublicKey = &value
+	return b
+}
+
+// WithTags adds the given value to the Tags field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Tags field.
+func (b *TaskSpecApplyConfiguration) WithTags(values ...*JobTagApplyConfiguration) *TaskSpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithTags")
+		}
+		b.Tags = append(b.Tags, *values[i])
+	}
 	return b
 }

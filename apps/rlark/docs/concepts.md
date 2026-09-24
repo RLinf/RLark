@@ -5,7 +5,6 @@
 RLark uses a multi-layer resource abstraction, from underlying infrastructure to top-level embodied AI workloads:
 
 ```
-Workflow  ──── Workflow (DAG orchestration of multiple Jobs)
   │
   └── Job  ──── Training Job (a complete embodied AI task)
         │
@@ -146,7 +145,7 @@ These business fields are stored on the KCP Node CR and are preserved when the A
 
 Workspace node totals and cluster-detail node lists include usable Workers carrying an RLark category label. Legacy `rlark.io/node-category` values and unlabeled Nodes that explicitly advertise GPU or embodied-device resources remain supported. Nodes carrying a Kubernetes `master` or `control-plane` role label remain visible only in the administration workspace and are not counted or shown as workload Workers in the business workspace.
 
-CPU, memory, and GPU usage in Node details is aggregated from the Kubernetes `resources.requests` of running Workers. It represents scheduler-reserved resources, not real-time hardware utilization from metrics-server. The detail page also lists every Worker on the Node with its Job, role, IP, resource requests, and runtime phase.
+CPU, memory, and GPU usage in Node details is aggregated from the Kubernetes `resources.requests` of running Workers. It represents scheduler-reserved resources, not real-time hardware utilization from metrics-server. Disk is reported separately from kubelet Stats Summary: the Agent combines nodefs with a dedicated imagefs, while avoiding double-counting when both refer to the same filesystem. The UI shows real used, total, and available storage and warns at 90% usage or when kubelet reports `DiskPressure=True`. The detail page also lists every Worker on the Node with its Job, role, IP, resource requests, and runtime phase.
 
 ## 5. Node Cordon/Uncordon
 
@@ -228,11 +227,16 @@ status:
 
 ```
 (empty) ──init──▶ Pending ──tasks-running──▶ Running
-                              │                  │
-                              │ any-task-failed  │ all-tasks-succeeded
-                              ▼                  ▼
-                          Failed            Succeeded
+                     │             │              │
+                     │ stop        │ stop         │ all-tasks-succeeded
+                     ▼             ▼              ▼
+                  Stopping ──cleanup-complete──▶ Stopped    Succeeded
+                     ▲
+                     │ failed-run stop/restart cleanup
+                   Failed
 ```
+
+`Stopping` is transitional: RLark deletes the child Tasks and waits for their Workers and task PVCs to be cleaned up. Stopping and then starting a terminal Job performs a clean rerun after removing the previous Tasks, Workers, and task PVCs.
 
 ### Relationship with Task
 
@@ -247,19 +251,23 @@ Jobs can be stopped and restarted via the `stopped` field in the Job spec, provi
 
 ### Concept
 
-Setting `spec.stopped: true` on a Job causes the Job controller to stop all associated workloads (Pods, Deployments, StatefulSets) without deleting the Job resource. Setting it back to `false` (or removing the field) restarts the workloads.
+Setting `spec.stopped: true` starts an orderly stop without deleting the Job resource. The Job is shown as `Stopping` while RLark waits for the Job and all child Tasks and Workers to stop, and then becomes `Stopped`. Clearing the field starts a stopped Job again.
 
 ### How it works
 
-1. **Stop**: When `spec.stopped` is set to `true`, the Job controller detects the change and deletes the underlying Kubernetes workloads (Deployments/StatefulSets) while keeping the Job CR.
-2. **Restart**: When `spec.stopped` is removed or set to `false`, the Job controller recreates the workloads from the Task templates.
-3. **State preservation**: The Job's phase and status fields are preserved during stop/restart cycles.
+1. **Stop**: RLark deletes the child Task CRs, waits for their underlying workloads and PVCs to be cleaned up, and retains the Job CR and configuration.
+2. **Start**: Clearing `spec.stopped` on a `Stopped` Job recreates Tasks, workloads, and empty task PVCs from the templates.
+3. **Restart**: Restart cleans up the current Tasks, Workers, and task PVCs before recreating them. `Succeeded` and `Failed` Jobs both start a new run from their templates.
+4. **Terminal result**: Stopping a terminal Job preserves completed Task results in status until the new run starts.
+5. **Delete**: Deleting a Job first performs the stop-and-wait sequence, then removes the Job and child Tasks. Task PVCs are deleted; hostPath data is not.
 
 ### Key Features
 
-- **Non-destructive**: Stopping a Job does not delete the Job CR or its Tasks
-- **Persistent state**: PVCs and other persistent resources are not affected by stopping
-- **Web UI integration**: The Web UI provides one-click Stop/Start buttons in the Job list
+- **Configuration preservation**: Stop keeps the Job CR and configuration, but does not preserve task PVC data
+- **Clean recreation**: Start and restart create empty task PVCs; copy required output elsewhere first
+- **Web UI integration**: The Web UI provides Stop, Start, Restart, and Delete actions with lifecycle-aware availability
+
+When a Workflow is stopped, RLark deletes all Jobs from the current run, including completed Jobs. Resuming the Workflow creates a new run from the beginning of the DAG; completion state from the previous run is not reused.
 
 ## 8. Task
 
@@ -339,60 +347,7 @@ graph LR
     Rollout <-->|"obs"| Camera
 ```
 
-## 9. Workflow
-
-Workflow is **DAG orchestration of multiple Jobs**, supporting training pipelines with dependencies.
-
-### Concept
-
-A Workflow contains multiple Job templates, each declaring upstream dependencies via `dependencies`. The Workflow Controller schedules Jobs in topological order: upstream Jobs must succeed before dependent Jobs can start.
-
-### Key Properties
-
-```yaml
-apiVersion: rlinf.io/v1alpha1
-kind: Workflow
-metadata:
-  name: training-pipeline-v1
-spec:
-  jobTemplates:
-    - name: prepare-data
-      dependencies: []            # No dependencies, start immediately
-      spec:
-        tasks:
-          - name: prep
-            role: Env
-            agentType: Kubernetes
-            kubernetes: ...
-    - name: train
-      dependencies: ["prepare-data"]  # Start after prepare-data succeeds
-      spec:
-        tasks:
-          - name: actor-head
-            head: true
-            role: Actor
-            agentType: Kubernetes
-            kubernetes: ...
-    - name: evaluate
-      dependencies: ["train"]
-      spec:
-        tasks: ...
-```
-
-### Typical Pipeline
-
-```
-Data Preparation ──▶ Model Training ──▶ Model Evaluation
-    prepare             train             evaluate
-```
-
-### State Machine
-
-Similar to Job, Workflow state is determined by the aggregate of its Jobs' states:
-- All Jobs succeed → Workflow Succeeded
-- Any Job fails → Workflow Failed
-
-## 10. Pod
+## 9. Pod
 
 Pod CR is the **control plane mirror** of data plane Pods, reported by the Agent's Push controller.
 
@@ -406,11 +361,10 @@ When a Pod is created in the data plane cluster, the Agent's Pod Push controller
 - **SSH Lookup**: Server's PodCache quickly locates Pod's Agent based on Pod CR
 - **Log Queries**: Gateway finds Pod's Agent via Pod CR and forwards log requests
 
-## 11. Resource Relationship Summary
+## 9. Resource Relationship Summary
 
 ```mermaid
 graph TD
-    wf["Workflow<br/>(Cluster scoped)<br/>DAG Pipeline"] -->|"1:N"| job["Job<br/>(Cluster scoped)<br/>Training Job"]
     job -->|"1:N"| task["Task<br/>(Namespaced: agent-{id})<br/>Exec Unit"]
     task -->|"1:1 (K8s workload)"| workload["Deployment /<br/>DaemonSet /<br/>StatefulSet<br/>(Local k8s cluster)"]
     workload -->|"1:N"| pod["Pod + Sidecar<br/>Agent Push reports → Pod CR"]
@@ -418,7 +372,7 @@ graph TD
     node["Node<br/>(Namespaced)<br/>Compute Node"]
 ```
 
-## 12. Naming Conventions
+## 9. Naming Conventions
 
 | Namespace Prefix | Meaning | Example |
 |-----------------|---------|---------|
@@ -427,7 +381,7 @@ graph TD
 | Label `rlinf.io/job` | Pod/Task's owning Job | `rlinf.io/job=ppo-cartpole-v1` |
 | Annotation `rlinf.io/ray-role` | Ray cluster role | `head` / `worker` |
 
-## 13. Ray Cluster Integration
+## 9. Ray Cluster Integration
 
 RLark supports declarative Ray cluster creation via Task annotations:
 
@@ -449,38 +403,52 @@ annotations:
 
 ## 14. Object Storage & PVCs
 
-RLark supports mounting persistent volumes to training tasks via `pvcStorageMap` in the Task specification.
+RLark mounts remote storage to training tasks with Kubernetes generic ephemeral volumes.
 
 ### Concept
 
-When a Task specifies `pvcStorageMap`, the Agent's Pull controller automatically creates PVCs with the specified StorageClass before creating the workload, and cleans them up when the task is deleted.
+Each Pod gets a PVC created from its volume's `ephemeral.volumeClaimTemplate`. Kubernetes owns this PVC and removes it with the Pod.
 
 ### Configuration
 
 ```yaml
 kubernetes:
   workload:
-    pvcStorageMap:
-      my-data-pvc: "ceph-rbd"    # PVC name → StorageClass name
+    template:
+      spec:
+        volumes:
+          - name: data
+            ephemeral:
+              volumeClaimTemplate:
+                spec:
+                  accessModes: [ReadWriteOnce]
+                  storageClassName: ceph-rbd
+                  resources:
+                    requests:
+                      storage: 10Gi
 ```
 
 ### How it works
 
-1. Agent queries StorageClasses via `GET /api/v1/storage/storageclass?clusters=<agent-id>`
-2. When creating a workload, Agent calls `ensurePVCs` to create PVCs with the specified StorageClass
-3. PVCs are created in the target namespace, scoped to the task
-4. On task deletion, PVCs are cleaned up automatically
+1. The frontend queries StorageClasses via `GET /api/v1/storage/storageclass?clusters=<agent-id>`
+2. The selected class and requested size are written into `volumeClaimTemplate`
+3. Kubernetes creates one PVC for each Pod and binds it through the selected StorageClass
+4. Kubernetes removes the PVC when its Pod is deleted
+
+`pvcStorageMap` and `pvcSizeGbMap` are deprecated and retained only for compatibility with existing Tasks. New Tasks should use `ephemeral.volumeClaimTemplate`.
 
 ## 15. User Authentication
 
-RLark provides login and role-based navigation for the Web UI. The current `admin` and `user` distinction is a **frontend gate only**: it selects the admin or platform console, but the Gateway does not enforce these roles as API authorization. Do not treat the UI role as a security boundary or expose the Gateway to untrusted clients on that basis.
+RLark authenticates Web UI and API requests with short-lived JWT access tokens. The verified `admin` and `user` roles enforce coarse-grained API authorization: platform operations are available to both roles, while control-plane configuration and credential management require `admin`.
 
 ### Authentication Flow
 
-1. During deployment, `rlarkadm` generates random passwords and stores them in a KCP Secret (`rlark-ui-auth`)
+1. During deployment, `rlarkadm` generates random passwords and a JWT signing key and stores them in a KCP Secret (`rlark-ui-auth`)
 2. Web UI sends `POST /api/v1/auth/login` with username and password
-3. Gateway validates against the KCP Secret and returns the role
-4. Frontend stores the login result in `sessionStorage` and uses the selected console route as the role gate
+3. Gateway validates against the Secret and returns an HS256 JWT containing the subject, role, issue time, and expiration time
+4. The frontend stores the token in `sessionStorage` and sends it as `Authorization: Bearer <token>` on API requests; the Gateway verifies it before dispatching protected routes
+
+`user` can manage Jobs, Workflows, Tasks, Pods, terminal sessions, SSH keys, and storage objects, and read cluster, node, Domain, image, StorageClass, and system configuration data. Node and Domain mutations, certificates, image registries, system configuration updates, StorageClass management, and Addon management require `admin`. This is role-level authorization; per-user resource ownership, including SSH key ownership, is not yet enforced.
 
 ## 16. Addon (Component Management)
 

@@ -30,7 +30,7 @@ import {
   updateNodeModelMetadata,
 } from "../utils/nodeBatchMetadata";
 import { useAutoRefresh } from "../hooks";
-import { MetricCard, StatusBadge } from "../components/shared";
+import { MetricCard, RefreshOverlay, StatusBadge } from "../components/shared";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
 import { ClusterDetailReal, NodeDetailReal } from "../pages/Clusters";
 
@@ -59,10 +59,7 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
     if (isInitial) setLoading(true);
     setError("");
     try {
-      const resp = await fetch("/api/v1/rlinf.io/v1alpha1/nodes");
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      setNodes(data.items ?? []);
+      setNodes(await nodesApi.list());
     } catch (e) {
       setNodes([]);
       setError(e instanceof Error ? e.message : String(e));
@@ -178,7 +175,10 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
   }
 
   return (
-    <div className="page-content resource-page cluster-page">
+    <div
+      className={`page-content resource-page cluster-page refreshable-region page-refresh-region${refreshing ? " is-refreshing" : ""}`}
+      aria-busy={refreshing}
+    >
       <div className="section-heading">
         <div>
           <span className="eyebrow">
@@ -320,6 +320,10 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
           })}
         </div>
       </section>
+      <RefreshOverlay
+        visible={refreshing}
+        label={zh ? "正在刷新集群概览" : "Refreshing cluster overview"}
+      />
     </div>
   );
 }
@@ -951,10 +955,7 @@ export function AdminPage({
     if (isInitial) setLoading(true);
     setError("");
     try {
-      const resp = await fetch("/api/v1/rlinf.io/v1alpha1/nodes");
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      setNodes(data.items ?? []);
+      setNodes(await nodesApi.list());
     } catch (e) {
       setNodes([]);
       setError(e instanceof Error ? e.message : String(e));
@@ -1049,16 +1050,7 @@ export function AdminPage({
       const patch = {
         metadata: { labels: labelPatch, annotations: annotationPatch },
       };
-      const resp = await fetch(
-        `/api/v1/rlinf.io/v1alpha1/nodes/${nodeName}?namespace=${encodeURIComponent(namespace)}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/merge-patch+json" },
-          body: JSON.stringify(patch),
-        },
-      );
-      if (!resp.ok)
-        throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+      await nodesApi.patch(nodeName, patch, namespace);
       setNodes((prev) =>
         prev.map((n) =>
           n.metadata.name === nodeName
@@ -1111,16 +1103,11 @@ export function AdminPage({
     setError("");
     try {
       const patch = { spec: { unschedulable: !node.spec.unschedulable } };
-      const resp = await fetch(
-        `/api/v1/rlinf.io/v1alpha1/nodes/${node.metadata.name}?namespace=${encodeURIComponent(node.metadata.namespace ?? "")}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/merge-patch+json" },
-          body: JSON.stringify(patch),
-        },
+      await nodesApi.patch(
+        node.metadata.name,
+        patch,
+        node.metadata.namespace ?? "",
       );
-      if (!resp.ok)
-        throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
       setNodes((prev) =>
         prev.map((n) =>
           n.metadata.name === node.metadata.name
@@ -1195,20 +1182,16 @@ export function AdminPage({
           modelMetadata.removedAnnotationKeys.forEach((key) => {
             annotationPatch[key] = null;
           });
-          const resp = await fetch(
-            `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node.metadata.name)}?namespace=${encodeURIComponent(node.metadata.namespace ?? "")}`,
-            {
-              method: "PATCH",
-              headers: { "Content-Type": "application/merge-patch+json" },
-              body: JSON.stringify({
+          try {
+            await nodesApi.patch(
+              node.metadata.name,
+              {
                 metadata: { labels: labelPatch, annotations: annotationPatch },
-              }),
-            },
-          );
-          if (!resp.ok) {
-            throw new Error(
-              `${node.metadata.name}: HTTP ${resp.status} ${await resp.text()}`,
+              },
+              node.metadata.namespace ?? "",
             );
+          } catch (error) {
+            throw new Error(`${node.metadata.name}: ${String(error)}`);
           }
           return { node, labels, annotations };
         }),
@@ -1318,18 +1301,14 @@ export function AdminPage({
     try {
       await Promise.all(
         selectedNodes.map(async (node) => {
-          const resp = await fetch(
-            `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node.metadata.name)}?namespace=${encodeURIComponent(node.metadata.namespace ?? "")}`,
-            {
-              method: "PATCH",
-              headers: { "Content-Type": "application/merge-patch+json" },
-              body: JSON.stringify({ spec: { unschedulable } }),
-            },
-          );
-          if (!resp.ok) {
-            throw new Error(
-              `${node.metadata.name}: HTTP ${resp.status} ${await resp.text()}`,
+          try {
+            await nodesApi.patch(
+              node.metadata.name,
+              { spec: { unschedulable } },
+              node.metadata.namespace ?? "",
             );
+          } catch (error) {
+            throw new Error(`${node.metadata.name}: ${String(error)}`);
           }
         }),
       );
@@ -1612,10 +1591,9 @@ export function AdminPage({
                         : "Multiple current values"
                       : batchCategories.length
                         ? batchCategories
-                            .map((category) =>
-                              category === "robot" && zh
-                                ? "具身节点"
-                                : categoryLabels[category][zh ? "zh" : "en"],
+                            .map(
+                              (category) =>
+                                categoryLabels[category][zh ? "zh" : "en"],
                             )
                             .join("、")
                         : zh
@@ -1638,7 +1616,7 @@ export function AdminPage({
                   <div
                     className="admin-node-category-chips"
                     role="group"
-                    aria-label={zh ? "节点分类（可多选）" : "Node categories"}
+                    aria-label={zh ? "节点分类" : "Node category"}
                   >
                     {(["cloud", "edge", "robot"] as NodeCategory[]).map(
                       (category) => (
@@ -1651,16 +1629,12 @@ export function AdminPage({
                           aria-pressed={batchCategories.includes(category)}
                           onClick={() =>
                             setBatchCategories((current) =>
-                              current.includes(category)
-                                ? current.filter((item) => item !== category)
-                                : [...current, category],
+                              current.includes(category) ? [] : [category],
                             )
                           }
                         >
                           {zh
-                            ? category === "robot"
-                              ? "具身节点"
-                              : categoryLabels[category].zh
+                            ? categoryLabels[category].zh
                             : categoryLabels[category].en}
                         </button>
                       ),
@@ -1668,8 +1642,8 @@ export function AdminPage({
                   </div>
                   <small className="admin-node-batch-hint">
                     {zh
-                      ? "可多选。例如 GPU 服务器选择“云算力”，机器人本体可同时选择“端算力”和“具身节点”。"
-                      : "Multiple selections are allowed. For example, choose Cloud for GPU servers; a robot may be both Edge and Embodied."}
+                      ? "单选。例如 GPU 服务器选择「云算力」，机器人本体选择「端真机」。"
+                      : "Single selection. For example, choose Cloud for GPU servers, Robot for robot devices."}
                   </small>
                 </>
               )}
@@ -1851,3 +1825,4 @@ export function AdminPage({
     </div>
   );
 }
+import { nodesApi } from "../backend";

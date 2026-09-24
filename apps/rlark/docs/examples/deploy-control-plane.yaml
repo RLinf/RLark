@@ -16,6 +16,8 @@ plane: control
 
 kubernetes:
   kubeconfig: ~/.kube/config # kubeconfig for the target cluster
+  # 使用目标 Kubernetes API 存储 RLark 资源且不部署 kcp/etcd：
+  # management-api: kubernetes
   gateway-image: rlark:latest
   controller-manager-image: rlark:latest
   server-image: rlark:latest
@@ -23,6 +25,9 @@ kubernetes:
   # etcd-image: etcd:3.5.15-0
   postgresql-image: postgres:15
   ui-image: rlark-ui:latest
+
+  # 组件镜像拉取策略：Always | IfNotPresent | Never，默认 Always
+  #image-pull-policy: IfNotPresent
 
   # 全局副本数会应用到所有组件；维护中的拓扑使用 1。
   # 多副本不等同于经过验证的 HA，请勿直接用于生产 HA 设计。
@@ -68,6 +73,8 @@ kubernetes:
 #  etcd-image: etcd:3.5
 #  postgresql-image: postgres:15
 #  ui-image: rlark-ui:latest
+#  # 组件镜像拉取策略：Always | IfNotPresent | Never，默认 Always
+#  image-pull-policy: IfNotPresent
 
 #raw:
 #  gateway-artifact: https://github.com/rlinf/rlark/releases/download/v0.1.0/rlark-gateway

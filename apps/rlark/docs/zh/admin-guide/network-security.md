@@ -6,6 +6,8 @@ Domain 用于虚拟地址分组并限定跨集群转发范围。每个 Domain �
 
 ### 创建 Domain
 
+> **截图说明：** 截图来自示例环境，资源名称和数据仅供说明，实际环境会有所不同。
+
 ![Domain 管理](../../images/ui/domain-ui.png)
 
 - 管理后台 → Domain 管理 → 创建 Domain
@@ -47,7 +49,7 @@ kubectl delete domain <name>
 
 ## 安全最佳实践
 
-- 为不同安全区域使用独立的 Domain
+- 使用 Kubernetes NetworkPolicy 等基础设施控制实施安全区域隔离；不要仅依赖 Domain
 - 通过 `rlarkadm` 定期轮换 TLS 证书
 - 检查 DomainPeer 资源是否有意外的跨集群连接
 - Worker 访问的 SSH 密钥应通过平台管理，不直接在节点上操作

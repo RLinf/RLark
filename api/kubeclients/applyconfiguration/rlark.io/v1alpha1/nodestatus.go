@@ -25,17 +25,21 @@ import (
 // NodeStatusApplyConfiguration represents a declarative configuration of the NodeStatus type for use
 // with apply.
 type NodeStatusApplyConfiguration struct {
-	Phase        *rlarkiov1alpha1.NodePhase  `json:"phase,omitempty"`
-	Reason       *string                     `json:"reason,omitempty"`
-	NodeInfo     *NodeInfoApplyConfiguration `json:"nodeInfo,omitempty"`
-	Addresses    []v1.NodeAddress            `json:"addresses,omitempty"`
-	DiskPressure *bool                       `json:"diskPressure,omitempty"`
-	Allocatable  *v1.ResourceList            `json:"allocatable,omitempty"`
+	Phase        *rlarkiov1alpha1.NodePhase           `json:"phase,omitempty"`
+	Reason       *string                              `json:"reason,omitempty"`
+	NodeInfo     *NodeInfoApplyConfiguration          `json:"nodeInfo,omitempty"`
+	Addresses    []v1.NodeAddress                     `json:"addresses,omitempty"`
+	DiskPressure *bool                                `json:"diskPressure,omitempty"`
+	Storage      *NodeStorageStatusApplyConfiguration `json:"storage,omitempty"`
+	Allocatable  *v1.ResourceList                     `json:"allocatable,omitempty"`
 	// 需要预留系统组件 agent
 	Capacity     *v1.ResourceList                 `json:"capacity,omitempty"`
 	Used         *v1.ResourceList                 `json:"used,omitempty"`
 	PullProgress []PullProgressApplyConfiguration `json:"pullProgress,omitempty"`
-	Events       []NodeEventApplyConfiguration    `json:"events,omitempty"`
+	// Events 由数据面 node-agent 上报节点相关 Kubernetes Event（如 DiskPressure
+	// 等 Warning 事件及镜像拉取/调度相关事件）。控制面 Task reconciler 在 Task
+	// 处于 Pending 期间聚合各节点事件到 Task.status.events，供前端展示。
+	Events []NodeEventApplyConfiguration `json:"events,omitempty"`
 }
 
 // NodeStatusApplyConfiguration constructs a declarative configuration of the NodeStatus type for use with
@@ -86,6 +90,14 @@ func (b *NodeStatusApplyConfiguration) WithDiskPressure(value bool) *NodeStatusA
 	return b
 }
 
+// WithStorage sets the Storage field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Storage field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithStorage(value *NodeStorageStatusApplyConfiguration) *NodeStatusApplyConfiguration {
+	b.Storage = value
+	return b
+}
+
 // WithAllocatable sets the Allocatable field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Allocatable field is set to the value of the last call.
@@ -113,9 +125,12 @@ func (b *NodeStatusApplyConfiguration) WithUsed(value v1.ResourceList) *NodeStat
 // WithPullProgress adds the given value to the PullProgress field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the PullProgress field.
-func (b *NodeStatusApplyConfiguration) WithPullProgress(values ...PullProgressApplyConfiguration) *NodeStatusApplyConfiguration {
+func (b *NodeStatusApplyConfiguration) WithPullProgress(values ...*PullProgressApplyConfiguration) *NodeStatusApplyConfiguration {
 	for i := range values {
-		b.PullProgress = append(b.PullProgress, values[i])
+		if values[i] == nil {
+			panic("nil value passed to WithPullProgress")
+		}
+		b.PullProgress = append(b.PullProgress, *values[i])
 	}
 	return b
 }
@@ -123,9 +138,12 @@ func (b *NodeStatusApplyConfiguration) WithPullProgress(values ...PullProgressAp
 // WithEvents adds the given value to the Events field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Events field.
-func (b *NodeStatusApplyConfiguration) WithEvents(values ...NodeEventApplyConfiguration) *NodeStatusApplyConfiguration {
+func (b *NodeStatusApplyConfiguration) WithEvents(values ...*NodeEventApplyConfiguration) *NodeStatusApplyConfiguration {
 	for i := range values {
-		b.Events = append(b.Events, values[i])
+		if values[i] == nil {
+			panic("nil value passed to WithEvents")
+		}
+		b.Events = append(b.Events, *values[i])
 	}
 	return b
 }

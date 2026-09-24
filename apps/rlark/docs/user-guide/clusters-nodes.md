@@ -9,6 +9,8 @@ Use this guide to find a data-plane cluster and confirm that it has suitable Wor
 3. Check the online status, online rate, and Worker count.
 4. Open the cluster that you plan to use.
 
+> **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
+
 ![Cluster list](../images/ui/first-login-cluster-list.png)
 
 ## Task 2: Check Cluster Capacity
@@ -27,10 +29,12 @@ Use this guide to find a data-plane cluster and confirm that it has suitable Wor
 4. Review CPU, memory, and GPU capacity and requested resources. The usage values are aggregated Kubernetes requests, not real-time hardware utilization.
 5. Check the Jobs and Workers already placed on the node.
 
+Use **Refresh** on the Nodes page to update the full filtered node list in place. During the request, the current rows remain visible under a dimmed loading mask with a centered spinner, while the surrounding page keeps its position.
+
 ![Node detail](../images/ui/first-login-node-detail.png)
 
 !!! note "Node categories"
-    The platform groups Workers using RLark category labels for cloud, edge, and robot resources. Legacy category values and nodes that explicitly advertise supported resources remain visible. Kubernetes control-plane nodes are excluded from the platform Worker view.
+The platform groups Workers using RLark category labels for cloud, edge, and robot resources. Legacy category values and nodes that explicitly advertise supported resources remain visible. Kubernetes control-plane nodes are excluded from the platform Worker view.
 
 ## Result
 

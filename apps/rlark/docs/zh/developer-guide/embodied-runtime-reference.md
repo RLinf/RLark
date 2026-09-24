@@ -2,6 +2,8 @@
 
 一个面向边缘节点的 Kubernetes 原生运行时，用于管理机器人（ROS）与摄像头硬件。它通过 Device Plugin API 将机器人和摄像头暴露为**可调度的 Kubernetes 资源**。接入流程请参见 [具身设备集群接入](../admin-guide/embodied-runtime.md)。
 
+![Embodied Runtime 架构](../../images/embodied-runtime-architecture.svg)
+
 ## Manager 模式
 
 每个控制器（`camera`、`ros`、`ros2`）可独立配置三种模式：

@@ -12,9 +12,6 @@ spec:
     workload:
       kind: Deployment
       replicas: 2
-      pvcStorageMap:
-        data-pvc: "standard"
-        model-pvc: "ssd"
       template:
         metadata:
           labels:
@@ -47,11 +44,23 @@ spec:
                   nvidia.com/gpu: "1"
           volumes:
             - name: data-vol
-              persistentVolumeClaim:
-                claimName: data-pvc
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: standard
+                    resources:
+                      requests:
+                        storage: 20Gi
             - name: model-vol
-              persistentVolumeClaim:
-                claimName: model-pvc
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: ssd
+                    resources:
+                      requests:
+                        storage: 10Gi
 status:
   phase: Running
   observedNodes:

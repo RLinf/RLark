@@ -322,6 +322,7 @@ func (s *HTTPServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	mountPrefix := httpproto.ProxyMountPrefix("robots", robotID)
 	rewritePath := strings.TrimPrefix(r.URL.Path, mountPrefix)
 
+	//nolint:staticcheck // Ignore staticcheck warnings for the Director function in the reverse proxy
 	proxy := &httputil.ReverseProxy{
 		Transport: s.transport,
 		Director: func(req *http.Request) {

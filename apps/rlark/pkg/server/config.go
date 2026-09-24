@@ -14,6 +14,11 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
 )
 
+const (
+	defaultClientQPS   = 50
+	defaultClientBurst = 100
+)
+
 // Config holds the server configuration parameters.
 type Config struct {
 	// HTTPS Port to listen on.
@@ -163,5 +168,11 @@ func (c *ClientConfig) BuildKubeAPIConfig() (*api.Config, error) {
 
 // BuildRestConfig builds the restConfig.
 func (c *ClientConfig) BuildRestConfig() (*rest.Config, error) {
-	return clientcmd.BuildConfigFromKubeconfigGetter("", c.BuildKubeAPIConfig)
+	config, err := clientcmd.BuildConfigFromKubeconfigGetter("", c.BuildKubeAPIConfig)
+	if err != nil {
+		return nil, err
+	}
+	config.QPS = defaultClientQPS
+	config.Burst = defaultClientBurst
+	return config, nil
 }

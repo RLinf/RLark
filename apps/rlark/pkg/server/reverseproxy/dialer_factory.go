@@ -7,9 +7,9 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/rancher/remotedialer"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/remotedialer"
 )
 
 // Variables used by the package.
@@ -19,45 +19,29 @@ var (
 	PeerTokenHeader = remotedialer.Token
 )
 
-type client struct {
-	key     string
-	connCnt int
-	errCnt  int
+const maxRejections = 5
+
+type clientState struct {
+	connections int
+	rejections  int
 }
 
-func (c *client) onConnect() error {
-	if c.connCnt > 0 {
-		// 当有相同 clientKey 的连接存在时，暂时不接受新的连接，让代理的连接尽可能均衡地分布在不同的 server 实例上
-		// 如果连续出现多个连接，说明可能连接已经较为均衡了，因此允许多个连接存在
-		if c.errCnt < 5 {
-			c.errCnt++
-			return fmt.Errorf("client %s already connected", c.key)
-		}
-	}
-	c.connCnt++
-	c.errCnt = 0
-	return nil
-}
-
-func (c *client) onDisconnect() {
-	if c.connCnt > 0 {
-		c.connCnt--
-		c.errCnt = 0
-	}
-}
-
-// DialerFactory creates instances.
+// DialerFactory wraps a remotedialer.Server and adds a soft load-balancing
+// heuristic: when a clientKey already has an active session the factory
+// rejects the first maxRejections reconnection attempts so that the agent's
+// retries may land on a different Server instance. After the threshold it
+// falls back to allowing multiple sessions for the same key.
 type DialerFactory struct {
 	dialerServer *remotedialer.Server
 
-	clients map[string]*client
-	mutex   sync.Mutex
+	clients map[string]*clientState
+	mu      sync.Mutex
 }
 
 // NewDialerFactory creates a new DialerFactory.
 func NewDialerFactory() *DialerFactory {
 	f := &DialerFactory{
-		clients: make(map[string]*client),
+		clients: make(map[string]*clientState),
 	}
 	f.dialerServer = remotedialer.New(f.auth, remotedialer.DefaultErrorWriter)
 	f.dialerServer.PeerID = uuid.NewString()
@@ -73,34 +57,42 @@ func (f *DialerFactory) auth(req *http.Request) (string, bool, error) {
 	return clientKey, true, nil
 }
 
-func (f *DialerFactory) addClient(clientKey string) error {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
+// tryAccept implements a soft load-balancing heuristic: when a clientKey
+// already has an active session the factory rejects the first maxRejections
+// reconnection attempts, so that agent retries may land on a different
+// Server instance and connections are distributed across replicas.
+// After the threshold it falls back to allowing multiple sessions for the
+// same key.
+func (f *DialerFactory) tryAccept(clientKey string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
-	c, ok := f.clients[clientKey]
-	if !ok {
-		c = &client{
-			key: clientKey,
-		}
-		f.clients[clientKey] = c
+	state := f.clients[clientKey]
+	if state == nil {
+		state = &clientState{}
+		f.clients[clientKey] = state
 	}
-	err := c.onConnect()
-	if c.connCnt == 0 {
-		delete(f.clients, clientKey)
+	if state.connections > 0 && state.rejections < maxRejections {
+		state.rejections++
+		return fmt.Errorf("client %s already connected", clientKey)
 	}
-	return err
+	state.connections++
+	state.rejections = 0
+	return nil
 }
 
-func (f *DialerFactory) removeClient(clientKey string) {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
+func (f *DialerFactory) disconnect(clientKey string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
-	c, ok := f.clients[clientKey]
-	if ok {
-		c.onDisconnect()
-		if c.connCnt == 0 {
-			delete(f.clients, clientKey)
-		}
+	state := f.clients[clientKey]
+	if state == nil {
+		return
+	}
+	state.connections--
+	state.rejections = 0
+	if state.connections == 0 {
+		delete(f.clients, clientKey)
 	}
 }
 
@@ -118,20 +110,21 @@ func (f *DialerFactory) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if err := f.addClient(clientKey); err != nil {
+	if err := f.tryAccept(clientKey); err != nil {
 		remotedialer.DefaultErrorWriter(rw, req, http.StatusInternalServerError, err)
 		return
 	}
-	defer f.removeClient(clientKey)
+	defer f.disconnect(clientKey)
 
 	logger.Info("Client connected", "clientKey", clientKey)
 
 	f.dialerServer.ServeHTTP(rw, req)
 }
 
-// GetDialer returns the dialer.
-func (f *DialerFactory) GetDialer(ctx context.Context, clientKey string) remotedialer.Dialer {
-	return f.dialerServer.Dialer(clientKey)
+// GetDialer returns the dialer for the given clientKey, or an error if no
+// active session exists.
+func (f *DialerFactory) GetDialer(ctx context.Context, clientKey string) (remotedialer.Dialer, error) {
+	return f.dialerServer.GetDialer(clientKey)
 }
 
 // GetPeerID returns the peerID.

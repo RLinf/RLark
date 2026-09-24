@@ -25,11 +25,13 @@ import (
 // KubernetesWorkloadSpecApplyConfiguration represents a declarative configuration of the KubernetesWorkloadSpec type for use
 // with apply.
 type KubernetesWorkloadSpecApplyConfiguration struct {
-	Kind          *rlarkiov1alpha1.KubernetesWorkloadKind `json:"kind,omitempty"`
-	Replicas      *int32                                  `json:"replicas,omitempty"`
-	Template      *v1.PodTemplateSpec                     `json:"template,omitempty"`
-	PvcStorageMap map[string]string                       `json:"pvcStorageMap,omitempty"`
-	PvcSizeGbMap  map[string]int32                        `json:"pvcSizeGbMap,omitempty"`
+	Kind     *rlarkiov1alpha1.KubernetesWorkloadKind `json:"kind,omitempty"`
+	Replicas *int32                                  `json:"replicas,omitempty"`
+	Template *v1.PodTemplateSpec                     `json:"template,omitempty"`
+	// Deprecated: use Template.Spec.Volumes[].Ephemeral.VolumeClaimTemplate.Spec.StorageClassName instead.
+	PvcStorageMap map[string]string `json:"pvcStorageMap,omitempty"`
+	// Deprecated: use Template.Spec.Volumes[].Ephemeral.VolumeClaimTemplate.Spec.Resources.Requests instead.
+	PvcSizeGbMap map[string]int32 `json:"pvcSizeGbMap,omitempty"`
 }
 
 // KubernetesWorkloadSpecApplyConfiguration constructs a declarative configuration of the KubernetesWorkloadSpec type for use with

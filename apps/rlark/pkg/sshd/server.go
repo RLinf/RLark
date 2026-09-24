@@ -6,7 +6,7 @@ package sshd
 
 import (
 	"crypto/ed25519"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -22,6 +22,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
 // ptyRequestMsg maps to the SSH "pty-req" channel request payload (RFC 4254 §6.2).
@@ -169,13 +170,7 @@ func (s *Server) serveDirectTCP(ch gossh.Channel, reqs <-chan *gossh.Request, ex
 	}
 	defer func() { _ = conn.Close() }()
 
-	done := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(conn, ch)
-		close(done)
-	}()
-	_, _ = io.Copy(ch, conn)
-	<-done
+	utils.RelayStreams(ch, conn)
 }
 
 // keepAlive sends periodic global keepalive requests to detect dead
@@ -355,13 +350,19 @@ func (s *Server) runSFTP(ch gossh.Channel) {
 	}
 }
 
-// generateHostKey creates a fresh ed25519 key pair on each startup. The key is
-// ephemeral and not persisted — clients should not pin the host key.
+// generateHostKey creates a deterministic ed25519 host key derived from the
+// pod hostname plus a hardcoded salt. The same pod (same hostname) always gets
+// the same key across restarts, so users don't need to clear their known_hosts
+// after a pod restart.
 func generateHostKey() (gossh.Signer, error) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	hostname, err := os.Hostname()
 	if err != nil {
-		return nil, fmt.Errorf("generate ed25519 key: %w", err)
+		return nil, fmt.Errorf("get hostname: %w", err)
 	}
+
+	hostKeySalt := "rlark-sshd-hostkey-salt-v1-7a3f8b2e1c9d4e6f"
+	seed := sha256.Sum256([]byte(hostKeySalt + ":" + hostname))
+	priv := ed25519.NewKeyFromSeed(seed[:])
 	signer, err := gossh.NewSignerFromKey(priv)
 	if err != nil {
 		return nil, fmt.Errorf("create signer: %w", err)

@@ -22,6 +22,8 @@ Before creating a job, identify the cluster and nodes that will run your workloa
 
 Navigate to the administrator console or the clusters page to see available clusters:
 
+> **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
+
 ![Cluster list](../images/ui/first-login-cluster-list.png)
 
 Note the cluster name and the labels applied to nodes in each cluster. You will need these when configuring node selectors in your job.
@@ -96,6 +98,7 @@ Network domains enable cross-cluster communication between Workers. Skip this st
 4. Click **Create**
 
 The domain will allocate virtual IPs to Workers that join it, establishing SSH tunnels for cross-cluster traffic.
+IPv4 addresses ending in `.0` or `.255` are reserved and are never allocated automatically, including within CIDR ranges larger than `/24`.
 
 !!! warning "CIDR must not overlap"
     The domain CIDR must not overlap with any cluster's pod or service CIDR, or with any other domain.
@@ -218,6 +221,5 @@ Check that checkpoints and training outputs are written to the configured storag
 ## Next Steps
 
 - [Create a Training Job](jobs.md) — detailed field reference
-- [Plan Multi-Node Jobs](workflows.md) — multi-role and heterogeneous Workers
 - [Use Storage in Jobs](storage.md) — hostPath and object storage configuration
 - [Connect via SSH](ssh-keys.md) — SSH into running Workers

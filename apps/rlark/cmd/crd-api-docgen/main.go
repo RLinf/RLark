@@ -107,9 +107,10 @@ func main() {
 
 	var out bytes.Buffer
 	_, _ = fmt.Fprintf(&out, "# CRD Schema Reference\n\n")
-	_, _ = fmt.Fprintf(&out, "Kubernetes resource operations and schemas generated from the current CRD manifests. This is not the RLark Gateway HTTP API reference.\n\n")
+	_, _ = fmt.Fprintf(&out, "> **Generated file:** This page is generated from `api/config/crd/bases` by `apps/rlark/cmd/crd-api-docgen`. Do not edit it manually; run `make generate-crd-schema-docs` instead.\n\n")
+	_, _ = fmt.Fprintf(&out, "Kubernetes resource operations and schemas generated from the current CRD manifests. This is not the RLark Gateway HTTP API reference. Descriptions are copied from source schemas, may retain their original language, and are shortened for readability.\n\n")
 	for _, doc := range docs {
-		if doc.Kind != "CustomResourceDefinition" {
+		if doc.Kind != "CustomResourceDefinition" || doc.Spec.Names.Plural == "workflows" {
 			continue
 		}
 		version, ok := storageVersion(doc.Spec.Versions)

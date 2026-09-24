@@ -1,4 +1,8 @@
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type {
+  CSSProperties,
+  PointerEvent as ReactPointerEvent,
+  UIEvent as ReactUIEvent,
+} from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -7,10 +11,12 @@ import {
   ChevronRight,
   Copy,
   Download,
-  ExternalLink,
+  Filter,
   Info,
   KeyRound,
   LoaderCircle,
+  Maximize,
+  Minimize,
   MoreVertical,
   Network,
   Pencil,
@@ -22,29 +28,44 @@ import {
   TerminalSquare,
   Trash2,
   Workflow,
+  X,
   Zap,
 } from "lucide-react";
 import {
   type Job,
+  type JobTag,
   type Phase,
   type PodInfo,
   type PullProgressEntry,
   type Worker as WorkerItem,
 } from "../data";
 import type { Copy as CopyType } from "../i18n";
-import type { CRDJob, CRDNode, NodeEventEntry } from "../types";
+import type { CRDNode, CRDTask, NodeEventEntry } from "../types";
 import { useAutoRefresh } from "../hooks";
 import { crdToJob } from "../utils/crd";
 import { effectiveJobPhase, type JobDisplayPhase } from "../utils/jobPhase";
 import { formatChinaDateTime } from "../utils/time";
+import { resolveSSHKeyOwners, type SSHUserKey } from "../utils/sshKeys";
+import { isDiskUsageWarning } from "../utils/nodeResources";
 import {
+  isValidJobDisplayName,
+  JOB_DISPLAY_NAME_MAX_LENGTH,
+} from "../utils/job";
+import {
+  ColumnFilterButton,
   compareSortValues,
   PageToolbar,
   Pagination,
+  RefreshOverlay,
   SortButton,
   StatusBadge,
+  useColumnFilter,
   type SortDirection,
 } from "../components/shared";
+import { ColumnFilterPopover } from "../components/ColumnFilterPopover";
+import { JobTagPopover } from "../components/JobTagPopover";
+import { TagFilterPopover } from "../components/TagFilterPopover";
+import { TagEditor } from "../components/TagEditor";
 
 function taskResourceName(jobName: string, taskName: string) {
   return `${jobName}-${taskName.toLowerCase().replace(/\s+/g, "-")}`
@@ -181,11 +202,23 @@ export function JobsPage({
 }) {
   const zh = c.nav.overview === "总览";
   const [query, setQuery] = useState("");
-  const [phaseFilter, setPhaseFilter] = useState<"All" | Phase>("All");
+  // 表头列多选筛选；空数组 = 全部
+  const [phaseFilter, setPhaseFilter] = useState<string[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [tagFilter, setTagFilter] = useState<Record<string, string[]>>({});
+  const [allJobTags, setAllJobTags] = useState<
+    Array<{ key: string; values: string[] }>
+  >([]);
+  const [tagFilterOpen, setTagFilterOpen] = useState(false);
+  const [tagFilterAnchor, setTagFilterAnchor] = useState<DOMRect | null>(null);
   const [realJobs, setRealJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [listRefreshing, setListRefreshing] = useState(false);
   const [copiedJobId, setCopiedJobId] = useState("");
+  const [tagPopover, setTagPopover] = useState<{
+    tags: JobTag[];
+    anchor: DOMRect;
+  } | null>(null);
   const [error, setError] = useState("");
   const [actionNotice, setActionNotice] = useState("");
   const [jobAction, setJobAction] = useState<
@@ -200,16 +233,10 @@ export function JobsPage({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [sort, setSort] = useState<{
-    key:
-      | "id"
-      | "type"
-      | "phase"
-      | "workers"
-      | "roleCount"
-      | "submittedAt"
-      | "stoppedAt";
+    key: "submittedAt" | "stoppedAt";
     direction: SortDirection;
   }>({ key: "submittedAt", direction: "desc" });
+  const columnFilter = useColumnFilter();
   const toggleSort = (key: typeof sort.key) =>
     setSort((current) => ({
       key,
@@ -230,16 +257,23 @@ export function JobsPage({
   const [nodeDeviceModelMap, setNodeDeviceModelMap] = useState<
     Record<string, { gpuModel?: string; deviceModel?: string }>
   >({});
+  const [nodeDiskWarningMap, setNodeDiskWarningMap] = useState<
+    Record<string, boolean>
+  >({});
 
   const fetchJobs = async (isInitial = true) => {
     if (isInitial) setLoading(true);
     setError("");
     try {
-      const jobsResp = await fetch("/api/v1/rlinf.io/v1alpha1/jobs");
-      if (!jobsResp.ok) throw new Error(`HTTP ${jobsResp.status}`);
-      const data = await jobsResp.json();
-      const items: CRDJob[] = data.items ?? [];
+      const tagSelector = Object.entries(tagFilter)
+        .flatMap(([key, values]) => values.map((value) => `${key}=${value}`))
+        .join(",");
+      const [items, tags] = await Promise.all([
+        jobsApi.list({ tagSelector: tagSelector || undefined }),
+        jobsApi.listTags(),
+      ]);
       setRealJobs(items.map(crdToJob));
+      setAllJobTags(tags);
 
       const nodeNames = new Set<string>();
       for (const job of items) {
@@ -254,10 +288,7 @@ export function JobsPage({
       // here are non-fatal: the hover tooltip simply won't appear.
       const nodeResponses = await Promise.all(
         [...nodeNames].map(async (nodeName) => {
-          const response = await fetch(
-            `/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(nodeName)}`,
-          );
-          return response.ok ? response.json() : null;
+          return nodesApi.get(nodeName).catch(() => null);
         }),
       );
       {
@@ -270,6 +301,7 @@ export function JobsPage({
           string,
           { gpuModel?: string; deviceModel?: string }
         > = {};
+        const diskWarningMap: Record<string, boolean> = {};
         for (const n of nodeItems) {
           const pp = n.status?.pullProgress;
           if (Array.isArray(pp) && pp.length > 0) {
@@ -284,10 +316,14 @@ export function JobsPage({
           if (gpuModel || deviceModel) {
             deviceModelMap[n.metadata.name] = { gpuModel, deviceModel };
           }
+          if (isDiskUsageWarning(n)) {
+            diskWarningMap[n.metadata.name] = true;
+          }
         }
         setNodePullProgressMap(progressMap);
         setNodeEventsMap(eventsMap);
         setNodeDeviceModelMap(deviceModelMap);
+        setNodeDiskWarningMap(diskWarningMap);
       }
     } catch (e) {
       setRealJobs([]);
@@ -319,23 +355,13 @@ export function JobsPage({
     setJobAction("delete");
     setError("");
     try {
-      const stopResp = await fetch(
-        `/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/merge-patch+json" },
-          body: JSON.stringify({ spec: { stopped: true } }),
-        },
+      await jobsApi.remove(job.name);
+      setRealJobs((prev) =>
+        prev.map((j) =>
+          j.id === job.id ? { ...j, phase: "Deleting" as Phase } : j,
+        ),
       );
-      if (!stopResp.ok) throw new Error(`HTTP ${stopResp.status}`);
-      await waitForJobWorkersStopped(job);
-
-      const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`, {
-        method: "DELETE",
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      setRealJobs((prev) => prev.filter((j) => j.id !== job.id));
-      setActionNotice(zh ? "任务已删除" : "Job deleted");
+      setActionNotice(zh ? "任务正在删除" : "Job deletion started");
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -345,61 +371,28 @@ export function JobsPage({
     }
   };
 
-  const waitForJobWorkersStopped = async (job: Job) => {
-    const deadline = Date.now() + 60_000;
-    const selector = encodeURIComponent(`rlinf.io/job=${job.name}`);
-    while (Date.now() < deadline) {
-      const [jobResp, tasksResp] = await Promise.all([
-        fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`),
-        fetch(`/api/v1/rlinf.io/v1alpha1/tasks?labelSelector=${selector}`),
-      ]);
-      if (!jobResp.ok) throw new Error(`HTTP ${jobResp.status}`);
-      if (!tasksResp.ok) throw new Error(`HTTP ${tasksResp.status}`);
-      const current = crdToJob((await jobResp.json()) as CRDJob);
-      const tasks = (await tasksResp.json()) as {
-        items?: Array<{ status?: { phase?: string } }>;
-      };
-      const workersStopped = (tasks.items ?? []).every(
-        (task) => task.status?.phase === "Stopped",
-      );
-      if (current.phase === "Stopped" && workersStopped) {
-        return current;
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 1000));
-    }
-    throw new Error(
-      zh ? "等待 Worker 停止超时。" : "Timed out waiting for workers to stop.",
-    );
-  };
-
   const handleSetStopped = async (job: Job, stopped: boolean) => {
     setJobAction(stopped ? "stop" : "start");
     setError("");
     try {
-      const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/merge-patch+json" },
-        body: JSON.stringify({ spec: { stopped } }),
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const stoppedJob = stopped ? await waitForJobWorkersStopped(job) : null;
+      await jobsApi.setStopped(job.name, stopped);
       setRealJobs((prev) =>
         prev.map((j) =>
           j.id === job.id
-            ? (stoppedJob ?? {
+            ? {
                 ...j,
                 stopped,
-                phase: "Pending" as Phase,
-                stoppedAt: "—",
-              })
+                phase: stopped ? j.phase : ("Pending" as Phase),
+                stoppedAt: stopped ? j.stoppedAt : "—",
+              }
             : j,
         ),
       );
       setActionNotice(
         stopped
           ? zh
-            ? "任务已停止，Worker 和 PVC 已清理"
-            : "Job stopped; workers and PVCs cleaned up"
+            ? "任务已提交停止"
+            : "Job stop submitted"
           : zh
             ? "任务已提交启动"
             : "Job start submitted",
@@ -417,17 +410,14 @@ export function JobsPage({
     setJobAction("restart");
     setError("");
     try {
-      const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/merge-patch+json" },
-        body: JSON.stringify({
-          metadata: {
-            annotations: { "rlark.io/restarted-at": new Date().toISOString() },
+      await jobsApi.patch(job.name, {
+        metadata: {
+          annotations: {
+            "rlark.io/restarted-at": new Date().toISOString(),
           },
-          spec: { stopped: false },
-        }),
+        },
+        spec: { stopped: false },
       });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       setRealJobs((prev) =>
         prev.map((item) =>
           item.id === job.id
@@ -448,9 +438,7 @@ export function JobsPage({
   const waitForFailedJobCleanup = async (job: Job) => {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
-      const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const current = crdToJob((await resp.json()) as CRDJob);
+      const current = crdToJob(await jobsApi.get(job.name));
       if (current.phase === "Stopped" && current.runningWorkers === 0) return;
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
     }
@@ -465,26 +453,10 @@ export function JobsPage({
     setJobAction("restart");
     setError("");
     try {
-      const stopResp = await fetch(
-        `/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/merge-patch+json" },
-          body: JSON.stringify({ spec: { stopped: true } }),
-        },
-      );
-      if (!stopResp.ok) throw new Error(`HTTP ${stopResp.status}`);
+      await jobsApi.setStopped(job.name, true);
       await waitForFailedJobCleanup(job);
 
-      const startResp = await fetch(
-        `/api/v1/rlinf.io/v1alpha1/jobs/${job.name}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/merge-patch+json" },
-          body: JSON.stringify({ spec: { stopped: false } }),
-        },
-      );
-      if (!startResp.ok) throw new Error(`HTTP ${startResp.status}`);
+      await jobsApi.setStopped(job.name, false);
       setRealJobs((prev) =>
         prev.map((item) =>
           item.id === job.id
@@ -522,28 +494,53 @@ export function JobsPage({
   };
 
   const allJobs = realJobs;
+
+  // 轻量更新 job（tags 或 displayName），使用 PATCH
+  const handlePatchJob = async (
+    jobName: string,
+    patchBody: Record<string, any>,
+  ) => {
+    const updated = await jobsApi.patch(jobName, patchBody);
+    const parsed = crdToJob(updated);
+    setRealJobs((prev) => prev.map((j) => (j.id === jobName ? parsed : j)));
+    setAllJobTags((prev) => {
+      const valuesByKey = new Map(
+        prev.map((tag) => [tag.key, new Set(tag.values)]),
+      );
+      for (const tag of parsed.tags ?? []) {
+        if (!valuesByKey.has(tag.key)) valuesByKey.set(tag.key, new Set());
+        valuesByKey.get(tag.key)!.add(tag.value);
+      }
+      return [...valuesByKey].map(([key, values]) => ({
+        key,
+        values: [...values],
+      }));
+    });
+    return parsed;
+  };
+
   const filtered = allJobs.filter((j) => {
-    const queryHit = `${j.id} ${j.displayName} ${j.type}`
-      .toLowerCase()
-      .includes(query.toLowerCase());
+    const queryHit =
+      `${j.id} ${j.displayName} ${j.type} ${(j.tags ?? []).map((t) => `${t.key}:${t.value}`).join(" ")}`
+        .toLowerCase()
+        .includes(query.toLowerCase());
     const phaseHit =
-      phaseFilter === "All" || effectiveJobPhase(j) === phaseFilter;
-    return queryHit && phaseHit;
+      phaseFilter.length === 0 || phaseFilter.includes(effectiveJobPhase(j));
+    const typeHit = typeFilter.length === 0 || typeFilter.includes(j.type);
+    return queryHit && phaseHit && typeHit;
   });
   const sortedJobs = useMemo(
     () =>
       [...filtered].sort((a, b) => {
-        const value = (job: Job) => {
-          if (sort.key === "workers") return job.progress;
-          if (sort.key === "phase") return effectiveJobPhase(job);
-          return job[sort.key];
-        };
-        return compareSortValues(
-          value(a),
-          value(b),
+        const comparison = compareSortValues(
+          a[sort.key],
+          b[sort.key],
           sort.direction,
           zh ? "zh-CN" : "en",
         );
+        return comparison !== 0
+          ? comparison
+          : a.id.localeCompare(b.id, zh ? "zh-CN" : "en");
       }),
     [filtered, sort, zh],
   );
@@ -554,7 +551,13 @@ export function JobsPage({
     currentPage * pageSize,
   );
 
-  useEffect(() => setPage(1), [query, phaseFilter, pageSize]);
+  useEffect(
+    () => setPage(1),
+    [query, phaseFilter, typeFilter, tagFilter, pageSize],
+  );
+  useEffect(() => {
+    void fetchJobs(false);
+  }, [tagFilter]);
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
@@ -596,6 +599,9 @@ export function JobsPage({
           nodePullProgressMap={nodePullProgressMap}
           nodeEventsMap={nodeEventsMap}
           nodeDeviceModelMap={nodeDeviceModelMap}
+          nodeDiskWarningMap={nodeDiskWarningMap}
+          allJobTags={allJobTags}
+          onPatchJob={handlePatchJob}
         />
         {restartTarget && (
           <RestartChoiceDialog
@@ -700,66 +706,52 @@ export function JobsPage({
         copy={c}
         onRefresh={handleListRefresh}
         refreshing={listRefreshing}
-        filterValue={phaseFilter}
-        onFilterChange={(value) => setPhaseFilter(value as "All" | Phase)}
-        filterOptions={[
-          { value: "All", label: zh ? "全部状态" : "All statuses" },
-          { value: "Running", label: c.status.Running },
-          { value: "Pending", label: c.status.Pending },
-          { value: "Succeeded", label: c.status.Succeeded },
-          { value: "Failed", label: c.status.Failed },
-          { value: "Stopped", label: c.status.Stopped },
-        ]}
       />
       {error && (
         <div className="cert-error" style={{ marginBottom: 12 }}>
           {error}
         </div>
       )}
-      <div className="table-panel jobs-table-panel">
+      <div
+        className={`table-panel jobs-table-panel refreshable-region${listRefreshing ? " is-refreshing" : ""}`}
+        aria-busy={listRefreshing}
+      >
         <table>
           <thead>
             <tr>
+              <th>{zh ? "名称/ID" : "Name / ID"}</th>
               <th>
-                <SortButton
-                  label={zh ? "任务 ID" : "Job ID"}
-                  active={sort.key === "id"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("id")}
+                <ColumnFilterButton
+                  label={zh ? "类型" : "Type"}
+                  selectedCount={typeFilter.length}
+                  onClick={columnFilter.openFor("type")}
                 />
               </th>
-              <th>
-                <SortButton
-                  label={zh ? "任务类型" : "Type"}
-                  active={sort.key === "type"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("type")}
-                />
+              <th className="job-table-tag-col">
+                <button
+                  type="button"
+                  className={`job-table-tag-head${Object.keys(tagFilter).length > 0 ? " has-filter" : ""}`}
+                  onClick={(e) => {
+                    const rect = (
+                      e.currentTarget as HTMLElement
+                    ).getBoundingClientRect();
+                    setTagFilterAnchor(rect);
+                    setTagFilterOpen(true);
+                  }}
+                >
+                  <span>{zh ? "标签" : "Tags"}</span>
+                  <Filter size={13} />
+                </button>
               </th>
               <th>
-                <SortButton
+                <ColumnFilterButton
                   label={zh ? "状态" : "Status"}
-                  active={sort.key === "phase"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("phase")}
+                  selectedCount={phaseFilter.length}
+                  onClick={columnFilter.openFor("phase")}
                 />
               </th>
-              <th>
-                <SortButton
-                  label="Worker"
-                  active={sort.key === "workers"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("workers")}
-                />
-              </th>
-              <th>
-                <SortButton
-                  label={zh ? "角色数量" : "Roles"}
-                  active={sort.key === "roleCount"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("roleCount")}
-                />
-              </th>
+              <th>Worker</th>
+              <th>{zh ? "角色数量" : "Roles"}</th>
               <th>
                 <SortButton
                   label={zh ? "创建时间" : "Created"}
@@ -782,7 +774,7 @@ export function JobsPage({
           <tbody>
             {filtered.length === 0 && !loading && (
               <tr>
-                <td colSpan={8}>
+                <td colSpan={9}>
                   <div className="table-empty-state">
                     <span>
                       <Workflow size={22} />
@@ -814,10 +806,13 @@ export function JobsPage({
                   : [];
               const jobFailedMessage =
                 effectiveJobPhase(job) === "Failed"
-                  ? job.taskStatuses
-                      .filter((ts) => ts.phase === "Failed" && ts.message)
-                      .map((ts) => ts.message)
-                      .join("\n")
+                  ? [
+                      ...new Set(
+                        job.taskStatuses
+                          .filter((ts) => ts.phase === "Failed")
+                          .map((ts) => jobFailureMessage(ts.message, zh)),
+                      ),
+                    ].join("\n")
                   : undefined;
               return (
                 <tr key={job.id}>
@@ -848,6 +843,38 @@ export function JobsPage({
                   </td>
                   <td>
                     <span className="role-chip">{c.jobType[job.type]}</span>
+                  </td>
+                  <td className="job-table-tag-cell">
+                    {(job.tags ?? []).length > 0 ? (
+                      <div className="job-tags-cell">
+                        {(job.tags ?? []).slice(0, 2).map((t) => (
+                          <span
+                            key={t.id}
+                            className="job-tag-chip"
+                            title={`${t.key}: ${t.value}`}
+                          >
+                            {t.key}: {t.value}
+                          </span>
+                        ))}
+                        {(job.tags ?? []).length > 2 && (
+                          <button
+                            type="button"
+                            className="job-tag-chip job-tag-overflow"
+                            onClick={(event) => {
+                              setTagPopover({
+                                tags: job.tags ?? [],
+                                anchor:
+                                  event.currentTarget.getBoundingClientRect(),
+                              });
+                            }}
+                          >
+                            +{(job.tags ?? []).length - 2}
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="job-no-tag">—</span>
+                    )}
                   </td>
                   <td>
                     <div className="status-with-info">
@@ -914,6 +941,10 @@ export function JobsPage({
             })}
           </tbody>
         </table>
+        <RefreshOverlay
+          visible={listRefreshing}
+          label={zh ? "正在刷新任务列表" : "Refreshing job list"}
+        />
       </div>
       <Pagination
         page={currentPage}
@@ -967,6 +998,73 @@ export function JobsPage({
           onConfirm={confirmLifecycleAction}
         />
       )}
+      {tagPopover &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <JobTagPopover
+            tags={tagPopover.tags}
+            anchorRect={tagPopover.anchor}
+            zh={zh}
+            onClose={() => setTagPopover(null)}
+          />,
+          document.body,
+        )}
+      {tagFilterOpen &&
+        tagFilterAnchor &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <TagFilterPopover
+            allTags={allJobTags}
+            selection={tagFilter}
+            onChange={setTagFilter}
+            onReset={() => {
+              setTagFilterOpen(false);
+              void fetchJobs(false);
+            }}
+            zh={zh}
+            anchorRect={tagFilterAnchor}
+            onClose={() => setTagFilterOpen(false)}
+          />,
+          document.body,
+        )}
+      {columnFilter.openKey === "type" &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <ColumnFilterPopover
+            label={zh ? "类型" : "Type"}
+            options={(
+              ["RL", "DataCollection", "Evaluation", "Custom"] as const
+            ).map((v) => ({ value: v, label: c.jobType[v] ?? v }))}
+            selected={typeFilter}
+            onChange={setTypeFilter}
+            anchorRect={columnFilter.anchorRect}
+            onClose={columnFilter.close}
+            zh={zh}
+          />,
+          document.body,
+        )}
+      {columnFilter.openKey === "phase" &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <ColumnFilterPopover
+            label={zh ? "状态" : "Status"}
+            options={[
+              { value: "Running", label: c.status.Running },
+              { value: "Pending", label: c.status.Pending },
+              { value: "Succeeded", label: c.status.Succeeded },
+              { value: "Failed", label: c.status.Failed },
+              { value: "Stopping", label: c.status.Stopping },
+              { value: "Stopped", label: c.status.Stopped },
+              { value: "Deleting", label: c.status.Deleting },
+            ]}
+            selected={phaseFilter}
+            onChange={setPhaseFilter}
+            anchorRect={columnFilter.anchorRect}
+            onClose={columnFilter.close}
+            zh={zh}
+          />,
+          document.body,
+        )}
     </div>
   );
 }
@@ -1052,23 +1150,22 @@ function JobActionMenu({
   }, [open]);
 
   const isStartable =
-    job.stopped || job.phase === "Stopped" || job.phase === "Failed";
+    job.stopped || job.phase === "Stopped" || job.phase === "Succeeded";
   const isSucceeded = job.phase === "Succeeded";
+  const isFailed = job.phase === "Failed";
+  const isDeleting = job.phase === "Deleting";
+  const isStopping = job.stopped && job.phase !== "Stopped";
   const lifecycleLabel = isSucceeded
     ? zh
       ? "已成功完成的任务不能再次启动"
       : "Succeeded jobs cannot be started again"
-    : job.phase === "Failed"
+    : isStartable
       ? zh
-        ? "清理残留 Worker 后启动"
-        : "Clean residual workers, then start"
-      : isStartable
-        ? zh
-          ? "启动任务"
-          : "Start job"
-        : zh
-          ? "停止任务"
-          : "Stop job";
+        ? "启动任务"
+        : "Start job"
+      : zh
+        ? "停止任务"
+        : "Stop job";
 
   const handleToggle = () => {
     setOpen((v) => !v);
@@ -1076,22 +1173,36 @@ function JobActionMenu({
 
   return (
     <div className="row-actions" ref={ref} style={{ position: "relative" }}>
-      <button className="job-row-action" onClick={onClone} disabled={pending}>
+      <button
+        className="job-row-action"
+        onClick={onClone}
+        disabled={pending || isDeleting}
+      >
         <Copy size={14} />
         {zh ? "复制" : "Clone"}
       </button>
-      <button className="job-row-action" onClick={onRestart} disabled={pending}>
+      <button
+        className="job-row-action"
+        onClick={onRestart}
+        disabled={pending || isDeleting || isStopping}
+      >
         <RotateCcw size={14} />
         {zh ? "重启" : "Restart"}
       </button>
       <button
-        className={`job-row-action job-quick-lifecycle${isStartable ? " start" : " stop"}`}
-        onClick={isStartable ? onStart : onStop}
-        disabled={pending || isSucceeded}
+        className={`job-row-action job-quick-lifecycle${isStartable && !isFailed ? " start" : " stop"}`}
+        onClick={isStartable && !isFailed ? onStart : onStop}
+        disabled={pending || isSucceeded || isDeleting || isStopping}
         title={lifecycleLabel}
       >
-        {isStartable ? <Play size={14} /> : <Square size={13} />}
-        {isStartable ? (zh ? "启动" : "Start") : zh ? "停止" : "Stop"}
+        {isStartable && !isFailed ? <Play size={14} /> : <Square size={13} />}
+        {isStartable && !isFailed
+          ? zh
+            ? "启动"
+            : "Start"
+          : zh
+            ? "停止"
+            : "Stop"}
       </button>
       <span
         className="action-tooltip"
@@ -1103,7 +1214,7 @@ function JobActionMenu({
           onClick={handleToggle}
           aria-label={zh ? `更多操作 ${job.name}` : `More actions ${job.name}`}
           aria-expanded={open}
-          disabled={pending}
+          disabled={pending || isDeleting || isStopping}
         >
           <MoreVertical size={16} />
         </button>
@@ -1141,8 +1252,10 @@ function AdminJobActions({
   onRestart: () => void;
   onDelete: () => void;
 }) {
+  const isDeleting = job.phase === "Deleting";
+  const isStopping = job.stopped && job.phase !== "Stopped";
   const canStop =
-    !job.stopped && !["Stopped", "Succeeded", "Failed"].includes(job.phase);
+    !job.stopped && !["Stopped", "Succeeded", "Deleting"].includes(job.phase);
 
   return (
     <div className="row-actions admin-job-actions">
@@ -1150,6 +1263,7 @@ function AdminJobActions({
         <button
           className="icon-button"
           onClick={onStop}
+          disabled={isDeleting || isStopping}
           title={zh ? "停止任务" : "Stop job"}
           aria-label={zh ? `停止任务 ${job.name}` : `Stop ${job.name}`}
         >
@@ -1159,6 +1273,7 @@ function AdminJobActions({
         <button
           className="icon-button"
           onClick={onRestart}
+          disabled={isDeleting || isStopping}
           title={zh ? "重启任务" : "Restart job"}
           aria-label={zh ? `重启任务 ${job.name}` : `Restart ${job.name}`}
         >
@@ -1168,6 +1283,7 @@ function AdminJobActions({
       <button
         className="icon-button danger"
         onClick={onDelete}
+        disabled={isDeleting || isStopping}
         title={zh ? "删除任务" : "Delete job"}
         aria-label={zh ? `删除任务 ${job.name}` : `Delete ${job.name}`}
       >
@@ -1531,6 +1647,9 @@ export function JobDetailPage({
   nodePullProgressMap = {},
   nodeEventsMap = {},
   nodeDeviceModelMap = {},
+  nodeDiskWarningMap = {},
+  allJobTags = [],
+  onPatchJob,
 }: {
   job: Job;
   copy: CopyType;
@@ -1550,9 +1669,94 @@ export function JobDetailPage({
     string,
     { gpuModel?: string; deviceModel?: string }
   >;
+  nodeDiskWarningMap?: Record<string, boolean>;
+  allJobTags?: Array<{ key: string; values: string[] }>;
+  onPatchJob?: (
+    jobName: string,
+    patchBody: Record<string, any>,
+  ) => Promise<Job>;
 }) {
   const zh = c.nav.overview === "总览";
+  // 是否处于编辑/重启中（任务名称编辑需置灰）
+  const isDeleting = job.phase === "Deleting";
+  const isStopping = job.stopped && job.phase !== "Stopped";
+  const isUpdating = lifecycleActions.pending !== null || isDeleting;
   const [jobIdCopied, setJobIdCopied] = useState(false);
+
+  // 任务名称内联编辑状态
+  const [nameEditing, setNameEditing] = useState(false);
+  const [nameDraft, setNameDraft] = useState(job.displayName);
+  const [nameSaving, setNameSaving] = useState(false);
+  const [nameError, setNameError] = useState("");
+  // 与创建任务一致：输入过程中立即校验名称格式
+  const nameInvalid =
+    nameDraft.trim().length > 0 && !isValidJobDisplayName(nameDraft.trim());
+
+  // 当 job 切换时重置
+  useEffect(() => {
+    setNameDraft(job.displayName);
+    setNameEditing(false);
+    setNameError("");
+  }, [job.id]);
+
+  const startNameEdit = () => {
+    if (isUpdating) return;
+    setNameDraft(job.displayName);
+    setNameEditing(true);
+    setNameError("");
+  };
+
+  const cancelNameEdit = () => {
+    setNameDraft(job.displayName);
+    setNameEditing(false);
+    setNameError("");
+  };
+
+  const saveNameEdit = async () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) {
+      setNameError(zh ? "任务名称不能为空" : "Name cannot be empty");
+      return;
+    }
+    if (trimmed.length > JOB_DISPLAY_NAME_MAX_LENGTH) {
+      setNameError(
+        zh
+          ? `任务名称不能超过 ${JOB_DISPLAY_NAME_MAX_LENGTH} 个字符`
+          : `Name too long (max ${JOB_DISPLAY_NAME_MAX_LENGTH})`,
+      );
+      return;
+    }
+    if (!isValidJobDisplayName(trimmed)) {
+      setNameError(
+        zh
+          ? "名称格式不正确，仅支持中英文、数字以及-_."
+          : "Invalid name format. Only Chinese/English letters, digits, -, _ and . are allowed.",
+      );
+      return;
+    }
+    if (trimmed === job.displayName) {
+      setNameEditing(false);
+      return;
+    }
+    if (!onPatchJob) {
+      setNameError(zh ? "当前环境不支持修改" : "Editing not available");
+      return;
+    }
+    setNameSaving(true);
+    setNameError("");
+    try {
+      await onPatchJob(job.name, {
+        metadata: {
+          annotations: { "rlark.io/display-name": trimmed },
+        },
+      });
+      setNameEditing(false);
+    } catch (e) {
+      setNameError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setNameSaving(false);
+    }
+  };
   const handleCopyResourceId = async () => {
     if (!(await copyText(job.id))) return;
     setJobIdCopied(true);
@@ -1571,6 +1775,11 @@ export function JobDetailPage({
   // 的 fallback worker 行展示 warning 事件。
   const [taskEventsMap, setTaskEventsMap] = useState<
     Record<string, NodeEventEntry[]>
+  >({});
+  // Task 列表缓存，用于获取节点 RANK
+  const [tasks, setTasks] = useState<CRDTask[]>([]);
+  const [detailNodeDiskWarningMap, setDetailNodeDiskWarningMap] = useState<
+    Record<string, boolean>
   >({});
   const [podEventsMap, setPodEventsMap] = useState<
     Record<string, NodeEventEntry[]>
@@ -1596,12 +1805,10 @@ export function JobDetailPage({
   >([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsError, setLogsError] = useState<string | null>(null);
+  // 无限滚动：内部游标状态，用户不感知
   const [logsHasMore, setLogsHasMore] = useState(false);
   const [logsNextCursor, setLogsNextCursor] = useState("");
   const [logsLoadingMore, setLogsLoadingMore] = useState(false);
-  // 游标历史栈，用于上一页/下一页翻页。首页为空字符串，第一页查完后 push(nextCursor)。
-  const [logsCursorHistory, setLogsCursorHistory] = useState<string[]>([""]);
-  const [logsPageIndex, setLogsPageIndex] = useState(0);
   // 角色配置区块的角色选择（默认第一个角色）
   const [workerRoleFilter, setWorkerRoleFilter] = useState(
     job.resources.length > 0 ? job.resources[0].role : "All",
@@ -1610,32 +1817,51 @@ export function JobDetailPage({
   const [workerListRoleFilter, setWorkerListRoleFilter] = useState("All");
   const [workerPage, setWorkerPage] = useState(1);
   const [workerSort, setWorkerSort] = useState<{
-    key:
-      | "name"
-      | "role"
-      | "cluster"
-      | "node"
-      | "kind"
-      | "ip"
-      | "domainIP"
-      | "gpu"
-      | "createdAt"
-      | "phase";
+    key: "createdAt";
     direction: SortDirection;
-  }>({ key: "name", direction: "asc" });
+  }>({ key: "createdAt", direction: "desc" });
+  // Worker 表表头多选筛选；空数组 = 全部
+  const [workerRoleFilterValues, setWorkerRoleFilterValues] = useState<
+    string[]
+  >([]);
+  const [workerPhaseFilter, setWorkerPhaseFilter] = useState<string[]>([]);
+  const [workerClusterFilter, setWorkerClusterFilter] = useState<string[]>([]);
+  const [workerKindFilter, setWorkerKindFilter] = useState<string[]>([]);
+  const workerColumnFilter = useColumnFilter();
   const workerTableRef = useRef<HTMLDivElement>(null);
   const workerTableDrag = useRef({ active: false, x: 0, scrollLeft: 0 });
   const [workerTableDragging, setWorkerTableDragging] = useState(false);
   const [workerRefreshKey, setWorkerRefreshKey] = useState(0);
   const [workerRefreshing, setWorkerRefreshing] = useState(false);
-  const [logRoleFilter, setLogRoleFilter] = useState("All");
+  // 默认选中第一个角色（不再支持"所有角色"）
+  const [logRoleFilter, setLogRoleFilter] = useState(() =>
+    job.resources.length > 0 ? job.resources[0].role : "",
+  );
   const [logWorkerFilter, setLogWorkerFilter] = useState("All");
   const [logQuery, setLogQuery] = useState("");
+  const [logQueryInput, setLogQueryInput] = useState(""); // 输入框的临时值
+  const logQueryInputRef = useRef<HTMLInputElement>(null); // 输入框引用
   const [logRange, setLogRange] = useState("1h");
   const [logCustomRange, setLogCustomRange] = useState(false);
   const [logCustomFrom, setLogCustomFrom] = useState("");
   const [logCustomTo, setLogCustomTo] = useState("");
-  const [logStreamEnabled, setLogStreamEnabled] = useState(false);
+  const [logOrder, setLogOrder] = useState<"desc" | "asc">("desc");
+  const [logFullscreen, setLogFullscreen] = useState(false);
+  const [logCopied, setLogCopied] = useState(false);
+
+  // 全屏时锁定 body 滚动，防止背景跟着滚
+  useEffect(() => {
+    if (!logFullscreen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [logFullscreen]);
+  // 从后端获取的历史 Worker 列表（用于已停止任务的日志查询）
+  const [logWorkersFromBackend, setLogWorkersFromBackend] = useState<string[]>(
+    [],
+  );
 
   // Aggregate Node CR pullProgress for the top StatusBadge hover. Uses Node CR
   // (not the Task CR-derived pullProgressMap used by WorkerRow) so the tooltip
@@ -1653,21 +1879,22 @@ export function JobDetailPage({
   const { refresh: refreshTasks } = useAutoRefresh(
     async () => {
       const labelSelector = `rlinf.io/job=${job.name}`;
-      const resp = await fetch(
-        `/api/v1/rlinf.io/v1alpha1/tasks?labelSelector=${encodeURIComponent(labelSelector)}`,
-      );
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      const items = data.items ?? [];
+      const items = await tasksApi.list({ labelSelector });
       const nodeMap: Record<string, string> = {};
       const clusterMap: Record<string, string> = {};
       const progressMap: Record<string, PullProgressEntry[]> = {};
       const taskEventsMap: Record<string, NodeEventEntry[]> = {};
+      const observedNodes = new Map<string, string>();
       let tbProxy = "";
       for (const item of items) {
         const taskName = item.metadata?.name ?? "";
-        const observedNodes = item.status?.observedNodes ?? [];
-        nodeMap[taskName] = observedNodes.join(", ") || "—";
+        const taskNamespace = item.metadata?.namespace ?? "";
+        const taskObservedNodes = item.status?.observedNodes ?? [];
+        for (const nodeName of taskObservedNodes) {
+          if (nodeName)
+            observedNodes.set(`${taskNamespace}/${nodeName}`, taskNamespace);
+        }
+        nodeMap[taskName] = taskObservedNodes.join(", ") || "—";
         clusterMap[taskName] = item.metadata?.namespace ?? "—";
         if (item.status?.tensorBoardProxy) {
           tbProxy = item.status.tensorBoardProxy;
@@ -1686,11 +1913,32 @@ export function JobDetailPage({
           taskEventsMap[taskName.toLowerCase()] = evs;
         }
       }
+      const nodeResponses = await Promise.all(
+        [...observedNodes].map(async ([nodeKey, namespace]) => {
+          const nodeName = nodeKey.slice(namespace.length + 1);
+          try {
+            return await nodesApi.get(nodeName, { namespace });
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const diskWarningMap: Record<string, boolean> = {};
+      for (const node of nodeResponses) {
+        const nodeName = node?.metadata?.name;
+        if (nodeName) {
+          diskWarningMap[nodeName] = isDiskUsageWarning(node as CRDNode);
+        }
+      }
+
       setTaskNodes(nodeMap);
       setTaskClusters(clusterMap);
       setTensorBoardProxy(tbProxy);
       setPullProgressMap(progressMap);
       setTaskEventsMap(taskEventsMap);
+      // 保存 Task 列表，用于获取节点 RANK
+      setTasks(items);
+      setDetailNodeDiskWarningMap(diskWarningMap);
     },
     10000,
     [job.name],
@@ -1720,23 +1968,12 @@ export function JobDetailPage({
     setWorkerRefreshing(true);
     const labelSelector = `rlark.io/task-name in (${workerTaskNamesKey})`;
 
-    const domainsPromise = fetch(`/api/v1/rlinf.io/v1alpha1/domains`).then(
-      (resp) =>
-        resp.ok
-          ? resp.json()
-          : Promise.reject(new Error(`HTTP ${resp.status}`)),
-    );
-
-    const podsPromise = fetch(
-      `/api/v1/rlinf.io/v1alpha1/pods?labelSelector=${encodeURIComponent(labelSelector)}`,
-    ).then((resp) =>
-      resp.ok ? resp.json() : Promise.reject(new Error(`HTTP ${resp.status}`)),
-    );
+    const domainsPromise = domainsApi.list();
+    const podsPromise = podsApi.list({ labelSelector });
 
     Promise.all([podsPromise, domainsPromise])
-      .then(([podData, domainData]) => {
+      .then(([podItems, domainItems]) => {
         if (cancelled) return;
-        const podItems = podData.items ?? [];
         const uniquePods = new Map<string, PodInfo>();
         for (const item of podItems) {
           const pod: PodInfo = {
@@ -1760,7 +1997,6 @@ export function JobDetailPage({
         const podList = [...uniquePods.values()];
         setPods(podList);
 
-        const domainItems = domainData.items ?? [];
         const ipMap: Record<string, string> = {};
         for (const d of domainItems) {
           const allocs = d.status?.ipAllocations ?? [];
@@ -1802,11 +2038,9 @@ export function JobDetailPage({
       const entries = await Promise.all(
         pendingPodNames.map(async (podName) => {
           try {
-            const response = await fetch(
-              `/api/v1/rlinf.io/v1alpha1/pods/${encodeURIComponent(podName)}/events`,
+            const data = await podsApi.events<{ events?: NodeEventEntry[] }>(
+              podName,
             );
-            if (!response.ok) return [podName, []] as const;
-            const data = await response.json();
             return [
               podName,
               Array.isArray(data.events) ? data.events : [],
@@ -1822,15 +2056,22 @@ export function JobDetailPage({
     [pendingPodNamesKey],
   );
 
-  const getLogTimeRange = (): { from: string; to: string } => {
+  // 返回有效的时间范围；如果自定义时间 from >= to，返回 null 表示无效
+  const getLogTimeRange = (): { from: string; to: string } | null => {
     if (logCustomRange) {
       if (logCustomFrom && logCustomTo) {
-        // Convert local datetime-local input (no timezone) to UTC ISO string
-        const fromDate = new Date(logCustomFrom);
-        const toDate = new Date(logCustomTo);
+        // datetime-local 返回的是本地时间字符串（如 "2026-09-16T14:30"），
+        // 需要手动添加时区偏移，确保被正确解析为本地时间，再转换为 UTC
+        const fromDate = new Date(logCustomFrom + ":00");
+        const toDate = new Date(logCustomTo + ":00");
+        // 校验开始时间必须早于结束时间
+        if (fromDate.getTime() >= toDate.getTime()) {
+          return null;
+        }
         return { from: fromDate.toISOString(), to: toDate.toISOString() };
       }
-      // Fallback to 1h if custom range is incomplete
+      // 自定义时间不完整时返回 null，不发起查询
+      return null;
     }
     const to = new Date();
     const from = new Date();
@@ -1856,20 +2097,33 @@ export function JobDetailPage({
       default:
         from.setHours(from.getHours() - 1);
     }
-    // Convert to UTC ISO string (new Date() is already local time)
     return { from: from.toISOString(), to: to.toISOString() };
   };
 
+  // 判断当前自定义时间范围是否有效（用于 UI 提示）
+  const isCustomRangeInvalid =
+    logCustomRange &&
+    logCustomFrom &&
+    logCustomTo &&
+    new Date(logCustomFrom).getTime() >= new Date(logCustomTo).getTime();
+
   const fetchLogs = async (isInitial = true, cursor = "") => {
     if (activeTab !== "logs") return;
+    // 如果时间范围无效（自定义时间 from >= to），直接报错，不发起请求
+    const timeRange = getLogTimeRange();
+    if (!timeRange) {
+      setLogsError(
+        zh ? "开始时间必须早于结束时间" : "Start time must be before end time",
+      );
+      return;
+    }
     if (isInitial) setLogsLoading(true);
     if (cursor) setLogsLoadingMore(true);
     setLogsError(null);
     try {
       const params = new URLSearchParams();
-      const { from, to } = getLogTimeRange();
-      params.set("from", from);
-      params.set("to", to);
+      params.set("from", timeRange.from);
+      params.set("to", timeRange.to);
 
       // Always send the first task as the base filter (backend requires it)
       let taskName = "";
@@ -1902,18 +2156,24 @@ export function JobDetailPage({
         params.set("query", logQuery.trim());
       }
 
+      // 传递排序方式
+      params.set("order", logOrder);
+
       if (cursor) {
         params.set("cursor", cursor);
       }
 
-      const resp = await fetch(
-        `/api/v1/rlinf.io/v1alpha1/jobs/${encodeURIComponent(job.name)}/logs?${params.toString()}`,
+      const data = await jobsApi.logs<any>(
+        job.name,
+        Object.fromEntries(params.entries()),
       );
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
       if (data.source === "backend" && Array.isArray(data.entries)) {
-        // 分页模式：替换当前页数据，而不是追加
-        setBackendLogs(data.entries);
+        // 无限滚动：首次替换，追加时拼接
+        if (cursor) {
+          setBackendLogs((prev) => [...prev, ...data.entries]);
+        } else {
+          setBackendLogs(data.entries);
+        }
         setPodLogs([]);
         setLogsHasMore(Boolean(data.hasMore));
         setLogsNextCursor(data.nextCursor || "");
@@ -1935,32 +2195,22 @@ export function JobDetailPage({
     }
   };
 
-  // 查询条件变化时重置到第一页
-  const resetLogsPagination = () => {
-    setLogsCursorHistory([""]);
-    setLogsPageIndex(0);
+  // 滚动到底部附近时自动加载下一页
+  const handleLogScroll = (e: ReactUIEvent<HTMLDivElement>) => {
+    if (!logsHasMore || !logsNextCursor || logsLoadingMore || logsLoading) {
+      return;
+    }
+    const el = e.currentTarget;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceToBottom < 100) {
+      fetchLogs(false, logsNextCursor);
+    }
   };
 
-  const goToNextLogPage = () => {
-    if (!logsHasMore || !logsNextCursor || logsLoadingMore) return;
-    const nextHistory = [...logsCursorHistory];
-    nextHistory[logsPageIndex + 1] = logsNextCursor;
-    setLogsCursorHistory(nextHistory);
-    setLogsPageIndex(logsPageIndex + 1);
-    fetchLogs(false, logsNextCursor);
-  };
-
-  const goToPrevLogPage = () => {
-    if (logsPageIndex === 0 || logsLoadingMore) return;
-    const prevIndex = logsPageIndex - 1;
-    const prevCursor = logsCursorHistory[prevIndex] || "";
-    setLogsPageIndex(prevIndex);
-    fetchLogs(false, prevCursor);
-  };
-
-  // 查询条件变化时重置分页到第一页
+  // 查询条件变化时重新查询
   useEffect(() => {
-    resetLogsPagination();
+    fetchLogs(true);
+    fetchLogWorkers(); // 时间范围变化时重新获取 Worker 列表
   }, [
     logRange,
     logCustomRange,
@@ -1969,31 +2219,62 @@ export function JobDetailPage({
     logRoleFilter,
     logWorkerFilter,
     logQuery,
+    logOrder,
   ]);
 
-  useAutoRefresh(fetchLogs, 5000, [
-    activeTab,
-    job.name,
-    logStreamEnabled,
-    logRange,
-    logCustomRange,
-    logCustomFrom,
-    logCustomTo,
-    logRoleFilter,
-    logWorkerFilter,
-    logQuery,
-  ]);
+  // 首次进入日志页面时自动加载数据
+  useEffect(() => {
+    if (activeTab === "logs") {
+      fetchLogs(true);
+      fetchLogWorkers(); // 同时获取历史 Worker 列表
+    }
+  }, [activeTab]);
 
-  const schedulingSummary = (
+  // 从后端获取历史 Worker 列表（用于已停止任务的日志查询）
+  const fetchLogWorkers = async () => {
+    try {
+      const timeRange = getLogTimeRange();
+      if (!timeRange) return;
+      const params = new URLSearchParams();
+      params.set("from", timeRange.from);
+      params.set("to", timeRange.to);
+      params.set("label", "pod");
+      // 如果选择了特定角色，则传递 task 参数
+      if (logRoleFilter !== "All") {
+        const resource = job.resources.find((r) => r.role === logRoleFilter);
+        const taskName = resource
+          ? taskResourceName(job.name, resource.role)
+          : logRoleFilter;
+        params.set("task", taskName);
+      }
+      const data = await jobsApi.logLabelValues<{ values?: string[] }>(
+        job.name,
+        Object.fromEntries(params.entries()),
+      );
+      if (Array.isArray(data.values)) {
+        setLogWorkersFromBackend(data.values);
+      }
+    } catch (e) {
+      // 静默失败，不影响日志查询主流程
+      console.error("failed to fetch log workers:", e);
+    }
+  };
+
+  const workerStatusSummary = (
     message: string | undefined,
     events: NodeEventEntry[],
-  ) =>
-    message === "FailedScheduling" ||
-    events.some((event) => event.reason === "FailedScheduling")
-      ? zh
+    failed: boolean,
+  ) => {
+    if (
+      message === "FailedScheduling" ||
+      events.some((event) => event.reason === "FailedScheduling")
+    ) {
+      return zh
         ? "没有合适的节点可调度，资源可能被占用"
-        : "No suitable node is available; resources may be occupied"
-      : message;
+        : "No suitable node is available; resources may be occupied";
+    }
+    return failed ? jobFailureMessage(message, zh) : message;
+  };
 
   const fallbackWorkers: WorkerItem[] = [];
   const resourceForTask = (taskName: string) =>
@@ -2019,7 +2300,7 @@ export function JobDetailPage({
           // 缺失时回退到 Task.status.events，让 Pending worker 行 tooltip
           // 在调度前就能展示 DiskPressure 等原因。
           const workerEvents =
-            phase === "Pending"
+            phase === "Pending" || phase === "Failed"
               ? (podEventsMap[pod.name] ?? []).length > 0
                 ? (podEventsMap[pod.name] ?? [])
                 : pod.node && (nodeEventsMap[pod.node] ?? []).length > 0
@@ -2043,7 +2324,11 @@ export function JobDetailPage({
                   `${role}: worker state synced`,
                   `${role}: waiting for runtime heartbeat`,
                 ],
-            statusMessage: schedulingSummary(pod.message, workerEvents),
+            statusMessage: workerStatusSummary(
+              pod.message,
+              workerEvents,
+              phase === "Failed",
+            ),
             pullProgress: nodePullProgress,
             events: workerEvents,
           };
@@ -2079,45 +2364,56 @@ export function JobDetailPage({
     }));
     setWorkerPage(1);
   };
-  const sortedWorkers = filteredWorkers
+  // 表头筛选 options（从 jobWorkers 去重）
+  const workerRoleOptions = useMemo(() => {
+    const set = new Set<string>();
+    jobWorkers.forEach((w) => w.role && set.add(w.role));
+    return [...set].sort().map((v) => ({ value: v, label: v }));
+  }, [jobWorkers]);
+  const workerPhaseOptions = useMemo(() => {
+    const set = new Set<string>();
+    jobWorkers.forEach((w) => w.phase && set.add(w.phase));
+    return [...set].sort().map((v) => ({
+      value: v,
+      label: (c.status as Record<string, string>)[v] ?? v,
+    }));
+  }, [jobWorkers, c]);
+  const workerClusterOptions = useMemo(() => {
+    const set = new Set<string>();
+    jobWorkers.forEach((w) => w.cluster && set.add(w.cluster));
+    return [...set].sort().map((v) => ({ value: v, label: v }));
+  }, [jobWorkers]);
+  const workerKindOptions = useMemo(() => {
+    const set = new Set<string>();
+    jobWorkers.forEach((w) => set.add(getNodeKindLabel(w)));
+    return [...set].sort().map((v) => ({ value: v, label: v }));
+  }, [jobWorkers]);
+  // 在过滤 + 排序前叠加表头多选筛选（角色/状态/集群/节点类型）
+  const columnFilteredWorkers = filteredWorkers.filter((worker) => {
+    const roleHit =
+      workerRoleFilterValues.length === 0 ||
+      workerRoleFilterValues.includes(worker.role);
+    const phaseHit =
+      workerPhaseFilter.length === 0 ||
+      workerPhaseFilter.includes(worker.phase);
+    const clusterHit =
+      workerClusterFilter.length === 0 ||
+      workerClusterFilter.includes(worker.cluster ?? "");
+    const kindHit =
+      workerKindFilter.length === 0 ||
+      workerKindFilter.includes(getNodeKindLabel(worker));
+    return roleHit && phaseHit && clusterHit && kindHit;
+  });
+  const sortedWorkers = columnFilteredWorkers
     .map((worker) => ({ worker, index: jobWorkers.indexOf(worker) }))
-    .sort((left, right) => {
-      const value = ({ worker, index }: typeof left) => {
-        const pod = workerPodsByTask.get(worker.id)?.[0];
-        switch (workerSort.key) {
-          case "name":
-            return worker.name;
-          case "role":
-            return worker.role;
-          case "cluster":
-            return worker.cluster ?? "";
-          case "node":
-            return worker.node;
-          case "kind":
-            return getNodeKindLabel(worker);
-          case "ip":
-            return pod?.ip ?? "";
-          case "domainIP":
-            return worker.id
-              ? (domainIPMap[
-                  `${worker.id.split("/")[0]}/${worker.id.split("/")[1]}/${worker.id.split("/")[2]}`
-                ] ?? "")
-              : "";
-          case "gpu":
-            return worker.gpu ?? "";
-          case "createdAt":
-            return formatWorkerCreatedAt(job.startedAt, index);
-          case "phase":
-            return worker.phase;
-        }
-      };
-      return compareSortValues(
-        value(left),
-        value(right),
+    .sort((left, right) =>
+      compareSortValues(
+        formatWorkerCreatedAt(job.startedAt, left.index),
+        formatWorkerCreatedAt(job.startedAt, right.index),
         workerSort.direction,
         zh ? "zh-CN" : "en",
-      );
-    });
+      ),
+    );
   const workersPerPage = 8;
   const workerPageCount = Math.max(
     1,
@@ -2213,6 +2509,11 @@ export function JobDetailPage({
   }, [job.resources, pods]);
 
   const logWorkers = useMemo(() => {
+    // 优先使用从后端获取的历史 Worker 列表（支持已停止任务）
+    if (logWorkersFromBackend.length > 0) {
+      return logWorkersFromBackend;
+    }
+    // 否则从当前运行中的 Pod 获取
     return [
       ...new Set(
         pods
@@ -2225,7 +2526,31 @@ export function JobDetailPage({
           .map((p) => p.podName),
       ),
     ].filter(Boolean);
-  }, [pods, logRoleFilter]);
+  }, [pods, logRoleFilter, logWorkersFromBackend]);
+
+  // 任务日志可查的最晚结束时刻（本地 datetime-local 字符串）。
+  // 运行中/Pending 等状态：当前时间；
+  // 已停止/失败/成功：min(stoppedAt, 当前时间)，停止之后没有日志。
+  const logMaxEndLocal = useMemo(() => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const toLocalInput = (d: Date) =>
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const now = new Date();
+    const isTerminated =
+      displayPhase === "Stopped" ||
+      displayPhase === "Failed" ||
+      displayPhase === "Succeeded";
+    if (isTerminated && job.stoppedAt && job.stoppedAt !== "—") {
+      const stopped = new Date(job.stoppedAt);
+      if (
+        !Number.isNaN(stopped.getTime()) &&
+        stopped.getTime() < now.getTime()
+      ) {
+        return toLocalInput(stopped);
+      }
+    }
+    return toLocalInput(now);
+  }, [displayPhase, job.stoppedAt]);
 
   const filteredLogEntries = logEntries.filter(
     (entry) =>
@@ -2235,6 +2560,35 @@ export function JobDetailPage({
         .toLowerCase()
         .includes(logQuery.toLowerCase()),
   );
+
+  // 复制全部日志到剪贴板：每行 "[时间] [worker] message"
+  const copyAllLogs = async () => {
+    const lines = filteredLogEntries.map((entry) => {
+      const time = entry.timestamp
+        ? new Date(entry.timestamp).toLocaleString(zh ? "zh-CN" : "en-US", {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: false,
+          })
+        : "";
+      const parts: string[] = [];
+      if (time) parts.push(`[${time}]`);
+      if (entry.worker) parts.push(`[${entry.worker}]`);
+      parts.push(entry.message);
+      return parts.join(" ");
+    });
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setLogCopied(true);
+      window.setTimeout(() => setLogCopied(false), 2000);
+    } catch {
+      // 剪贴板不可用（非安全上下文等）时静默失败
+    }
+  };
   const tabs: Array<{ id: typeof activeTab; label: string }> = [
     { id: "workers", label: zh ? "详情" : "Details" },
     { id: "logs", label: c.common.logs },
@@ -2242,10 +2596,13 @@ export function JobDetailPage({
   ];
   const jobFailedMessage =
     displayPhase === "Failed"
-      ? job.taskStatuses
-          .filter((ts) => ts.phase === "Failed" && ts.message)
-          .map((ts) => ts.message)
-          .join("\n")
+      ? [
+          ...new Set(
+            job.taskStatuses
+              .filter((ts) => ts.phase === "Failed")
+              .map((ts) => jobFailureMessage(ts.message, zh)),
+          ),
+        ].join("\n")
       : undefined;
   return (
     <div className="page-content resource-page job-detail-page">
@@ -2256,7 +2613,71 @@ export function JobDetailPage({
             ← {zh ? "返回任务列表" : "Back"}
           </button>
           <span className="eyebrow">{c.jobs.selected}</span>
-          <h2>{job.displayName}</h2>
+          {nameEditing ? (
+            <div className="job-name-edit">
+              <input
+                value={nameDraft}
+                maxLength={JOB_DISPLAY_NAME_MAX_LENGTH}
+                autoFocus
+                disabled={nameSaving}
+                className={nameInvalid ? "input-invalid" : undefined}
+                placeholder={
+                  zh
+                    ? "请输入名称,支持1-64字符,中英文、数字以及-_."
+                    : "Enter a name (1-64 chars; Chinese/English, digits, -, _ and .)"
+                }
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void saveNameEdit();
+                  else if (e.key === "Escape") cancelNameEdit();
+                }}
+                onBlur={() => {
+                  // 失焦自动保存（如果有改动的话）
+                  if (nameDraft.trim() !== job.displayName) void saveNameEdit();
+                  else cancelNameEdit();
+                }}
+              />
+              {nameSaving && <span className="job-name-saving">...</span>}
+              {nameInvalid && (
+                <span className="job-name-edit-error">
+                  {zh
+                    ? "名称格式不正确，仅支持中英文、数字以及-_."
+                    : "Invalid name format. Only Chinese/English letters, digits, -, _ and . are allowed."}
+                </span>
+              )}
+              {nameError && (
+                <span className="job-name-edit-error">{nameError}</span>
+              )}
+            </div>
+          ) : (
+            <h2
+              className={`job-title-row${isUpdating ? " is-disabled" : ""}`}
+              onClick={startNameEdit}
+            >
+              <span>{job.displayName}</span>
+              <button
+                type="button"
+                className="job-title-edit-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  startNameEdit();
+                }}
+                disabled={isUpdating}
+                title={
+                  isUpdating
+                    ? zh
+                      ? "重启或执行中，无法编辑名称"
+                      : "Editing disabled during lifecycle operation"
+                    : zh
+                      ? "编辑任务名称"
+                      : "Edit job name"
+                }
+                aria-label={zh ? "编辑任务名称" : "Edit job name"}
+              >
+                <Pencil size={20} />
+              </button>
+            </h2>
+          )}
           <div className="job-detail-resource-line">
             <button
               type="button"
@@ -2309,7 +2730,9 @@ export function JobDetailPage({
               <button
                 className="secondary-button job-detail-clone-button"
                 onClick={onClone}
-                disabled={lifecycleActions.pending !== null}
+                disabled={
+                  lifecycleActions.pending !== null || isDeleting || isStopping
+                }
               >
                 <Copy size={15} />
                 {zh ? "复制" : "Clone"}
@@ -2319,7 +2742,9 @@ export function JobDetailPage({
               <button
                 className="secondary-button primary-action"
                 onClick={lifecycleActions.onStart}
-                disabled={lifecycleActions.pending !== null}
+                disabled={
+                  lifecycleActions.pending !== null || isDeleting || isStopping
+                }
               >
                 {lifecycleActions.pending === "start" ? (
                   <LoaderCircle className="job-action-loading" size={15} />
@@ -2328,11 +2753,13 @@ export function JobDetailPage({
                 )}
                 {zh ? "启动" : "Start"}
               </button>
-            ) : !["Succeeded", "Failed"].includes(job.phase) ? (
+            ) : !["Succeeded"].includes(job.phase) ? (
               <button
                 className="secondary-button"
                 onClick={lifecycleActions.onStop}
-                disabled={lifecycleActions.pending !== null}
+                disabled={
+                  lifecycleActions.pending !== null || isDeleting || isStopping
+                }
               >
                 {lifecycleActions.pending === "stop" ? (
                   <LoaderCircle className="job-action-loading" size={15} />
@@ -2345,7 +2772,9 @@ export function JobDetailPage({
             <button
               className="secondary-button"
               onClick={lifecycleActions.onRestart}
-              disabled={lifecycleActions.pending !== null}
+              disabled={
+                lifecycleActions.pending !== null || isDeleting || isStopping
+              }
             >
               {lifecycleActions.pending === "restart" ? (
                 <LoaderCircle className="job-action-loading" size={15} />
@@ -2357,7 +2786,9 @@ export function JobDetailPage({
             <button
               className="secondary-button danger"
               onClick={lifecycleActions.onDelete}
-              disabled={lifecycleActions.pending !== null}
+              disabled={
+                lifecycleActions.pending !== null || isDeleting || isStopping
+              }
             >
               {lifecycleActions.pending === "delete" ? (
                 <LoaderCircle className="job-action-loading" size={15} />
@@ -2419,6 +2850,8 @@ export function JobDetailPage({
               jobPullProgress={jobPullProgress}
               jobEvents={jobEvents}
               jobFailedMessage={jobFailedMessage}
+              allJobTags={allJobTags}
+              onPatchJob={onPatchJob}
             />
 
             {/* 第三块：Pod 实例列表 */}
@@ -2485,7 +2918,8 @@ export function JobDetailPage({
               </div>
               <div
                 ref={workerTableRef}
-                className={`worker-table worker-console-table worker-table-scroll${workerTableDragging ? " dragging" : ""}`}
+                className={`worker-table worker-console-table worker-table-scroll refreshable-region${workerTableDragging ? " dragging" : ""}${workerRefreshing ? " is-refreshing" : ""}`}
+                aria-busy={workerRefreshing}
                 onPointerDown={handleWorkerTablePointerDown}
                 onPointerMove={handleWorkerTablePointerMove}
                 onPointerUp={stopWorkerTableDrag}
@@ -2494,29 +2928,48 @@ export function JobDetailPage({
                 <table>
                   <thead>
                     <tr>
-                      {(
-                        [
-                          ["name", zh ? "实例名称" : "Worker name"],
-                          ["role", zh ? "角色" : "Role"],
-                          ["cluster", zh ? "集群" : "Cluster"],
-                          ["node", zh ? "节点" : "Node"],
-                          ["kind", zh ? "节点类型" : "Node type"],
-                          ["ip", zh ? "实例 IP" : "Worker IP"],
-                          ["domainIP", zh ? "网络域 IP" : "Domain IP"],
-                          ["gpu", zh ? "申请 GPU" : "GPU"],
-                          ["createdAt", zh ? "创建时间" : "Created"],
-                          ["phase", zh ? "状态" : "Status"],
-                        ] as const
-                      ).map(([key, label]) => (
-                        <th key={key}>
-                          <SortButton
-                            label={label}
-                            active={workerSort.key === key}
-                            direction={workerSort.direction}
-                            onClick={() => toggleWorkerSort(key)}
-                          />
-                        </th>
-                      ))}
+                      <th>{zh ? "实例名称" : "Worker name"}</th>
+                      <th>
+                        <ColumnFilterButton
+                          label={zh ? "角色" : "Role"}
+                          selectedCount={workerRoleFilterValues.length}
+                          onClick={workerColumnFilter.openFor("role")}
+                        />
+                      </th>
+                      <th>
+                        <ColumnFilterButton
+                          label={zh ? "状态" : "Status"}
+                          selectedCount={workerPhaseFilter.length}
+                          onClick={workerColumnFilter.openFor("phase")}
+                        />
+                      </th>
+                      <th>
+                        <ColumnFilterButton
+                          label={zh ? "集群" : "Cluster"}
+                          selectedCount={workerClusterFilter.length}
+                          onClick={workerColumnFilter.openFor("cluster")}
+                        />
+                      </th>
+                      <th>{zh ? "节点" : "Node"}</th>
+                      <th>
+                        <ColumnFilterButton
+                          label={zh ? "节点类型" : "Node type"}
+                          selectedCount={workerKindFilter.length}
+                          onClick={workerColumnFilter.openFor("kind")}
+                        />
+                      </th>
+                      <th>{zh ? "节点 RANK" : "Node RANK"}</th>
+                      <th>{zh ? "实例 IP" : "Worker IP"}</th>
+                      <th>{zh ? "网络域 IP" : "Domain IP"}</th>
+                      <th>{zh ? "申请 GPU" : "GPU"}</th>
+                      <th>
+                        <SortButton
+                          label={zh ? "创建时间" : "Created"}
+                          active={workerSort.key === "createdAt"}
+                          direction={workerSort.direction}
+                          onClick={() => toggleWorkerSort("createdAt")}
+                        />
+                      </th>
                       <th
                         className="worker-sticky-header-col"
                         aria-label={zh ? "操作" : "Actions"}
@@ -2542,10 +2995,12 @@ export function JobDetailPage({
                           )}
                           onSelectNode={onSelectNode}
                           onSelectCluster={onSelectCluster}
-                          podEventsMap={podEventsMap}
-                          nodeEventsMap={nodeEventsMap}
-                          nodePullProgressMap={nodePullProgressMap}
-                          taskEventsMap={taskEventsMap}
+                          diskWarning={
+                            detailNodeDiskWarningMap[worker.node] ??
+                            nodeDiskWarningMap[worker.node] ??
+                            false
+                          }
+                          tasks={tasks}
                         />
                       ))
                     ) : (
@@ -2559,6 +3014,10 @@ export function JobDetailPage({
                     )}
                   </tbody>
                 </table>
+                <RefreshOverlay
+                  visible={workerRefreshing}
+                  label={zh ? "正在刷新 Worker 列表" : "Refreshing worker list"}
+                />
               </div>
               {visibleWorkers.length > 0 && (
                 <div className="worker-pagination">
@@ -2603,9 +3062,42 @@ export function JobDetailPage({
                 <h3>{zh ? "Worker 日志流" : "Worker log stream"}</h3>
               </div>
             </div>
-            {logsError ? (
-              <code className="log-error">{logsError}</code>
-            ) : (
+            {logsError && (
+              <div className="log-error-banner" role="alert">
+                <AlertTriangle size={16} />
+                <span>{logsError}</span>
+                <button
+                  className="log-error-banner-close"
+                  onClick={() => setLogsError(null)}
+                  aria-label={zh ? "关闭" : "Close"}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            {logsLoading && (
+              <div
+                className="log-loading-state"
+                role="status"
+                aria-live="polite"
+              >
+                <span className="log-loading-icon">
+                  <LoaderCircle size={20} />
+                </span>
+                <div>
+                  <strong>
+                    {zh ? "正在连接 Worker 日志" : "Connecting to worker logs"}
+                  </strong>
+                  <small>
+                    {zh
+                      ? "正在汇总各实例的最新输出…"
+                      : "Collecting the latest output from each instance…"}
+                  </small>
+                </div>
+                <i className="log-loading-shimmer" aria-hidden="true" />
+              </div>
+            )}
+            {!logsLoading && (
               <>
                 <div className="log-console-toolbar">
                   <label className="log-role-filter">
@@ -2617,9 +3109,6 @@ export function JobDetailPage({
                         setLogWorkerFilter("All");
                       }}
                     >
-                      <option value="All">
-                        {zh ? "全部角色" : "All roles"}
-                      </option>
                       {logRoles.map((role) => (
                         <option key={role} value={role}>
                           {role}
@@ -2652,10 +3141,17 @@ export function JobDetailPage({
                       onChange={(event) => {
                         if (event.target.value === "custom") {
                           setLogCustomRange(true);
-                          const now = new Date();
-                          const past = new Date(now.getTime() - 3600 * 1000);
-                          setLogCustomTo(now.toISOString().slice(0, 16));
-                          setLogCustomFrom(past.toISOString().slice(0, 16));
+                          // 默认与「最近 1 小时」一致：from = to - 1h。
+                          // to 取 logMaxEndLocal（运行中=现在；已停止/失败=任务停止时刻）。
+                          const toDate = new Date(logMaxEndLocal);
+                          const fromDate = new Date(
+                            toDate.getTime() - 3600 * 1000,
+                          );
+                          const pad = (n: number) => String(n).padStart(2, "0");
+                          const toLocalInput = (d: Date) =>
+                            `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                          setLogCustomTo(toLocalInput(toDate));
+                          setLogCustomFrom(toLocalInput(fromDate));
                         } else {
                           setLogCustomRange(false);
                           setLogRange(event.target.value);
@@ -2696,7 +3192,13 @@ export function JobDetailPage({
                         type="datetime-local"
                         className="log-custom-datetime"
                         value={logCustomFrom}
+                        max={logMaxEndLocal}
                         onChange={(e) => setLogCustomFrom(e.target.value)}
+                        style={
+                          isCustomRangeInvalid
+                            ? { borderColor: "var(--error, #ef4444)" }
+                            : undefined
+                        }
                       />
                       <span
                         style={{
@@ -2710,15 +3212,55 @@ export function JobDetailPage({
                         type="datetime-local"
                         className="log-custom-datetime"
                         value={logCustomTo}
+                        max={logMaxEndLocal}
                         onChange={(e) => setLogCustomTo(e.target.value)}
+                        style={
+                          isCustomRangeInvalid
+                            ? { borderColor: "var(--error, #ef4444)" }
+                            : undefined
+                        }
                       />
+                      {isCustomRangeInvalid && (
+                        <span
+                          style={{
+                            fontSize: "12px",
+                            color: "var(--error, #ef4444)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {zh ? "开始时间需早于结束时间" : "Invalid range"}
+                        </span>
+                      )}
                     </div>
                   )}
+                  <label className="log-order-filter">
+                    <span>{zh ? "排序" : "Order"}</span>
+                    <select
+                      value={logOrder}
+                      onChange={(event) =>
+                        setLogOrder(event.target.value as "desc" | "asc")
+                      }
+                    >
+                      <option value="desc">
+                        {zh ? "最新在前" : "Newest first"}
+                      </option>
+                      <option value="asc">
+                        {zh ? "最旧在前" : "Oldest first"}
+                      </option>
+                    </select>
+                  </label>
                   <label className="log-search-field">
                     <Search size={15} />
                     <input
-                      value={logQuery}
-                      onChange={(event) => setLogQuery(event.target.value)}
+                      ref={logQueryInputRef}
+                      value={logQueryInput}
+                      onChange={(event) => setLogQueryInput(event.target.value)}
+                      onBlur={() => setLogQuery(logQueryInput)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          setLogQuery(logQueryInput);
+                        }
+                      }}
                       placeholder={
                         zh
                           ? "搜索日志内容（仅支持完整单词/词组）"
@@ -2732,19 +3274,22 @@ export function JobDetailPage({
                     />
                   </label>
                   <button
-                    className={
-                      "stream-toggle" + (logStreamEnabled ? " active" : "")
-                    }
-                    onClick={() => setLogStreamEnabled((enabled) => !enabled)}
+                    className="secondary-button"
+                    onClick={() => fetchLogs(true)}
+                    disabled={logsLoading}
+                    title={zh ? "刷新日志" : "Refresh logs"}
                   >
-                    <i />
-                    {logStreamEnabled
+                    <RotateCcw
+                      size={14}
+                      className={logsLoading ? "job-action-loading" : ""}
+                    />
+                    {logsLoading
                       ? zh
-                        ? "实时输出中"
-                        : "Streaming"
+                        ? "刷新中…"
+                        : "Refreshing…"
                       : zh
-                        ? "已暂停"
-                        : "Paused"}
+                        ? "刷新"
+                        : "Refresh"}
                   </button>
                   <button
                     className="secondary-button log-export-button"
@@ -2779,81 +3324,114 @@ export function JobDetailPage({
                     <i className="log-loading-shimmer" aria-hidden="true" />
                   </div>
                 ) : (
-                  <div
-                    className="log-list"
-                    aria-live={logStreamEnabled ? "polite" : "off"}
-                  >
-                    {filteredLogEntries.length > 0 ? (
-                      <>
-                        <div className="log-list-head" aria-hidden="true">
-                          <span>{zh ? "角色" : "Role"}</span>
-                          <span>Worker</span>
-                          <span>{zh ? "日志内容" : "Log message"}</span>
-                          <span>{zh ? "时间" : "Time"}</span>
+                  (() => {
+                    const terminalNode = (
+                      <div
+                        className={`log-terminal ${logFullscreen ? "log-terminal-fullscreen" : ""}`}
+                        aria-live="polite"
+                      >
+                        <div className="log-terminal-header">
+                          <div className="log-terminal-title">
+                            <span className="log-terminal-dot" />
+                            <span className="log-terminal-dot" />
+                            <span className="log-terminal-dot" />
+                            <strong>{zh ? "任务日志" : "Job logs"}</strong>
+                          </div>
+                          <div className="log-terminal-actions">
+                            <button
+                              className="icon-button"
+                              onClick={() => setLogFullscreen(!logFullscreen)}
+                              title={
+                                logFullscreen
+                                  ? zh
+                                    ? "退出全屏"
+                                    : "Exit fullscreen"
+                                  : zh
+                                    ? "全屏"
+                                    : "Fullscreen"
+                              }
+                            >
+                              {logFullscreen ? (
+                                <Minimize size={14} />
+                              ) : (
+                                <Maximize size={14} />
+                              )}
+                            </button>
+                            <button
+                              className="icon-button"
+                              onClick={copyAllLogs}
+                              title={
+                                logCopied
+                                  ? zh
+                                    ? "已复制"
+                                    : "Copied"
+                                  : zh
+                                    ? "复制全部日志"
+                                    : "Copy all logs"
+                              }
+                            >
+                              {logCopied ? (
+                                <Check size={14} />
+                              ) : (
+                                <Copy size={14} />
+                              )}
+                            </button>
+                          </div>
                         </div>
-                        {filteredLogEntries.map((entry) => (
-                          <div className="log-list-row" key={entry.id}>
-                            <span className="log-role-name">{entry.role}</span>
-                            <span className="log-worker-name">
-                              {entry.worker}
-                            </span>
-                            <p>{entry.message}</p>
-                            <span className="log-timestamp">
-                              {entry.timestamp
-                                ? new Date(entry.timestamp).toLocaleString(
-                                    zh ? "zh-CN" : "en-US",
-                                    {
-                                      year: "numeric",
-                                      month: "2-digit",
-                                      day: "2-digit",
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                      second: "2-digit",
-                                      hour12: false,
-                                    },
-                                  )
-                                : ""}
-                            </span>
-                          </div>
-                        ))}
-                        {backendLogs.length > 0 && (
-                          <div className="log-pagination">
-                            <button
-                              type="button"
-                              className="secondary-button"
-                              disabled={logsPageIndex === 0 || logsLoadingMore}
-                              onClick={goToPrevLogPage}
-                            >
-                              {zh ? "上一页" : "Prev"}
-                            </button>
-                            <span className="log-page-indicator">
+                        <div
+                          className="log-terminal-content"
+                          onScroll={handleLogScroll}
+                        >
+                          {filteredLogEntries.length > 0 ? (
+                            filteredLogEntries.map((entry) => (
+                              <div className="log-terminal-line" key={entry.id}>
+                                <span className="log-terminal-time">
+                                  {entry.timestamp
+                                    ? new Date(entry.timestamp).toLocaleString(
+                                        zh ? "zh-CN" : "en-US",
+                                        {
+                                          year: "numeric",
+                                          month: "2-digit",
+                                          day: "2-digit",
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                          second: "2-digit",
+                                          hour12: false,
+                                        },
+                                      )
+                                    : ""}
+                                </span>
+                                {logWorkerFilter === "All" && (
+                                  <span className="log-terminal-worker">
+                                    {entry.worker}
+                                  </span>
+                                )}
+                                <span className="log-terminal-message">
+                                  {entry.message}
+                                </span>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="empty-inline">
                               {zh
-                                ? `第 ${logsPageIndex + 1} 页`
-                                : `Page ${logsPageIndex + 1}`}
-                            </span>
-                            <button
-                              type="button"
-                              className="secondary-button"
-                              disabled={!logsHasMore || logsLoadingMore}
-                              onClick={goToNextLogPage}
-                            >
-                              {logsLoadingMore
-                                ? zh
-                                  ? "加载中…"
-                                  : "Loading…"
-                                : zh
-                                  ? "下一页"
-                                  : "Next"}
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="empty-inline">
-                        {zh ? "未找到匹配的日志。" : "No matching logs found."}
+                                ? "未找到匹配的日志。"
+                                : "No matching logs found."}
+                            </div>
+                          )}
+                          {logsLoadingMore && (
+                            <div className="log-terminal-loading-more">
+                              {zh ? "加载中…" : "Loading…"}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    )}
-                  </div>
+                    );
+                    // 全屏时挂到 body 下，避免侧边栏/顶栏的 stacking context
+                    // （半透明 + backdrop-filter）与全屏终端叠出脏视觉。
+                    return logFullscreen
+                      ? createPortal(terminalNode, document.body)
+                      : terminalNode;
+                  })()
                 )}
               </>
             )}
@@ -2882,6 +3460,62 @@ export function JobDetailPage({
           </div>
         )}
       </div>
+      {workerColumnFilter.openKey === "role" &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <ColumnFilterPopover
+            label={zh ? "角色" : "Role"}
+            options={workerRoleOptions}
+            selected={workerRoleFilterValues}
+            onChange={setWorkerRoleFilterValues}
+            anchorRect={workerColumnFilter.anchorRect}
+            onClose={workerColumnFilter.close}
+            zh={zh}
+          />,
+          document.body,
+        )}
+      {workerColumnFilter.openKey === "phase" &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <ColumnFilterPopover
+            label={zh ? "状态" : "Status"}
+            options={workerPhaseOptions}
+            selected={workerPhaseFilter}
+            onChange={setWorkerPhaseFilter}
+            anchorRect={workerColumnFilter.anchorRect}
+            onClose={workerColumnFilter.close}
+            zh={zh}
+          />,
+          document.body,
+        )}
+      {workerColumnFilter.openKey === "cluster" &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <ColumnFilterPopover
+            label={zh ? "集群" : "Cluster"}
+            options={workerClusterOptions}
+            selected={workerClusterFilter}
+            onChange={setWorkerClusterFilter}
+            anchorRect={workerColumnFilter.anchorRect}
+            onClose={workerColumnFilter.close}
+            zh={zh}
+          />,
+          document.body,
+        )}
+      {workerColumnFilter.openKey === "kind" &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <ColumnFilterPopover
+            label={zh ? "节点类型" : "Node type"}
+            options={workerKindOptions}
+            selected={workerKindFilter}
+            onChange={setWorkerKindFilter}
+            anchorRect={workerColumnFilter.anchorRect}
+            onClose={workerColumnFilter.close}
+            zh={zh}
+          />,
+          document.body,
+        )}
     </div>
   );
 }
@@ -2899,6 +3533,8 @@ function JobPublicOverview({
   jobPullProgress = [],
   jobEvents = [],
   jobFailedMessage,
+  allJobTags = [],
+  onPatchJob,
 }: {
   job: Job;
   copy: CopyType;
@@ -2912,8 +3548,59 @@ function JobPublicOverview({
   jobPullProgress?: PullProgressEntry[];
   jobEvents?: NodeEventEntry[];
   jobFailedMessage?: string;
+  allJobTags?: Array<{ key: string; values: string[] }>;
+  onPatchJob?: (
+    jobName: string,
+    patchBody: Record<string, any>,
+  ) => Promise<Job>;
 }) {
   const zh = c.nav.overview === "总览";
+  const [sshKeys, setSSHKeys] = useState<SSHUserKey[]>([]);
+  const [sshKeysLoaded, setSSHKeysLoaded] = useState(false);
+
+  // tags 内联编辑
+  const [tagsEditing, setTagsEditing] = useState(false);
+  const [tagsDraft, setTagsDraft] = useState<JobTag[]>(job.tags ?? []);
+  const [tagsSaving, setTagsSaving] = useState(false);
+  const [tagsError, setTagsError] = useState("");
+  const [tagPopover, setTagPopover] = useState<{
+    tags: JobTag[];
+    anchor: DOMRect;
+  } | null>(null);
+
+  useEffect(() => {
+    setTagsDraft(job.tags ?? []);
+    setTagsEditing(false);
+    setTagsError("");
+    // 仅在切换任务时重置：列表自动刷新会让 job.tags 变成新引用，不能因此打断编辑
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job.id]);
+
+  useEffect(() => {
+    if (!job.sshPublicKey) {
+      setSSHKeys([]);
+      setSSHKeysLoaded(true);
+      return;
+    }
+
+    const controller = new AbortController();
+    setSSHKeysLoaded(false);
+    sshKeysApi
+      .list(controller.signal)
+      .then((data) => setSSHKeys(Array.isArray(data) ? data : []))
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError")
+          return;
+        setSSHKeys([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setSSHKeysLoaded(true);
+      });
+
+    return () => controller.abort();
+  }, [job.sshPublicKey]);
+
+  const resolvedSSHKeys = resolveSSHKeyOwners(job.sshPublicKey, sshKeys);
   const baseConfigRows = [
     {
       label: zh ? "Worker 数量" : "Worker count",
@@ -2930,21 +3617,74 @@ function JobPublicOverview({
     {
       label: zh ? "网络域" : "Network domain",
       value: job.domain || (zh ? "未配置" : "Not configured"),
+      fullValue: job.domain,
+      className: job.domain ? "public-config-truncated-value" : undefined,
     },
     {
       label: "TensorBoard",
       value: job.tensorBoardDir || (zh ? "未配置" : "Not configured"),
     },
-    {
-      label: zh ? "SSH 公钥" : "SSH Public Key",
-      value: job.sshPublicKey
-        ? `${job.sshPublicKey.slice(0, 32)}...`
-        : zh
-          ? "未配置"
-          : "Not configured",
-      fullValue: job.sshPublicKey,
-    },
   ];
+
+  const tagGroups = Array.from(
+    (job.tags ?? []).reduce((groups, tag) => {
+      const values = groups.get(tag.key);
+      if (values) {
+        values.push(tag.value);
+      } else {
+        groups.set(tag.key, [tag.value]);
+      }
+      return groups;
+    }, new Map<string, string[]>()),
+  );
+  const flatTags = tagGroups.flatMap(([key, values]) =>
+    values.map((value) => ({ key, value })),
+  );
+
+  const saveTags = async () => {
+    if (!onPatchJob) return;
+    setTagsSaving(true);
+    setTagsError("");
+    try {
+      await onPatchJob(job.name, {
+        spec: {
+          tags: [
+            ...new Map(
+              tagsDraft
+                .filter((t) => t.key.trim() && t.value.trim())
+                .map((t) => [
+                  t.key.trim(),
+                  {
+                    key: t.key.trim(),
+                    values: tagsDraft
+                      .filter((item) => item.key.trim() === t.key.trim())
+                      .map((item) => item.value.trim())
+                      .filter(
+                        (value, index, values) =>
+                          value && values.indexOf(value) === index,
+                      ),
+                  },
+                ]),
+            ).values(),
+          ],
+        },
+      });
+      setTagsEditing(false);
+    } catch (e) {
+      setTagsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTagsSaving(false);
+    }
+  };
+
+  const cancelTagsEdit = () => {
+    setTagsDraft(job.tags ?? []);
+    setTagsEditing(false);
+    setTagsError("");
+  };
+
+  const isUpdating =
+    lifecycleActions.pending !== null || job.phase === "Deleting";
   return (
     <section className="job-detail-summary-card">
       <div className="role-runtime-heading" style={{ marginBottom: "16px" }}>
@@ -2973,61 +3713,191 @@ function JobPublicOverview({
               {baseConfigRows.map((row) => (
                 <div key={row.label}>
                   <span>{row.label}</span>
-                  <code title={row.fullValue || row.value}>{row.value}</code>
+                  <code
+                    className={row.className}
+                    title={row.fullValue || row.value}
+                  >
+                    {row.value}
+                  </code>
                 </div>
               ))}
+              <div className="public-ssh-keys-row">
+                <span>{zh ? "SSH 公钥" : "SSH Public Keys"}</span>
+                {resolvedSSHKeys.length > 0 ? (
+                  <ul className="job-ssh-key-list">
+                    {resolvedSSHKeys.map(({ publicKey, owners }, index) => {
+                      const ownerLabel =
+                        owners.length > 0
+                          ? owners.map(({ user }) => user).join(", ")
+                          : sshKeysLoaded
+                            ? zh
+                              ? "未知用户"
+                              : "Unknown user"
+                            : zh
+                              ? "加载用户中…"
+                              : "Loading user…";
+
+                      return (
+                        <li key={`${publicKey}-${index}`} title={publicKey}>
+                          <strong title={ownerLabel}>{ownerLabel}</strong>
+                          <code>{publicKey}</code>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <code>{zh ? "未配置" : "Not configured"}</code>
+                )}
+              </div>
+              <div className="public-tags-row">
+                <span className="public-tags-label">
+                  {zh ? "标签" : "Tags"}
+                </span>
+                <div className="public-tags-content">
+                  {flatTags.length > 0 ? (
+                    <div className="job-tags-cell">
+                      {flatTags.slice(0, 2).map(({ key, value }) => (
+                        <span
+                          key={`${key}-${value}`}
+                          className="job-tag-chip"
+                          title={`${key}: ${value}`}
+                        >
+                          {key}: {value}
+                        </span>
+                      ))}
+                      {flatTags.length > 2 && (
+                        <button
+                          type="button"
+                          className="job-tag-chip job-tag-overflow"
+                          onClick={(event) => {
+                            setTagPopover({
+                              tags: job.tags ?? [],
+                              anchor:
+                                event.currentTarget.getBoundingClientRect(),
+                            });
+                          }}
+                        >
+                          +{flatTags.length - 2}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="public-config-empty">
+                      {zh ? "未配置" : "Not configured"}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="job-tags-edit-btn"
+                    onClick={() => {
+                      setTagsDraft(job.tags ?? []);
+                      setTagsError("");
+                      setTagsEditing(true);
+                    }}
+                    disabled={isUpdating || !onPatchJob}
+                    title={
+                      isUpdating
+                        ? zh
+                          ? "执行中，无法编辑"
+                          : "Editing disabled during operation"
+                        : zh
+                          ? "编辑标签"
+                          : "Edit tags"
+                    }
+                    aria-label={zh ? "编辑标签" : "Edit tags"}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                </div>
+              </div>
+              {tagPopover &&
+                typeof document !== "undefined" &&
+                createPortal(
+                  <JobTagPopover
+                    tags={tagPopover.tags}
+                    anchorRect={tagPopover.anchor}
+                    zh={zh}
+                    onClose={() => setTagPopover(null)}
+                  />,
+                  document.body,
+                )}
+              {tagsEditing &&
+                typeof document !== "undefined" &&
+                createPortal(
+                  <div
+                    className="modal-backdrop job-tags-modal-backdrop"
+                    onMouseDown={(event) =>
+                      event.target === event.currentTarget &&
+                      !tagsSaving &&
+                      cancelTagsEdit()
+                    }
+                  >
+                    <section
+                      className="modal job-tags-modal"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="job-tags-modal-title"
+                    >
+                      <div className="modal-head">
+                        <div>
+                          <h2 id="job-tags-modal-title">
+                            {zh ? "编辑标签" : "Edit tags"}
+                          </h2>
+                        </div>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          onClick={cancelTagsEdit}
+                          disabled={tagsSaving}
+                          aria-label={zh ? "关闭" : "Close"}
+                        >
+                          <X size={18} />
+                        </button>
+                      </div>
+                      <div className="job-tags-modal-body">
+                        <TagEditor
+                          tags={tagsDraft}
+                          onChange={setTagsDraft}
+                          suggestions={allJobTags}
+                          zh={zh}
+                          sectioned
+                        />
+                        {tagsError && (
+                          <span className="public-tags-error">{tagsError}</span>
+                        )}
+                      </div>
+                      <div className="modal-footer job-tags-modal-actions">
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={cancelTagsEdit}
+                          disabled={tagsSaving}
+                        >
+                          {zh ? "取消" : "Cancel"}
+                        </button>
+                        <button
+                          type="button"
+                          className="primary-button"
+                          onClick={saveTags}
+                          disabled={tagsSaving || isUpdating}
+                        >
+                          {tagsSaving
+                            ? zh
+                              ? "保存中…"
+                              : "Saving…"
+                            : zh
+                              ? "确定"
+                              : "Confirm"}
+                        </button>
+                      </div>
+                    </section>
+                  </div>,
+                  document.querySelector(".app-shell") ?? document.body,
+                )}
             </div>
           </div>
         </div>
       </div>
-    </section>
-  );
-}
-
-function PublicCompactConfigTable({
-  title,
-  firstHeader,
-  secondHeader,
-  rows,
-  empty,
-}: {
-  title: string;
-  firstHeader: string;
-  secondHeader: string;
-  rows: Array<{ key: string; value: string }>;
-  empty: string;
-}) {
-  return (
-    <section className="public-compact-config-card">
-      <span className="public-config-title">{title}</span>
-      <table className="public-compact-config-table">
-        <thead>
-          <tr>
-            <th>{firstHeader}</th>
-            <th>{secondHeader}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? (
-            rows.map((row, index) => (
-              <tr key={`${row.key}-${row.value}-${index}`}>
-                <td>
-                  <code>{row.key || "—"}</code>
-                </td>
-                <td>
-                  <code>{row.value || "—"}</code>
-                </td>
-              </tr>
-            ))
-          ) : (
-            <tr>
-              <td colSpan={2}>
-                <small>{empty}</small>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
     </section>
   );
 }
@@ -3097,26 +3967,6 @@ function highlightCommandLine(line: string) {
       <span key={`${part}-${index}`}>{part}</span>
     );
   });
-}
-
-function SummaryMetric({
-  label,
-  value,
-  hint,
-  tone,
-}: {
-  label: string;
-  value: string;
-  hint: string;
-  tone?: "blue";
-}) {
-  return (
-    <div className={"task-summary-metric" + (tone ? ` tone-${tone}` : "")}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{hint}</small>
-    </div>
-  );
 }
 
 function RoleRuntimeConfig({
@@ -3293,6 +4143,7 @@ function RoleRuntimeConfig({
               headers={[
                 zh ? "挂载类型" : "Mount type",
                 zh ? "来源" : "Source",
+                zh ? "大小" : "Size",
                 zh ? "挂载到 Worker" : "Mount in worker",
               ]}
               rows={resource.mounts.map((mount) => [
@@ -3304,6 +4155,7 @@ function RoleRuntimeConfig({
                     ? "主机目录"
                     : "Host directory",
                 mount.type === "storage" ? mount.objectStorage : mount.hostPath,
+                mount.type === "storage" ? `${mount.pvcSizeGb} Gi` : "",
                 mount.mountPath,
               ])}
               empty={zh ? "未配置数据挂载" : "No data mounts configured"}
@@ -3386,12 +4238,13 @@ function exportLogs(
     worker: string;
     role: string;
     message: string;
+    timestamp?: string;
   }>,
   jobName: string,
 ) {
-  const header = "worker,role,message";
+  const header = "timestamp,worker,role,message";
   const rows = entries.map((entry) =>
-    [entry.worker, entry.role, entry.message]
+    [entry.timestamp || "", entry.worker, entry.role, entry.message]
       .map((value) => `"${value.replaceAll('"', '""')}"`)
       .join(","),
   );
@@ -3636,6 +4489,128 @@ function formatBytes(bytes: number): string {
   return bytes + "B";
 }
 
+const workerEventReasonLabels: Record<string, { zh: string; en: string }> = {
+  FailedScheduling: { zh: "调度失败", en: "Scheduling failed" },
+  FailedMount: { zh: "存储挂载失败", en: "Storage mount failed" },
+  FailedAttachVolume: { zh: "存储卷连接失败", en: "Volume attachment failed" },
+  FailedBinding: { zh: "存储卷绑定失败", en: "Volume binding failed" },
+  FailedMapVolume: { zh: "存储卷映射失败", en: "Volume mapping failed" },
+  FailedUnMount: { zh: "存储卷卸载失败", en: "Volume unmount failed" },
+  FailedMountOnFilesystemMismatch: {
+    zh: "存储卷文件系统不匹配",
+    en: "Volume filesystem mismatch",
+  },
+  VolumeResizeFailed: { zh: "存储卷扩容失败", en: "Volume resize failed" },
+  FileSystemResizeFailed: {
+    zh: "文件系统扩容失败",
+    en: "Filesystem resize failed",
+  },
+  FailedCreatePodSandBox: {
+    zh: "运行环境创建失败",
+    en: "Pod sandbox creation failed",
+  },
+  FailedCreatePodContainer: {
+    zh: "容器创建失败",
+    en: "Container creation failed",
+  },
+  SandboxChanged: {
+    zh: "运行环境已变更，正在重建",
+    en: "Pod sandbox changed; recreating",
+  },
+  FailedCreate: { zh: "Worker 创建失败", en: "Worker creation failed" },
+  Failed: { zh: "Worker 启动失败", en: "Worker startup failed" },
+  FailedSync: {
+    zh: "Worker 状态同步失败",
+    en: "Worker state synchronization failed",
+  },
+  FailedKillPod: { zh: "Worker 停止失败", en: "Worker termination failed" },
+  FailedPostStartHook: {
+    zh: "容器启动钩子执行失败",
+    en: "Container post-start hook failed",
+  },
+  FailedPreStopHook: {
+    zh: "容器停止钩子执行失败",
+    en: "Container pre-stop hook failed",
+  },
+  ErrImagePull: { zh: "镜像拉取失败", en: "Image pull failed" },
+  ImagePullBackOff: { zh: "镜像拉取重试中", en: "Retrying image pull" },
+  InvalidImageName: { zh: "镜像地址无效", en: "Invalid image name" },
+  FailedToRetrieveImagePullSecret: {
+    zh: "镜像凭据不可用",
+    en: "Image credentials unavailable",
+  },
+  BackOff: { zh: "容器启动重试中", en: "Retrying container startup" },
+  CrashLoopBackOff: {
+    zh: "容器反复启动失败",
+    en: "Container repeatedly failed to start",
+  },
+  OOMKilled: {
+    zh: "容器内存不足被终止",
+    en: "Container terminated due to insufficient memory",
+  },
+  Unhealthy: { zh: "健康检查失败", en: "Health check failed" },
+  Evicted: { zh: "Worker 已被节点驱逐", en: "Worker evicted from node" },
+  Preempted: {
+    zh: "Worker 已被高优先级任务抢占",
+    en: "Worker preempted by a higher-priority workload",
+  },
+  NodeNotReady: { zh: "节点不可用", en: "Node unavailable" },
+  NodeNotReachable: { zh: "节点无法连接", en: "Node unreachable" },
+  NodeNotSchedulable: { zh: "节点不可调度", en: "Node unschedulable" },
+  DiskPressure: { zh: "节点磁盘空间不足", en: "Node disk pressure" },
+  MemoryPressure: { zh: "节点内存压力", en: "Node memory pressure" },
+  PIDPressure: { zh: "节点进程资源不足", en: "Node PID pressure" },
+  OutOfDisk: { zh: "节点磁盘空间耗尽", en: "Node out of disk space" },
+  NetworkUnavailable: { zh: "节点网络不可用", en: "Node network unavailable" },
+  Rebooted: { zh: "节点已重启", en: "Node rebooted" },
+  FreeDiskSpaceFailed: {
+    zh: "镜像清理失败，磁盘空间不足",
+    en: "Image cleanup failed; insufficient disk space",
+  },
+  ContainerGCFailed: { zh: "容器清理失败", en: "Container cleanup failed" },
+  ImageGCFailed: { zh: "镜像清理失败", en: "Image cleanup failed" },
+  FailedNodeAllocatableEnforcement: {
+    zh: "节点资源限制配置失败",
+    en: "Node resource enforcement failed",
+  },
+  Pulling: { zh: "正在拉取镜像", en: "Pulling image" },
+  Pulled: { zh: "镜像已拉取", en: "Image pulled" },
+};
+
+function workerEventReasonLabel(
+  reason: string,
+  zh: boolean,
+  failed = false,
+): string {
+  const label = workerEventReasonLabels[reason];
+  if (label) return zh ? label.zh : label.en;
+  if (failed) return zh ? "Worker 运行失败" : "Worker failed";
+  return zh ? "等待 Worker 启动" : "Waiting for Worker startup";
+}
+
+function jobFailureMessage(message: string | undefined, zh: boolean): string {
+  if (!message) return zh ? "Worker 运行失败" : "Worker failed";
+  if (/oomkilled|out of memory/i.test(message)) {
+    return workerEventReasonLabel("OOMKilled", zh, true);
+  }
+  if (
+    /crashloopbackoff|back-off .*restarting failed container/i.test(message)
+  ) {
+    return workerEventReasonLabel("CrashLoopBackOff", zh, true);
+  }
+  if (/imagepullbackoff/i.test(message)) {
+    return workerEventReasonLabel("ImagePullBackOff", zh, true);
+  }
+  if (/errimagepull/i.test(message)) {
+    return workerEventReasonLabel("ErrImagePull", zh, true);
+  }
+  for (const reason of Object.keys(workerEventReasonLabels)) {
+    if (message.includes(reason))
+      return workerEventReasonLabel(reason, zh, true);
+  }
+  return workerEventReasonLabel("", zh, true);
+}
+
 // PullProgressInfo renders an "i" icon at the top-right of a task status badge.
 // Hovering (or focusing) it reveals the live image pull progress / speed for
 // the task's images while its pods have not yet reached Running, plus any
@@ -3656,12 +4631,20 @@ export function PullProgressInfo({
   zh,
   emptyMessage,
   statusMessage,
+  statusTitle,
+  eventTitle,
+  failed = false,
+  variant = "default",
 }: {
   progress: PullProgressEntry[];
   events?: NodeEventEntry[];
   zh: boolean;
   emptyMessage?: string;
   statusMessage?: string;
+  statusTitle?: string;
+  eventTitle?: string;
+  failed?: boolean;
+  variant?: "default" | "danger";
 }) {
   const wrapperRef = useRef<HTMLSpanElement | null>(null);
   const tooltipRef = useRef<HTMLSpanElement | null>(null);
@@ -3673,13 +4656,20 @@ export function PullProgressInfo({
     above: boolean;
     arrowLeft: number;
   } | null>(null);
-  const recentEvents = [...events]
-    .sort((left, right) => {
-      const leftTime = Date.parse(left.lastTime ?? "") || 0;
-      const rightTime = Date.parse(right.lastTime ?? "") || 0;
-      return rightTime - leftTime;
-    })
-    .slice(0, 4);
+  const recentEvents = [
+    ...new Map(
+      [...events]
+        .sort((left, right) => {
+          const leftTime = Date.parse(left.lastTime ?? "") || 0;
+          const rightTime = Date.parse(right.lastTime ?? "") || 0;
+          return rightTime - leftTime;
+        })
+        .map((event) => [
+          workerEventReasonLabel(event.reason, zh, failed),
+          event,
+        ]),
+    ).values(),
+  ].slice(0, 4);
 
   const measure = () => {
     const icon = wrapperRef.current;
@@ -3763,7 +4753,7 @@ export function PullProgressInfo({
     };
     frame = window.requestAnimationFrame(track);
     return () => window.cancelAnimationFrame(frame);
-  }, [open, progress, events, emptyMessage, statusMessage]);
+  }, [open, progress, events, emptyMessage, statusMessage, statusTitle]);
 
   const tooltipStyle: CSSProperties = pos
     ? {
@@ -3783,7 +4773,7 @@ export function PullProgressInfo({
   return (
     <>
       <span
-        className="status-info"
+        className={`status-info${variant === "danger" ? " status-info-danger" : ""}`}
         tabIndex={0}
         ref={wrapperRef}
         onMouseEnter={show}
@@ -3797,7 +4787,7 @@ export function PullProgressInfo({
         createPortal(
           <span
             ref={tooltipRef}
-            className={`status-info-tooltip status-info-tooltip-open${pos && !pos.above ? " status-info-tooltip-below" : ""}`}
+            className={`status-info-tooltip status-info-tooltip-open${variant === "danger" ? " status-info-tooltip-danger" : ""}${pos && !pos.above ? " status-info-tooltip-below" : ""}`}
             style={tooltipStyle}
             role="status"
             onMouseEnter={show}
@@ -3819,7 +4809,9 @@ export function PullProgressInfo({
               )}
             {statusMessage && (
               <>
-                <strong>{zh ? "异常原因" : "Failure Reason"}</strong>
+                <strong>
+                  {statusTitle ?? (zh ? "异常原因" : "Failure Reason")}
+                </strong>
                 <span className="pull-entry status-message-entry">
                   {statusMessage}
                 </span>
@@ -3863,7 +4855,14 @@ export function PullProgressInfo({
             {recentEvents.length > 0 && (
               <>
                 <strong className="status-info-tooltip-section">
-                  {zh ? "Worker 事件" : "Worker Events"}
+                  {eventTitle ??
+                    (failed
+                      ? zh
+                        ? "失败原因"
+                        : "Failure Reasons"
+                      : zh
+                        ? "等待原因"
+                        : "Pending Reasons")}
                   {events.length > recentEvents.length && (
                     <small>
                       {zh
@@ -3875,16 +4874,16 @@ export function PullProgressInfo({
                 {recentEvents.map((ev, i) => (
                   <span key={`e-${i}`} className="pull-entry event-entry">
                     <span
-                      className={`event-chip event-${ev.type?.toLowerCase() ?? "normal"}`}
+                      className={`event-chip ${
+                        ev.type === "Normal"
+                          ? "event-normal"
+                          : failed
+                            ? "event-failed"
+                            : "event-pending"
+                      }`}
                     >
-                      {ev.reason || ev.type || "Event"}
+                      {workerEventReasonLabel(ev.reason, zh, failed)}
                     </span>
-                    {ev.objectName && (
-                      <code className="event-object">{ev.objectName}</code>
-                    )}
-                    {ev.message && (
-                      <span className="event-message">{ev.message}</span>
-                    )}
                     {ev.lastTime && (
                       <span className="pull-detail">
                         {formatChinaDateTime(ev.lastTime)}
@@ -3911,10 +4910,8 @@ function WorkerTableRow({
   createdAt,
   onSelectNode,
   onSelectCluster,
-  podEventsMap,
-  nodeEventsMap,
-  nodePullProgressMap,
-  taskEventsMap,
+  diskWarning,
+  tasks,
 }: {
   jobName: string;
   worker: WorkerItem;
@@ -3925,10 +4922,8 @@ function WorkerTableRow({
   createdAt: string;
   onSelectNode?: (name: string) => void;
   onSelectCluster?: (id: string) => void;
-  podEventsMap: Record<string, NodeEventEntry[]>;
-  nodeEventsMap: Record<string, NodeEventEntry[]>;
-  nodePullProgressMap: Record<string, PullProgressEntry[]>;
-  taskEventsMap: Record<string, NodeEventEntry[]>;
+  diskWarning: boolean;
+  tasks: CRDTask[];
 }) {
   const zh = c.nav.overview === "总览";
   const [copied, setCopied] = useState(false);
@@ -3937,10 +4932,13 @@ function WorkerTableRow({
     jumpPort: string;
   } | null>(null);
   useEffect(() => {
-    fetch("/api/v1/system-config")
-      .then((r) => (r.ok ? r.json() : null))
+    systemConfigApi
+      .get()
       .then((d) => {
-        if (d) setSSHConfig(d.ssh);
+        setSSHConfig({
+          jumpHost: d.ssh?.jumpHost || d.sshJumpHost || "",
+          jumpPort: d.ssh?.jumpPort || d.sshJumpPort || "",
+        });
       })
       .catch(() => {});
   }, []);
@@ -3962,6 +4960,39 @@ function WorkerTableRow({
   const domainIP =
     domainIPMap[`${pod?.namespace}/${pod?.podNamespace}/${pod?.podName}`] ??
     "—";
+
+  // 获取节点 RANK：优先从环境变量 RLINF_NODE_RANK 获取，否则从 task 的 ray-node-rank-start annotation 加上 worker index 计算
+  const getNodeRank = (worker: WorkerItem, pods: PodInfo[]) => {
+    const pod = pods[0];
+    if (!pod) return "—";
+
+    // 方式一：从环境变量获取
+    const envRank = pod.env?.find((e) => e.name === "RLINF_NODE_RANK")?.value;
+    if (envRank) return envRank;
+
+    // 方式二：从 task 的 annotation 计算
+    // 从 worker 名称中提取 task 名称（去掉 -0, -1, -2 等后缀）
+    const taskNameMatch = worker.name.match(/^(.+)-(\d+)$/);
+    if (taskNameMatch) {
+      const taskName = taskNameMatch[1];
+      const index = parseInt(taskNameMatch[2], 10);
+
+      // 从 tasks 列表中查找对应的 task
+      const task = tasks.find((t) => t.metadata?.name === taskName);
+      if (task?.metadata?.annotations?.["rlark.io/ray-node-rank-start"]) {
+        const startRank = parseInt(
+          task.metadata.annotations["rlark.io/ray-node-rank-start"],
+          10,
+        );
+        if (!isNaN(startRank)) {
+          return String(startRank + index);
+        }
+      }
+    }
+
+    return "—";
+  };
+
   return (
     <>
       <tr>
@@ -3993,16 +5024,71 @@ function WorkerTableRow({
           <span className="role-chip">{worker.role}</span>
         </td>
         <td>
+          <div className="status-with-info">
+            <StatusBadge phase={worker.phase} copy={c} />
+            {worker.phase !== "Running" &&
+              (worker.phase === "Pending" ||
+                worker.phase === "Failed" ||
+                (worker.pullProgress && worker.pullProgress.length > 0) ||
+                (worker.events && worker.events.length > 0)) && (
+                <PullProgressInfo
+                  progress={worker.pullProgress ?? []}
+                  events={worker.events ?? []}
+                  zh={zh}
+                  statusMessage={
+                    worker.phase === "Failed"
+                      ? jobFailureMessage(worker.statusMessage, zh)
+                      : undefined
+                  }
+                  failed={worker.phase === "Failed"}
+                  emptyMessage={
+                    worker.phase === "Pending"
+                      ? worker.node && worker.node !== "—"
+                        ? zh
+                          ? `已调度到 ${worker.node}，正在等待容器创建或节点上报镜像拉取状态。`
+                          : `Scheduled to ${worker.node}; waiting for container creation or image-pull status from the node.`
+                        : zh
+                          ? "正在等待节点调度；调度完成后将展示镜像拉取或节点事件。"
+                          : "Waiting for node scheduling. Image-pull progress or node events will appear after placement."
+                      : undefined
+                  }
+                />
+              )}
+          </div>
+        </td>
+        <td>
           <WorkerClusterLink
             cluster={worker.cluster}
             onSelectCluster={onSelectCluster}
           />
         </td>
         <td>
-          <WorkerNodeLink node={worker.node} onSelectNode={onSelectNode} />
+          <span
+            className={`worker-node-with-warning${diskWarning ? " is-warning" : ""}`}
+          >
+            <WorkerNodeLink node={worker.node} onSelectNode={onSelectNode} />
+            {diskWarning && (
+              <PullProgressInfo
+                progress={[]}
+                zh={zh}
+                statusMessage={
+                  zh
+                    ? "磁盘即将用满，请及时清理空间"
+                    : "Disk is almost full. Please clean up space."
+                }
+                statusTitle={
+                  zh ? "健康与容量告警" : "Health and Capacity Alert"
+                }
+                variant="danger"
+              />
+            )}
+          </span>
         </td>
         <td>
           <span className="node-kind-chip">{getNodeKindLabel(worker)}</span>
+        </td>
+        <td>
+          <span className="node-rank-chip">{getNodeRank(worker, pods)}</span>
         </td>
         <td>
           <code className="inline-code">{pod?.ip || "—"}</code>
@@ -4021,36 +5107,6 @@ function WorkerTableRow({
         </td>
         <td>
           <span className="table-date">{createdAt}</span>
-        </td>
-        <td>
-          <div className="status-with-info">
-            <StatusBadge phase={worker.phase} copy={c} />
-            {worker.phase !== "Running" &&
-              (worker.phase === "Pending" ||
-                worker.phase === "Failed" ||
-                (worker.pullProgress && worker.pullProgress.length > 0) ||
-                (worker.events && worker.events.length > 0)) && (
-                <PullProgressInfo
-                  progress={worker.pullProgress ?? []}
-                  events={worker.events ?? []}
-                  zh={zh}
-                  statusMessage={
-                    worker.phase === "Failed" ? worker.statusMessage : undefined
-                  }
-                  emptyMessage={
-                    worker.phase === "Pending"
-                      ? worker.node && worker.node !== "—"
-                        ? zh
-                          ? `已调度到 ${worker.node}，正在等待容器创建或节点上报镜像拉取状态。`
-                          : `Scheduled to ${worker.node}; waiting for container creation or image-pull status from the node.`
-                        : zh
-                          ? "正在等待节点调度；调度完成后将展示镜像拉取或节点事件。"
-                          : "Waiting for node scheduling. Image-pull progress or node events will appear after placement."
-                      : undefined
-                  }
-                />
-              )}
-          </div>
         </td>
         <td className="worker-sticky-actions">
           <div className="worker-table-actions">
@@ -4173,3 +5229,12 @@ function WorkerNodeLink({
     </button>
   );
 }
+import {
+  domainsApi,
+  jobsApi,
+  nodesApi,
+  podsApi,
+  sshKeysApi,
+  systemConfigApi,
+  tasksApi,
+} from "../backend";

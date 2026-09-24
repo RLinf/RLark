@@ -92,7 +92,7 @@ func (g *Gateway) handlePodTerminal(c *gin.Context) {
 	serverWs, _, err := serverDialer.DialContext(ctx, serverURL, nil)
 	if err != nil {
 		logger.Error(err, "failed to dial server terminal WebSocket")
-		_ = browserWs.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("failed to connect to server: %v\r\n", err)))
+		_ = browserWs.WriteMessage(websocket.TextMessage, fmt.Appendf(nil, "failed to connect to server: %v\r\n", err))
 		return
 	}
 	defer func() { _ = serverWs.Close() }()

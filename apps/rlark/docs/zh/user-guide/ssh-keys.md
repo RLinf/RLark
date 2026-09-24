@@ -2,6 +2,8 @@
 
 使用本指南登记用于 RLark SSH 堡垒机认证的公钥，并可选择在创建 Job 时将其写入任务配置。
 
+> **截图说明：** 截图来自示例环境，资源名称和数据仅供说明，实际环境会有所不同。
+
 ![SSH 密钥管理](../../images/ui/ssh-key-ui.png)
 
 ## 任务一：添加公钥
@@ -12,7 +14,7 @@
 4. 粘贴一条 OpenSSH 公钥，例如 `ssh-ed25519` 或 `ssh-rsa`。
 5. 选择**确认添加**，并确认密钥出现在列表中。
 
-RLark 会校验公钥格式并拒绝重复密钥。当 Server SSH 地址可用时，页面还会显示配置好的跳板连接命令。
+RLark 会校验公钥格式，并要求 SSH 用户名和公钥内容在全局范围内均不可重复。任一内容已存在时，表单会在上传前显示行内错误提示。当 Server SSH 地址可用时，页面还会显示配置好的跳板连接命令。
 
 ## 任务二：为 Job 选择密钥
 
@@ -21,7 +23,7 @@ RLark 会校验公钥格式并拒绝重复密钥。当 Server SSH 地址可用�
 3. 检查 YAML 预览，确认 `spec.sshPublicKey` 包含所选公钥。
 4. 提交 Job。
 
-此操作会把一条公钥写入 Job 配置，供工作负载注入。只在 SSH 公钥页面登记密钥不会修改已有 Job 或 Pod。
+每条选中的公钥只会写入 Job 配置一次，供工作负载注入。只在 SSH 公钥页面登记密钥不会修改已有 Job 或 Pod。Job 详情中的多条已注入公钥会通过可滚动列表展示。
 
 ## 任务三：通过堡垒机连接
 
@@ -57,4 +59,4 @@ ssh -J <bastion-host>:<port> root@<worker-name>
 
 ## API 等效操作
 
-使用 `GET`、`POST /api/v1/ssh-user-keys` 和 `DELETE /api/v1/ssh-user-keys/{index}?user={user}`。详见 [API 参考](../api/reference.md)。
+使用 `GET`、`POST /api/v1/ssh-user-keys` 和 `DELETE /api/v1/ssh-user-keys/{index}?user={user}`。`index` 是该用户名下已登记密钥的零基索引。详见 [API 参考](../api/reference.md)。

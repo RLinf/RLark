@@ -3,11 +3,17 @@ package sync
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/db"
 )
+
+func readyForFinalDeletion(obj client.Object) bool {
+	return obj.GetDeletionTimestamp() != nil &&
+		len(obj.GetFinalizers()) == 1 && slices.Contains(obj.GetFinalizers(), SyncFinalizer)
+}
 
 // Handler defines the interface for syncing resources to the database.
 type Handler interface {
@@ -72,7 +78,7 @@ func (h *genericSyncHandler) ToPersistedModelObject(obj client.Object) (db.Resou
 		CreatedAt: obj.GetCreationTimestamp().Time,
 		Raw:       rawData,
 	}
-	if obj.GetDeletionTimestamp() != nil {
+	if readyForFinalDeletion(obj) {
 		deletedAt := obj.GetDeletionTimestamp().Time
 		m.DeletedAt = &deletedAt
 	}
@@ -94,7 +100,7 @@ func (h *genericSyncHandler) ToPersistedLastestModelObject(obj client.Object) (d
 		CreatedAt: obj.GetCreationTimestamp().Time,
 		Raw:       rawData,
 	}
-	if obj.GetDeletionTimestamp() != nil {
+	if readyForFinalDeletion(obj) {
 		deletedAt := obj.GetDeletionTimestamp().Time
 		m.DeletedAt = &deletedAt
 	}

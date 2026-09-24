@@ -13,9 +13,13 @@
 3. 只需输入集群名称，例如 `my-cluster-01`。
 4. 选择**签发证书**。
 
+> **截图说明：** 截图来自示例环境，资源名称和数据仅供说明，实际环境会有所不同。
+
 ![创建集群](../../images/ui/admin-create-cluster.jpg)
 
 签发后，页面会显示集群名称、Server 地址和完整部署 YAML，并将名称加入**已签发集群**；之后仍可展开该记录并再次复制 YAML。
+
+管理员可在**系统配置 > 部署配置**中设置生成 YAML 的默认值，这些字段沿用 `rlarkadm` 的 `DeployConfig` 结构。已配置的控制面与 SSH 地址会覆盖生成值；TLS 验证、Kubeconfig、Agent 镜像、共享 RLark 镜像、镜像拉取策略、镜像拉取 Secret 和 containerd socket 也会在有值时写入 YAML。展开历史签发记录时会使用当前默认值重新生成 YAML。
 
 !!! warning "保护 YAML"
     页面显示的 `agent-key` 是私钥。请安全保存复制的 YAML，且不要在其他集群复用。
@@ -45,8 +49,8 @@ cert:
     -----END PRIVATE KEY-----
 
 kubernetes:
-  kubeconfig: /path/to/kubeconfig.yaml
-  agent-image: rlark-agent:latest
+  kubeconfig: ~/.kube/config
+  agent-image: rlark:latest
 ```
 
 将 `kubernetes.kubeconfig` 替换为可向目标集群部署资源的 kubeconfig，并设置可用的 Agent 镜像。仅在启用需要共享 RLark 镜像的组件时添加可选的 `kubernetes.image`。所有可用字段参见[配置参考](../reference/configuration.md)。

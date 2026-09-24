@@ -54,8 +54,30 @@ var commonEnvs = []corev1.EnvVar{
 // Component describes a deployable component.
 type Component = types.Component
 
-func commonArgs() []string {
-	return []string{"--kubeconfig", constants.KCPKubeconfigPath}
+func commonArgs(cfg *types.DeployConfig) []string {
+	if cfg.UsesKubernetesManagementAPI() {
+		return []string{"--in-cluster", "--kube-namespace=" + constants.Namespace}
+	}
+	return []string{"--kubeconfig", constants.KCPKubeconfigPath, "--kube-namespace=default"}
+}
+
+func managementAPIVolume(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
+	if cfg.UsesKubernetesManagementAPI() {
+		return nil, nil
+	}
+	return kubeconfigVolume()
+}
+
+func managementAPIRBAC(cfg *types.DeployConfig) []rbacv1.PolicyRule {
+	if !cfg.UsesKubernetesManagementAPI() {
+		return nil
+	}
+	return []rbacv1.PolicyRule{
+		{APIGroups: []string{"rlinf.io"}, Resources: []string{"*"}, Verbs: []string{"*"}},
+		{APIGroups: []string{""}, Resources: []string{"configmaps", "events", "namespaces", "secrets", "serviceaccounts"}, Verbs: []string{"*"}},
+		{APIGroups: []string{"rbac.authorization.k8s.io"}, Resources: []string{"roles", "rolebindings", "clusterroles", "clusterrolebindings"}, Verbs: []string{"*"}},
+		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"*"}},
+	}
 }
 
 func dbConfigVolume() ([]corev1.Volume, []corev1.VolumeMount) {
@@ -101,7 +123,7 @@ func kcpDataVolume(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMou
 			}},
 			[]corev1.VolumeMount{{
 				Name:      "kcp-data",
-				MountPath: constants.KCPEtcdDataDir,
+				MountPath: constants.KCPDataDir,
 			}}
 	case types.StorageHostPath:
 		return []corev1.Volume{{
@@ -115,12 +137,12 @@ func kcpDataVolume(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMou
 			}},
 			[]corev1.VolumeMount{{
 				Name:      "kcp-data",
-				MountPath: constants.KCPEtcdDataDir,
+				MountPath: constants.KCPDataDir,
 			}}
 	default:
 		return nil, []corev1.VolumeMount{{
 			Name:      "kcp-data",
-			MountPath: constants.KCPEtcdDataDir,
+			MountPath: constants.KCPDataDir,
 		}}
 	}
 }
@@ -311,6 +333,9 @@ func resolveComponentReplicas(cfg *types.DeployConfig, name string) int32 {
 	if cfg.Kubernetes == nil {
 		return 1
 	}
+	if name == constants.ComponentKCP {
+		return 1
+	}
 	cc := resolveComponentConfig(cfg, name)
 	if cc.Replicas != 0 {
 		return cc.Replicas
@@ -376,17 +401,54 @@ func kubeconfigVolume() ([]corev1.Volume, []corev1.VolumeMount) {
 		}}
 }
 
-func postgresqlDataVolume() ([]corev1.Volume, []corev1.VolumeMount) {
-	return []corev1.Volume{{
+func postgresqlDataVolume(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
+	storage := resolveComponentStorage(cfg, constants.ComponentPostgresql)
+	mounts := []corev1.VolumeMount{{
+		Name:      "pg-data",
+		MountPath: constants.PostgresqlDataDir,
+	}}
+	switch storage.Type {
+	case "", types.StorageEmptyDir:
+		return []corev1.Volume{{
 			Name: "pg-data",
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
-		}},
-		[]corev1.VolumeMount{{
-			Name:      "pg-data",
-			MountPath: constants.PostgresqlDataDir,
-		}}
+		}}, mounts
+	case types.StorageHostPath:
+		return []corev1.Volume{{
+			Name: "pg-data",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: storage.HostPath,
+					Type: &[]corev1.HostPathType{corev1.HostPathDirectoryOrCreate}[0],
+				},
+			},
+		}}, mounts
+	default:
+		return nil, mounts
+	}
+}
+
+func postgresqlVolumeClaim(cfg *types.DeployConfig) []corev1.PersistentVolumeClaim {
+	storage := resolveComponentStorage(cfg, constants.ComponentPostgresql)
+	if storage.Type != types.StoragePVC {
+		return nil
+	}
+	size := storage.Size
+	if size == "" {
+		size = "30Gi"
+	}
+	return []corev1.PersistentVolumeClaim{{
+		ObjectMeta: metav1.ObjectMeta{Name: "pg-data"},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			StorageClassName: stringPtr(storage.StorageClass),
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceStorage: mustParseQuantity(size)},
+			},
+		},
+	}}
 }
 
 func postgresqlInitVolume() ([]corev1.Volume, []corev1.VolumeMount) {
@@ -409,8 +471,10 @@ func postgresqlInitVolume() ([]corev1.Volume, []corev1.VolumeMount) {
 var components = []types.Component{
 	{
 		Name: constants.ComponentGateway, Port: 8090, Plane: types.PlaneControl, NeedsService: true,
-		Dependencies:  []string{constants.ComponentKCP, constants.ComponentServer},
-		HealthCheckFn: health.ModeHealthCheck(types.Component{Name: constants.ComponentGateway}),
+		ServiceAccount: constants.ComponentGateway,
+		RBACRulesFn:    managementAPIRBAC,
+		Dependencies:   []string{constants.ComponentKCP, constants.ComponentServer},
+		HealthCheckFn:  health.ModeHealthCheck(types.Component{Name: constants.ComponentGateway}),
 		ImageFn: func(cfg *types.DeployConfig) string {
 			return imageByMode(cfg, func(k *types.KubernetesEnv) string { return k.GatewayImage }, func(d *types.DockerEnv) string { return d.GatewayImage })
 		},
@@ -426,10 +490,10 @@ var components = []types.Component{
 			if cfg.DB != nil {
 				args = append(args, "--db-config="+constants.DBConfigPath)
 			}
-			return append(args, commonArgs()...)
+			return append(args, commonArgs(cfg)...)
 		},
 		VolumeFn: func(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
-			vols, mounts := kubeconfigVolume()
+			vols, mounts := managementAPIVolume(cfg)
 			if cfg.DB != nil {
 				dv, dm := dbConfigVolume()
 				vols = append(vols, dv...)
@@ -440,9 +504,11 @@ var components = []types.Component{
 	},
 	{
 		Name: constants.ComponentControllerManager, Port: 8081, Plane: types.PlaneControl,
-		MetricsPort:   8080,
-		Dependencies:  []string{constants.ComponentKCP},
-		HealthCheckFn: health.ModeHealthCheck(types.Component{Name: constants.ComponentControllerManager}),
+		ServiceAccount: constants.ComponentControllerManager,
+		RBACRulesFn:    managementAPIRBAC,
+		MetricsPort:    8080,
+		Dependencies:   []string{constants.ComponentKCP},
+		HealthCheckFn:  health.ModeHealthCheck(types.Component{Name: constants.ComponentControllerManager}),
 		ImageFn: func(cfg *types.DeployConfig) string {
 			return imageByMode(cfg, func(k *types.KubernetesEnv) string { return k.ControllerManagerImage }, func(d *types.DockerEnv) string { return d.ControllerManagerImage })
 		},
@@ -457,15 +523,15 @@ var components = []types.Component{
 			args := []string{
 				"--metrics-bind-address=:8080",
 				"--health-probe-bind-address=:8081",
-				"--leader-elect=" + leaderElectFlag(cfg, constants.ComponentControllerManager),
+				"--leader-election=" + leaderElectFlag(cfg, constants.ComponentControllerManager),
 			}
 			if cfg.DB != nil {
 				args = append(args, "--db-config="+constants.DBConfigPath)
 			}
-			return append(args, commonArgs()...)
+			return append(args, commonArgs(cfg)...)
 		},
 		VolumeFn: func(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
-			vols, mounts := kubeconfigVolume()
+			vols, mounts := managementAPIVolume(cfg)
 			if cfg.DB != nil {
 				dv, dm := dbConfigVolume()
 				vols = append(vols, dv...)
@@ -476,9 +542,11 @@ var components = []types.Component{
 	},
 	{
 		Name: constants.ComponentServer, Port: 8443, Plane: types.PlaneControl, NeedsService: true,
-		MetricsPort:   8888,
-		Dependencies:  []string{constants.ComponentKCP},
-		HealthCheckFn: health.ModeHealthCheck(types.Component{Name: constants.ComponentServer}),
+		ServiceAccount: constants.ComponentServer,
+		RBACRulesFn:    managementAPIRBAC,
+		MetricsPort:    8888,
+		Dependencies:   []string{constants.ComponentKCP},
+		HealthCheckFn:  health.ModeHealthCheck(types.Component{Name: constants.ComponentServer}),
 		ImageFn: func(cfg *types.DeployConfig) string {
 			return imageByMode(cfg, func(k *types.KubernetesEnv) string { return k.ServerImage }, func(d *types.DockerEnv) string { return d.ServerImage })
 		},
@@ -500,7 +568,7 @@ var components = []types.Component{
 			if cfg.DB != nil {
 				args = append(args, "--db-config="+constants.DBConfigPath)
 			}
-			return append(args, commonArgs()...)
+			return append(args, commonArgs(cfg)...)
 		},
 		ExtraSvcPortsFn: func(cfg *types.DeployConfig) []corev1.ServicePort {
 			return []corev1.ServicePort{
@@ -512,7 +580,7 @@ var components = []types.Component{
 			}
 		},
 		VolumeFn: func(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
-			vols, mounts := kubeconfigVolume()
+			vols, mounts := managementAPIVolume(cfg)
 			if cfg.DB != nil {
 				dv, dm := dbConfigVolume()
 				vols = append(vols, dv...)
@@ -571,7 +639,23 @@ var components = []types.Component{
 	{
 		Name: constants.ComponentAgentNode, Port: 8081, Plane: types.PlaneData, WorkloadKind: "DaemonSet",
 		HealthCheckFn:  health.ModeHealthCheck(types.Component{Name: constants.ComponentAgentNode}),
-		ServiceAccount: "rlark-agent",
+		ServiceAccount: constants.ComponentAgentNode,
+		ProbeFn: func(cfg *types.DeployConfig) (*corev1.Probe, *corev1.Probe) {
+			readiness := &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+					Path: "/readyz",
+					Port: intstr.FromInt32(8081),
+				}},
+				PeriodSeconds:    5,
+				TimeoutSeconds:   3,
+				FailureThreshold: 3,
+			}
+			return nil, readiness
+		},
+		RBACRules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"get"}},
+			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"list", "watch"}},
+		},
 		ImageFn: func(cfg *types.DeployConfig) string {
 			return imageByMode(cfg, func(k *types.KubernetesEnv) string { return k.AgentImage }, func(d *types.DockerEnv) string { return d.AgentImage })
 		},
@@ -591,7 +675,7 @@ var components = []types.Component{
 				"--ca-cert=" + constants.CertDir + "/ca.crt",
 				"--leader-election=false",
 				"--mode=node",
-				"--rlark-server-ssh-address=client@" + cfg.ControlPlaneAddress + ":" + strconv.Itoa(constants.ServerSSHPort),
+				"--rlark-server-ssh-address=" + cfg.SSHServerAddress(),
 				// Enable node-level image pre-pulling (containerd/docker). The
 				// node-agent mounts the container runtime socket below.
 				"--image-pull-enabled=true",
@@ -659,7 +743,7 @@ var components = []types.Component{
 		ParallelPodMgmt: true,
 		WorkloadKind:    "StatefulSet",
 		MetricsPort:     constants.EtcdMetricsPort,
-		EnabledFn:       func(cfg *types.DeployConfig) bool { return etcdEnabled(cfg) },
+		EnabledFn:       func(cfg *types.DeployConfig) bool { return !cfg.UsesKubernetesManagementAPI() && etcdEnabled(cfg) },
 		HealthCheckFn:   health.ModeHealthCheck(types.Component{Name: constants.ComponentEtcd}),
 		ImageFn: func(cfg *types.DeployConfig) string {
 			return imageByMode(cfg, func(k *types.KubernetesEnv) string { return k.EtcdImage }, func(d *types.DockerEnv) string { return d.EtcdImage })
@@ -698,20 +782,12 @@ var components = []types.Component{
 				"--data-dir=" + constants.EtcdDataDir,
 			}
 
-			if etcdReplicas(cfg) == 1 {
-				args = append(args,
-					"--initial-advertise-peer-urls=http://$(POD_IP):"+peerPort,
-					"--advertise-client-urls=http://$(POD_IP):"+clientPort,
-					"--initial-cluster=$(POD_NAME)=http://$(POD_IP):"+peerPort,
-				)
-			} else {
-				dnsHost := "$(POD_NAME)." + constants.ComponentEtcd + "." + constants.Namespace + ".svc"
-				args = append(args,
-					"--initial-advertise-peer-urls=http://"+dnsHost+":"+peerPort,
-					"--advertise-client-urls=http://"+dnsHost+":"+clientPort,
-					"--initial-cluster="+etcdInitialClusterDNS(cfg),
-				)
-			}
+			dnsHost := "$(POD_NAME)." + constants.ComponentEtcd + "." + constants.Namespace + ".svc"
+			args = append(args,
+				"--initial-advertise-peer-urls=http://"+dnsHost+":"+peerPort,
+				"--advertise-client-urls=http://"+dnsHost+":"+clientPort,
+				"--initial-cluster="+etcdInitialClusterDNS(cfg),
+			)
 
 			return args
 		},
@@ -752,6 +828,7 @@ var components = []types.Component{
 	},
 	{
 		Name: constants.ComponentKCP, Port: 6443, Plane: types.PlaneControl, NeedsService: true,
+		EnabledFn:     func(cfg *types.DeployConfig) bool { return !cfg.UsesKubernetesManagementAPI() },
 		MetricsPort:   8080,
 		Dependencies:  []string{constants.ComponentEtcd},
 		HealthCheckFn: health.ModeHealthCheck(types.Component{Name: constants.ComponentKCP}),
@@ -829,10 +906,11 @@ var components = []types.Component{
 			}
 		},
 		VolumeFn: func(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
-			dv, dm := postgresqlDataVolume()
+			dv, dm := postgresqlDataVolume(cfg)
 			iv, im := postgresqlInitVolume()
 			return append(dv, iv...), append(dm, im...)
 		},
+		VolumeClaimFn: postgresqlVolumeClaim,
 	},
 	{
 		Name: constants.ComponentUI, Port: 80, Plane: types.PlaneControl, NeedsService: true,
@@ -886,8 +964,12 @@ func ComponentsForPlane(cfg *types.DeployConfig) []types.Component {
 		if c.EnabledFn != nil && !c.EnabledFn(cfg) {
 			continue
 		}
-		result = append(result, *c)
-		topos = append(topos, c)
+		resolved := *c
+		if resolved.Name == constants.ComponentKCP && cfg.Kubernetes != nil && !etcdConfigured(cfg) {
+			resolved.WorkloadKind = "StatefulSet"
+		}
+		result = append(result, resolved)
+		topos = append(topos, &result[len(result)-1])
 	}
 
 	sorted, err := utils.TopologicalSort(topos)
@@ -904,6 +986,17 @@ func ComponentsForPlane(cfg *types.DeployConfig) []types.Component {
 }
 
 // Deployment returns a Deployment for the component.
+func imagePullSecrets(cfg *types.DeployConfig) []corev1.LocalObjectReference {
+	if cfg.Kubernetes == nil {
+		return nil
+	}
+	secrets := make([]corev1.LocalObjectReference, 0, len(cfg.Kubernetes.ImagePullSecrets))
+	for _, name := range cfg.Kubernetes.ImagePullSecrets {
+		secrets = append(secrets, corev1.LocalObjectReference{Name: name})
+	}
+	return secrets
+}
+
 func Deployment(cfg *types.DeployConfig, c *types.Component) *appsv1.Deployment {
 	labels := map[string]string{"app": c.Name}
 
@@ -919,11 +1012,12 @@ func Deployment(cfg *types.DeployConfig, c *types.Component) *appsv1.Deployment 
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: ServiceAccountName(c),
+					ServiceAccountName: ServiceAccountName(cfg, c),
+					ImagePullSecrets:   imagePullSecrets(cfg),
 					Containers: []corev1.Container{{
 						Name:            c.Name,
 						Image:           c.ImageFn(cfg),
-						ImagePullPolicy: corev1.PullAlways,
+						ImagePullPolicy: cfg.ImagePullPolicy(),
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: c.Port,
 						}},
@@ -990,6 +1084,8 @@ func Deployment(cfg *types.DeployConfig, c *types.Component) *appsv1.Deployment 
 		}
 	}
 
+	dep.Spec.Template.Spec.NodeSelector = resolveComponentNodeSelector(cfg, c.Name)
+
 	return dep
 }
 
@@ -1008,11 +1104,12 @@ func DaemonSet(cfg *types.DeployConfig, c *types.Component) *appsv1.DaemonSet {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: ServiceAccountName(c),
+					ServiceAccountName: ServiceAccountName(cfg, c),
+					ImagePullSecrets:   imagePullSecrets(cfg),
 					Containers: []corev1.Container{{
 						Name:            c.Name,
 						Image:           c.ImageFn(cfg),
-						ImagePullPolicy: corev1.PullAlways,
+						ImagePullPolicy: cfg.ImagePullPolicy(),
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: c.Port,
 						}},
@@ -1056,6 +1153,16 @@ func DaemonSet(cfg *types.DeployConfig, c *types.Component) *appsv1.DaemonSet {
 		ds.Spec.Template.Spec.Containers[0].VolumeMounts = append(ds.Spec.Template.Spec.Containers[0].VolumeMounts, mounts...)
 	}
 
+	if c.ProbeFn != nil {
+		liveness, readiness := c.ProbeFn(cfg)
+		if liveness != nil {
+			ds.Spec.Template.Spec.Containers[0].LivenessProbe = liveness
+		}
+		if readiness != nil {
+			ds.Spec.Template.Spec.Containers[0].ReadinessProbe = readiness
+		}
+	}
+
 	return ds
 }
 
@@ -1088,11 +1195,12 @@ func StatefulSet(cfg *types.DeployConfig, c *types.Component) *appsv1.StatefulSe
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: ServiceAccountName(c),
+					ServiceAccountName: ServiceAccountName(cfg, c),
+					ImagePullSecrets:   imagePullSecrets(cfg),
 					Containers: []corev1.Container{{
 						Name:            c.Name,
 						Image:           c.ImageFn(cfg),
-						ImagePullPolicy: corev1.PullAlways,
+						ImagePullPolicy: cfg.ImagePullPolicy(),
 						Ports:           ports,
 						Args:            c.ArgsFn(cfg),
 					}},
@@ -1158,16 +1266,24 @@ func StatefulSet(cfg *types.DeployConfig, c *types.Component) *appsv1.StatefulSe
 }
 
 // ServiceAccountName returns the service account name.
-func ServiceAccountName(c *types.Component) string {
-	if c.ServiceAccount != "" {
+func ServiceAccountName(cfg *types.DeployConfig, c *types.Component) string {
+	rules := c.RBACRules
+	if c.RBACRulesFn != nil {
+		rules = c.RBACRulesFn(cfg)
+	}
+	if c.ServiceAccount != "" && len(rules) > 0 {
 		return c.ServiceAccount
 	}
 	return "default"
 }
 
 // RBAC returns RBAC resources for the component.
-func RBAC(c *types.Component) (*corev1.ServiceAccount, *rbacv1.ClusterRole, *rbacv1.ClusterRoleBinding) {
-	if len(c.RBACRules) == 0 {
+func RBAC(cfg *types.DeployConfig, c *types.Component) (*corev1.ServiceAccount, *rbacv1.ClusterRole, *rbacv1.ClusterRoleBinding) {
+	rules := c.RBACRules
+	if c.RBACRulesFn != nil {
+		rules = c.RBACRulesFn(cfg)
+	}
+	if len(rules) == 0 {
 		return nil, nil, nil
 	}
 	sa := &corev1.ServiceAccount{
@@ -1175,7 +1291,7 @@ func RBAC(c *types.Component) (*corev1.ServiceAccount, *rbacv1.ClusterRole, *rba
 	}
 	cr := &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: c.ServiceAccount},
-		Rules:      c.RBACRules,
+		Rules:      rules,
 	}
 	crb := &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: c.ServiceAccount},

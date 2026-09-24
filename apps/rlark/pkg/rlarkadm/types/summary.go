@@ -70,8 +70,12 @@ func (s *InstallSummary) Print() {
 		if s.AdminPassword != "" {
 			b.WriteString("\n")
 			b.WriteString("Credentials:\n")
-			b.WriteString("  Admin:  admin / " + s.AdminPassword + "\n")
-			b.WriteString("  User:   user / " + s.UserPassword + "\n")
+			b.WriteString("  Admin:  admin / ")
+			b.WriteString(s.AdminPassword)
+			b.WriteString("\n")
+			b.WriteString("  User:   user / ")
+			b.WriteString(s.UserPassword)
+			b.WriteString("\n")
 		}
 	}
 

@@ -3,8 +3,10 @@ package job
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 )
@@ -20,6 +22,26 @@ func TestStoppedJobRecordsEndTime(t *testing.T) {
 	}
 	if job.Status.EndTime == nil {
 		t.Fatal("stopped job did not record endTime")
+	}
+}
+
+func TestRestartedJobResetsRunTimes(t *testing.T) {
+	oldStart := metav1.NewTime(time.Now().Add(-time.Hour))
+	oldEnd := metav1.NewTime(time.Now().Add(-time.Minute))
+	job := &rlarkv1alpha1.Job{Status: rlarkv1alpha1.JobStatus{
+		Phase: rlarkv1alpha1.JobPhaseStopped, StartTime: &oldStart, EndTime: &oldEnd,
+	}}
+	f := newJobStateMachine()
+	f.SetState(string(job.Status.Phase))
+
+	if err := f.Event(context.Background(), EventTasksPending, job); err != nil {
+		t.Fatalf("restart job: %v", err)
+	}
+	if job.Status.StartTime == nil || !job.Status.StartTime.After(oldStart.Time) {
+		t.Fatalf("startTime was not reset: %v", job.Status.StartTime)
+	}
+	if job.Status.EndTime != nil {
+		t.Fatalf("endTime was not cleared: %v", job.Status.EndTime)
 	}
 }
 

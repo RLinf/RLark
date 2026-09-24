@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, X } from "lucide-react";
 import type { CRDNodeLite } from "../types";
-import { parseNodeSelectorStr, selectorToStr } from "../utils/job";
+import {
+  isValidRoleName,
+  parseNodeSelectorStr,
+  ROLE_NAME_MAX_LENGTH,
+  selectorToStr,
+} from "../utils/job";
 
 export function NodeSelectorPicker({
   value,
@@ -254,30 +259,48 @@ export function NodeSelectorPicker({
 }
 
 export function RoleNameInput({
-  role,
+  id,
+  value,
+  zh,
   onRename,
 }: {
-  role: string;
-  onRename: (old: string, newName: string) => void;
+  id: string;
+  value: string;
+  zh: boolean;
+  onRename: (id: string, newName: string) => void;
 }) {
-  const [draft, setDraft] = useState(role);
-  useEffect(() => setDraft(role), [role]);
+  // 受控组件：输入（含粘贴）即时提交，避免依赖失焦时机，
+  // 否则点击“下一步”时校验可能读到未提交的旧名称。
+  const invalid = value.trim().length > 0 && !isValidRoleName(value.trim());
   return (
-    <input
-      value={draft}
-      maxLength={50}
-      onClick={(e) => e.stopPropagation()}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => {
-        const trimmed = draft.trim();
-        if (trimmed && trimmed !== role) onRename(role, trimmed);
-        else setDraft(role);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          (e.target as HTMLInputElement).blur();
+    <div className="role-name-field" onClick={(e) => e.stopPropagation()}>
+      <input
+        value={value}
+        maxLength={ROLE_NAME_MAX_LENGTH}
+        placeholder={
+          zh
+            ? "请输入名称,支持1-64字符,中英文、数字以及-_."
+            : "Enter a name (1-64 chars; Chinese/English, digits, -, _ and .)"
         }
-      }}
-    />
+        className={invalid ? "input-invalid" : undefined}
+        onChange={(e) => onRename(id, e.target.value)}
+        onBlur={() => {
+          const trimmed = value.trim();
+          if (trimmed !== value) onRename(id, trimmed);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+      {invalid && (
+        <small className="field-error">
+          {zh
+            ? "名称格式不正确，仅支持中英文、数字以及-_."
+            : "Invalid name format. Only Chinese/English letters, digits, -, _ and . are allowed."}
+        </small>
+      )}
+    </div>
   );
 }

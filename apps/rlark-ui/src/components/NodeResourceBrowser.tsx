@@ -5,20 +5,20 @@ import type { Copy } from "../i18n";
 import type { CRDNode, NodeCategory } from "../types";
 import {
   categoryLabels,
-  getNodeCategory,
   getNodeCategories,
   getNodeLocation,
   getNodeResourceSummary,
   hasNodeCategory,
 } from "../utils/nodes";
 import {
-  compareSortValues,
+  ColumnFilterButton,
   PageToolbar,
   Pagination,
-  SortButton,
+  RefreshOverlay,
   StatusBadge,
-  type SortDirection,
+  useColumnFilter,
 } from "./shared";
+import { ColumnFilterPopover } from "./ColumnFilterPopover";
 
 type CategoryFilter = "all" | NodeCategory;
 
@@ -58,27 +58,14 @@ export function NodeResourceBrowser({
   const zh = c.nav.overview === "总览";
   const [category, setCategory] = useState<CategoryFilter>(initialCategory);
   const [query, setQuery] = useState(initialQuery);
-  const [phaseFilter, setPhaseFilter] = useState<"All" | Phase>("All");
+  // 表头列多选筛选；空数组 = 全部
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [phaseFilter, setPhaseFilter] = useState<string[]>([]);
+  const [clusterFilter, setClusterFilter] = useState<string[]>([]);
+  const [locationFilter, setLocationFilter] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [sort, setSort] = useState<{
-    key:
-      | "name"
-      | "type"
-      | "phase"
-      | "cluster"
-      | "location"
-      | "ip"
-      | "resource"
-      | "task";
-    direction: SortDirection;
-  }>({ key: "cluster", direction: "asc" });
-  const toggleSort = (key: typeof sort.key) =>
-    setSort((current) => ({
-      key,
-      direction:
-        current.key === key && current.direction === "asc" ? "desc" : "asc",
-    }));
+  const { openKey, anchorRect, openFor, close } = useColumnFilter();
 
   const categoryCounts = useMemo(() => {
     const counts: Record<CategoryFilter, number> = {
@@ -93,6 +80,12 @@ export function NodeResourceBrowser({
     );
     return counts;
   }, [nodes]);
+
+  // 节点集群归属（与表头"所属集群"一致）
+  const clusterOf = (node: CRDNode) =>
+    node.metadata.namespace ??
+    node.metadata.labels?.["rlark.io/cluster-id"] ??
+    "";
 
   const filteredNodes = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -110,50 +103,42 @@ export function NodeResourceBrowser({
         const searchable =
           `${node.metadata.name} ${node.metadata.namespace ?? ""} ${node.spec.agentType ?? ""} ${address} ${taskName} ${location}`.toLowerCase();
         const phase = (node.status?.phase ?? "Offline") as Phase;
+        const typeHit =
+          typeFilter.length === 0 ||
+          getNodeCategories(node).some((c) => typeFilter.includes(c));
+        const phaseHit =
+          phaseFilter.length === 0 || phaseFilter.includes(phase);
+        const clusterHit =
+          clusterFilter.length === 0 ||
+          clusterFilter.includes(clusterOf(node) || "—");
+        const locationHit =
+          locationFilter.length === 0 ||
+          locationFilter.includes(location || "—");
         return (
           (category === "all" || hasNodeCategory(node, category)) &&
-          (phaseFilter === "All" || phase === phaseFilter) &&
+          typeHit &&
+          phaseHit &&
+          clusterHit &&
+          locationHit &&
           (!normalizedQuery || searchable.includes(normalizedQuery))
         );
       })
-      .sort((a, b) => {
-        const value = (node: CRDNode): string | number => {
-          const labels = node.metadata.labels ?? {};
-          const address =
-            node.status?.addresses?.find((item) => item.type === "InternalIP")
-              ?.address ??
-            node.status?.addresses?.[0]?.address ??
-            "";
-          const workload = nodeWorkloads[node.metadata.name];
-          if (sort.key === "name") return node.metadata.name;
-          if (sort.key === "type") return getNodeCategory(node);
-          if (sort.key === "phase") return node.status?.phase ?? "Offline";
-          if (sort.key === "cluster")
-            return (
-              node.metadata.namespace ?? labels["rlark.io/cluster-id"] ?? ""
-            );
-          if (sort.key === "location") return getNodeLocation(node);
-          if (sort.key === "ip") return address;
-          if (sort.key === "resource")
-            return (
-              Number.parseFloat(getNodeResourceSummary(node, zh).primary) || 0
-            );
-          return workload?.jobs.length ?? 0;
-        };
-        const order = compareSortValues(
-          value(a),
-          value(b),
-          sort.direction,
-          zh ? "zh-CN" : "en",
-        );
-        return (
-          order ||
-          a.metadata.name.localeCompare(b.metadata.name, zh ? "zh-CN" : "en", {
-            numeric: true,
-          })
-        );
-      });
-  }, [category, nodeWorkloads, nodes, phaseFilter, query, sort, zh]);
+      .sort((a, b) =>
+        a.metadata.name.localeCompare(b.metadata.name, zh ? "zh-CN" : "en", {
+          numeric: true,
+        }),
+      );
+  }, [
+    category,
+    clusterFilter,
+    locationFilter,
+    nodeWorkloads,
+    nodes,
+    phaseFilter,
+    query,
+    typeFilter,
+    zh,
+  ]);
 
   const totalPages = Math.max(1, Math.ceil(filteredNodes.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -180,9 +165,48 @@ export function NodeResourceBrowser({
     onSelectionChange(next);
   };
 
-  useEffect(() => setPage(1), [category, pageSize, phaseFilter, query]);
+  useEffect(
+    () => setPage(1),
+    [
+      category,
+      clusterFilter,
+      locationFilter,
+      pageSize,
+      phaseFilter,
+      query,
+      typeFilter,
+    ],
+  );
   useEffect(() => setCategory(initialCategory), [initialCategory]);
   useEffect(() => setQuery(initialQuery), [initialQuery]);
+
+  // 表头筛选选项：从当前节点集合去重
+  const typeOptions = categoryOrder.map((v) => ({
+    value: v,
+    label: zh ? categoryLabels[v].zh : categoryLabels[v].en,
+  }));
+  // 状态选项：从当前节点集合去重（节点实际只有 Online/Offline，但保留弹性）
+  const phaseOptions = useMemo(() => {
+    const labelOf = (p: string) =>
+      p === "Online" ? c.status.Online : p === "Offline" ? c.status.Offline : p;
+    const set = new Set<string>();
+    nodes.forEach((n) => set.add(n.status?.phase ?? "Offline"));
+    return [...set].sort().map((v) => ({ value: v, label: labelOf(v) }));
+  }, [nodes, c]);
+  const clusterOptions = useMemo(() => {
+    const set = new Set<string>();
+    nodes.forEach((n) => set.add(clusterOf(n) || "—"));
+    return [...set]
+      .sort((a, b) => a.localeCompare(b, zh ? "zh-CN" : "en"))
+      .map((v) => ({ value: v, label: v }));
+  }, [nodes, zh]);
+  const locationOptions = useMemo(() => {
+    const set = new Set<string>();
+    nodes.forEach((n) => set.add(getNodeLocation(n) || "—"));
+    return [...set]
+      .sort((a, b) => a.localeCompare(b, zh ? "zh-CN" : "en"))
+      .map((v) => ({ value: v, label: v }));
+  }, [nodes, zh]);
 
   const tabs: Array<{
     value: CategoryFilter;
@@ -238,16 +262,12 @@ export function NodeResourceBrowser({
         copy={c}
         onRefresh={onRefresh}
         refreshing={refreshing}
-        filterValue={phaseFilter}
-        onFilterChange={(value) => setPhaseFilter(value as "All" | Phase)}
-        filterOptions={[
-          { value: "All", label: zh ? "全部状态" : "All statuses" },
-          { value: "Online", label: c.status.Online },
-          { value: "Offline", label: c.status.Offline },
-        ]}
       />
 
-      <section className="panel node-resource-table-panel">
+      <section
+        className={`panel node-resource-table-panel refreshable-region${refreshing ? " is-refreshing" : ""}`}
+        aria-busy={refreshing}
+      >
         <div className="node-resource-table-summary">
           <div>
             <strong>{tabs.find((tab) => tab.value === category)?.label}</strong>
@@ -292,54 +312,30 @@ export function NodeResourceBrowser({
             className={`node-resource-table-head${onToggleScheduling ? " has-admin-actions" : ""}${selectable ? " has-selection" : ""}`}
           >
             {selectable && <span aria-label={zh ? "选择" : "Select"} />}
-            <SortButton
-              label={zh ? "节点名称" : "Node"}
-              active={sort.key === "name"}
-              direction={sort.direction}
-              onClick={() => toggleSort("name")}
-            />
-            <SortButton
+            <span>{zh ? "节点名称" : "Node"}</span>
+            <ColumnFilterButton
               label={zh ? "类型" : "Type"}
-              active={sort.key === "type"}
-              direction={sort.direction}
-              onClick={() => toggleSort("type")}
+              selectedCount={typeFilter.length}
+              onClick={openFor("type")}
             />
-            <SortButton
+            <ColumnFilterButton
               label={zh ? "状态" : "Status"}
-              active={sort.key === "phase"}
-              direction={sort.direction}
-              onClick={() => toggleSort("phase")}
+              selectedCount={phaseFilter.length}
+              onClick={openFor("phase")}
             />
-            <SortButton
+            <ColumnFilterButton
               label={zh ? "所属集群" : "Cluster"}
-              active={sort.key === "cluster"}
-              direction={sort.direction}
-              onClick={() => toggleSort("cluster")}
+              selectedCount={clusterFilter.length}
+              onClick={openFor("cluster")}
             />
-            <SortButton
+            <ColumnFilterButton
               label={zh ? "物理位置" : "Location"}
-              active={sort.key === "location"}
-              direction={sort.direction}
-              onClick={() => toggleSort("location")}
+              selectedCount={locationFilter.length}
+              onClick={openFor("location")}
             />
-            <SortButton
-              label={zh ? "节点 IP" : "Node IP"}
-              active={sort.key === "ip"}
-              direction={sort.direction}
-              onClick={() => toggleSort("ip")}
-            />
-            <SortButton
-              label={zh ? "资源与空闲" : "Resources"}
-              active={sort.key === "resource"}
-              direction={sort.direction}
-              onClick={() => toggleSort("resource")}
-            />
-            <SortButton
-              label={zh ? "任务" : "Task"}
-              active={sort.key === "task"}
-              direction={sort.direction}
-              onClick={() => toggleSort("task")}
-            />
+            <span>{zh ? "节点 IP" : "Node IP"}</span>
+            <span>{zh ? "资源与空闲" : "Resources"}</span>
+            <span>{zh ? "任务" : "Task"}</span>
             <span>
               {onToggleScheduling ? (zh ? "调度管理" : "Scheduling") : ""}
             </span>
@@ -534,6 +530,10 @@ export function NodeResourceBrowser({
             )}
           </div>
         </div>
+        <RefreshOverlay
+          visible={!!refreshing}
+          label={zh ? "正在刷新全部节点" : "Refreshing all nodes"}
+        />
       </section>
 
       <Pagination
@@ -544,6 +544,51 @@ export function NodeResourceBrowser({
         onPageSizeChange={setPageSize}
         zh={zh}
       />
+
+      {openKey === "type" && (
+        <ColumnFilterPopover
+          label={zh ? "类型" : "Type"}
+          options={typeOptions}
+          selected={typeFilter}
+          onChange={setTypeFilter}
+          anchorRect={anchorRect}
+          onClose={close}
+          zh={zh}
+        />
+      )}
+      {openKey === "phase" && (
+        <ColumnFilterPopover
+          label={zh ? "状态" : "Status"}
+          options={phaseOptions}
+          selected={phaseFilter}
+          onChange={setPhaseFilter}
+          anchorRect={anchorRect}
+          onClose={close}
+          zh={zh}
+        />
+      )}
+      {openKey === "cluster" && (
+        <ColumnFilterPopover
+          label={zh ? "所属集群" : "Cluster"}
+          options={clusterOptions}
+          selected={clusterFilter}
+          onChange={setClusterFilter}
+          anchorRect={anchorRect}
+          onClose={close}
+          zh={zh}
+        />
+      )}
+      {openKey === "location" && (
+        <ColumnFilterPopover
+          label={zh ? "物理位置" : "Location"}
+          options={locationOptions}
+          selected={locationFilter}
+          onChange={setLocationFilter}
+          anchorRect={anchorRect}
+          onClose={close}
+          zh={zh}
+        />
+      )}
     </div>
   );
 }

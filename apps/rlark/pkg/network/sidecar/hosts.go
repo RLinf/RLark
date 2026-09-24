@@ -2,9 +2,11 @@ package sidecar
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -27,6 +29,15 @@ type hostsSyncer struct {
 	transport http.RoundTripper
 	hostsFile string
 	interval  time.Duration
+	version   string
+	hosts     map[string]string
+}
+
+type hostsWatchResult struct {
+	supported bool
+	hosts     map[string]string
+	version   string
+	err       error
 }
 
 // newHostsSyncer creates a new hostsSyncer.
@@ -47,14 +58,47 @@ func (h *hostsSyncer) Run(ctx context.Context) error {
 		logger.Info("Initial hosts sync failed", "err", err)
 	}
 
-	ticker := time.NewTicker(h.interval)
-	defer ticker.Stop()
-
+	repairTicker := time.NewTicker(time.Second)
+	defer repairTicker.Stop()
+	pollTicker := time.NewTicker(h.interval)
+	defer pollTicker.Stop()
+	watchResults := make(chan hostsWatchResult, 1)
+	watchEnabled := true
+	watching := false
 	for {
+		if watchEnabled && !watching {
+			watching = true
+			go func(version string) {
+				watchResults <- h.watchOnce(ctx, version)
+			}(h.version)
+		}
+
 		select {
-		case <-ticker.C:
-			if err := h.syncOnce(ctx); err != nil {
-				logger.Info("Hosts sync failed", "err", err)
+		case result := <-watchResults:
+			watching = false
+			watchEnabled = result.supported
+			if result.err != nil {
+				logger.Info("Hosts watch failed", "err", result.err)
+				select {
+				case <-time.After(time.Second):
+				case <-ctx.Done():
+					return nil
+				}
+			}
+			if result.hosts != nil {
+				if err := h.applyHosts(result.hosts, result.version); err != nil {
+					logger.Info("Hosts sync failed", "err", err)
+				}
+			}
+		case <-repairTicker.C:
+			if err := h.repairHostsFile(); err != nil {
+				logger.Info("Hosts file repair failed", "err", err)
+			}
+		case <-pollTicker.C:
+			if !watchEnabled {
+				if err := h.syncOnce(ctx); err != nil {
+					logger.Info("Hosts sync failed", "err", err)
+				}
 			}
 		case <-ctx.Done():
 			return nil
@@ -67,13 +111,13 @@ func (h *hostsSyncer) Run(ctx context.Context) error {
 func (h *hostsSyncer) syncOnce(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 
-	hosts, err := h.fetchHosts(ctx)
+	hosts, version, err := h.fetchHosts(ctx, "/get_hosts")
 	if err != nil {
 		metrics.IncHostsSync("error")
 		return fmt.Errorf("fetch hosts: %w", err)
 	}
 
-	if err := h.updateHostsFile(hosts); err != nil {
+	if err := h.applyHosts(hosts, version); err != nil {
 		metrics.IncHostsSync("error")
 		return fmt.Errorf("update hosts file: %w", err)
 	}
@@ -85,10 +129,10 @@ func (h *hostsSyncer) syncOnce(ctx context.Context) error {
 
 // fetchHosts calls the NodeServer /get_hosts endpoint, which returns a JSON
 // object mapping hostname to IP.
-func (h *hostsSyncer) fetchHosts(ctx context.Context) (map[string]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/get_hosts", nil)
+func (h *hostsSyncer) fetchHosts(ctx context.Context, path string) (map[string]string, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost"+path, nil)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, "", fmt.Errorf("create request: %w", err)
 	}
 	client := &http.Client{
 		Transport: h.transport,
@@ -96,19 +140,79 @@ func (h *hostsSyncer) fetchHosts(ctx context.Context) (map[string]string, error)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("http get: %w", err)
+		return nil, "", fmt.Errorf("http get: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status: %s", resp.Status)
+		return nil, "", fmt.Errorf("unexpected status: %s", resp.Status)
 	}
 
 	var hosts map[string]string
 	if err := json.NewDecoder(resp.Body).Decode(&hosts); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+		return nil, "", fmt.Errorf("decode response: %w", err)
 	}
-	return hosts, nil
+	return hosts, resp.Header.Get("ETag"), nil
+}
+
+func (h *hostsSyncer) watchOnce(ctx context.Context, version string) hostsWatchResult {
+	path := "/watch_hosts?version=" + url.QueryEscape(version)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost"+path, nil)
+	if err != nil {
+		return hostsWatchResult{supported: true, err: fmt.Errorf("create watch request: %w", err)}
+	}
+	client := &http.Client{Transport: h.transport, Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return hostsWatchResult{supported: true, err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		return hostsWatchResult{supported: true}
+	case http.StatusNotFound, http.StatusMethodNotAllowed:
+		return hostsWatchResult{}
+	case http.StatusOK:
+		var hosts map[string]string
+		if err := json.NewDecoder(resp.Body).Decode(&hosts); err != nil {
+			return hostsWatchResult{supported: true, err: fmt.Errorf("decode watch response: %w", err)}
+		}
+		return hostsWatchResult{supported: true, hosts: hosts, version: resp.Header.Get("ETag")}
+	default:
+		return hostsWatchResult{supported: true, err: fmt.Errorf("unexpected watch status: %s", resp.Status)}
+	}
+}
+
+func (h *hostsSyncer) applyHosts(hosts map[string]string, version string) error {
+	if err := h.updateHostsFile(hosts); err != nil {
+		return err
+	}
+	if version == "" {
+		version = hostsVersion(hosts)
+	}
+	h.version = version
+	h.hosts = hosts
+	return nil
+}
+
+func (h *hostsSyncer) repairHostsFile() error {
+	if len(h.hosts) == 0 {
+		return nil
+	}
+	content, err := os.ReadFile(h.hostsFile)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(content), buildManagedSection(h.hosts)) {
+		return nil
+	}
+	return h.updateHostsFile(h.hosts)
+}
+
+func hostsVersion(hosts map[string]string) string {
+	data, _ := json.Marshal(hosts)
+	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
 // updateHostsFile replaces the managed section (between the BEGIN/END markers)
@@ -119,11 +223,10 @@ func (h *hostsSyncer) updateHostsFile(hosts map[string]string) error {
 
 	content, err := os.ReadFile(h.hostsFile)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("read hosts file: %w", err)
-		}
-		// File doesn't exist; create it with just our section.
-		return os.WriteFile(h.hostsFile, []byte(section), 0644)
+		return fmt.Errorf("read hosts file: %w", err)
+	}
+	if !validBaseHosts(string(content)) {
+		return fmt.Errorf("hosts file is empty or missing localhost; retrying without update")
 	}
 
 	newContent, err := replaceManagedSection(string(content), section)
@@ -137,6 +240,21 @@ func (h *hostsSyncer) updateHostsFile(hosts map[string]string) error {
 	}
 
 	return os.WriteFile(h.hostsFile, []byte(newContent), 0644)
+}
+
+func validBaseHosts(content string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || strings.HasPrefix(fields[0], "#") {
+			continue
+		}
+		for _, host := range fields[1:] {
+			if host == "localhost" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // buildManagedSection renders the managed block (including markers) from a

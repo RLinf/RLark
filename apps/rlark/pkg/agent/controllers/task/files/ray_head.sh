@@ -8,15 +8,15 @@ if [ -n "$WAIT_NETWORK_SCRIPT" ]; then
     bash "$WAIT_NETWORK_SCRIPT" "network"
 fi
 
-# Phase 0: Start rlark-sshd if the binary is available
-if [ -n "$RLARK_SSH_PUBLIC_KEY" ] && [ -x /sshd/rlark-sshd ]; then
-    nohup /sshd/rlark-sshd -port 22 > /tmp/rlark-sshd.log 2>&1 &
-    echo "rlark-sshd started on port 22"
+# Phase 0: Start rlark-tools sshd if the binary is available
+if [ -n "$RLARK_SSH_PUBLIC_KEY" ] && [ -x /rlark-tools/rlark-tools ]; then
+    nohup /rlark-tools/rlark-tools sshd -port 22 > /tmp/rlark-sshd.log 2>&1 &
+    echo "rlark-tools sshd started on port 22"
 elif [ -n "$RLARK_SSH_PUBLIC_KEY" ]; then
     mkdir -p ~/.ssh && chmod 700 ~/.ssh
     echo "$RLARK_SSH_PUBLIC_KEY" >> ~/.ssh/authorized_keys
     chmod 600 ~/.ssh/authorized_keys
-    echo "SSH public key injected into authorized_keys (fallback: no rlark-sshd binary)"
+    echo "SSH public key injected into authorized_keys (fallback: no rlark-tools binary)"
 fi
 
 # Phase 1: Prepare script (executed before Ray starts)
@@ -51,6 +51,14 @@ if [ -n "$RLARK_DOMAIN" ]; then
         sleep 1
     done
 fi
+
+# Extend health-check / heartbeat timeouts so that the cluster survives
+# transient network interruptions (e.g. node-agent restarts) without Ray
+# marking nodes dead prematurely.
+export RAY_health_check_period_ms="${RAY_health_check_period_ms:-5000}"
+export RAY_health_check_timeout_ms="${RAY_health_check_timeout_ms:-15000}"
+export RAY_health_check_failure_threshold="${RAY_health_check_failure_threshold:-30}"
+export RAY_num_heartbeats_timeout="${RAY_num_heartbeats_timeout:-60}"
 
 ray start --head --dashboard-host=0.0.0.0 --disable-usage-stats \
     --node-ip-address="$NODE_IP" --port=${RLARK_RAY_PORT} --temp-dir $TEMP_DIR &
