@@ -20,6 +20,8 @@ type ListOptions struct {
 	FieldSelector []FieldSelector
 	// LabelSelector filters by raw JSONB labels, e.g. "tenant=acme".
 	LabelSelector []LabelSelector
+	// TagSelector filters Job spec.tags by key/value pairs.
+	TagSelector []TagSelector
 	// OrderBy specifies sorting, e.g. "created_at", "name", "created_at desc".
 	OrderBy []string
 	// Limit limits the number of results (0 means no limit).
@@ -39,6 +41,12 @@ type FieldSelector struct {
 type LabelSelector struct {
 	Key   string
 	Op    string // "=", "!=", "in" (default: "=")
+	Value string
+}
+
+// TagSelector represents a Job spec.tags key/value filter.
+type TagSelector struct {
+	Key   string
 	Value string
 }
 
@@ -122,6 +130,18 @@ func (q *ResourceStore) List(ctx context.Context, opts ListOptions) (*ListResult
 	for _, ls := range opts.LabelSelector {
 		colExpr := fmt.Sprintf("%s.raw#>>'{metadata,labels,%s}'", q.tableAlias, ls.Key)
 		baseQuery = applySelector(baseQuery, colExpr, ls.Op, ls.Value)
+	}
+
+	// Tag selectors: values of the same key are ORed; different keys are ANDed.
+	tagValuesByKey := make(map[string][]string)
+	for _, ts := range opts.TagSelector {
+		tagValuesByKey[ts.Key] = append(tagValuesByKey[ts.Key], ts.Value)
+	}
+	for key, values := range tagValuesByKey {
+		baseQuery = baseQuery.Where(
+			"EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(?TableAlias.raw->'spec'->'tags', '[]'::jsonb)) AS tag WHERE tag->>'key' = ? AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(tag->'values', '[]'::jsonb)) AS value WHERE value IN (?)))",
+			bun.Ident(q.tableAlias), key, bun.List(values),
+		)
 	}
 
 	// Count total before pagination

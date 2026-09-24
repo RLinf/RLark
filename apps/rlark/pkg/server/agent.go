@@ -3,16 +3,15 @@ package server
 import (
 	"context"
 	"fmt"
-	"time"
 
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/leaderelection"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
+	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
 )
 
 func (s *Server) registerAgent(ctx context.Context, agentID string) error {
@@ -59,6 +58,8 @@ func (s *Server) registerAgent(ctx context.Context, agentID string) error {
 		{APIGroups: []string{"rlinf.io"}, Resources: []string{"nodes", "tasks", "pods", "addons"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		{APIGroups: []string{"rlinf.io"}, Resources: []string{"nodes/status", "tasks/status", "pods/status", "addons/status"}, Verbs: []string{"get", "update", "patch"}},
 		{APIGroups: []string{"rlinf.io"}, Resources: []string{"domainpeers"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
+		{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "create", "update", "patch"}},
 	}
 	roleName := saName
@@ -160,31 +161,20 @@ func (s *Server) startAgentBroadcaster(ctx context.Context, agentID, role, connI
 
 	namespace := apis.RLarkAgentNamespacePrefix + agentID
 	id := "heartbeat"
-	rl, err := resourcelock.New(
-		resourcelock.LeasesResourceLock,
-		namespace, id,
-		s.kubeClient.CoreV1(),
-		s.kubeClient.CoordinationV1(),
-		resourcelock.ResourceLockConfig{
-			Identity: connID,
+	leConfig := configs.DefaultLeaderElectionConfig()
+	leConfig.Key = namespace + "/" + id
+	leConfig.Identity = connID
+	electionConfig, err := leConfig.Build(s.kubeClient, namespace, leaderelection.LeaderCallbacks{
+		OnStartedLeading: func(ctx context.Context) {
+			<-ctx.Done()
 		},
-	)
-	if err != nil {
-		return fmt.Errorf("create lock: %w", err)
-	}
-	le, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
-		Lock:          rl,
-		LeaseDuration: time.Second * 30,
-		RenewDeadline: time.Second * 10,
-		RetryPeriod:   time.Second * 5,
-		Callbacks: leaderelection.LeaderCallbacks{
-			OnStartedLeading: func(ctx context.Context) {
-				<-ctx.Done()
-			},
-			OnStoppedLeading: func() {},
-			OnNewLeader:      func(identity string) {},
-		},
+		OnStoppedLeading: func() {},
+		OnNewLeader:      func(identity string) {},
 	})
+	if err != nil {
+		return fmt.Errorf("build leader election config: %w", err)
+	}
+	le, err := leaderelection.NewLeaderElector(electionConfig)
 	if err != nil {
 		return fmt.Errorf("create leader elector: %w", err)
 	}

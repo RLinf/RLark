@@ -121,11 +121,9 @@ func TestNewDeviceServer_EmptyHasNoMacvlans(t *testing.T) {
 }
 
 // TestEnrichForSetup_DropsInvalid verifies the per-Setup enrich+validate path
-// drops configs that cannot be completed. EnrichMACVLANConfig is best-effort
-// (a hard no-op on non-Linux; a no-op when the host is unreachable on Linux),
-// so on the test host enrichment leaves the config unchanged and the result
-// is driven by the pure ValidateMACVLANConfig: a fully-specified config
-// passes; network/broadcast/empty IPs and missing name are rejected.
+// for configs that do not require host-network discovery. Network-address
+// placeholders are covered by netmac validation and enrichment tests because
+// their result here depends on the runner's interfaces and privileges.
 func TestEnrichForSetup_DropsInvalid(t *testing.T) {
 	cases := []struct {
 		name string
@@ -133,7 +131,6 @@ func TestEnrichForSetup_DropsInvalid(t *testing.T) {
 		want bool
 	}{
 		{"good", netmac.MACVLANConfig{Name: "good", HostNIC: "eno1", IP: "172.16.0.100/24"}, true},
-		{"network-addr", netmac.MACVLANConfig{Name: "bad-net", HostNIC: "eno1", IP: "172.16.0.0/24"}, false},
 		{"broadcast", netmac.MACVLANConfig{Name: "bad-bcast", HostNIC: "eno1", IP: "172.16.0.255/24"}, false},
 		{"no-ip", netmac.MACVLANConfig{Name: "bad-noip", HostNIC: "eno1", IP: ""}, false},
 		{"no-name", netmac.MACVLANConfig{HostNIC: "eno1", IP: "172.16.0.100/24"}, false},

@@ -12,6 +12,7 @@ import {
   stripLegacyProxyCloseMessage,
 } from "../utils/terminalKeyboard";
 import "@xterm/xterm/css/xterm.css";
+import { terminalApi } from "../backend";
 
 const workerStatusLabels: Record<string, string> = {
   Running: "运行中",
@@ -62,9 +63,7 @@ export function TerminalPage({
 
     term.writeln(`Connecting to ${workerName} ...`);
 
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${proto}//${location.host}/api/v1/rlinf.io/v1alpha1/pods/${encodeURIComponent(workerCRName)}/terminal`;
-    const ws = new WebSocket(wsUrl);
+    const ws = terminalApi.createSocket(workerCRName);
     wsRef.current = ws;
     ws.binaryType = "arraybuffer";
 

@@ -21,6 +21,7 @@ package v1alpha1
 // with apply.
 type WorkflowSpecApplyConfiguration struct {
 	JobTemplates []WorkflowJobTemplateApplyConfiguration `json:"jobTemplates,omitempty"`
+	Stopped      *bool                                   `json:"stopped,omitempty"`
 }
 
 // WorkflowSpecApplyConfiguration constructs a declarative configuration of the WorkflowSpec type for use with
@@ -39,5 +40,13 @@ func (b *WorkflowSpecApplyConfiguration) WithJobTemplates(values ...*WorkflowJob
 		}
 		b.JobTemplates = append(b.JobTemplates, *values[i])
 	}
+	return b
+}
+
+// WithStopped sets the Stopped field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Stopped field is set to the value of the last call.
+func (b *WorkflowSpecApplyConfiguration) WithStopped(value bool) *WorkflowSpecApplyConfiguration {
+	b.Stopped = &value
 	return b
 }

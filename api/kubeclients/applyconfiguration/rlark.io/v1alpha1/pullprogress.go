@@ -19,12 +19,14 @@ package v1alpha1
 
 // PullProgressApplyConfiguration represents a declarative configuration of the PullProgress type for use
 // with apply.
+//
+// PullProgress captures the progress of an in-flight image pull on a node.
 type PullProgressApplyConfiguration struct {
-	Image      *string  `json:"image"`
-	Downloaded *int64   `json:"downloaded"`
-	Total      *int64   `json:"total"`
-	Speed      *float64 `json:"speed"`
-	Status     *string  `json:"status"`
+	Image      *string  `json:"image,omitempty"`
+	Downloaded *int64   `json:"downloaded,omitempty"`
+	Total      *int64   `json:"total,omitempty"`
+	Speed      *float64 `json:"speed,omitempty"`
+	Status     *string  `json:"status,omitempty"`
 	Message    *string  `json:"message,omitempty"`
 }
 

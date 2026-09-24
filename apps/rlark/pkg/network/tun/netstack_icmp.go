@@ -153,5 +153,6 @@ func (ns *netstack) handleICMPEcho(ep *channel.Endpoint, srcAddr, dstAddr tcpip.
 			Payload: buffer.MakeWithData(ipBuf),
 		})
 		ep.InjectInbound(ipv4.ProtocolNumber, injectPkt)
+		injectPkt.DecRef()
 	}
 }

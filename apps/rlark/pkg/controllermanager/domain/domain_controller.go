@@ -2,21 +2,28 @@ package domain
 
 import (
 	"context"
+	"reflect"
+	"sort"
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	controllerconfig "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
 )
+
+const podDomainField = "spec.domain"
 
 // Reconciler watches Domain and Pod CRs, and generates DomainPeer
 // (one per cluster/namespace per domain) containing the pod list.
@@ -26,7 +33,8 @@ import (
 // field records all pods belonging to that domain in that cluster.
 type Reconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme                  *runtime.Scheme
+	MaxConcurrentReconciles int
 
 	// Kubernetes client configuration.
 	KubeClientConfig configs.KubernetesClientConfig
@@ -57,10 +65,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		logger.Error(err, "invalid CIDR in Domain spec, skip")
 		return ctrl.Result{}, nil
 	}
+	originalAllocations := append([]rlarkv1alpha1.DomainIPAllocation(nil), domain.Status.IPAllocations...)
 
-	// 2. List all Pod CRs across all namespaces that belong to this domain
+	// 2. List Pod CRs belonging to this domain through the cache index.
 	var podList rlarkv1alpha1.PodList
-	if err := r.List(ctx, &podList); err != nil {
+	if err := r.List(ctx, &podList, client.MatchingFields{podDomainField: domain.Name}); err != nil {
 		logger.Error(err, "failed to list Pods")
 		return ctrl.Result{}, err
 	}
@@ -76,18 +85,28 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	// 4. Group pods by namespace (each namespace = one cluster).
-	// Terminal pods (Succeeded/Failed) are skipped: their UID-named CRs may
+	// Terminal and not-yet-scheduled pods are skipped. A newly created
+	// management Pod receives status in a second API write; waiting for Node and
+	// local IP avoids allocating an address and rewriting every DomainPeer twice.
+	// Terminal pods' UID-named CRs may
 	// coexist with the recreated pod's CR, and processing both would produce
-	// duplicate entries and incorrect IP allocation.
+	// duplicate entries and incorrect IP allocation. Their namespaces remain
+	// known, however, so a transient container restart does not delete the
+	// DomainPeer and break the still-running network sidecar.
 	podsByNamespace := make(map[string][]rlarkv1alpha1.DomainPodInfo)
 	nonAllocPodsByNamespace := make(map[string][]rlarkv1alpha1.DomainPodInfo)
+	knownNamespaces := make(map[string]struct{})
 	reusedIPs := make(map[string]bool)     // IPs already reclaimed in this pass
 	reusedAlloc := make(map[string]string) // podKey -> reclaimed IP
 	for _, pod := range podList.Items {
 		if pod.Spec.Domain != domain.Name {
 			continue
 		}
+		knownNamespaces[pod.Namespace] = struct{}{}
 		if pod.Status.Phase == rlarkv1alpha1.PodPhaseSucceeded || pod.Status.Phase == rlarkv1alpha1.PodPhaseFailed {
+			continue
+		}
+		if pod.Status.Node == "" || pod.Status.IP == "" {
 			continue
 		}
 		ns := pod.Namespace
@@ -173,11 +192,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			})
 		}
 	}
+	sort.Slice(domain.Status.IPAllocations, func(i, j int) bool {
+		return domain.Status.IPAllocations[i].Pod < domain.Status.IPAllocations[j].Pod
+	})
 
 	// 7. Update Domain.Status.IPAllocations with the new allocations
-	if err := r.Status().Update(ctx, &domain); err != nil {
-		logger.Error(err, "failed to update Domain status")
-		return ctrl.Result{}, err
+	if !reflect.DeepEqual(originalAllocations, domain.Status.IPAllocations) {
+		if err := r.Status().Update(ctx, &domain); err != nil {
+			logger.Error(err, "failed to update Domain status")
+			return ctrl.Result{}, err
+		}
 	}
 
 	// 8. Create or update DomainPeer per namespace
@@ -186,6 +210,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	for _, pods := range podsByNamespace {
 		allPods = append(allPods, pods...)
 	}
+	sort.Slice(allPods, func(i, j int) bool {
+		if allPods[i].GlobalNamespace != allPods[j].GlobalNamespace {
+			return allPods[i].GlobalNamespace < allPods[j].GlobalNamespace
+		}
+		if allPods[i].Namespace != allPods[j].Namespace {
+			return allPods[i].Namespace < allPods[j].Namespace
+		}
+		return allPods[i].Name < allPods[j].Name
+	})
 	for ns := range podsByNamespace {
 		if err := r.createOrUpdateDomainPeer(ctx, logger, domain.Name, ns, allPods, signer, ippool.PrefixLength()); err != nil {
 			return ctrl.Result{}, err
@@ -193,7 +226,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	// 9. Delete DomainPeers in namespaces that no longer have pods for this domain
-	if err := r.cleanupStaleDomainPeers(ctx, logger, domain.Name, podsByNamespace); err != nil {
+	if err := r.cleanupStaleDomainPeers(ctx, logger, domain.Name, knownNamespaces); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -204,8 +237,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 // It watches Domain as the primary resource and Pod as a secondary resource
 // (pod changes trigger reconciliation of the associated domain).
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &rlarkv1alpha1.Pod{}, podDomainField, func(obj client.Object) []string {
+		pod, ok := obj.(*rlarkv1alpha1.Pod)
+		if !ok || pod.Spec.Domain == "" {
+			return nil
+		}
+		return []string{pod.Spec.Domain}
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&rlarkv1alpha1.Domain{}).
+		For(&rlarkv1alpha1.Domain{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("domain").
 		Watches(
 			&rlarkv1alpha1.Pod{},
@@ -219,6 +262,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}}
 			}),
 		).
+		WithOptions(controllerconfig.Options{MaxConcurrentReconciles: r.MaxConcurrentReconciles}).
 		Complete(r)
 }
 
@@ -257,6 +301,8 @@ func (r *Reconciler) createOrUpdateDomainPeer(
 		return r.Create(ctx, desiredPeer)
 	}
 
+	changed := existingPeer.Spec.PrefixLen != prefixLen || !reflect.DeepEqual(existingPeer.Spec.Pods, pods)
+	existingPeer.Spec.PrefixLen = prefixLen
 	existingPeer.Spec.Pods = pods
 	certData, err := cert.LoadData([]byte(existingPeer.Spec.Cert), []byte(existingPeer.Spec.Key))
 	if err != nil || certData.SSHCert == nil || !certData.IsValid() {
@@ -269,6 +315,10 @@ func (r *Reconciler) createOrUpdateDomainPeer(
 		}
 		existingPeer.Spec.Cert = string(cert)
 		existingPeer.Spec.Key = string(key)
+		changed = true
+	}
+	if !changed {
+		return nil
 	}
 	if err := r.Update(ctx, &existingPeer); err != nil {
 		logger.Error(err, "failed to update DomainPeer", "namespace", namespace)
@@ -298,7 +348,7 @@ func (r *Reconciler) deleteDomainPeers(ctx context.Context, logger logr.Logger, 
 	return ctrl.Result{}, nil
 }
 
-func (r *Reconciler) cleanupStaleDomainPeers(ctx context.Context, logger logr.Logger, domainName string, activeNamespaces map[string][]rlarkv1alpha1.DomainPodInfo) error {
+func (r *Reconciler) cleanupStaleDomainPeers(ctx context.Context, logger logr.Logger, domainName string, knownNamespaces map[string]struct{}) error {
 	var peerList rlarkv1alpha1.DomainPeerList
 	if err := r.List(ctx, &peerList); err != nil {
 		return err
@@ -307,7 +357,7 @@ func (r *Reconciler) cleanupStaleDomainPeers(ctx context.Context, logger logr.Lo
 		if peer.Name != domainName {
 			continue
 		}
-		if _, ok := activeNamespaces[peer.Namespace]; ok {
+		if _, ok := knownNamespaces[peer.Namespace]; ok {
 			continue // still has pods, skip
 		}
 		// Namespace no longer has pods for this domain — delete DomainPeer

@@ -6,6 +6,9 @@ export type Phase =
   | "Succeeded"
   | "Failed"
   | "Stopped"
+  | "Stopping"
+  | "Deleting"
+  | "Unknown"
   | "Online"
   | "Offline";
 
@@ -82,6 +85,16 @@ export interface Worker {
   // Task.status.events 聚合，仅在 worker 处于 Pending 时填充，供状态
   // 徽标 "i" tooltip 展示。
   events?: NodeEventEntry[];
+  // Task 名称，用于获取节点 RANK
+  taskName?: string;
+}
+
+// JobTag 表示任务标签，id 为前端生成的稳定标识（用于 React key），
+// key/value 为用户输入的实际标签内容（均不超过 10 字符）。
+export interface JobTag {
+  id: string;
+  key: string;
+  value: string;
 }
 
 export interface Job {
@@ -118,6 +131,7 @@ export interface Job {
   domain?: string;
   tensorBoardDir?: string;
   sshPublicKey?: string;
+  tags?: JobTag[];
   resources: Array<{
     role: string;
     cluster: string;
@@ -137,8 +151,6 @@ export interface Job {
       hostPath: string;
       pvcSizeGb: number;
     }>;
-    pvcStorageMap?: Record<string, string>;
-    pvcSizeGbMap?: Record<string, number>;
   }>;
   taskStatuses: Array<{
     name: string;
@@ -160,6 +172,7 @@ export interface PodInfo {
   node: string;
   ip: string;
   message: string;
+  env?: Array<{ name: string; value: string }>;
 }
 
 export interface Domain {
@@ -207,7 +220,6 @@ export interface StorageClassCreateRequest {
   description: string;
 }
 
-export const storageClasses: StorageClass[] = [];
 export const clusters: Cluster[] = [
   {
     id: "cloud-east-a",
@@ -280,6 +292,37 @@ export const clusters: Cluster[] = [
     robotUsage: 72,
     runningJobs: 2,
     description: "面向仓储巡检、导航采集和 AMR 任务的现场真机场。",
+  },
+];
+
+export const storageClasses: StorageClass[] = [
+  {
+    id: "training-datasets",
+    name: "training-datasets",
+    namespace: "default",
+    provider: "MinIO",
+    clusters: clusters.map((cluster) => cluster.id),
+    endpoint: "https://minio.mock.local",
+    region: "local",
+    bucket: "rlark-training",
+    accessKeyId: "mock-access-key",
+    pathStyle: true,
+    description: "用于训练数据集的 Mock 对象存储",
+    createdAt: "2026-08-01T08:00:00Z",
+  },
+  {
+    id: "evaluation-results",
+    name: "evaluation-results",
+    namespace: "default",
+    provider: "AWS S3",
+    clusters: clusters.slice(0, 2).map((cluster) => cluster.id),
+    endpoint: "https://s3.mock.local",
+    region: "cn-east-1",
+    bucket: "rlark-evaluation",
+    accessKeyId: "mock-access-key",
+    pathStyle: false,
+    description: "用于评估产物的 Mock 对象存储",
+    createdAt: "2026-08-02T08:00:00Z",
   },
 ];
 

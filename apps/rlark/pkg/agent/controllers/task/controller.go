@@ -39,15 +39,15 @@ func (c *Controller) AsPullReconciler() base.KubernetesReconciler {
 // AsKubePushReconcilers is an exported method.
 func (c *Controller) AsKubePushReconcilers() map[base.KubernetesResource]base.KubernetesReconciler {
 	return map[base.KubernetesResource]base.KubernetesReconciler{
-		base.KubernetesResource{
+		{
 			Name: "task-deployment",
 			Type: &appsv1.Deployment{},
 		}: &pushDeploymentReconciler{c: c},
-		base.KubernetesResource{
+		{
 			Name: "task-daemonset",
 			Type: &appsv1.DaemonSet{},
 		}: &pushDaemonSetReconciler{c: c},
-		base.KubernetesResource{
+		{
 			Name: "task-statefulset",
 			Type: &appsv1.StatefulSet{},
 		}: &pushStatefulSetReconciler{c: c},

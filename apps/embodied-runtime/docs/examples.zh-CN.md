@@ -19,6 +19,8 @@ embodied-runtime 最常见场景的端到端部署与使用样例。每个场景
   - [R1 — USB 机器人宿主设备透传](#r1--usb-机器人宿主设备透传)
   - [R2 — 通过宿主 macvlan 接入网络机器人](#r2--通过宿主-macvlan-接入网络机器人)
   - [R3 — ROS 托管机器人](#r3--ros-托管机器人)
+- [未适配设备](#未适配设备)
+  - [U1 — 通过宿主机网络访问未适配设备](#u1--通过宿主机网络访问未适配设备)
 - [组合 — 同一节点上的机器人 + 摄像头](#组合--同一节点上的机器人--摄像头)
 - [注意事项](#注意事项)
   - [ROS 隔离](#ros-隔离)
@@ -66,8 +68,9 @@ embodied-runtime 最常见场景的端到端部署与使用样例。每个场景
 | R1 | USB 机器人直连 | `host_devices` | 无 | 直接打开 `/dev/ttyUSBx` |
 | R2 | 通过 macvlan 接入网络机器人 | `host_macvlans` + webhook | 无 | 通过 macvlan 用 IP 访问机器人 |
 | R3 | ROS 托管机器人 | `ros` / `ros2`（pod 模式） | ros[-2]-controller | `rosctr` CLI / `RobotClient` SDK / REST |
+| U1 | 未适配的网络设备 | 无 | 无 | 通过 `hostNetwork` 使用厂商 SDK 或协议直接访问 |
 
-每个场景中，业务 Pod 都申请 `rlinf.io/device`（设置了 `config.model` 时为 `rlinf.io/device-<model>`）。device plugin 的 `Allocate` 随后注入：
+C1–R3 使用 embodied-runtime 的原生能力，业务 Pod 需要申请 `rlinf.io/device`（设置了 `config.model` 时为 `rlinf.io/device-<model>`）。device plugin 的 `Allocate` 随后注入：
 
 - socket 目录 `/var/run/rlark`（只读）—— 控制器 gRPC socket。
 - CLI 目录 `/opt/rlinf/bin`（只读）—— `rosctr`、`camctr`。
@@ -647,6 +650,41 @@ kubectl exec -it ros2-task -- /opt/rlinf/bin/rosctr env franka-robot-1   # 显�
 ```
 
 > ROS 2 DDS 发现依赖 IP 组播。跨 Pod / 跨节点运行 ROS 2 前，请先阅读 [ROS 2 组播](#ros-2-组播)。
+
+---
+
+## 未适配设备
+
+### U1 — 通过宿主机网络访问未适配设备
+
+**适用场景。** embodied-runtime 尚未提供对应 controller、设备模型或 SDK，但设备已能从宿主机网络访问，业务镜像也已包含厂商 SDK、驱动或协议客户端。此方式让业务 Pod 直接使用宿主机网络，是原生适配完成前的兼容方案。
+
+在业务 Pod 中设置 `hostNetwork: true`，并使用 `nodeSelector` 将其调度到能访问设备的节点：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unsupported-device-task
+  namespace: default
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeSelector:
+    kubernetes.io/hostname: worker-1
+  containers:
+    - name: app
+      image: registry.example.com/vendor/device-sdk:latest
+      command: ["sh", "-c", "./device-client --address 192.168.10.20"]
+  tolerations:
+    - key: rlinf.io/robot
+      operator: Exists
+      effect: NoSchedule
+```
+
+该 Pod 不需要申请 `rlinf.io/device`，也不会获得 embodied-runtime 的设备发现、资源隔离、controller、CLI、SDK 或环境变量注入。设备驱动、连接参数与生命周期管理由业务镜像负责。
+
+`hostNetwork` 会让 Pod 与宿主机共享网络命名空间，可能产生端口冲突并降低网络隔离能力。仅在可信数据面和专用设备节点使用，并通过节点标签、污点和容忍限制调度范围。若设备已能通过 `host_devices`、`host_macvlans`、ROS 或 Camera controller 接入，应优先使用对应的原生方案。
 
 ---
 

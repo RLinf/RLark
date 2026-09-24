@@ -9,6 +9,7 @@ apiVersion: rlark.io/v1alpha1
 kind: DeployConfig
 plane: data
 control-plane-address: https://rlark-server.rlark-system.svc:8443
+# ssh-address: client@rlark-server.rlark-system.svc:2222 # 可选，跨集群网络的 Server SSH 地址 user@host:port；留空则从 control-plane-address 自动推导
 
 cert:
   ca-cert: |
@@ -31,6 +32,7 @@ kubernetes:
   agent-image: rlark:latest
   image: rlark:latest # 可选，启用跨集群 Pod 网络互通和 SSH server
   # containerd-socket: /run/k3s/containerd/containerd.sock # 可选，k3s 等非标准 containerd 路径，启用 node-agent 镜像拉取进度监控
+  # image-pull-policy: IfNotPresent # 可选，组件镜像拉取策略 Always | IfNotPresent | Never，默认 Always
 
 #docker:
 #  agent-image: rlark-agent:latest

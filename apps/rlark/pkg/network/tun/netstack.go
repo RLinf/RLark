@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"sync"
 	"time"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
@@ -24,7 +23,7 @@ import (
 // netstack 管理一个 gVisor 用户态 TCP/IP 协议栈实例。
 //
 // 该协议栈作为虚拟机和远端 Proxy 之间的中间层：
-// - 接收来自 TUN 设备（经 net.Pipe）的 IP 包
+// - 直接接收来自 TUN 设备的 IP 包
 // - 在协议栈内完成 TCP/UDP/ICMP 协议解析
 // - 通过 dialer 回调建立到 Proxy 的 TCP 连接，转发原始流量
 // - Proxy 发回的响应经由协议栈重组为 IP 包写回 TUN 设备
@@ -45,6 +44,12 @@ type netstack struct {
 	// 因为注入到 gVisor 内部会导致 gVisor 将其作为本地包消费（dst 是协议栈自身 IP），
 	// 而无法到达对端 VM。
 	writeToTUN func([]byte) error
+}
+
+type tunDevice interface {
+	Read([]byte) (int, error)
+	Write([]byte) (int, error)
+	Close() error
 }
 
 func newNetstack(ip net.IP, mtu int, dialProxy utils.Dial, queryParams map[string]string) *netstack {
@@ -71,7 +76,7 @@ func (ns *netstack) ipaddr() [4]byte {
 	return ip
 }
 
-// handleTunnel 为一个 TCP 隧道连接创建独立的 gVisor 协议栈实例。
+// run 为一个 TUN 设备创建独立的 gVisor 协议栈实例。
 //
 // 每个隧道连接（对应一个 TUN 设备）拥有独立的协议栈，包含：
 // - IPv4 网络层
@@ -79,10 +84,10 @@ func (ns *netstack) ipaddr() [4]byte {
 // - channel endpoint 作为链路层接口
 // - 完整的协议转发器（Forwarder）
 //
-// 数据传输在一个双向转发循环中完成：隧道 → gVisor（handleRecv）和
-// gVisor → 隧道（handleSend），通过 sync.WaitGroup 同步退出。
-func (ns *netstack) handleTunnel(tunnelConn net.Conn) error {
-	defer func() { _ = tunnelConn.Close() }()
+// 数据传输在两个直接转发循环中完成：TUN → gVisor 和 gVisor → TUN。
+func (ns *netstack) run(ctx context.Context, iface tunDevice) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	// ─── 1. 创建 gVisor 协议栈 ───
 	s := stack.New(stack.Options{
@@ -95,6 +100,7 @@ func (ns *netstack) handleTunnel(tunnelConn net.Conn) error {
 			icmp.NewProtocol4,
 		},
 	})
+	defer s.Destroy()
 
 	// ─── 2. 创建通道链路层端点 ───
 	// 这是 gVisor 和外部世界（TCP 隧道）之间的桥梁。
@@ -141,32 +147,37 @@ func (ns *netstack) handleTunnel(tunnelConn net.Conn) error {
 	s.SetTransportProtocolHandler(udp.ProtocolNumber, ns.getUDPHandler(s))
 	s.SetTransportProtocolHandler(icmp.ProtocolNumber4, ns.getICMPHandler(s, ep))
 
-	// ─── 7. 启动双向数据传输 ───
-	var wg sync.WaitGroup
-	wg.Add(2)
-	// 隧道 → gVisor：从 TCP 隧道读取 IP 包，注入 gVisor 协议栈
-	go ns.handleRecv(tunnelConn, ep, &wg)
-	// gVisor → 隧道：从 gVisor 协议栈读取 IP 包，通过隧道发回客户端
-	go ns.handleSend(ep, tunnelConn, &wg)
+	errCh := make(chan error, 2)
+	go func() { errCh <- ns.handleRecv(iface, ep) }()
+	go func() { errCh <- ns.handleSend(ctx, ep, iface) }()
 
-	// ─── 8. 等待退出信号 ───
-	wg.Wait()
-	return nil
+	var err error
+	completed := 0
+	select {
+	case <-ctx.Done():
+		err = ctx.Err()
+	case err = <-errCh:
+		completed = 1
+	}
+	cancel()
+	_ = iface.Close()
+	ep.Close()
+	for completed < 2 {
+		<-errCh
+		completed++
+	}
+	return err
 }
 
-// handleRecv 从 TCP 隧道读取帧封装的 IP 包并注入到 gVisor 协议栈。
-//
-// 这是远端 → 本地虚拟机的方向：远端 Proxy 返回的数据经由 TCP 隧道，
-// 在此函数中被还原为 IP 包并注入 gVisor 栈，最终由虚拟机接收。
-func (ns *netstack) handleRecv(tunnelConn net.Conn, ep *channel.Endpoint, wg *sync.WaitGroup) {
-	logger := log.GetLogger()
-	defer wg.Done()
+// handleRecv 从 TUN 读取 IP 包并直接注入 gVisor 协议栈。
+func (ns *netstack) handleRecv(iface tunDevice, ep *channel.Endpoint) error {
+	buf := make([]byte, ns.mtu)
 	for {
-		data, err := RecvPacket(tunnelConn)
+		n, err := iface.Read(buf)
 		if err != nil {
-			logger.Error(nil, "Failed to receive packet from tunnel", "err", err)
-			return
+			return err
 		}
+		data := buf[:n]
 		// 最小 IPv4 头长度为 20 字节，不足则丢弃
 		if len(data) < header.IPv4MinimumSize {
 			continue
@@ -180,6 +191,7 @@ func (ns *netstack) handleRecv(tunnelConn net.Conn, ep *channel.Endpoint, wg *sy
 				Payload: buffer.MakeWithData(data),
 			})
 			ep.InjectInbound(ipv4.ProtocolNumber, pkt)
+			pkt.DecRef()
 			tunMetrics.IncPackets("rx")
 		default:
 			// ignore unsupported versions
@@ -187,31 +199,28 @@ func (ns *netstack) handleRecv(tunnelConn net.Conn, ep *channel.Endpoint, wg *sy
 	}
 }
 
-// handleSend 从 gVisor 协议栈的通道链路层读取 IP 包并通过 TCP 隧道发回。
-//
-// 这是本地虚拟机 → 远端的方向：虚拟机发出的 IP 包经 gVisor 协议栈处理，
-// 未匹配地址的包被路由到此函数，帧封装后通过 TCP 隧道发往远端 Proxy。
-func (ns *netstack) handleSend(ep *channel.Endpoint, tunnelConn net.Conn, wg *sync.WaitGroup) {
-	logger := log.GetLogger()
-	defer wg.Done()
+// handleSend 从 gVisor 通道链路层读取 IP 包并直接写回 TUN。
+func (ns *netstack) handleSend(ctx context.Context, ep *channel.Endpoint, iface tunDevice) error {
 	for {
-		// 从通道链路层读取出去的 IP 包
-		pkt := ep.Read()
+		pkt := ep.ReadContext(ctx)
 		if pkt == nil {
-			continue
+			return ctx.Err()
 		}
 
 		// 收集所有 buffer 中的数据
 		pktBuf := pkt.ToBuffer()
 		data := pktBuf.Flatten()
 		if len(data) == 0 {
+			pktBuf.Release()
+			pkt.DecRef()
 			continue
 		}
 
-		// 通过隧道发回客户端
-		if err := SendPacket(tunnelConn, data); err != nil {
-			logger.Error(nil, "Failed to send packet to tunnel", "err", err)
-			return
+		_, err := iface.Write(data)
+		pktBuf.Release()
+		pkt.DecRef()
+		if err != nil {
+			return err
 		}
 		tunMetrics.IncPackets("tx")
 	}

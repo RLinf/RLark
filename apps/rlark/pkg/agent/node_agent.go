@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	_ "net/http/pprof" // 注册 /debug/pprof 到 DefaultServeMux
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -166,10 +164,12 @@ func (n *nodeAgent) Run(ctx context.Context) error {
 		managementPodLister,
 		n.a.config.RLarkServerSSHAddress,
 		n.a.config.RLarkServerSSHHostKey,
+		n.a.config.SSHMaxConnectionsPerDomain,
 		n.a.config.EnableSameClusterDirect,
 		n.a.config.EnableCrossClusterDirect,
 		n.a.config.KubeletDir,
 	)
+	defer func() { _ = networkAdapter.Close() }()
 	nodeserver := nodeserver.NewNodeServer(
 		n.a.config.NodeServerConfig,
 		networkAdapter.GetContainerNetworkCred,
@@ -181,13 +181,11 @@ func (n *nodeAgent) Run(ctx context.Context) error {
 
 	var eg errgroup.Group
 	eg.Go(func() error {
-		return nodeserver.Run(ctx)
+		return nodeserver.Run(ctx, n.a)
 	})
-	// metrics/pprof HTTP server,复用 --metrics-bind-address(默认 :8081)
+	// Health, metrics, and pprof HTTP server, using --metrics-bind-address (default :8081).
 	eg.Go(func() error {
-		mux := http.DefaultServeMux
-		mux.Handle("/metrics", promhttp.Handler())
-		srv := &http.Server{Addr: n.a.config.MetricsBindAddress, Handler: mux}
+		srv := &http.Server{Addr: n.a.config.MetricsBindAddress, Handler: n.a.healthRouter()}
 		go func() {
 			<-ctx.Done()
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

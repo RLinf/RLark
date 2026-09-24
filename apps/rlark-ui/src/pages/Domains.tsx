@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react";
 import type { Copy } from "../i18n";
 import type { CRDDomain } from "../types";
 import { useAutoRefresh } from "../hooks";
-import { PageToolbar } from "../components/shared";
+import { PageToolbar, RefreshOverlay } from "../components/shared";
 
 export function DomainsPage({
   copy: c,
@@ -17,8 +17,10 @@ export function DomainsPage({
   const zh = c.nav.overview === "总览";
   const [domains, setDomains] = useState<CRDDomain[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [query, setQuery] = useState("");
   const [newName, setNewName] = useState("");
   const [newCidr, setNewCidr] = useState("10.244.0.0/16");
   const [creating, setCreating] = useState(false);
@@ -27,10 +29,7 @@ export function DomainsPage({
     if (isInitial) setLoading(true);
     setError("");
     try {
-      const resp = await fetch("/api/v1/rlinf.io/v1alpha1/domains");
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      setDomains(data.items ?? []);
+      setDomains(await domainsApi.list());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -40,22 +39,26 @@ export function DomainsPage({
 
   useAutoRefresh(fetchDomains, 10000);
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await fetchDomains(false);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleCreate = async () => {
     setCreating(true);
     setError("");
     try {
-      const resp = await fetch("/api/v1/rlinf.io/v1alpha1/domains", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          apiVersion: "rlinf.io/v1alpha1",
-          kind: "Domain",
-          metadata: { name: newName.trim() },
-          spec: { cidr: newCidr.trim() },
-        }),
+      await domainsApi.create({
+        apiVersion: "rlinf.io/v1alpha1",
+        kind: "Domain",
+        metadata: { name: newName.trim() },
+        spec: { cidr: newCidr.trim() },
       });
-      if (!resp.ok)
-        throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
       setShowCreate(false);
       setNewName("");
       setNewCidr("10.244.0.0/16");
@@ -71,10 +74,7 @@ export function DomainsPage({
     if (!confirm(zh ? `确定删除域 "${name}" 吗?` : `Delete domain "${name}"?`))
       return;
     try {
-      const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/domains/${name}`, {
-        method: "DELETE",
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      await domainsApi.remove(name);
       setDomains((prev) => prev.filter((d) => d.metadata.name !== name));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -85,6 +85,12 @@ export function DomainsPage({
     selectedName && domains.length > 0
       ? (domains.find((d) => d.metadata.name === selectedName) ?? null)
       : null;
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredDomains = domains.filter((domain) =>
+    `${domain.metadata.name} ${domain.spec.cidr}`
+      .toLowerCase()
+      .includes(normalizedQuery),
+  );
 
   if (selected) {
     return (
@@ -117,18 +123,22 @@ export function DomainsPage({
       </div>
       <PageToolbar
         placeholder={zh ? "搜索域..." : "Search domains..."}
-        value=""
-        onChange={() => {}}
-        count={domains.length}
+        value={query}
+        onChange={setQuery}
+        count={filteredDomains.length}
         copy={c}
-        onRefresh={() => fetchDomains(false)}
+        onRefresh={handleRefresh}
+        refreshing={refreshing}
       />
       {error && (
         <div className="cert-error" style={{ marginBottom: 12 }}>
           {error}
         </div>
       )}
-      <div className="table-panel">
+      <div
+        className={`table-panel domains-table-panel refreshable-region${refreshing ? " is-refreshing" : ""}`}
+        aria-busy={refreshing}
+      >
         <table>
           <thead>
             <tr>
@@ -136,18 +146,18 @@ export function DomainsPage({
               <th>CIDR</th>
               <th>{zh ? "IP 分配" : "IP Allocations"}</th>
               <th>{zh ? "创建时间" : "Created"}</th>
-              <th />
+              <th className="table-actions-col">{zh ? "操作" : "Actions"}</th>
             </tr>
           </thead>
           <tbody>
-            {domains.map((d) => (
+            {filteredDomains.map((d) => (
               <tr
                 key={d.metadata.name}
                 className="clickable-row"
                 onClick={() => onSelect(d.metadata.name)}
               >
-                <td>
-                  <strong>{d.metadata.name}</strong>
+                <td className="domain-name-cell">
+                  <strong title={d.metadata.name}>{d.metadata.name}</strong>
                 </td>
                 <td>
                   <code className="inline-code">{d.spec.cidr}</code>
@@ -161,7 +171,7 @@ export function DomainsPage({
                 <td>
                   <small>{d.metadata.creationTimestamp ?? "—"}</small>
                 </td>
-                <td>
+                <td className="table-actions-col">
                   <div className="row-actions">
                     <button
                       className="icon-button danger"
@@ -177,7 +187,7 @@ export function DomainsPage({
                 </td>
               </tr>
             ))}
-            {domains.length === 0 && !loading && (
+            {filteredDomains.length === 0 && !loading && (
               <tr>
                 <td
                   colSpan={5}
@@ -191,6 +201,10 @@ export function DomainsPage({
             )}
           </tbody>
         </table>
+        <RefreshOverlay
+          visible={refreshing}
+          label={zh ? "正在刷新域列表" : "Refreshing domain list"}
+        />
       </div>
       {showCreate && (
         <div
@@ -336,11 +350,13 @@ export function DomainDetailPage({
   return (
     <div className="page-content resource-page domain-detail-page">
       <div className="section-heading">
-        <div>
+        <div className="domain-detail-heading-copy">
           <span className="eyebrow">
             {zh ? "跨集群网络" : "Cross-cluster Network"}
           </span>
-          <h2>{domain.metadata.name}</h2>
+          <h2 className="domain-detail-title" title={domain.metadata.name}>
+            {domain.metadata.name}
+          </h2>
           <p>
             {zh
               ? "管理跨集群网络域，为 Pod 分配跨集群可达的 IP 地址。"
@@ -528,3 +544,4 @@ export function DomainDetailPage({
     </div>
   );
 }
+import { domainsApi } from "../backend";

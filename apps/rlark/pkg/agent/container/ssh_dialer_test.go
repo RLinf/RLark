@@ -100,21 +100,96 @@ func testDialer(t *testing.T) *SSHDialer {
 func TestDomainEntry_Borrow(t *testing.T) {
 	entry := &domainEntry{domainID: "test"}
 	client := newSSHClient(t)
-	entry.client = client
-	entry.lastUsed = time.Now()
+	pooled := newPooledSSHClient(client)
+	entry.clients = []*pooledSSHClient{pooled}
 
 	// 健康的连接走 fast path，d 不会被使用
 	got, err := entry.borrow(context.Background(), nil, "", "", "")
 	if err != nil {
 		t.Fatalf("borrow: %v", err)
 	}
-	if got != client {
+	if got != pooled {
 		t.Fatal("borrow returned wrong client")
 	}
-	if entry.lastUsed.Equal(time.Time{}) {
+	if pooled.lastUsed().Equal(time.Time{}) {
 		t.Fatal("expected lastUsed to be updated")
 	}
+	entry.release(got)
 }
+
+func TestDomainEntry_AdaptivePoolSelection(t *testing.T) {
+	d := NewSSHDialer(SSHDialerConfig{MaxConnectionsPerDomain: 2})
+	t.Cleanup(func() { _ = d.Close() })
+	entry := &domainEntry{domainID: "test"}
+	first := newPooledSSHClient(newSSHClient(t))
+	second := newPooledSSHClient(newSSHClient(t))
+	first.active = 2
+	second.active = 1
+	entry.clients = []*pooledSSHClient{first, second}
+
+	got, err := entry.borrow(context.Background(), d, "", "", "")
+	if err != nil {
+		t.Fatalf("borrow: %v", err)
+	}
+	if got != second {
+		t.Fatal("expected least-loaded SSH connection")
+	}
+	if second.active != 2 {
+		t.Fatalf("expected active=2, got %d", second.active)
+	}
+	entry.release(got)
+	if second.active != 1 {
+		t.Fatalf("expected active=1 after release, got %d", second.active)
+	}
+}
+
+func TestActivityConn_CloseReleasesOnce(t *testing.T) {
+	left, right := net.Pipe()
+	t.Cleanup(func() { _ = right.Close() })
+	releases := 0
+	conn := &activityConn{
+		Conn:       left,
+		onActivity: func() {},
+		onClose:    func() { releases++ },
+		onError:    func(error) {},
+	}
+
+	_ = conn.Close()
+	_ = conn.Close()
+	if releases != 1 {
+		t.Fatalf("expected one release, got %d", releases)
+	}
+}
+
+func TestActivityConn_TransportErrorReportedOnce(t *testing.T) {
+	transportErr := &net.OpError{Op: "write", Err: syscall.ETIMEDOUT}
+	errorsReported := 0
+	conn := &activityConn{
+		Conn:       &errorConn{err: transportErr},
+		onActivity: func() {},
+		onClose:    func() {},
+		onError: func(err error) {
+			if !errors.Is(err, transportErr) {
+				t.Errorf("unexpected transport error: %v", err)
+			}
+			errorsReported++
+		},
+	}
+
+	_, _ = conn.Write(nil)
+	_, _ = conn.Read(nil)
+	if errorsReported != 1 {
+		t.Fatalf("expected one transport error report, got %d", errorsReported)
+	}
+}
+
+type errorConn struct {
+	net.Conn
+	err error
+}
+
+func (c *errorConn) Read([]byte) (int, error)  { return 0, c.err }
+func (c *errorConn) Write([]byte) (int, error) { return 0, c.err }
 
 // TestDomainEntry_BorrowBroken 测试连接损坏后触发重连。
 func TestDomainEntry_BorrowBroken(t *testing.T) {
@@ -128,25 +203,47 @@ func TestDomainEntry_BorrowBroken(t *testing.T) {
 	}
 
 	// 重连失败后不应有 client
-	entry.mu.RLock()
-	if entry.client != nil {
+	entry.mu.Lock()
+	if len(entry.clients) != 0 {
 		t.Fatal("expected nil client after failed reconnect")
 	}
-	entry.mu.RUnlock()
+	entry.mu.Unlock()
 }
 
 // TestDomainEntry_MarkBroken 测试标记为损坏并关闭连接。
 func TestDomainEntry_MarkBroken(t *testing.T) {
 	entry := &domainEntry{domainID: "test"}
 	client := newSSHClient(t)
-	entry.client = client
+	pooled := newPooledSSHClient(client)
+	entry.clients = []*pooledSSHClient{pooled}
 
-	entry.markBroken("test")
-	if !entry.broken {
-		t.Fatal("expected broken=true")
-	}
-	if entry.client != nil {
+	entry.markBroken(pooled, "test")
+	if len(entry.clients) != 0 {
 		t.Fatal("expected client to be nil after markBroken")
+	}
+}
+
+func TestDomainEntry_MarkBrokenDrainsActiveChannels(t *testing.T) {
+	entry := &domainEntry{domainID: "test"}
+	pooled := newPooledSSHClient(newSSHClient(t))
+	pooled.active = 2
+	entry.clients = []*pooledSSHClient{pooled}
+
+	entry.markBroken(pooled, "test")
+	if len(entry.clients) != 1 || !pooled.draining {
+		t.Fatal("active client should remain tracked while draining")
+	}
+	if got := entry.leastLoadedLocked(); got != nil {
+		t.Fatal("draining client must not accept new channels")
+	}
+
+	entry.release(pooled)
+	if len(entry.clients) != 1 {
+		t.Fatal("client should remain until all channels are released")
+	}
+	entry.release(pooled)
+	if len(entry.clients) != 0 {
+		t.Fatal("client should close after its last channel is released")
 	}
 }
 
@@ -174,7 +271,7 @@ func TestSSHDialer_ConcurrentSafety(t *testing.T) {
 	t.Log("50 concurrent dials completed without panic")
 }
 
-// TestSSHDialer_ConcurrentReconnect 50 个并发请求，连接断开后全部应等待重连而非直接失败。
+// TestSSHDialer_ConcurrentReconnect 50 个并发请求失败后都应及时返回。
 func TestSSHDialer_ConcurrentReconnect(t *testing.T) {
 	d := NewSSHDialer(SSHDialerConfig{
 		InitialReconnectBackoff: 1 * time.Millisecond,
@@ -184,9 +281,9 @@ func TestSSHDialer_ConcurrentReconnect(t *testing.T) {
 	entry := d.getOrCreate("test-domain")
 
 	// 模拟连接断开
-	entry.markBroken("test")
+	entry.close()
 
-	// 50 个并发请求，全部尝试重连（预期失败，但无惊群）
+	// 50 个并发请求，最多并行建立连接池容量个连接。
 	var wg sync.WaitGroup
 	errCh := make(chan error, 50)
 	for i := 0; i < 50; i++ {
@@ -213,8 +310,7 @@ func TestSSHDialer_ConcurrentReconnect(t *testing.T) {
 	t.Logf("50 concurrent reconnects: all completed, none deadlocked")
 }
 
-// TestSSHDialer_ReconnectCoordination 重连协调测试：
-// 连接断开后，多个 goroutine 同时 borrow，只有第一个执行 dialSSH，其余等待。
+// TestSSHDialer_ReconnectCoordination 验证并发请求可并行填充连接池。
 func TestSSHDialer_ReconnectCoordination(t *testing.T) {
 	d := NewSSHDialer(SSHDialerConfig{
 		InitialReconnectBackoff: 1 * time.Millisecond,
@@ -246,8 +342,8 @@ func TestSSHDialer_ReconnectCoordination(t *testing.T) {
 			if err != nil {
 				return
 			}
-			time.Sleep(200 * time.Millisecond)
 			go func() {
+				time.Sleep(200 * time.Millisecond)
 				_, _, _, err := ssh.NewServerConn(tcpConn, serverConfig)
 				if err != nil {
 					_ = tcpConn.Close()
@@ -256,9 +352,10 @@ func TestSSHDialer_ReconnectCoordination(t *testing.T) {
 		}
 	}()
 
+	const requestCount = defaultMaxConnections * 10
 	var wg sync.WaitGroup
 	start := time.Now()
-	for i := 0; i < 10; i++ {
+	for i := 0; i < requestCount; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -271,9 +368,12 @@ func TestSSHDialer_ReconnectCoordination(t *testing.T) {
 	wg.Wait()
 
 	elapsed := time.Since(start)
-	t.Logf("10 concurrent borrows with 200ms handshake: took %v", elapsed)
-	if elapsed > 2*time.Second {
-		t.Fatalf("expected reconnect coordination, but took %v (should be ~200-400ms)", elapsed)
+	t.Logf("%d concurrent borrows with 200ms handshake: took %v", requestCount, elapsed)
+	if elapsed > time.Second {
+		t.Fatalf("expected parallel connection setup, but took %v", elapsed)
+	}
+	if got := d.Stats(); got != defaultMaxConnections {
+		t.Fatalf("expected pool capped at %d connections, got %d", defaultMaxConnections, got)
 	}
 }
 
@@ -281,7 +381,7 @@ func TestSSHDialer_ReconnectCoordination(t *testing.T) {
 func TestSSHDialer_Close(t *testing.T) {
 	d := NewSSHDialer(SSHDialerConfig{})
 	entry := d.getOrCreate("test-domain")
-	entry.client = newSSHClient(t)
+	entry.clients = []*pooledSSHClient{newPooledSSHClient(newSSHClient(t))}
 	_ = d.Close()
 }
 
@@ -306,9 +406,9 @@ func TestSSHDialer_CloseRacesReconnect(t *testing.T) {
 	<-done
 
 	// Close 后不应有 client
-	entry.mu.RLock()
-	hasClient := entry.client != nil
-	entry.mu.RUnlock()
+	entry.mu.Lock()
+	hasClient := len(entry.clients) != 0
+	entry.mu.Unlock()
 	if hasClient {
 		t.Fatal("expected no client after Close, got leaked connection")
 	}
@@ -323,15 +423,15 @@ func TestSSHDialer_Stats(t *testing.T) {
 	defer func() { _ = d.Close() }()
 
 	entry1 := d.getOrCreate("a")
-	entry1.client = newSSHClient(t)
+	entry1.clients = []*pooledSSHClient{newPooledSSHClient(newSSHClient(t))}
 	entry2 := d.getOrCreate("b")
-	entry2.client = newSSHClient(t)
+	entry2.clients = []*pooledSSHClient{newPooledSSHClient(newSSHClient(t))}
 
 	if stats := d.Stats(); stats != 2 {
 		t.Fatalf("expected 2 open, got %d", stats)
 	}
 
-	entry1.markBroken("test")
+	entry1.markBroken(entry1.clients[0], "test")
 	if stats := d.Stats(); stats != 1 {
 		t.Fatalf("expected 1 open after broken, got %d", stats)
 	}
@@ -348,18 +448,18 @@ func TestSSHDialer_GC(t *testing.T) {
 	entry := d.getOrCreate("test-domain")
 	client := newSSHClient(t)
 	entry.mu.Lock()
-	entry.client = client
-	entry.lastUsed = time.Now().Add(-1 * time.Hour)
+	pooled := newPooledSSHClient(client)
+	pooled.lastUsedNanos.Store(time.Now().Add(-1 * time.Hour).UnixNano())
+	entry.clients = []*pooledSSHClient{pooled}
 	entry.mu.Unlock()
 
 	time.Sleep(100 * time.Millisecond)
 
-	entry.mu.RLock()
-	broken := entry.broken
-	hasClient := entry.client != nil
-	entry.mu.RUnlock()
+	entry.mu.Lock()
+	hasClient := len(entry.clients) != 0
+	entry.mu.Unlock()
 
-	if !broken || hasClient {
+	if hasClient {
 		t.Fatal("expected idle connection to be GC'd")
 	}
 }
@@ -400,7 +500,7 @@ func TestDialSSH_ParsePubkey(t *testing.T) {
 	}
 }
 
-// TestReconnectCoord_Parallelism 验证单次重连期间其余请求等待而非并行新建。
+// TestReconnectCoord_Parallelism 验证池满时请求等待当前一轮建连。
 func TestReconnectCoord_Parallelism(t *testing.T) {
 	d := NewSSHDialer(SSHDialerConfig{
 		InitialReconnectBackoff: 1 * time.Millisecond,
@@ -412,23 +512,19 @@ func TestReconnectCoord_Parallelism(t *testing.T) {
 	blockCh := make(chan struct{})
 	startedCh := make(chan struct{})
 
-	// 模拟一个正在进行的重连
+	// 模拟所有建连槽都正在使用。
 	go func() {
-		entry.reconMu.Lock()
 		entry.mu.Lock()
-		entry.reconnecting = true
+		entry.reconnecting = d.cfg.MaxConnectionsPerDomain
 		entry.reconnectCh = make(chan struct{})
 		entry.mu.Unlock()
-		entry.reconMu.Unlock()
 
 		close(startedCh)
 		<-blockCh
 
 		entry.mu.Lock()
-		entry.reconnecting = false
-		entry.client = newSSHClient(t)
-		entry.broken = false
-		entry.lastUsed = time.Now()
+		entry.reconnecting = 0
+		entry.clients = []*pooledSSHClient{newPooledSSHClient(newSSHClient(t))}
 		close(entry.reconnectCh)
 		entry.mu.Unlock()
 	}()
@@ -446,6 +542,9 @@ func TestReconnectCoord_Parallelism(t *testing.T) {
 			if err != nil || client == nil {
 				t.Error("expected successful borrow after reconnect")
 			}
+			if client != nil {
+				entry.release(client)
+			}
 		}()
 	}
 
@@ -459,7 +558,7 @@ func TestReconnectCoord_Parallelism(t *testing.T) {
 
 	close(blockCh)
 	wg.Wait()
-	t.Log("all 5 borrowers correctly waited for single reconnect")
+	t.Log("all 5 borrowers correctly waited for the active connection attempts")
 }
 
 // waitCh returns a channel that is never closed (for timeout selects).
@@ -472,6 +571,7 @@ func TestSSHDialer_BackoffReset(t *testing.T) {
 	d := testDialer(t)
 	entry := &domainEntry{domainID: "test", maxBackoff: maxReconnectBackoff}
 	entry.reconnectCh = make(chan struct{})
+	entry.reconnecting = 1
 	entry.reconnectBackoff = 10 * time.Second
 
 	// 模拟成功
@@ -481,6 +581,7 @@ func TestSSHDialer_BackoffReset(t *testing.T) {
 	}
 
 	entry.reconnectCh = make(chan struct{})
+	entry.reconnecting = 1
 
 	// 模拟失败
 	entry.finishReconnect(nil, assertAnError("fail"), false, d)
@@ -489,6 +590,7 @@ func TestSSHDialer_BackoffReset(t *testing.T) {
 	}
 
 	entry.reconnectCh = make(chan struct{})
+	entry.reconnecting = 1
 
 	// 模拟再次失败
 	entry.finishReconnect(nil, assertAnError("fail again"), false, d)
@@ -546,8 +648,9 @@ func TestIsSSHTransportError(t *testing.T) {
 		{"wrapped net.OpError", fmt.Errorf("proxy: %w", &net.OpError{Op: "read", Err: syscall.ECONNRESET}), true},
 		{"ssh transport closed", errors.New("ssh: tcp transport closed"), true},
 		{"context.Canceled", context.Canceled, false},
-		{"context.DeadlineExceeded", context.DeadlineExceeded, false},
+		{"context.DeadlineExceeded", context.DeadlineExceeded, true},
 		{"wrapped context.Canceled", fmt.Errorf("dial: %w", context.Canceled), false},
+		{"wrapped context.DeadlineExceeded", fmt.Errorf("dial: %w", context.DeadlineExceeded), true},
 		{"generic error", errors.New("connection refused"), false},
 	}
 	for _, tt := range tests {
@@ -563,29 +666,22 @@ func TestIsSSHTransportError(t *testing.T) {
 func TestDomainEntry_MarkBrokenIfCurrent(t *testing.T) {
 	entry := &domainEntry{domainID: "test"}
 
-	old := newSSHClient(t)
-	entry.client = old
-	entry.broken = false
+	old := newPooledSSHClient(newSSHClient(t))
+	entry.clients = []*pooledSSHClient{old}
 
 	// 换一个"新"client 进来（模拟重连成功）
-	newClient := newSSHClient(t)
-	entry.client = newClient
+	newClient := newPooledSSHClient(newSSHClient(t))
+	entry.clients = []*pooledSSHClient{newClient}
 
 	// keepalive 拿旧 client 来标 broken,不应影响新连接
-	entry.markBrokenIfCurrent(old, "test")
-	if entry.broken {
-		t.Fatal("should not mark broken when client has been replaced")
-	}
-	if entry.client != newClient {
+	entry.markBroken(old, "test")
+	if len(entry.clients) != 1 || entry.clients[0] != newClient {
 		t.Fatal("current client should remain untouched")
 	}
 
 	// 用当前 client 标 broken,应生效
-	entry.markBrokenIfCurrent(newClient, "test")
-	if !entry.broken {
-		t.Fatal("expected broken=true when marking current client")
-	}
-	if entry.client != nil {
+	entry.markBroken(newClient, "test")
+	if len(entry.clients) != 0 {
 		t.Fatal("expected client to be nil after markBrokenIfCurrent")
 	}
 }

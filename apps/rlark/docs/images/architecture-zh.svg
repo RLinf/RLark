@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="678" viewBox="0 0 1024 678">
+  <defs>
+    <linearGradient id="arrow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a8a8a8"/>
+      <stop offset="1" stop-color="#303030"/>
+    </linearGradient>
+    <style>
+      .font { font-family: Inter, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif; }
+      .label { font-size: 20px; font-weight: 600; }
+      .section { font-size: 21px; font-weight: 700; fill: #fff; }
+      .cluster { font-size: 21px; font-weight: 600; }
+    </style>
+  </defs>
+  <rect width="1024" height="678" fill="#fff"/>
+
+  <!-- 用户层 -->
+  <rect x="0" y="1" width="1022" height="68" rx="2" fill="#edf5e7" stroke="#66a822"/>
+  <rect x="0" y="1" width="184" height="68" rx="2" fill="#66a822"/>
+  <text x="92" y="42" text-anchor="middle" class="font section">用户层</text>
+  <rect x="184" y="6" width="277" height="56" fill="#d8e9c9"/>
+  <rect x="469" y="6" width="270" height="56" fill="#d8e9c9"/>
+  <rect x="747" y="6" width="269" height="56" fill="#d8e9c9"/>
+  <text x="323" y="42" text-anchor="middle" class="font label" fill="#70ba23">Web 界面</text>
+  <text x="604" y="42" text-anchor="middle" class="font label" fill="#70ba23">API 客户端</text>
+  <text x="882" y="42" text-anchor="middle" class="font label" fill="#70ba23">RLinf/框架集</text>
+  <path d="M303 69h48v9h17l-41 20-41-20h17z" fill="url(#arrow)"/>
+  <path d="M580 69h48v9h17l-41 20-41-20h17z" fill="url(#arrow)"/>
+  <path d="M856 69h48v9h17l-41 20-41-20h17z" fill="url(#arrow)"/>
+
+  <!-- 控制面 -->
+  <rect x="0" y="99" width="1022" height="127" rx="2" fill="#eef6ff" stroke="#2689e8"/>
+  <rect x="0" y="99" width="184" height="127" rx="2" fill="#2d88e7"/>
+  <text x="92" y="169" text-anchor="middle" class="font section">控制面</text>
+  <rect x="192" y="106" width="201" height="111" rx="2" fill="#bfdcf6"/>
+  <rect x="400" y="106" width="200" height="111" rx="2" fill="#bfdcf6"/>
+  <rect x="607" y="106" width="201" height="111" rx="2" fill="#bfdcf6"/>
+  <rect x="815" y="106" width="200" height="111" rx="2" fill="#bfdcf6"/>
+  <text x="292" y="169" text-anchor="middle" class="font label" fill="#2689e8">API 网关服务</text>
+  <text x="500" y="169" text-anchor="middle" class="font label" fill="#2689e8">跨集群通信服务</text>
+  <text x="707" y="169" text-anchor="middle" class="font label" fill="#2689e8">任务编排服务</text>
+  <text x="915" y="169" text-anchor="middle" class="font label" fill="#2689e8">运维监控服务</text>
+  <path d="M199 226h48v9h17l-41 20-41-20h17z" fill="url(#arrow)"/>
+  <path d="M776 226h48v9h17l-41 20-41-20h17z" fill="url(#arrow)"/>
+
+  <!-- 云端 GPU 集群 -->
+  <rect x="0" y="254" width="445" height="423" rx="2" fill="#f0f3ff" stroke="#3d63df"/>
+  <rect x="0" y="254" width="184" height="50" rx="2" fill="#3d63df"/>
+  <text x="92" y="286" text-anchor="middle" class="font section">数据面</text>
+  <text x="315" y="288" text-anchor="middle" class="font cluster" fill="#3d63df">云端 GPU 集群</text>
+  <rect x="11" y="318" width="133" height="125" rx="3" fill="#c3d1f5"/>
+  <rect x="157" y="318" width="132" height="56" rx="3" fill="#c3d1f5"/>
+  <rect x="302" y="318" width="132" height="56" rx="3" fill="#c3d1f5"/>
+  <rect x="157" y="388" width="277" height="55" rx="3" fill="#c3d1f5"/>
+  <text x="77" y="389" text-anchor="middle" class="font label" fill="#3d63df">集群代理</text>
+  <text x="223" y="352" text-anchor="middle" class="font label" fill="#3d63df">节点代理</text>
+  <text x="368" y="352" text-anchor="middle" class="font label" fill="#3d63df">算力设备插件</text>
+  <text x="295" y="423" text-anchor="middle" class="font label" fill="#3d63df">算力节点</text>
+  <rect x="11" y="456" width="423" height="81" rx="3" fill="#809ce9"/>
+  <text x="223" y="508" text-anchor="middle" class="font section">Kubernetes</text>
+  <rect x="11" y="552" width="423" height="113" rx="3" fill="#c3d1f5"/>
+  <text x="223" y="587" text-anchor="middle" class="font label" fill="#3d63df">算力硬件</text>
+  <g fill="none" stroke="#2e4e9d" stroke-width="5">
+    <g transform="translate(37 605)"><path d="M0 0v43M3 8h38v28H3zM14 19h5M27 19h5M10 43h24"/></g>
+    <g transform="translate(103 605)"><path d="M0 0v43M3 8h38v28H3zM14 19h5M27 19h5M10 43h24"/></g>
+    <g transform="translate(169 605)"><path d="M0 0v43M3 8h38v28H3zM14 19h5M27 19h5M10 43h24"/></g>
+    <g transform="translate(235 605)"><path d="M0 0v43M3 8h38v28H3zM14 19h5M27 19h5M10 43h24"/></g>
+    <g transform="translate(301 605)"><path d="M0 0v43M3 8h38v28H3zM14 19h5M27 19h5M10 43h24"/></g>
+    <g transform="translate(367 605)"><path d="M0 0v43M3 8h38v28H3zM14 19h5M27 19h5M10 43h24"/></g>
+  </g>
+
+  <!-- 跨集群网络 -->
+  <path d="M445 459l19-19v15h93v-15l20 19-20 19v-15h-93v15z" fill="#5b50df"/>
+  <text x="511" y="512" text-anchor="middle" class="font" font-size="18" font-weight="700">跨集群网络</text>
+
+  <!-- 边缘设备集群 -->
+  <rect x="578" y="254" width="445" height="423" rx="2" fill="#f5efff" stroke="#7139dc"/>
+  <rect x="578" y="254" width="132" height="50" rx="2" fill="#7139dc"/>
+  <text x="644" y="286" text-anchor="middle" class="font section">数据面</text>
+  <text x="851" y="288" text-anchor="middle" class="font cluster" fill="#7139dc">边缘设备集群</text>
+  <rect x="590" y="318" width="134" height="171" rx="3" fill="#d8c1f3"/>
+  <rect x="736" y="318" width="92" height="111" rx="3" fill="#d8c1f3"/>
+  <rect x="839" y="318" width="172" height="50" rx="3" fill="#d8c1f3"/>
+  <rect x="839" y="379" width="172" height="50" rx="3" fill="#d8c1f3"/>
+  <rect x="736" y="440" width="275" height="49" rx="3" fill="#d8c1f3"/>
+  <text x="657" y="407" text-anchor="middle" class="font label" fill="#7139dc">集群代理</text>
+  <text x="782" y="383" text-anchor="middle" class="font label" fill="#7139dc">节点代理</text>
+  <text x="925" y="350" text-anchor="middle" class="font label" fill="#7139dc">具身设备插件</text>
+  <text x="925" y="411" text-anchor="middle" class="font label" fill="#7139dc">统一运行时</text>
+  <text x="874" y="473" text-anchor="middle" class="font label" fill="#7139dc">机器人工作节点</text>
+  <rect x="590" y="502" width="421" height="81" rx="3" fill="#9b70e8"/>
+  <text x="800" y="554" text-anchor="middle" class="font section">Kubernetes</text>
+  <rect x="590" y="596" width="421" height="69" rx="3" fill="#d8c1f3"/>
+  <text x="642" y="639" text-anchor="middle" class="font label" fill="#7139dc">机械臂</text>
+  <text x="742" y="639" text-anchor="middle" class="font label" fill="#7139dc">传感器</text>
+  <text x="858" y="639" text-anchor="middle" class="font label" fill="#7139dc">边缘算力</text>
+  <text x="973" y="639" text-anchor="middle" class="font label" fill="#7139dc">其他</text>
+</svg>

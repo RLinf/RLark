@@ -17,13 +17,14 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zapr v1.3.0
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/looplab/fsm v1.0.3
 	github.com/moby/sys/mountinfo v0.7.2
 	github.com/patrickmn/go-cache v2.1.0+incompatible
+	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.23.2
-	github.com/rancher/remotedialer v0.6.1
 	github.com/rlinf/rlark/api v0.0.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/songgao/water v0.0.0-20200317203138-2b4b6d7c09d8
@@ -36,6 +37,7 @@ require (
 	github.com/uptrace/bun/extra/bundebug v1.2.18
 	github.com/vishvananda/netlink v1.3.1
 	github.com/xjasonlyu/tun2socks/v2 v2.6.0
+	github.com/xtaci/smux v1.5.57
 	go.uber.org/zap v1.27.1
 	go.yaml.in/yaml/v2 v2.4.3
 	go.yaml.in/yaml/v3 v3.0.4
@@ -45,10 +47,12 @@ require (
 	golang.org/x/term v0.40.0
 	gvisor.dev/gvisor v0.0.0-20250523182742-eede7a881b20
 	k8s.io/api v0.36.3
+	k8s.io/apiextensions-apiserver v0.36.0
 	k8s.io/apimachinery v0.36.3
 	k8s.io/client-go v0.36.3
 	k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2
 	sigs.k8s.io/controller-runtime v0.24.1
+	sigs.k8s.io/yaml v1.6.0
 )
 
 require (
@@ -157,7 +161,6 @@ require (
 	github.com/opencontainers/selinux v1.11.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.5 // indirect
@@ -198,7 +201,6 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/apiextensions-apiserver v0.36.0 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a // indirect
 	k8s.io/streaming v0.36.3 // indirect
@@ -206,7 +208,6 @@ require (
 	sigs.k8s.io/json v0.0.0-20250730193827-2d320260d730 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.3 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
 replace github.com/rlinf/rlark/api => ../../api

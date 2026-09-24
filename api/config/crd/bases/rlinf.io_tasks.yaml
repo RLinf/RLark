@@ -103,10 +103,14 @@ spec:
                         additionalProperties:
                           format: int32
                           type: integer
+                        description: 'Deprecated: use Template.Spec.Volumes[].Ephemeral.VolumeClaimTemplate.Spec.Resources.Requests
+                          instead.'
                         type: object
                       pvcStorageMap:
                         additionalProperties:
                           type: string
+                        description: 'Deprecated: use Template.Spec.Volumes[].Ephemeral.VolumeClaimTemplate.Spec.StorageClassName
+                          instead.'
                         type: object
                       replicas:
                         format: int32
@@ -8769,6 +8773,24 @@ spec:
                 type: string
               sshPublicKey:
                 type: string
+              tags:
+                items:
+                  description: |-
+                    JobTag 表示一个任务标签，由 key 和多个 value 组成。
+                    key 和每个 value 长度均不超过 10 个字符；一个任务最多 10 个标签；
+                    每个标签最多包含 10 个不同的 value。
+                  properties:
+                    key:
+                      type: string
+                    values:
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - key
+                  - values
+                  type: object
+                type: array
               tensorBoardDir:
                 type: string
             required:
@@ -8835,18 +8857,17 @@ spec:
                   - type
                   type: object
                 type: array
-              message:
-                type: string
-              observedNodes:
-                items:
-                  type: string
-                type: array
               events:
                 description: |-
                   Events 在 Task 处于 Pending 期间由控制面 Task reconciler 从各节点
                   Node.status.events 聚合而来，包含 DiskPressure 等 Warning 事件及镜像
                   拉取/调度相关事件。Task 离开 Pending 后被清空。
                 items:
+                  description: |-
+                    NodeEvent represents a Kubernetes Event observed on a node that is relevant
+                    for surfacing to operators (e.g. DiskPressure warnings, FailedScheduling,
+                    image pull failures). The node-agent collects Warning events plus a small
+                    set of Normal scheduling/pulling events and writes them to Node.status.events.
                   properties:
                     count:
                       format: int32
@@ -8871,6 +8892,12 @@ spec:
                   - type
                   type: object
                 type: array
+              message:
+                type: string
+              observedNodes:
+                items:
+                  type: string
+                type: array
               phase:
                 type: string
               pullProgress:
@@ -8879,6 +8906,8 @@ spec:
                   ContainerCreating（尚未 Running）期间由 cluster-agent 聚合写入。Pod 进入
                   Running 后被清空。供前端展示镜像拉取进度/速度。
                 items:
+                  description: PullProgress captures the progress of an in-flight
+                    image pull on a node.
                   properties:
                     downloaded:
                       format: int64

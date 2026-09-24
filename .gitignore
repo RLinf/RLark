@@ -7,6 +7,7 @@
 # Build output
 **/bin/
 **/dist/
+*.tsbuildinfo
 tmp/
 
 # macOS
@@ -15,9 +16,15 @@ tmp/
 # Local config overrides
 *.local
 
-# Go test output
+# Test and coverage output
 *.out
-coverage.out
+*.profraw
+/coverage/
+/apps/rlark-ui/coverage/
+
+# Python cache
+__pycache__/
+*.py[cod]
 
 # Dependencies
 **/node_modules/

@@ -4,6 +4,12 @@
 #   make                          # build everything (lint-go, go-vet, go-build)
 #   make docker-build             # build rlark image and load into local docker
 
+GREP = grep -P
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+	GREP = grep -E
+endif
+
 ##@ Code style
 
 .PHONY: lint-go lint-web fmt-go fmt-web
@@ -28,21 +34,34 @@ fmt-web: ## Format web UI (prettier)
 
 ##@ Go targets
 
-.PHONY: build go-tidy
+.PHONY: build test-go test-web go-tidy
 
 build: ## Build all binaries (apps/rlark)
 	$(MAKE) -C apps/rlark build $(MAKEOVERRIDES)
 
+test-go: ## Run Go unit tests with coverage
+	@mkdir -p coverage/go
+	@for module in api apps/rlark apps/embodied-runtime; do \
+		name=$$(echo $$module | tr '/' '-'); \
+		coverage=$$(cd $$module && realpath --relative-to=. $(CURDIR)/coverage/go/$$name.out); \
+		(cd $$module && go test ./... -v -count=1 -short -covermode=atomic -coverprofile=$$coverage) || exit $$?; \
+	done
+
+test-web: ## Run web UI unit tests with coverage
+	npm ci --prefix apps/rlark-ui
+	npm run test:coverage --prefix apps/rlark-ui
+
 go-tidy: ## Run go mod tidy on all workspace modules
-	@for dir in $$(grep '^\t\./' go.work | sed 's/^\t//'); do \
-		(cd $$dir && go mod tidy); \
+	@for dir in $$( $(GREP) '^\t\./' go.work | sed 's/^\t//' ); do \
+		echo "Running go mod tidy in $$dir"; \
+		(cd $$dir && go mod tidy -x); \
 	done
 
 ##@ Code generation
 
 .PHONY: generate generate-crd generate-crd-schema-docs proto
 
-generate: generate-crd generate-crd-schema-docs ## Generate CRD manifests, clients, and schema docs
+generate: generate-crd-schema-docs ## Generate CRD manifests, clients, and schema docs
 
 generate-crd: ## Generate CRD manifests and clients
 	$(MAKE) -C api generate-crd $(MAKEOVERRIDES)

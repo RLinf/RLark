@@ -18,20 +18,30 @@ limitations under the License.
 package v1alpha1
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // NodeEventApplyConfiguration represents a declarative configuration of the NodeEvent type for use
 // with apply.
+//
+// NodeEvent represents a Kubernetes Event observed on a node that is relevant
+// for surfacing to operators (e.g. DiskPressure warnings, FailedScheduling,
+// image pull failures). The node-agent collects Warning events plus a small
+// set of Normal scheduling/pulling events and writes them to Node.status.events.
 type NodeEventApplyConfiguration struct {
-	Type       *string      `json:"type,omitempty"`
-	Reason     *string      `json:"reason,omitempty"`
-	Message    *string      `json:"message,omitempty"`
-	LastTime   *metav1.Time `json:"lastTime,omitempty"`
-	Count      *int32       `json:"count,omitempty"`
-	Source     *string      `json:"source,omitempty"`
-	ObjectKind *string      `json:"objectKind,omitempty"`
-	ObjectName *string      `json:"objectName,omitempty"`
+	Type *string `json:"type,omitempty"`
+	// Warning / Normal
+	Reason *string `json:"reason,omitempty"`
+	// DiskPressure, FailedScheduling, Pulling, etc.
+	Message  *string  `json:"message,omitempty"`
+	LastTime *v1.Time `json:"lastTime,omitempty"`
+	// 最近一次发生时间
+	Count  *int32  `json:"count,omitempty"`
+	Source *string `json:"source,omitempty"`
+	// 事件来源组件，如 kubelet
+	ObjectKind *string `json:"objectKind,omitempty"`
+	// 涉及对象类型：Node / Pod
+	ObjectName *string `json:"objectName,omitempty"`
 }
 
 // NodeEventApplyConfiguration constructs a declarative configuration of the NodeEvent type for use with
@@ -67,7 +77,7 @@ func (b *NodeEventApplyConfiguration) WithMessage(value string) *NodeEventApplyC
 // WithLastTime sets the LastTime field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the LastTime field is set to the value of the last call.
-func (b *NodeEventApplyConfiguration) WithLastTime(value metav1.Time) *NodeEventApplyConfiguration {
+func (b *NodeEventApplyConfiguration) WithLastTime(value v1.Time) *NodeEventApplyConfiguration {
 	b.LastTime = &value
 	return b
 }

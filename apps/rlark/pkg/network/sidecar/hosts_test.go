@@ -1,6 +1,10 @@
 package sidecar
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +30,89 @@ func TestBuildManagedSection(t *testing.T) {
 	if !strings.Contains(got, "10.0.0.1\tpod-a.domain1.domain\n10.0.0.2\tpod-b.domain1.domain\n") {
 		t.Fatalf("expected sorted entries, got:\n%s", got)
 	}
+}
+
+func TestWatchOnceUpdatesHosts(t *testing.T) {
+	hosts := map[string]string{"pod-a.domain": "10.0.0.2"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/watch_hosts" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("ETag", hostsVersion(hosts))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"pod-a.domain":"10.0.0.2"}`))
+	}))
+	defer server.Close()
+
+	hostsFile := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(hostsFile, []byte("127.0.0.1\tlocalhost\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	hs := newHostsSyncer(rewriteHostTransport{base: http.DefaultTransport, host: server.URL}, hostsFile, 0)
+	result := hs.watchOnce(context.Background(), "")
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if !result.supported {
+		t.Fatal("watch should be supported")
+	}
+	if err := hs.applyHosts(result.hosts, result.version); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(hostsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "10.0.0.2\tpod-a.domain") {
+		t.Fatalf("hosts file = %q", content)
+	}
+}
+
+func TestWatchOnceFallsBackForOldServer(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	hs := newHostsSyncer(rewriteHostTransport{base: http.DefaultTransport, host: server.URL}, "", 0)
+
+	result := hs.watchOnce(context.Background(), "")
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if result.supported {
+		t.Fatal("404 watch endpoint should be treated as unsupported")
+	}
+}
+
+func TestRepairHostsFileRestoresExternalOverwrite(t *testing.T) {
+	hostsFile := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(hostsFile, []byte("127.0.0.1\tlocalhost\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	hs := newHostsSyncer(nil, hostsFile, 0)
+	hs.hosts = map[string]string{"pod-a.domain": "10.0.0.2"}
+
+	if err := hs.repairHostsFile(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(hostsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "10.0.0.2\tpod-a.domain") {
+		t.Fatal("managed hosts section was not restored")
+	}
+}
+
+type rewriteHostTransport struct {
+	base http.RoundTripper
+	host string
+}
+
+func (t rewriteHostTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	target, _ := url.Parse(t.host)
+	clone.URL.Scheme = target.Scheme
+	clone.URL.Host = target.Host
+	return t.base.RoundTrip(clone)
 }
 
 func TestBuildManagedSection_Empty(t *testing.T) {
@@ -147,33 +234,48 @@ func TestReplaceManagedSection_MissingEndMarker(t *testing.T) {
 	}
 }
 
-func TestUpdateHostsFile_NoExistingFile(t *testing.T) {
-	dir := t.TempDir()
-	hostsFile := filepath.Join(dir, "hosts")
+func TestUpdateHostsFileRejectsInvalidBaseFile(t *testing.T) {
+	hosts := map[string]string{"pod-a.domain": "10.0.0.1"}
+	for _, content := range []string{"", "10.0.0.9\tpod-only\n"} {
+		hostsFile := filepath.Join(t.TempDir(), "hosts")
+		if err := os.WriteFile(hostsFile, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		hs := newHostsSyncer(nil, hostsFile, 0)
 
+		if err := hs.updateHostsFile(hosts); err == nil {
+			t.Fatalf("expected invalid base hosts %q to be rejected", content)
+		}
+		got, err := os.ReadFile(hostsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != content {
+			t.Fatalf("invalid hosts file was modified: got %q, want %q", got, content)
+		}
+	}
+}
+
+func TestApplyHostsDoesNotAdvanceStateWhenBaseFileIsInvalid(t *testing.T) {
+	hostsFile := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(hostsFile, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
 	hs := newHostsSyncer(nil, hostsFile, 0)
+	hosts := map[string]string{"pod-a.domain": "10.0.0.1"}
 
-	hosts := map[string]string{
-		"pod-a.domain1.domain": "10.0.0.1",
-		"pod-b.domain1.domain": "10.0.0.2",
+	if err := hs.applyHosts(hosts, "new-version"); err == nil {
+		t.Fatal("expected invalid base hosts to reject update")
 	}
-	if err := hs.updateHostsFile(hosts); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	content, err := os.ReadFile(hostsFile)
-	if err != nil {
-		t.Fatalf("read hosts file: %v", err)
+	if hs.version != "" || hs.hosts != nil {
+		t.Fatalf("state advanced after failed update: version=%q hosts=%v", hs.version, hs.hosts)
 	}
 
-	if !strings.Contains(string(content), hostsBeginMarker) {
-		t.Fatalf("begin marker should be present, got:\n%s", string(content))
+	if err := os.WriteFile(hostsFile, []byte("127.0.0.1\tlocalhost\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), hostsEndMarker) {
-		t.Fatalf("end marker should be present, got:\n%s", string(content))
-	}
-	if !strings.Contains(string(content), "10.0.0.1\tpod-a.domain1.domain") {
-		t.Fatalf("entry should be present, got:\n%s", string(content))
+	if err := hs.applyHosts(hosts, "new-version"); err != nil {
+		t.Fatalf("retry after base hosts recovered: %v", err)
 	}
 }
 

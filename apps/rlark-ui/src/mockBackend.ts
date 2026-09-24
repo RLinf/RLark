@@ -1,5 +1,9 @@
-import { clusters, type StorageClass } from "./data";
-import type { CRDDomain, CRDJob, CRDWorkflow } from "./types";
+import {
+  clusters,
+  storageClasses as mockStorageClasses,
+  type StorageClass,
+} from "./data";
+import type { CRDDomain, CRDJob, CRDWorkflow, NodeEventEntry } from "./types";
 import { buildMockCRDNodes } from "./utils/nodes";
 
 const nodes = buildMockCRDNodes();
@@ -35,7 +39,6 @@ const makeTask = (
     workload: {
       kind: "Deployment",
       replicas: 1,
-      pvcStorageMap: { data: "training-datasets" },
       template: {
         spec: {
           containers: [
@@ -43,14 +46,29 @@ const makeTask = (
               name,
               image,
               env: [{ name: "RLARK_TASK_ROLE", value: role }],
-              volumeMounts: [{ name: "data", mountPath: "/data" }],
+              volumeMounts: [
+                { name: "data", mountPath: "/data" },
+                { name: "local-cache", mountPath: "/cache" },
+              ],
               resources: {
                 requests: { cpu: "4", memory: "8Gi", "nvidia.com/gpu": "1" },
               },
             },
           ],
           volumes: [
-            { name: "data", persistentVolumeClaim: { claimName: "data" } },
+            {
+              name: "data",
+              ephemeral: {
+                volumeClaimTemplate: {
+                  spec: {
+                    accessModes: ["ReadWriteOnce"],
+                    storageClassName: "training-datasets",
+                    resources: { requests: { storage: "50Gi" } },
+                  },
+                },
+              },
+            },
+            { name: "local-cache", hostPath: { path: "/var/lib/rlark/cache" } },
           ],
         },
       },
@@ -58,10 +76,48 @@ const makeTask = (
   },
 });
 
+const jobTagPool = [
+  { key: "project", values: ["rlark", "console", "vision", "robot"] },
+  { key: "environment", values: ["development", "staging", "production"] },
+  { key: "team", values: ["platform", "runtime", "frontend"] },
+  { key: "priority", values: ["high", "medium", "low"] },
+  { key: "wrtest", values: ["collection", "train", "training"] },
+  { key: "workload", values: ["training", "evaluation"] },
+  { key: "hardware", values: ["gpu-a100", "jetson-orin"] },
+  { key: "region", values: ["cn-north", "cn-east", "cn-south"] },
+  { key: "owner", values: ["alice", "bob", "carol"] },
+  { key: "experiment", values: ["baseline", "ablation", "sweep"] },
+  { key: "phase", values: ["prepare", "train", "eval"] },
+  { key: "dataset", values: ["images", "pointclouds", "speech"] },
+];
+
+// 每个任务固定生成 10 个不同 key 的标签，便于验证多标签展示与筛选
+const makeJobTags = (index: number) =>
+  Array.from({ length: 10 }, (_, offset) => {
+    const { key, values } =
+      jobTagPool[(index * 3 + offset) % jobTagPool.length];
+    return { key, values: [values[index % values.length]] };
+  });
+
 const jobs: CRDJob[] = [
-  ["robot-policy-training", 0, "Running"],
-  ["warehouse-evaluation", 1, "Succeeded"],
-  ["vision-data-collection", 2, "Pending"],
+  // 创建时间最新，desc 排序时排在列表最前面
+  ["sim-replay-pipeline", 13, "Running"],
+  ["scene-bake-rendering", 12, "Succeeded"],
+  ["nav-policy-distill", 11, "Running"],
+  ["grasp-dataset-augment", 10, "Succeeded"],
+  ["lidar-calibration-suite", 9, "Pending"],
+  ["edge-mapping-benchmark", 8, "Running"],
+  ["talker-finetune-sft", 7, "Succeeded"],
+  ["vision-data-collection", 6, "Pending"],
+  ["slam-bag-replay", 5, "Running"],
+  ["warehouse-evaluation", 4, "Succeeded"],
+  ["robot-policy-training", 4, "Running"],
+  ["dual-arm-transfer", 3, "Pending"],
+  ["object-6d-pose-estim", 2, "Running"],
+  ["audio-command-parser", 1, "Succeeded"],
+  // 创建时间最早（其余任务均晚于它），desc 排序时固定落在列表页底部，
+  // 且标签数量多，用于验证多标签展开弹层在屏幕底部自动翻转的修复
+  ["multi-tag-preview", 0, "Running"],
 ].map(([name, indexValue, phase]) => {
   const index = Number(indexValue);
   const cluster = clusterNames[index % clusterNames.length];
@@ -71,10 +127,11 @@ const jobs: CRDJob[] = [
     kind: "Job",
     metadata: {
       name: String(name),
-      creationTimestamp: `2026-08-0${index + 6}T09:00:00Z`,
+      creationTimestamp: `2026-08-${String(index + 6).padStart(2, "0")}T09:00:00Z`,
     },
     spec: {
       domain: domains[index % domains.length].metadata.name,
+      tags: makeJobTags(index),
       tasks: [
         makeTask(
           taskNames[0],
@@ -136,6 +193,64 @@ const pods = jobs.flatMap((job, jobIndex) =>
   }),
 );
 
+const pendingWorkerEvents: NodeEventEntry[] = [
+  {
+    type: "Warning",
+    reason: "FailedScheduling",
+    message: "Insufficient GPU resources for the requested worker.",
+    lastTime: "2026-08-08T09:05:00Z",
+    objectKind: "Pod",
+  },
+  {
+    type: "Warning",
+    reason: "ImagePullBackOff",
+    message: "Back-off pulling the runtime image.",
+    lastTime: "2026-08-08T09:06:00Z",
+    objectKind: "Pod",
+  },
+  {
+    type: "Warning",
+    reason: "FailedMount",
+    message: "The training dataset volume is not mounted yet.",
+    lastTime: "2026-08-08T09:07:00Z",
+    objectKind: "Pod",
+  },
+  {
+    type: "Warning",
+    reason: "NodeNotReady",
+    message: "The selected node is unavailable because of memory pressure.",
+    lastTime: "2026-08-08T09:08:00Z",
+    objectKind: "Node",
+  },
+  {
+    type: "Warning",
+    reason: "FailedCreatePodSandBox",
+    message: "The worker runtime environment is not ready.",
+    lastTime: "2026-08-08T09:09:00Z",
+    objectKind: "Pod",
+  },
+];
+
+const pendingWorkerEventMap = Object.fromEntries(
+  pods
+    .filter(
+      (pod) =>
+        pod.metadata.name.startsWith("vision-data-collection-") &&
+        pod.status.phase === "Pending",
+    )
+    .map((pod, index) => [
+      pod.metadata.name,
+      pendingWorkerEvents.map((event) => ({
+        ...event,
+        objectName:
+          event.objectKind === "Pod" ? pod.spec.podName : pod.status.node,
+        lastTime: new Date(
+          Date.parse(event.lastTime ?? "") + index * 60_000,
+        ).toISOString(),
+      })),
+    ]),
+);
+
 domains.forEach((domain) => {
   domain.status = {
     ipAllocations: pods
@@ -176,34 +291,18 @@ const workflows: CRDWorkflow[] = [
   },
 ];
 
-const storageClasses: StorageClass[] = [
+const storageClasses: StorageClass[] = mockStorageClasses.map((item) => ({
+  ...item,
+  clusters: item.clusters.length > 0 ? item.clusters : clusterNames,
+}));
+
+const imageRegistries = [
   {
-    id: "training-datasets",
-    name: "training-datasets",
-    namespace: "default",
-    provider: "MinIO",
-    clusters: clusterNames,
-    endpoint: "https://minio.mock.local",
-    region: "local",
-    bucket: "rlark-training",
-    accessKeyId: "mock-access-key",
-    pathStyle: true,
-    description: "Shared datasets for the mock topology",
-    createdAt: "2026-08-01T08:00:00Z",
-  },
-  {
-    id: "evaluation-results",
-    name: "evaluation-results",
-    namespace: "default",
-    provider: "AWS S3",
-    clusters: clusterNames.slice(0, 2),
-    endpoint: "https://s3.mock.local",
-    region: "cn-east-1",
-    bucket: "rlark-evaluation",
-    accessKeyId: "mock-access-key",
-    pathStyle: false,
-    description: "Evaluation artifacts",
-    createdAt: "2026-08-02T08:00:00Z",
+    id: "ir-0123456789abcdef",
+    name: "Mock Harbor",
+    registry: "registry.example.com",
+    username: "robot",
+    clusterSelection: { mode: "All", clusters: [] as string[] },
   },
 ];
 
@@ -282,6 +381,8 @@ export function installMockBackend() {
       }
       return json(node);
     }
+    if (method === "GET" && path === "/api/v1/rlinf.io/v1alpha1/jobs/tags")
+      return json({ items: jobTagPool });
     if (method === "GET" && path === "/api/v1/rlinf.io/v1alpha1/jobs")
       return json({ items: jobs });
     if (
@@ -379,10 +480,35 @@ export function installMockBackend() {
           : pods,
       });
     }
+    if (
+      method === "GET" &&
+      path.startsWith("/api/v1/rlinf.io/v1alpha1/pods/") &&
+      path.endsWith("/events")
+    ) {
+      const podName = decodeURIComponent(path.split("/").at(-2)!);
+      return json({ events: pendingWorkerEventMap[podName] ?? [] });
+    }
     if (method === "GET" && path === "/api/v1/rlinf.io/v1alpha1/domains")
       return json({ items: domains });
     if (method === "GET" && path === "/api/v1/rlinf.io/v1alpha1/workflows")
       return json({ items: workflows });
+    if (
+      method === "PATCH" &&
+      path.startsWith("/api/v1/rlinf.io/v1alpha1/workflows/")
+    ) {
+      const name = decodeURIComponent(path.split("/").pop()!);
+      const workflow = workflows.find((item) => item.metadata.name === name);
+      if (!workflow) return json({ error: "not found" }, 404);
+      const patch = await request.json();
+      if (typeof patch.spec?.stopped === "boolean") {
+        workflow.spec.stopped = patch.spec.stopped;
+        workflow.status = {
+          ...workflow.status,
+          phase: patch.spec.stopped ? "Stopping" : "Running",
+        };
+      }
+      return json(workflow);
+    }
     if (method === "GET" && path === "/api/v1/storage/storageclass")
       return json({
         data: Object.fromEntries(storageClasses.map((item) => [item.id, item])),
@@ -430,12 +556,51 @@ export function installMockBackend() {
       if (index >= 0) storageClasses.splice(index, 1);
       return json({ success: true });
     }
+    if (method === "GET" && path === "/api/v1/image-registries")
+      return json(imageRegistries);
+    if (method === "POST" && path === "/api/v1/image-registries") {
+      const payload = await request.json();
+      const item = {
+        id: `ir-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+        name: payload.name,
+        registry: payload.registry,
+        username: payload.username,
+        clusterSelection: payload.clusterSelection,
+      };
+      imageRegistries.push(item);
+      return json(item, 201);
+    }
+    if (path.startsWith("/api/v1/image-registries/")) {
+      const id = decodeURIComponent(path.split("/").pop() || "");
+      const index = imageRegistries.findIndex((item) => item.id === id);
+      if (index < 0) return json({ error: "not found" }, 404);
+      if (method === "GET") return json(imageRegistries[index]);
+      if (method === "PUT") {
+        const payload = await request.json();
+        imageRegistries[index] = {
+          ...imageRegistries[index],
+          name: payload.name,
+          registry: payload.registry,
+          username: payload.username,
+          clusterSelection: payload.clusterSelection,
+        };
+        return json(imageRegistries[index]);
+      }
+      if (method === "DELETE") {
+        imageRegistries.splice(index, 1);
+        return json({ ok: true }, 202);
+      }
+    }
     if (method === "GET" && path.includes("/list"))
       return json({ data: { objects: [] } });
     if (method === "GET" && path === "/api/v1/ssh-user-keys")
       return json(sshUserKeys);
     if (method === "POST" && path === "/api/v1/ssh-user-keys") {
       const payload = await request.json();
+      if (sshUserKeys.some((item) => item.user === payload.user))
+        return json({ error: "public key name already exists" }, 409);
+      if (sshUserKeys.some((item) => item.public_key === payload.public_key))
+        return json({ error: "public key already exists" }, 409);
       sshUserKeys.push({
         index: sshUserKeys.length,
         user: payload.user,

@@ -18,11 +18,20 @@ type JobTaskTemplate struct {
 	TaskSpec `json:",inline"`
 }
 
+// JobTag 表示一个任务标签，由 key 和多个 value 组成。
+// key 和每个 value 长度均不超过 10 个字符；一个任务最多 10 个标签；
+// 每个标签最多包含 10 个不同的 value。
+type JobTag struct {
+	Key    string   `json:"key"`
+	Values []string `json:"values"`
+}
+
 type JobSpec struct {
 	Domain       string            `json:"domain,omitempty"`
 	Stopped      bool              `json:"stopped,omitempty"`
 	Tasks        []JobTaskTemplate `json:"tasks,omitempty"`
 	SSHPublicKey string            `json:"sshPublicKey,omitempty"`
+	Tags         []JobTag          `json:"tags,omitempty"`
 }
 
 type JobTaskStatus struct {

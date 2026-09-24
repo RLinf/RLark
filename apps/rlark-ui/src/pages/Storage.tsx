@@ -28,12 +28,13 @@ import {
 } from "../data";
 import { copy, type Copy } from "../i18n";
 import {
-  compareSortValues,
+  ColumnFilterButton,
   PageToolbar,
   Pagination,
-  SortButton,
-  type SortDirection,
+  RefreshOverlay,
+  useColumnFilter,
 } from "../components/shared";
+import { ColumnFilterPopover } from "../components/ColumnFilterPopover";
 import { formatChinaDateTime } from "../utils/time";
 
 type StorageClassFormState = {
@@ -104,12 +105,14 @@ export function StorageClassesPage({
   selectedName,
   onSelect,
   onCreate,
+  onBrowseFiles,
   refreshKey = 0,
 }: {
   copy: Copy;
   selectedName?: string;
   onSelect: (name?: string) => void;
   onCreate: () => void;
+  onBrowseFiles: (cluster: string, storageClass: string) => void;
   refreshKey?: number;
 }) {
   const zh = c === copy.zh;
@@ -117,19 +120,12 @@ export function StorageClassesPage({
   const [loading, setLoading] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [search, setSearch] = useState("");
-  const [providerFilter, setProviderFilter] = useState("All");
+  // 表头列多选筛选；空数组 = 全部
+  const [providerFilter, setProviderFilter] = useState<string[]>([]);
+  const [clusterFilter, setClusterFilter] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [sort, setSort] = useState<{
-    key: "name" | "provider" | "bucket" | "clusters" | "description";
-    direction: SortDirection;
-  }>({ key: "name", direction: "asc" });
-  const toggleSort = (key: typeof sort.key) =>
-    setSort((current) => ({
-      key,
-      direction:
-        current.key === key && current.direction === "asc" ? "desc" : "asc",
-    }));
+  const columnFilter = useColumnFilter();
   const [editingClass, setEditingClass] = useState<StorageClass | null>(null);
 
   const selected = useMemo(
@@ -141,16 +137,11 @@ export function StorageClassesPage({
     if (loading) return;
     setLoading(true);
     try {
-      const resp = await fetch("/api/v1/storage/storageclass");
-      if (resp.ok) {
-        const data = await resp.json();
-        const list: StorageClass[] = Object.values(data.data || {}).map(
-          normalizeStorageClass,
-        );
-        setRealClasses(list);
-      } else {
-        setRealClasses([]);
-      }
+      const data = await storageClassesApi.list();
+      const list: StorageClass[] = Object.values(data).map(
+        normalizeStorageClass,
+      );
+      setRealClasses(list);
     } catch {
       setRealClasses([]);
     } finally {
@@ -167,7 +158,10 @@ export function StorageClassesPage({
     setFetched(false);
   }, [refreshKey]);
 
-  useEffect(() => setPage(1), [search, providerFilter, pageSize]);
+  useEffect(
+    () => setPage(1),
+    [search, providerFilter, clusterFilter, pageSize],
+  );
 
   const handleDelete = async (id: string, name: string) => {
     if (
@@ -177,13 +171,8 @@ export function StorageClassesPage({
     )
       return;
     try {
-      const resp = await fetch(
-        `/api/v1/storage/storageclass/${encodeURIComponent(id || name)}`,
-        {
-          method: "DELETE",
-        },
-      );
-      if (resp.ok) fetchClasses();
+      await storageClassesApi.remove(id || name);
+      fetchClasses();
     } catch (e) {
       console.error("Failed to delete storage class:", e);
     }
@@ -206,25 +195,19 @@ export function StorageClassesPage({
       sc.provider.toLowerCase().includes(query) ||
       sc.bucket.toLowerCase().includes(query) ||
       sc.clusters.some((cluster) => cluster.toLowerCase().includes(query));
-    return (
-      matchesSearch &&
-      (providerFilter === "All" || sc.provider === providerFilter)
-    );
+    const providerHit =
+      providerFilter.length === 0 || providerFilter.includes(sc.provider);
+    const clusterHit =
+      clusterFilter.length === 0 ||
+      sc.clusters.some((cluster) => clusterFilter.includes(cluster));
+    return matchesSearch && providerHit && clusterHit;
   });
   const providers = Array.from(new Set(realClasses.map((sc) => sc.provider)));
   const associatedClusters = new Set(realClasses.flatMap((sc) => sc.clusters));
-  const sortedClasses = [...filtered].sort((a, b) => {
-    const value = (storageClass: StorageClass) =>
-      sort.key === "clusters"
-        ? storageClass.clusters.length
-        : storageClass[sort.key];
-    return compareSortValues(
-      value(a),
-      value(b),
-      sort.direction,
-      zh ? "zh-CN" : "en",
-    );
-  });
+  // 列表页列不再支持排序，按名称做稳定 tiebreak 即可
+  const sortedClasses = [...filtered].sort((a, b) =>
+    a.name.localeCompare(b.name, zh ? "zh-CN" : "en", { numeric: true }),
+  );
   const totalPages = Math.max(1, Math.ceil(sortedClasses.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pagedClasses = sortedClasses.slice(
@@ -293,17 +276,11 @@ export function StorageClassesPage({
         copy={c}
         onRefresh={fetchClasses}
         refreshing={loading}
-        filterValue={providerFilter}
-        onFilterChange={setProviderFilter}
-        filterOptions={[
-          { value: "All", label: zh ? "全部提供商" : "All providers" },
-          ...providers.map((provider) => ({
-            value: provider,
-            label: provider,
-          })),
-        ]}
       />
-      <section className="table-panel storage-class-table-panel">
+      <section
+        className={`table-panel storage-class-table-panel refreshable-region${loading ? " is-refreshing" : ""}`}
+        aria-busy={loading}
+      >
         <div className="storage-table-heading">
           <div>
             <strong>{zh ? "存储资源" : "Storage resources"}</strong>
@@ -320,47 +297,24 @@ export function StorageClassesPage({
         <table>
           <thead>
             <tr>
+              <th>{c.storageClass.name}</th>
               <th>
-                <SortButton
-                  label={c.storageClass.name}
-                  active={sort.key === "name"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("name")}
-                />
-              </th>
-              <th>
-                <SortButton
+                <ColumnFilterButton
                   label={c.storageClass.provider}
-                  active={sort.key === "provider"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("provider")}
+                  selectedCount={providerFilter.length}
+                  onClick={columnFilter.openFor("provider")}
                 />
               </th>
+              <th>{c.storageClass.bucket}</th>
               <th>
-                <SortButton
-                  label={c.storageClass.bucket}
-                  active={sort.key === "bucket"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("bucket")}
-                />
-              </th>
-              <th>
-                <SortButton
+                <ColumnFilterButton
                   label={c.storageClass.clusters}
-                  active={sort.key === "clusters"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("clusters")}
+                  selectedCount={clusterFilter.length}
+                  onClick={columnFilter.openFor("cluster")}
                 />
               </th>
-              <th>
-                <SortButton
-                  label={c.storageClass.description}
-                  active={sort.key === "description"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("description")}
-                />
-              </th>
-              <th></th>
+              <th>{c.storageClass.description}</th>
+              <th className="storage-actions-col">{zh ? "操作" : "Actions"}</th>
             </tr>
           </thead>
           <tbody>
@@ -388,7 +342,6 @@ export function StorageClassesPage({
                     </span>
                     <span>
                       <strong>{sc.name}</strong>
-                      <small>{sc.namespace}</small>
                     </span>
                   </button>
                 </td>
@@ -412,7 +365,7 @@ export function StorageClassesPage({
                     {sc.description || "—"}
                   </span>
                 </td>
-                <td>
+                <td className="storage-actions-col">
                   <div className="row-actions">
                     <button
                       className="icon-button"
@@ -428,8 +381,7 @@ export function StorageClassesPage({
                           );
                           return;
                         }
-                        const url = `/files/${encodeURIComponent(cluster)}/${encodeURIComponent(sc.name)}`;
-                        window.open(url, "_blank");
+                        onBrowseFiles(cluster, sc.name);
                       }}
                     >
                       <FolderOpen size={14} />
@@ -459,6 +411,10 @@ export function StorageClassesPage({
             ))}
           </tbody>
         </table>
+        <RefreshOverlay
+          visible={loading}
+          label={zh ? "正在刷新存储类列表" : "Refreshing storage class list"}
+        />
       </section>
       <Pagination
         page={currentPage}
@@ -468,6 +424,30 @@ export function StorageClassesPage({
         onPageSizeChange={setPageSize}
         zh={zh}
       />
+      {columnFilter.openKey === "provider" && (
+        <ColumnFilterPopover
+          label={c.storageClass.provider}
+          options={providers.map((p) => ({ value: p, label: p }))}
+          selected={providerFilter}
+          onChange={setProviderFilter}
+          anchorRect={columnFilter.anchorRect}
+          onClose={columnFilter.close}
+          zh={zh}
+        />
+      )}
+      {columnFilter.openKey === "cluster" && (
+        <ColumnFilterPopover
+          label={c.storageClass.clusters}
+          options={[...associatedClusters]
+            .sort()
+            .map((cl) => ({ value: cl, label: cl }))}
+          selected={clusterFilter}
+          onChange={setClusterFilter}
+          anchorRect={columnFilter.anchorRect}
+          onClose={columnFilter.close}
+          zh={zh}
+        />
+      )}
       {editingClass && (
         <StorageClassCreatePage
           copy={c}
@@ -497,6 +477,13 @@ export function StorageClassDetailPage({
     <div className="page-content resource-page storage-detail-page">
       <div className="section-heading storage-detail-hero">
         <div>
+          <button
+            type="button"
+            className="plain-button back-button"
+            onClick={onBack}
+          >
+            ← {zh ? "返回存储列表" : "Back to storage"}
+          </button>
           <span className="eyebrow">
             <HardDrive size={13} />
             {c.storageClass.eyebrow}
@@ -518,15 +505,6 @@ export function StorageClassDetailPage({
             </span>
           </div>
         </div>
-        <button
-          type="button"
-          className="secondary-button"
-          aria-label={zh ? "关闭" : "Close"}
-          onClick={onBack}
-        >
-          <ChevronLeft size={17} />
-          {zh ? "返回" : "Back"}
-        </button>
       </div>
       <div className="node-detail-body storage-detail-layout">
         <section className="node-detail-section storage-detail-panel">
@@ -632,14 +610,17 @@ export function StorageClassCreatePage({
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/v1/clusters")
-      .then((r) =>
-        r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)),
-      )
+    clustersApi
+      .list<{
+        id?: string;
+        name?: string;
+        region?: string;
+        location?: string;
+      }>()
       .then((data) => {
         if (cancelled) return;
-        const options: ClusterOption[] = (data.data ?? [])
-          .map((cluster: any) => ({
+        const options: ClusterOption[] = data
+          .map((cluster) => ({
             id: cluster.id ?? cluster.name ?? "",
             name: cluster.name ?? cluster.id ?? "",
             description: cluster.region ?? cluster.location ?? "",
@@ -678,32 +659,11 @@ export function StorageClassCreatePage({
     setSubmitting(true);
     setError("");
     try {
-      const resp = await fetch(
-        isEdit
-          ? `/api/v1/storage/storageclass/${encodeURIComponent(form.name)}`
-          : "/api/v1/storage/storageclass",
-        {
-          method: isEdit ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(form),
-        },
-      );
-      if (!resp.ok) {
-        const msg = await resp.text();
-        setError(
-          (isEdit
-            ? zh
-              ? "更新存储类失败"
-              : "Failed to update storage class"
-            : c.storageClass.createFailed) +
-            ": " +
-            msg,
-        );
-        return;
-      }
+      if (isEdit) await storageClassesApi.update(form.name, form);
+      else await storageClassesApi.create(form);
       onCreated?.();
       onBack();
-    } catch (err) {
+    } catch {
       setError(c.storageClass.createFailed);
     } finally {
       setSubmitting(false);
@@ -1097,14 +1057,10 @@ export function StorageClassFilesPage({
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams();
-      params.set("prefix", prefix);
-      params.set("maxKeys", "100");
-      const resp = await fetch(
-        `/api/v1/storage/storageclass/${encodeURIComponent(name)}/${encodeURIComponent(cluster)}/list?${params}`,
-      );
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
+      const data = await storageObjectsApi.list<{
+        objects?: any[];
+        common_prefixes?: string[];
+      }>(name, cluster, prefix);
       setObjects(data.objects || []);
       setCommonPrefixes(data.common_prefixes || []);
     } catch (e: any) {
@@ -1133,14 +1089,7 @@ export function StorageClassFilesPage({
         setUploadProgress(
           `${zh ? "上传中" : "Uploading"}: ${file.name} (${i + 1}/${files.length})`,
         );
-        const resp = await fetch(
-          `/api/v1/storage/storageclass/${encodeURIComponent(name)}/${encodeURIComponent(cluster)}/upload`,
-          { method: "POST", body: formData },
-        );
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({}));
-          throw new Error(err.error || `Upload failed: ${resp.status}`);
-        }
+        await storageObjectsApi.upload(name, cluster, formData);
       }
       setUploadProgress("");
       fetchFiles();
@@ -1153,11 +1102,11 @@ export function StorageClassFilesPage({
 
   const handleDownload = async (key: string) => {
     try {
-      const resp = await fetch(
-        `/api/v1/storage/storageclass/${encodeURIComponent(name)}/${encodeURIComponent(cluster)}/object/${encodeURIComponent(key)}?expire=3600`,
+      const data = await storageObjectsApi.download<{ url?: string }>(
+        name,
+        cluster,
+        key,
       );
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
       if (data.url) {
         window.open(data.url, "_blank");
       }
@@ -1172,14 +1121,7 @@ export function StorageClassFilesPage({
     if (!confirm(zh ? `确定删除文件 "${key}" 吗?` : `Delete file "${key}"?`))
       return;
     try {
-      const resp = await fetch(
-        `/api/v1/storage/storageclass/${encodeURIComponent(name)}/${encodeURIComponent(cluster)}/object/${encodeURIComponent(key)}`,
-        { method: "DELETE" },
-      );
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        throw new Error(data.error || `Delete failed: ${resp.status}`);
-      }
+      await storageObjectsApi.remove(name, cluster, key);
       fetchFiles();
     } catch (e: any) {
       alert(e?.message || (zh ? "删除失败" : "Delete failed"));
@@ -1373,7 +1315,10 @@ export function StorageClassFilesPage({
         </div>
       )}
 
-      <section className="table-panel files-table storage-files-table-panel">
+      <section
+        className={`table-panel files-table storage-files-table-panel refreshable-region${loading ? " is-refreshing" : ""}`}
+        aria-busy={loading}
+      >
         <div className="storage-table-heading">
           <div>
             <strong>{zh ? "目录内容" : "Directory contents"}</strong>
@@ -1407,99 +1352,81 @@ export function StorageClassFilesPage({
                 </td>
               </tr>
             )}
-            {loading && (
-              <tr>
-                <td colSpan={4}>
-                  <div className="storage-files-state">
-                    <span className="storage-files-spinner">
-                      <RefreshCw size={20} />
-                    </span>
-                    <strong>
-                      {zh
-                        ? "正在加载目录内容..."
-                        : "Loading directory contents..."}
-                    </strong>
-                  </div>
-                </td>
-              </tr>
-            )}
-            {!loading &&
-              filteredPrefixes.map((folder) => {
-                const folderName = folder.endsWith("/")
-                  ? folder.slice(0, -1)
-                  : folder;
-                const displayName = prefix
-                  ? folderName.replace(prefix, "")
-                  : folderName;
-                return (
-                  <tr
-                    key={folder}
-                    className="clickable"
-                    onClick={() => navigateFolder(folder)}
-                  >
-                    <td>
-                      <span className="storage-file-name folder">
-                        <i>
-                          <Folder size={17} />
-                        </i>
-                        <span>
-                          <strong>{displayName}</strong>
-                          <small>{zh ? "文件夹" : "Folder"}</small>
-                        </span>
+            {filteredPrefixes.map((folder) => {
+              const folderName = folder.endsWith("/")
+                ? folder.slice(0, -1)
+                : folder;
+              const displayName = prefix
+                ? folderName.replace(prefix, "")
+                : folderName;
+              return (
+                <tr
+                  key={folder}
+                  className="clickable"
+                  onClick={() => navigateFolder(folder)}
+                >
+                  <td>
+                    <span className="storage-file-name folder">
+                      <i>
+                        <Folder size={17} />
+                      </i>
+                      <span>
+                        <strong>{displayName}</strong>
+                        <small>{zh ? "文件夹" : "Folder"}</small>
                       </span>
-                    </td>
-                    <td className="muted">—</td>
-                    <td className="muted">—</td>
-                    <td>
+                    </span>
+                  </td>
+                  <td className="muted">—</td>
+                  <td className="muted">—</td>
+                  <td>
+                    <button
+                      className="icon-button"
+                      title={zh ? "进入目录" : "Enter folder"}
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {pagedObjects.map((obj) => {
+              const fileName = obj.key.split("/").pop() || obj.key;
+              return (
+                <tr key={obj.key}>
+                  <td>
+                    <span className="storage-file-name file">
+                      <i>
+                        <FileText size={17} />
+                      </i>
+                      <span>
+                        <strong>{fileName}</strong>
+                        <small>{zh ? "对象文件" : "Object"}</small>
+                      </span>
+                    </span>
+                  </td>
+                  <td>{formatSize(obj.size || 0)}</td>
+                  <td>{formatDate(obj.last_modified)}</td>
+                  <td>
+                    <div className="row-actions">
                       <button
                         className="icon-button"
-                        title={zh ? "进入目录" : "Enter folder"}
+                        title={c.files.download}
+                        onClick={() => handleDownload(obj.key)}
                       >
-                        <ChevronRight size={14} />
+                        <Download size={14} />
                       </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            {!loading &&
-              pagedObjects.map((obj) => {
-                const fileName = obj.key.split("/").pop() || obj.key;
-                return (
-                  <tr key={obj.key}>
-                    <td>
-                      <span className="storage-file-name file">
-                        <i>
-                          <FileText size={17} />
-                        </i>
-                        <span>
-                          <strong>{fileName}</strong>
-                          <small>{zh ? "对象文件" : "Object"}</small>
-                        </span>
-                      </span>
-                    </td>
-                    <td>{formatSize(obj.size || 0)}</td>
-                    <td>{formatDate(obj.last_modified)}</td>
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          className="icon-button"
-                          title={c.files.download}
-                          onClick={() => handleDownload(obj.key)}
-                        >
-                          <Download size={14} />
-                        </button>
-                        <button
-                          className="icon-button danger"
-                          title={c.files.delete}
-                          onClick={() => handleDelete(obj.key)}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                      <button
+                        className="icon-button danger"
+                        title={c.files.delete}
+                        onClick={() => handleDelete(obj.key)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
             {!loading &&
               filteredObjects.length === 0 &&
               filteredPrefixes.length === 0 &&
@@ -1522,6 +1449,10 @@ export function StorageClassFilesPage({
               )}
           </tbody>
         </table>
+        <RefreshOverlay
+          visible={loading}
+          label={zh ? "正在刷新目录内容" : "Refreshing directory contents"}
+        />
       </section>
       {!loading && filteredObjects.length > 0 && (
         <Pagination
@@ -1536,3 +1467,4 @@ export function StorageClassFilesPage({
     </div>
   );
 }
+import { clustersApi, storageClassesApi, storageObjectsApi } from "../backend";

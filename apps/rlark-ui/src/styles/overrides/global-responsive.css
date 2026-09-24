@@ -1,0 +1,316 @@
+/* Late responsive overrides for resource tables defined after the base breakpoints. */
+@media (max-width: 1300px) {
+  .cluster-management-table-head,
+  .cluster-management-row {
+    min-width: 760px;
+    grid-template-columns:
+      minmax(170px, 1.35fr)
+      minmax(66px, 0.55fr)
+      minmax(48px, 0.42fr)
+      minmax(48px, 0.42fr)
+      minmax(48px, 0.42fr)
+      minmax(104px, 0.8fr)
+      minmax(82px, 0.65fr)
+      16px;
+    column-gap: 8px;
+  }
+
+  .cluster-management-empty {
+    min-width: 760px;
+  }
+
+  .node-resource-table-head,
+  .node-resource-row {
+    min-width: 1120px;
+    grid-template-columns:
+      minmax(130px, 1.25fr)
+      minmax(76px, 0.65fr)
+      minmax(80px, 0.68fr)
+      minmax(100px, 0.85fr)
+      minmax(104px, 0.85fr)
+      minmax(98px, 0.8fr)
+      minmax(170px, 1.25fr)
+      minmax(120px, 0.95fr)
+      16px;
+    column-gap: 7px;
+  }
+
+  .node-resource-table-head.has-admin-actions,
+  .node-resource-row.has-admin-actions {
+    min-width: 1250px;
+    grid-template-columns:
+      minmax(130px, 1.25fr)
+      minmax(76px, 0.65fr)
+      minmax(80px, 0.68fr)
+      minmax(100px, 0.85fr)
+      minmax(104px, 0.85fr)
+      minmax(98px, 0.8fr)
+      minmax(170px, 1.25fr)
+      minmax(120px, 0.95fr)
+      minmax(170px, 1fr);
+  }
+
+  .storage-class-table-panel table,
+  .storage-class-table-panel .storage-table-heading {
+    min-width: 780px;
+  }
+
+  .storage-files-table-panel table,
+  .storage-files-table-panel .storage-table-heading {
+    min-width: 740px;
+  }
+
+  .jobs-table-panel table {
+    min-width: 820px;
+  }
+}
+
+/* Keep content usable on tablet-sized windows without requiring a manual
+   sidebar toggle. This final rule wins over the broader 1050px breakpoint. */
+@media (max-width: 780px) {
+  .app-shell,
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .sidebar {
+    padding: 14px 10px;
+  }
+
+  .sidebar .brand {
+    height: 46px;
+    padding: 0 5px;
+    margin-bottom: 16px;
+  }
+
+  .sidebar .brand-logo {
+    width: 44px;
+    height: 44px;
+    object-fit: cover;
+    object-position: left center;
+  }
+
+  .sidebar nav button span,
+  .sidebar nav button em,
+  .sidebar .nav-label,
+  .sidebar .environment-card div,
+  .sidebar .environment-card i,
+  .sidebar .sidebar-bottom > button span {
+    display: none;
+  }
+
+  .sidebar nav button,
+  .sidebar .sidebar-bottom > button {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .sidebar .nav-children {
+    padding-left: 0;
+  }
+
+  .sidebar .environment-card {
+    grid-template-columns: 1fr;
+    min-height: 54px;
+    padding: 8px;
+  }
+
+  .sidebar .environment-card > span {
+    margin: auto;
+  }
+}
+
+@media (min-width: 621px) and (max-width: 780px) {
+  .job-detail-page {
+    gap: 10px;
+  }
+
+  .job-detail-summary-card {
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .job-detail-summary-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    padding-bottom: 10px;
+  }
+
+  .job-detail-summary-head h2 {
+    margin: 5px 0;
+    font-size: 22px;
+  }
+
+  .job-detail-summary-head p {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .job-detail-summary-status {
+    justify-items: end;
+  }
+
+  .job-detail-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .task-summary-metric {
+    padding: 8px 12px;
+  }
+
+  .task-summary-metric strong {
+    margin: 4px 0 2px;
+    font-size: 15px;
+  }
+
+  .job-detail-summary-columns {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    align-items: start;
+  }
+
+  .job-detail-summary-section {
+    padding: 9px 12px;
+  }
+
+  .public-card-head h3 {
+    font-size: 14px;
+  }
+
+  .header-worker-identity {
+    margin-top: 10px;
+  }
+
+  .copyable-code-block {
+    margin-top: 9px;
+  }
+
+  .copyable-code-block code {
+    padding: 8px 10px;
+    line-height: 1.45;
+  }
+
+  .config-value-list > div {
+    display: grid;
+    gap: 5px;
+    margin-top: 7px;
+  }
+
+  .config-value-list code {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+
+  .sub-tabs {
+    height: 42px;
+  }
+
+  .sub-tabs button {
+    height: 34px;
+  }
+}
+
+@media (max-width: 620px) {
+  .job-detail-summary-head,
+  .job-detail-summary-grid,
+  .job-detail-summary-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .job-detail-summary-status {
+    justify-items: start;
+  }
+
+  .public-runtime-card,
+  .public-command-card {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .public-runtime-topology,
+  .public-runtime-tables,
+  .role-runtime-config-tables {
+    grid-template-columns: 1fr;
+  }
+
+  .role-runtime-config {
+    padding: 12px;
+  }
+
+  .role-runtime-meta {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .role-runtime-details {
+    grid-template-columns: 1fr;
+  }
+
+  .worker-detail-head,
+  .worker-ssh-access {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .worker-ssh-inline {
+    width: 100%;
+    max-width: 100%;
+    flex-basis: auto;
+    box-sizing: border-box;
+  }
+
+  .worker-detail-head .worker-ssh-button,
+  .worker-ssh-access .secondary-button {
+    width: fit-content;
+  }
+}
+
+@media (max-width: 1080px) {
+  .admin-node-page-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .admin-node-page-heading .admin-node-list-actions {
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .admin-node-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-node-overview > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .admin-node-overview > div:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-node-page-heading .admin-node-list-actions {
+    width: 100%;
+  }
+
+  .admin-node-page-heading .admin-node-list-actions button {
+    flex: 1 1 calc(50% - 8px);
+  }
+
+  .admin-node-overview > div {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    padding: 11px;
+  }
+
+  .admin-node-overview-icon {
+    width: 30px;
+    height: 30px;
+  }
+}

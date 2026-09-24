@@ -105,11 +105,77 @@ export function formatResourceQuantity(key: string, raw?: string): string {
   const value = parseResourceQuantity(key, raw);
   if (value === null) return "—";
   if (key === "memory" || key === "ephemeral-storage") {
-    const gb = value / 1000 ** 3;
-    return `${gb >= 100 ? gb.toFixed(0) : gb.toFixed(1)} GB`;
+    const gib = value / 1024 ** 3;
+    return `${gib >= 100 ? gib.toFixed(0) : gib.toFixed(1)} GiB`;
   }
   if (key === "cpu") return `${formatResourceNumber(value)} 核`;
   return formatResourceNumber(value);
+}
+
+export function getResourceUsagePercent(
+  key: string,
+  used?: string,
+  total?: string,
+): number | null {
+  const totalValue = parseResourceQuantity(key, total);
+  if (totalValue === null || totalValue <= 0) return null;
+  if (!used) return 0;
+  if (used.endsWith("%")) {
+    const percent = Number.parseFloat(used);
+    return Number.isFinite(percent)
+      ? Math.min(100, Math.max(0, Math.round(percent)))
+      : null;
+  }
+  const usedValue = parseResourceQuantity(key, used);
+  return usedValue === null
+    ? null
+    : Math.min(100, Math.max(0, Math.round((usedValue / totalValue) * 100)));
+}
+
+export function getNodeDiskUsage(node: CRDNode): {
+  capacityBytes: number;
+  usedBytes: number;
+  availableBytes: number;
+  percent: number;
+} | null {
+  const storage = node.status?.storage;
+  const capacityBytes = storage?.capacityBytes;
+  const availableBytes = storage?.availableBytes;
+  if (
+    capacityBytes === undefined ||
+    availableBytes === undefined ||
+    capacityBytes <= 0
+  ) {
+    return null;
+  }
+  const usedBytes = Math.min(
+    capacityBytes,
+    Math.max(0, storage?.usedBytes ?? capacityBytes - availableBytes),
+  );
+  const normalizedAvailableBytes = Math.min(
+    capacityBytes,
+    Math.max(0, availableBytes),
+  );
+  const rawPercent =
+    ((capacityBytes - normalizedAvailableBytes) / capacityBytes) * 100;
+  return {
+    capacityBytes,
+    usedBytes,
+    availableBytes: normalizedAvailableBytes,
+    percent:
+      normalizedAvailableBytes > 0
+        ? Math.min(99, Math.max(0, Math.floor(rawPercent)))
+        : 100,
+  };
+}
+
+export function isDiskUsageWarning(node: CRDNode): boolean {
+  const usage = getNodeDiskUsage(node);
+  if (node.status?.diskPressure === true) return true;
+  if (!usage) return false;
+  return (
+    usage.capacityBytes - usage.availableBytes >= usage.capacityBytes * 0.9
+  );
 }
 
 export function getNodeResourceSummary(

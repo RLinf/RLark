@@ -6,8 +6,21 @@ import {
   useState,
   type MouseEvent,
 } from "react";
-import { Check, ChevronLeft, Plus, Trash2, X } from "lucide-react";
-import { clusters, type Cluster, type JobType } from "../data";
+import {
+  Check,
+  ChevronLeft,
+  Play,
+  Plus,
+  Square,
+  Trash2,
+  X,
+} from "lucide-react";
+import {
+  storageClasses as mockStorageClasses,
+  clusters,
+  type Cluster,
+  type JobType,
+} from "../data";
 import type { Copy } from "../i18n";
 import type {
   CRDWorkflow,
@@ -21,8 +34,9 @@ import { crdToWorkflow } from "../utils/crd";
 import { hasCycle, makeDefaultRoleResources } from "../utils/dag";
 import {
   automaticNetworkDomain,
-  computePvcStorageMap,
   generateJobCRD,
+  isValidRoleName,
+  ROLE_NAME_MAX_LENGTH,
   ROLE_TEMPLATES,
 } from "../utils/job";
 import { toYaml } from "../utils/yaml";
@@ -31,26 +45,32 @@ import { useNodeLabels } from "../utils/nodes";
 import { NodeSelectorPicker, RoleNameInput } from "../components/create";
 import { CodeEditorField } from "../components/CodeEditor";
 import {
+  ColumnFilterButton,
   compareSortValues,
   PageToolbar,
   Pagination,
+  RefreshOverlay,
   SortButton,
   StatusBadge,
+  useColumnFilter,
   type SortDirection,
 } from "../components/shared";
+import { ColumnFilterPopover } from "../components/ColumnFilterPopover";
 
 export function WorkflowDetailPage({
   wf,
-  crd,
   copy: c,
   onBack,
   onJobClick,
+  onSetStopped,
+  actionPending,
 }: {
   wf: ReturnType<typeof crdToWorkflow>;
-  crd: CRDWorkflow;
   copy: Copy;
   onBack: () => void;
   onJobClick: (jobName: string) => void;
+  onSetStopped: (name: string, stopped: boolean) => void;
+  actionPending: boolean;
 }) {
   const zh = c.nav.overview === "总览";
   const templates = wf.templates;
@@ -208,6 +228,24 @@ export function WorkflowDetailPage({
             </span>
           </p>
         </div>
+        {(wf.phase === "Running" ||
+          wf.phase === "Pending" ||
+          wf.phase === "Stopped") && (
+          <button
+            className="secondary-button"
+            disabled={actionPending}
+            onClick={() => onSetStopped(wf.name, wf.phase !== "Stopped")}
+          >
+            {wf.phase === "Stopped" ? <Play size={15} /> : <Square size={14} />}
+            {wf.phase === "Stopped"
+              ? zh
+                ? "恢复"
+                : "Resume"
+              : zh
+                ? "停止"
+                : "Stop"}
+          </button>
+        )}
       </div>
       <div className="form-section">
         <div className="form-section-head">
@@ -373,14 +411,19 @@ export function WorkflowsPage({
   const zh = c.nav.overview === "总览";
   const [workflows, setWorkflows] = useState<CRDWorkflow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [actionPending, setActionPending] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [sort, setSort] = useState<{
-    key: "name" | "phase" | "jobCount" | "created";
+    key: "created";
     direction: SortDirection;
   }>({ key: "created", direction: "desc" });
+  // 状态列多选筛选；空数组 = 全部
+  const [phaseFilter, setPhaseFilter] = useState<string[]>([]);
+  const columnFilter = useColumnFilter();
   const toggleSort = (key: typeof sort.key) =>
     setSort((current) => ({
       key,
@@ -392,10 +435,7 @@ export function WorkflowsPage({
     if (isInitial) setLoading(true);
     setError("");
     try {
-      const resp = await fetch("/api/v1/rlinf.io/v1alpha1/workflows");
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      setWorkflows(data.items ?? []);
+      setWorkflows(await workflowsApi.list());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -405,6 +445,16 @@ export function WorkflowsPage({
 
   useAutoRefresh(fetchWorkflows, 10000);
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await fetchWorkflows(false);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleDelete = async (name: string) => {
     if (
       !confirm(
@@ -413,30 +463,68 @@ export function WorkflowsPage({
     )
       return;
     try {
-      const resp = await fetch(`/api/v1/rlinf.io/v1alpha1/workflows/${name}`, {
-        method: "DELETE",
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      setWorkflows((prev) => prev.filter((w) => w.metadata.name !== name));
+      await workflowsApi.remove(name);
+      setWorkflows((prev) =>
+        prev.map((w) =>
+          w.metadata.name === name
+            ? {
+                ...w,
+                metadata: {
+                  ...w.metadata,
+                  deletionTimestamp: new Date().toISOString(),
+                },
+              }
+            : w,
+        ),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
 
+  const handleSetStopped = async (name: string, stopped: boolean) => {
+    setActionPending(name);
+    setError("");
+    try {
+      await workflowsApi.setStopped(name, stopped);
+      setWorkflows((prev) =>
+        prev.map((workflow) =>
+          workflow.metadata.name === name
+            ? { ...workflow, spec: { ...workflow.spec, stopped } }
+            : workflow,
+        ),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActionPending("");
+    }
+  };
+
   const items = workflows.map(crdToWorkflow);
-  const filteredItems = items.filter((workflow) =>
-    `${workflow.name} ${workflow.phase}`
+  const filteredItems = items.filter((workflow) => {
+    const queryHit = `${workflow.name} ${workflow.phase}`
       .toLowerCase()
-      .includes(query.trim().toLowerCase()),
-  );
+      .includes(query.trim().toLowerCase());
+    const phaseHit =
+      phaseFilter.length === 0 || phaseFilter.includes(workflow.phase);
+    return queryHit && phaseHit;
+  });
   const sortedItems = [...filteredItems].sort((a, b) =>
     compareSortValues(
-      a[sort.key],
-      b[sort.key],
+      a.created,
+      b.created,
       sort.direction,
       zh ? "zh-CN" : "en",
     ),
   );
+  // 状态选项：从当前工作流去重
+  const phaseOptions = Array.from(new Set(items.map((w) => w.phase)))
+    .sort()
+    .map((v) => ({
+      value: v,
+      label: (c.status as Record<string, string>)[v] ?? v,
+    }));
   const totalPages = Math.max(1, Math.ceil(sortedItems.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pagedItems = sortedItems.slice(
@@ -444,7 +532,7 @@ export function WorkflowsPage({
     currentPage * pageSize,
   );
 
-  useEffect(() => setPage(1), [query, pageSize]);
+  useEffect(() => setPage(1), [query, phaseFilter, pageSize]);
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
@@ -458,10 +546,11 @@ export function WorkflowsPage({
     return (
       <WorkflowDetailPage
         wf={selected}
-        crd={workflows.find((w) => w.metadata.name === selectedName)!}
         copy={c}
         onBack={() => onSelect(undefined)}
         onJobClick={onJobClick}
+        onSetStopped={handleSetStopped}
+        actionPending={actionPending === selected.name}
       />
     );
   }
@@ -485,41 +574,30 @@ export function WorkflowsPage({
         onChange={setQuery}
         count={filteredItems.length}
         copy={c}
-        onRefresh={() => fetchWorkflows(false)}
+        onRefresh={handleRefresh}
+        refreshing={refreshing}
       />
       {error && (
         <div className="cert-error" style={{ marginBottom: 12 }}>
           {error}
         </div>
       )}
-      <div className="table-panel">
+      <div
+        className={`table-panel refreshable-region${refreshing ? " is-refreshing" : ""}`}
+        aria-busy={refreshing}
+      >
         <table>
           <thead>
             <tr>
+              <th>{zh ? "工作流名称" : "Name"}</th>
               <th>
-                <SortButton
-                  label={zh ? "工作流名称" : "Name"}
-                  active={sort.key === "name"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("name")}
-                />
-              </th>
-              <th>
-                <SortButton
+                <ColumnFilterButton
                   label={zh ? "状态" : "Status"}
-                  active={sort.key === "phase"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("phase")}
+                  selectedCount={phaseFilter.length}
+                  onClick={columnFilter.openFor("phase")}
                 />
               </th>
-              <th>
-                <SortButton
-                  label={zh ? "任务数" : "Jobs"}
-                  active={sort.key === "jobCount"}
-                  direction={sort.direction}
-                  onClick={() => toggleSort("jobCount")}
-                />
-              </th>
+              <th>{zh ? "任务数" : "Jobs"}</th>
               <th>
                 <SortButton
                   label={zh ? "创建时间" : "Created"}
@@ -528,7 +606,7 @@ export function WorkflowsPage({
                   onClick={() => toggleSort("created")}
                 />
               </th>
-              <th />
+              <th className="table-actions-col">{zh ? "操作" : "Actions"}</th>
             </tr>
           </thead>
           <tbody>
@@ -562,14 +640,42 @@ export function WorkflowsPage({
                 <td>
                   <small>{formatChinaDateTime(wf.created)}</small>
                 </td>
-                <td>
+                <td className="table-actions-col">
                   <div className="row-actions">
+                    {(wf.phase === "Running" ||
+                      wf.phase === "Pending" ||
+                      wf.phase === "Stopped") && (
+                      <button
+                        className="icon-button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleSetStopped(wf.name, wf.phase !== "Stopped");
+                        }}
+                        disabled={actionPending === wf.name}
+                        title={
+                          wf.phase === "Stopped"
+                            ? zh
+                              ? "恢复"
+                              : "Resume"
+                            : zh
+                              ? "停止"
+                              : "Stop"
+                        }
+                      >
+                        {wf.phase === "Stopped" ? (
+                          <Play size={15} />
+                        ) : (
+                          <Square size={14} />
+                        )}
+                      </button>
+                    )}
                     <button
                       className="icon-button danger"
                       onClick={(event) => {
                         event.stopPropagation();
                         handleDelete(wf.name);
                       }}
+                      disabled={wf.phase === "Deleting"}
                       title={zh ? "删除" : "Delete"}
                     >
                       <Trash2 size={15} />
@@ -598,6 +704,10 @@ export function WorkflowsPage({
             )}
           </tbody>
         </table>
+        <RefreshOverlay
+          visible={refreshing}
+          label={zh ? "正在刷新工作流列表" : "Refreshing workflow list"}
+        />
       </div>
       <Pagination
         page={currentPage}
@@ -607,6 +717,17 @@ export function WorkflowsPage({
         onPageSizeChange={setPageSize}
         zh={zh}
       />
+      {columnFilter.openKey === "phase" && (
+        <ColumnFilterPopover
+          label={zh ? "状态" : "Status"}
+          options={phaseOptions}
+          selected={phaseFilter}
+          onChange={setPhaseFilter}
+          anchorRect={columnFilter.anchorRect}
+          onClose={columnFilter.close}
+          zh={zh}
+        />
+      )}
     </div>
   );
 }
@@ -649,7 +770,7 @@ export function CreateWorkflowModal({
   >([]);
   const [storageClassLoading, setStorageClassLoading] = useState(false);
   const [storageClassFetched, setStorageClassFetched] = useState(false);
-  const [clustersLoaded, setClustersLoaded] = useState(false);
+  const [, setClustersLoaded] = useState(false);
   const lastFetchedStorageClusterRef = useRef<string>("");
 
   const [dragNode, setDragNode] = useState<{
@@ -690,13 +811,11 @@ export function CreateWorkflowModal({
   ]);
 
   useEffect(() => {
-    fetch("/api/v1/rlinf.io/v1alpha1/domains")
-      .then((r) =>
-        r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)),
-      )
-      .then((data) =>
+    domainsApi
+      .list()
+      .then((items) =>
         setDomains(
-          (data.items ?? []).map((d: any) => ({
+          items.map((d) => ({
             name: d.metadata?.name ?? "",
             cidr: d.spec?.cidr ?? "",
           })),
@@ -706,12 +825,10 @@ export function CreateWorkflowModal({
   }, []);
 
   useEffect(() => {
-    fetch("/api/v1/clusters")
-      .then((r) =>
-        r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)),
-      )
+    clustersApi
+      .list<Partial<Cluster>>()
       .then((data) => {
-        const list: Cluster[] = (data.data ?? []).map((c: any) => ({
+        const list: Cluster[] = data.map((c) => ({
           id: c.id ?? c.name ?? "",
           name: c.name ?? c.id ?? "",
           type: c.type === "Embodied" ? "Embodied" : "Cloud",
@@ -771,30 +888,32 @@ export function CreateWorkflowModal({
     setStorageClassLoading(true);
     setStorageClassFetched(false);
     try {
-      const url = new URL(
-        "/api/v1/storage/storageclass",
-        window.location.origin,
-      );
-      if (cluster) {
-        url.searchParams.set("clusters", cluster);
-      }
-      const resp = await fetch(url.pathname + url.search);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const result = await resp.json();
+      const data = await storageClassesApi.list<{
+        name?: string;
+        description?: string;
+        bucket?: string;
+      }>(cluster);
       const list: Array<{ name: string; description: string; bucket: string }> =
         [];
-      const data = result.data ?? {};
       for (const [key, value] of Object.entries(data)) {
-        const item = value as any;
         list.push({
-          name: item.name ?? key,
-          description: item.description ?? "",
-          bucket: item.bucket ?? "",
+          name: value.name ?? key,
+          description: value.description ?? "",
+          bucket: value.bucket ?? "",
         });
       }
       setStorageClasses(list);
     } catch (e) {
       console.warn("Failed to fetch storage classes:", e);
+      setStorageClasses(
+        mockStorageClasses
+          .filter((sc) => !cluster || sc.clusters.includes(cluster))
+          .map(({ name, description, bucket }) => ({
+            name,
+            description,
+            bucket,
+          })),
+      );
     } finally {
       setStorageClassLoading(false);
       setStorageClassFetched(true);
@@ -838,12 +957,7 @@ export function CreateWorkflowModal({
       type: "RL",
       roles,
       headerRole: roles[0],
-      roleResources: makeDefaultRoleResources(
-        "RL",
-        roles,
-        clusterDisplayNames,
-        name,
-      ),
+      roleResources: makeDefaultRoleResources("RL", roles, clusterDisplayNames),
       runScript:
         "python train.py --config /mnt/config/train.yaml --dataset /mnt/dataset --output /mnt/checkpoints",
       domain: "",
@@ -1030,11 +1144,19 @@ export function CreateWorkflowModal({
         setError(zh ? "角色名称不能为空。" : "Role names cannot be empty.");
         return;
       }
-      if (job.roles.some((role) => role.trim().length > 50)) {
+      if (job.roles.some((role) => role.trim().length > ROLE_NAME_MAX_LENGTH)) {
         setError(
           zh
-            ? "角色名称不能超过 50 个字符。"
-            : "Role names cannot exceed 50 characters.",
+            ? `角色名称不能超过 ${ROLE_NAME_MAX_LENGTH} 个字符。`
+            : `Role names cannot exceed ${ROLE_NAME_MAX_LENGTH} characters.`,
+        );
+        return;
+      }
+      if (job.roles.some((role) => !isValidRoleName(role.trim()))) {
+        setError(
+          zh
+            ? "名称格式不正确，仅支持中英文、数字以及-_."
+            : "Invalid name format. Only Chinese/English letters, digits, -, _ and . are allowed.",
         );
         return;
       }
@@ -1042,18 +1164,27 @@ export function CreateWorkflowModal({
         setError(zh ? "角色名称不能重复。" : "Role names must be unique.");
         return;
       }
+      // ray head 只能是单 pod 任务：header 角色的副本数必须为 1。
+      const header =
+        job.roles.includes(job.headerRole) && job.headerRole
+          ? job.headerRole
+          : (job.roles[0] ?? "");
+      if (header) {
+        const raw = Number(job.roleResources[header]?.replicas);
+        const headerReplicas = Number.isFinite(raw) && raw > 0 ? raw : 1;
+        if (headerReplicas !== 1) {
+          setError(
+            zh
+              ? `Job ${job.name} 的 Header 角色 ${header} 只能有一个 Pod（副本数需为 1）。`
+              : `The header role ${header} of job ${job.name} must have exactly one pod (replicas must be 1).`,
+          );
+          return;
+        }
+      }
     }
     setSubmitting(true);
     try {
-      const resp = await fetch("/api/v1/rlinf.io/v1alpha1/workflows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(crd),
-      });
-      if (!resp.ok) {
-        const body = await resp.text();
-        throw new Error(`HTTP ${resp.status}: ${body}`);
-      }
+      await workflowsApi.create(crd);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1067,6 +1198,18 @@ export function CreateWorkflowModal({
     activeJob && activeJob.roles.includes(activeJob.headerRole)
       ? activeJob.headerRole
       : (activeJob?.roles[0] ?? "");
+  // ray head 只能是单 pod 任务：replicas 为 1（未配置时按 1 处理）。
+  const roleReplicas = (role: string) => {
+    const rr = activeJob?.roleResources[role];
+    if (!rr) return 1;
+    const value = Number(rr.replicas);
+    return Number.isFinite(value) && value > 0 ? value : 1;
+  };
+  const canBeHeader = (role: string) => roleReplicas(role) === 1;
+  const selectHeaderRole = (role: string) => {
+    if (!activeJob || !canBeHeader(role)) return;
+    updateJob(activeJob.id, { headerRole: role });
+  };
   const steps = zh
     ? ["DAG 编排", "Job 详情", "YAML 预览"]
     : ["DAG Editor", "Job Details", "YAML Preview"];
@@ -1171,11 +1314,10 @@ export function CreateWorkflowModal({
     const mounts = rr.mounts.map((m, i) =>
       i === index ? { ...m, [field]: value } : m,
     );
-    const pvcStorageMap = computePvcStorageMap(role, mounts, activeJob.name);
     updateJob(activeJob.id, {
       roleResources: {
         ...activeJob.roleResources,
-        [role]: { ...rr, mounts, pvcStorageMap },
+        [role]: { ...rr, mounts },
       },
     });
   };
@@ -1194,11 +1336,10 @@ export function CreateWorkflowModal({
         pvcSizeGb: 10,
       },
     ];
-    const pvcStorageMap = computePvcStorageMap(role, newMounts, activeJob.name);
     updateJob(activeJob.id, {
       roleResources: {
         ...activeJob.roleResources,
-        [role]: { ...rr, mounts: newMounts, pvcStorageMap },
+        [role]: { ...rr, mounts: newMounts },
       },
     });
   };
@@ -1208,11 +1349,10 @@ export function CreateWorkflowModal({
     const rr = activeJob.roleResources[role];
     if (!rr) return;
     const newMounts = rr.mounts.filter((_, i) => i !== index);
-    const pvcStorageMap = computePvcStorageMap(role, newMounts, activeJob.name);
     updateJob(activeJob.id, {
       roleResources: {
         ...activeJob.roleResources,
-        [role]: { ...rr, mounts: newMounts, pvcStorageMap },
+        [role]: { ...rr, mounts: newMounts },
       },
     });
   };
@@ -1220,12 +1360,7 @@ export function CreateWorkflowModal({
   const onJobTypeChange = (next: JobType) => {
     if (!activeJob) return;
     const newRoles = ROLE_TEMPLATES[next];
-    const newRR = makeDefaultRoleResources(
-      next,
-      newRoles,
-      clusterDisplayNames,
-      activeJob.name,
-    );
+    const newRR = makeDefaultRoleResources(next, newRoles, clusterDisplayNames);
     updateJob(activeJob.id, {
       type: next,
       roles: newRoles,
@@ -1280,7 +1415,9 @@ export function CreateWorkflowModal({
   const renameRole = (old: string, newName: string) => {
     if (!activeJob) return;
     newName = newName.trim();
-    if (!newName || newName.length > 50 || old === newName) return;
+    // 允许清空/超长名称即时写入，空与格式问题由提交校验统一拦截；
+    // 此处仅拦截重复，避免按名称索引的 roleResources 相互覆盖。
+    if (old === newName) return;
     if (
       activeJob.roles.some(
         (role) => role !== old && role.toLowerCase() === newName.toLowerCase(),
@@ -1551,32 +1688,54 @@ export function CreateWorkflowModal({
                   </button>
                 </div>
                 <div className="role-edit-list">
-                  {activeJob.roles.map((role) => (
-                    <div
-                      key={role}
-                      className={`role-edit-row ${effectiveHeader === role ? "active" : ""}`}
-                      onClick={() =>
-                        updateJob(activeJob.id, { headerRole: role })
-                      }
-                    >
-                      <Check size={14} />
-                      <RoleNameInput role={role} onRename={renameRole} />
-                      <small>
-                        {effectiveHeader === role ? "Header" : "Worker"}
-                      </small>
-                      {activeJob.roles.length > 1 && (
-                        <button
-                          className="icon-button danger"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeRole(role);
-                          }}
-                        >
-                          <X size={14} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                  {activeJob.roles.map((role) => {
+                    const headerAllowed = canBeHeader(role);
+                    const isHeader = effectiveHeader === role;
+                    return (
+                      <div
+                        key={role}
+                        className={`role-edit-row ${isHeader ? "active" : ""} ${
+                          !headerAllowed ? "disabled" : ""
+                        }`}
+                        onClick={() => selectHeaderRole(role)}
+                        title={
+                          !headerAllowed
+                            ? zh
+                              ? "Header 角色只能有一个 Pod，请将该角色副本数设为 1。"
+                              : "The header role must have exactly one pod. Set its replicas to 1."
+                            : undefined
+                        }
+                      >
+                        <Check size={14} />
+                        <RoleNameInput
+                          id={role}
+                          value={role}
+                          zh={zh}
+                          onRename={renameRole}
+                        />
+                        <small>
+                          {isHeader
+                            ? "Header"
+                            : !headerAllowed
+                              ? zh
+                                ? "Worker（多 Pod）"
+                                : "Worker (multi-pod)"
+                              : "Worker"}
+                        </small>
+                        {activeJob.roles.length > 1 && (
+                          <button
+                            className="icon-button danger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeRole(role);
+                            }}
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
               {activeJob.roles.length > 0 && (
@@ -1982,13 +2141,9 @@ export function CreateWorkflowModal({
                                         role,
                                         index,
                                         "pvcSizeGb",
-                                        Math.min(
-                                          200,
-                                          Math.max(
-                                            1,
-                                            Number(e.target.value) || 1,
-                                          ),
-                                        ),
+                                        e.target.value === ""
+                                          ? ""
+                                          : Number(e.target.value),
                                       )
                                     }
                                   />
@@ -2014,21 +2169,39 @@ export function CreateWorkflowModal({
                   <small>{zh ? "选择 Head 节点" : "Select Head"}</small>
                 </div>
                 <div className="role-template selectable">
-                  {activeJob.roles.map((role) => (
-                    <button
-                      key={role}
-                      className={effectiveHeader === role ? "active" : ""}
-                      onClick={() =>
-                        updateJob(activeJob.id, { headerRole: role })
-                      }
-                    >
-                      <Check size={13} />
-                      {role}
-                      <small>
-                        {effectiveHeader === role ? "Header" : "Worker"}
-                      </small>
-                    </button>
-                  ))}
+                  {activeJob.roles.map((role) => {
+                    const headerAllowed = canBeHeader(role);
+                    const isHeader = effectiveHeader === role;
+                    return (
+                      <button
+                        key={role}
+                        className={`${isHeader ? "active" : ""} ${
+                          !headerAllowed ? "disabled" : ""
+                        }`}
+                        disabled={!headerAllowed}
+                        onClick={() => selectHeaderRole(role)}
+                        title={
+                          !headerAllowed
+                            ? zh
+                              ? "Header 角色只能有一个 Pod，请将该角色副本数设为 1。"
+                              : "The header role must have exactly one pod. Set its replicas to 1."
+                            : undefined
+                        }
+                      >
+                        <Check size={13} />
+                        {role}
+                        <small>
+                          {isHeader
+                            ? "Header"
+                            : !headerAllowed
+                              ? zh
+                                ? "Worker（多 Pod）"
+                                : "Worker (multi-pod)"
+                              : "Worker"}
+                        </small>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
               <div className="form-section">
@@ -2155,3 +2328,9 @@ export function CreateWorkflowModal({
     </div>
   );
 }
+import {
+  clustersApi,
+  domainsApi,
+  storageClassesApi,
+  workflowsApi,
+} from "../backend";

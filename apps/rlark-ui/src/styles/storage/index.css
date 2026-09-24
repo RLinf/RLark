@@ -1,0 +1,749 @@
+/* Storage resources */
+/* Keep storage detail sections aligned after the shared node-detail rules,
+   which are declared later in this stylesheet. */
+.node-detail-body.storage-detail-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.storage-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.storage-overview-card {
+  min-width: 0;
+  min-height: 112px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.storage-overview-card > span {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+}
+
+.storage-overview-card.purple > span {
+  color: #7c3aed;
+  background: #f1eafe;
+}
+
+.storage-overview-card.green > span {
+  color: #159b6b;
+  background: #e5f8f1;
+}
+
+.storage-overview-card.orange > span {
+  color: #e47a14;
+  background: #fff1df;
+}
+
+.storage-overview-card div {
+  min-width: 0;
+}
+
+.storage-overview-card small,
+.storage-overview-card strong,
+.storage-overview-card em {
+  display: block;
+}
+
+.storage-overview-card small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.storage-overview-card strong {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.storage-overview-card em {
+  max-width: 100%;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-class-table-panel {
+  overflow-x: auto;
+}
+
+.storage-class-table-panel table {
+  min-width: 900px;
+}
+
+/* 操作列右对齐，让表头文字与行内图标对齐 */
+.storage-class-table-panel .storage-actions-col {
+  text-align: right;
+}
+
+.storage-class-table-panel .storage-actions-col .row-actions {
+  justify-content: flex-end;
+}
+
+.storage-table-heading {
+  min-width: 900px;
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.storage-table-heading strong,
+.storage-table-heading small {
+  display: block;
+}
+
+.storage-table-heading strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.storage-table-heading small,
+.storage-table-heading > span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.storage-table-heading > span {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #f2f4f8;
+  font-weight: 700;
+}
+
+.storage-class-table-panel tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.storage-empty-cell {
+  height: 180px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.storage-name-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.storage-name-cell > span:first-child {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: #f1eafe;
+  color: var(--blue);
+}
+
+.storage-name-cell strong,
+.storage-name-cell small {
+  display: block;
+}
+
+.storage-name-cell strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.storage-name-cell small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.storage-provider-chip,
+.storage-cluster-list span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f2f4f8;
+  color: #596579;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.storage-provider-chip {
+  background: #e8f8f2;
+  color: #168764;
+}
+
+.storage-cluster-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.storage-description {
+  display: -webkit-box;
+  max-width: 320px;
+  overflow: hidden;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.storage-class-table-panel .row-actions {
+  justify-content: flex-end;
+}
+
+.storage-files-hero {
+  align-items: flex-end;
+}
+
+.storage-files-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.storage-files-summary > div {
+  min-width: 0;
+  min-height: 80px;
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  grid-template-rows: auto auto;
+  align-content: center;
+  column-gap: 11px;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.storage-files-summary > div > span {
+  grid-row: 1 / 3;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: #f1eafe;
+  color: var(--blue);
+}
+
+.storage-files-summary > div:nth-child(2) > span {
+  background: #e5f8f1;
+  color: #159b6b;
+}
+
+.storage-files-summary > div:nth-child(3) > span {
+  background: #fff1df;
+  color: #e47a14;
+}
+
+.storage-files-summary small {
+  align-self: end;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.storage-files-summary strong {
+  min-width: 0;
+  align-self: start;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-files-summary strong em {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.storage-files-page .files-breadcrumb {
+  min-height: 46px;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  box-shadow: 0 5px 16px rgba(28, 39, 58, 0.035);
+}
+
+.storage-files-page .files-breadcrumb > svg {
+  flex: 0 0 auto;
+  color: var(--blue);
+}
+
+.storage-files-page .files-breadcrumb .breadcrumb-label {
+  margin-right: 2px;
+  font-size: 11px;
+}
+
+.storage-files-page .files-breadcrumb button,
+.storage-files-page .files-breadcrumb > span:not(.breadcrumb-label) {
+  min-height: 25px;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgba(124, 58, 237, 0.07);
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.storage-files-toolbar {
+  margin-bottom: 12px;
+  padding: 0;
+}
+
+.storage-files-toolbar .search-field {
+  min-width: min(360px, 100%);
+}
+
+.storage-files-table-panel {
+  overflow-x: auto;
+}
+
+.storage-files-table-panel .storage-table-heading,
+.storage-files-table-panel table {
+  min-width: 820px;
+}
+
+.storage-files-table-panel th:nth-child(1) {
+  width: 44%;
+}
+
+.storage-files-table-panel th:nth-child(2) {
+  width: 15%;
+}
+
+.storage-files-table-panel th:nth-child(3) {
+  width: 25%;
+}
+
+.storage-files-table-panel th:last-child {
+  width: 120px;
+  text-align: right;
+}
+
+.storage-files-table-panel td:last-child {
+  text-align: right;
+}
+
+.storage-files-table-panel tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.storage-file-name {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.storage-file-name > i {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #f1eafe;
+  color: var(--blue);
+  font-style: normal;
+}
+
+.storage-file-name.file > i {
+  background: #eef2f7;
+  color: #718096;
+}
+
+.storage-file-name > span {
+  min-width: 0;
+}
+
+.storage-file-name strong,
+.storage-file-name small {
+  display: block;
+}
+
+.storage-file-name strong {
+  max-width: 480px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-file-name small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.storage-files-table-panel .row-actions {
+  justify-content: flex-end;
+}
+
+.storage-files-error {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 12px;
+  padding: 11px 12px;
+  border: 1px solid rgba(239, 90, 122, 0.2);
+  border-radius: 14px;
+  background: rgba(239, 90, 122, 0.06);
+  color: var(--red);
+}
+
+.storage-files-error > svg {
+  justify-self: center;
+}
+
+.storage-files-error strong,
+.storage-files-error span {
+  display: block;
+}
+
+.storage-files-error strong {
+  font-size: 11px;
+}
+
+.storage-files-error span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.storage-files-error .secondary-button {
+  min-height: 34px;
+  height: 34px;
+}
+
+.storage-go-up-row td {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.storage-go-up-row td svg {
+  margin-right: 7px;
+  vertical-align: middle;
+}
+
+.storage-files-state {
+  min-height: 170px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.storage-files-state > span {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: #f1eafe;
+  color: var(--blue);
+}
+
+.storage-files-state strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.storage-files-state small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.storage-files-spinner svg {
+  animation: storage-files-spin 0.9s linear infinite;
+}
+
+@keyframes storage-files-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.storage-detail-hero {
+  align-items: flex-end;
+}
+
+/* 返回按钮挪到左上之后，与 eyebrow 保持一点间距 */
+.storage-detail-hero .back-button {
+  margin-bottom: 4px;
+}
+
+.storage-detail-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 13px;
+}
+
+.storage-detail-badges span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 9px;
+  border: 1px solid rgba(124, 58, 237, 0.12);
+  border-radius: 999px;
+  background: rgba(124, 58, 237, 0.08);
+  color: #6d3fd3;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.storage-detail-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.storage-detail-panel {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.storage-detail-panel .node-detail-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: none;
+}
+
+.storage-detail-panel .node-detail-label svg {
+  color: var(--blue);
+}
+
+.storage-detail-section-copy {
+  margin: -3px 0 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.storage-detail-info-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.storage-detail-info-grid > div {
+  min-width: 0;
+  min-height: 82px;
+  justify-content: center;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: #f8f9fc;
+}
+
+.storage-detail-info-grid .muted {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.storage-detail-info-grid strong {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.theme-dark .storage-overview-card {
+  background: #151d2b;
+  border-color: var(--line);
+}
+
+.theme-dark .storage-files-hero {
+  background:
+    radial-gradient(
+      circle at 78% 15%,
+      rgba(124, 58, 237, 0.18),
+      transparent 25%
+    ),
+    linear-gradient(135deg, #151d2b 35%, #1a2030 100%);
+  border-color: var(--line);
+}
+
+.theme-dark .storage-files-summary > div {
+  background: #151d2b;
+  border-color: var(--line);
+}
+
+.theme-dark .storage-files-summary > div > span,
+.theme-dark .storage-file-name.folder > i,
+.theme-dark .storage-files-state > span {
+  background: rgba(124, 58, 237, 0.18);
+  color: #b79af8;
+}
+
+.theme-dark .storage-files-summary > div:nth-child(2) > span {
+  background: rgba(54, 201, 143, 0.14);
+  color: #62dbaf;
+}
+
+.theme-dark .storage-files-summary > div:nth-child(3) > span {
+  background: rgba(244, 143, 46, 0.15);
+  color: #f5a75d;
+}
+
+.theme-dark .storage-file-name.file > i {
+  background: #1e293a;
+  color: #aebbd0;
+}
+
+.theme-dark .storage-files-page .files-breadcrumb button,
+.theme-dark
+  .storage-files-page
+  .files-breadcrumb
+  > span:not(.breadcrumb-label) {
+  background: rgba(124, 58, 237, 0.18);
+  color: #c4b5fd;
+}
+
+.theme-dark .storage-detail-hero {
+  background:
+    radial-gradient(
+      circle at 10% 30%,
+      rgba(124, 58, 237, 0.2),
+      transparent 28%
+    ),
+    linear-gradient(135deg, #151d2b 30%, #1a2030 100%);
+  border-color: var(--line);
+}
+
+.theme-dark .storage-detail-badges span {
+  border-color: rgba(183, 154, 248, 0.18);
+  background: rgba(124, 58, 237, 0.18);
+  color: #c4b5fd;
+}
+
+.theme-dark .storage-detail-panel,
+.theme-dark .storage-detail-info-grid > div {
+  border-color: var(--line);
+  background: #151d2b;
+}
+
+.theme-dark .storage-detail-info-grid > div {
+  background: #111a29;
+}
+
+.theme-dark .storage-overview-card.purple > span,
+.theme-dark .storage-name-cell > span {
+  background: rgba(124, 58, 237, 0.18);
+  color: #b79af8;
+}
+
+.theme-dark .storage-overview-card.green > span {
+  background: rgba(54, 201, 143, 0.14);
+  color: #62dbaf;
+}
+
+.theme-dark .storage-overview-card.orange > span {
+  background: rgba(244, 143, 46, 0.15);
+  color: #f5a75d;
+}
+
+.theme-dark .storage-table-heading > span,
+.theme-dark .storage-cluster-list span {
+  background: #1e293a;
+  color: #b4c0d1;
+}
+
+.theme-dark .storage-provider-chip {
+  background: rgba(54, 201, 143, 0.14);
+  color: #62dbaf;
+}
+
+.theme-dark .storage-class-page .toolbar-filter select {
+  background-position: right 8px center !important;
+  background-repeat: no-repeat !important;
+  background-size: 14px 14px !important;
+}
+
+.theme-dark .storage-class-table-panel .inline-code {
+  color: #c5d1e2;
+}
+
+@media (max-width: 900px) {
+  .storage-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .storage-files-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .storage-detail-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .storage-detail-hero {
+    align-items: flex-start;
+    padding: 20px;
+  }
+
+  .storage-detail-info-grid {
+    grid-template-columns: 1fr;
+  }
+}

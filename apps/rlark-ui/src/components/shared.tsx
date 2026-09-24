@@ -110,6 +110,58 @@ export function SortButton({
   );
 }
 
+// 表头筛选触发按钮：列名 + ListFilter 图标，激活态高亮并显示选中数。
+// 与 SortButton 视觉对称，但语义是"筛选"而非"排序"。
+export function ColumnFilterButton({
+  label,
+  selectedCount,
+  onClick,
+}: {
+  label: string;
+  selectedCount: number;
+  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+}) {
+  const active = selectedCount > 0;
+  return (
+    <button
+      type="button"
+      className={`col-filter-button${active ? " active" : ""}`}
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={active}
+    >
+      <span>{label}</span>
+      <ListFilter size={12} />
+      {active && <span className="col-filter-badge">{selectedCount}</span>}
+    </button>
+  );
+}
+
+// 管理表格内"当前打开哪一列的筛选弹层"和触发位置。
+// 一个表格可能有多列可筛选，但同一时间只开一个弹层。
+export function useColumnFilter() {
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+
+  const openFor = (key: string) => (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (openKey === key) {
+      setOpenKey(null);
+      setAnchorRect(null);
+    } else {
+      setAnchorRect(e.currentTarget.getBoundingClientRect());
+      setOpenKey(key);
+    }
+  };
+
+  const close = () => {
+    setOpenKey(null);
+    setAnchorRect(null);
+  };
+
+  return { openKey, anchorRect, openFor, close };
+}
+
 export function Logo({ lang }: { lang: Lang }) {
   const locale = lang === "zh" ? "zh" : "en";
   return (
@@ -120,7 +172,7 @@ export function Logo({ lang }: { lang: Lang }) {
         className="brand-logo brand-logo-light"
       />
       <img
-        src={`/rlark-logo-${locale}-dark.png`}
+        src={`/rlark-logo-${locale}-dark.svg`}
         alt="RLark"
         className="brand-logo brand-logo-dark"
       />
@@ -136,7 +188,7 @@ export function StatusBadge({
   copy: Copy;
 }) {
   const Icon =
-    phase === "Running" || phase === "Stopping"
+    phase === "Running" || phase === "Stopping" || phase === "Deleting"
       ? LoaderCircle
       : phase === "Succeeded" || phase === "Online"
         ? Check
@@ -569,13 +621,32 @@ export function PageToolbar({
   );
 }
 
-export function ResourceDistribution({
-  copy: c,
-  rows,
+export function RefreshOverlay({
+  visible,
+  label,
 }: {
-  copy: Copy;
-  rows: ResourceRow[];
+  visible: boolean;
+  label: string;
 }) {
+  if (!visible) return null;
+
+  return (
+    <div
+      className="refreshable-region-overlay"
+      role="status"
+      aria-live="polite"
+    >
+      <LoaderCircle
+        className="refreshable-region-spinner"
+        size={26}
+        aria-hidden="true"
+      />
+      <span className="sr-only">{label}</span>
+    </div>
+  );
+}
+
+export function ResourceDistribution({ rows }: { rows: ResourceRow[] }) {
   const total = rows.reduce((s, r) => s + r.count, 0) || 1;
   return (
     <div className="resource-split">

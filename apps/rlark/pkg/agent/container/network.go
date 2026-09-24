@@ -88,6 +88,7 @@ func NewContainerNetworkAdapter(
 	managementPodLister listerv1alpha1.PodLister,
 	sshAddr string,
 	sshHostKey string,
+	sshMaxConnectionsPerDomain int,
 	enableSameClusterDirect bool,
 	enableCrossClusterDirect bool,
 	kubeletDir string,
@@ -99,14 +100,19 @@ func NewContainerNetworkAdapter(
 		managementPodLister: managementPodLister,
 		sshAddr:             sshAddr,
 		sshDialer: NewSSHDialer(SSHDialerConfig{
-			HostKeyCallback: hostKeyCallback,
-			OnReconnect:     nodeservermetrics.OnReconnect(),
+			HostKeyCallback:         hostKeyCallback,
+			OnReconnect:             nodeservermetrics.OnReconnect(),
+			MaxConnectionsPerDomain: sshMaxConnectionsPerDomain,
 		}),
 		enableSameClusterDirect:  enableSameClusterDirect,
 		enableCrossClusterDirect: enableCrossClusterDirect,
 		kubeletDir:               kubeletDir,
 		podUIDCache:              gocache.New(5*time.Minute, 10*time.Minute),
 	}
+}
+
+func (a *containerNetworkAdapter) Close() error {
+	return a.sshDialer.Close()
 }
 
 // makeHostKeyCallback 解析 SSH 主机公钥字符串，返回对应的 HostKeyCallback。

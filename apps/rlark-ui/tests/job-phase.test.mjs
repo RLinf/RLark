@@ -42,6 +42,10 @@ test("distinguishes stopping from normal Pending states", () => {
   assert.equal(effectiveJobPhase(job("Pending", false, [])), "Pending");
 });
 
+test("deleting takes precedence over stopping", () => {
+  assert.equal(effectiveJobPhase(job("Deleting", true, ["Stopped"])), "Deleting");
+});
+
 test("does not infer terminal states from task phases", () => {
   assert.equal(
     effectiveJobPhase(job("Pending", false, ["Pending", "Failed"])),

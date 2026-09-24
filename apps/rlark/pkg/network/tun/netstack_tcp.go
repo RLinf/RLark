@@ -2,12 +2,11 @@ package tun
 
 import (
 	"context"
-	"io"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
@@ -73,26 +72,13 @@ func (ns *netstack) getTCPHandler(s *stack.Stack) func(id stack.TransportEndpoin
 // handleTCPConnection 在 gVisor TCP 连接和 Proxy TCP 连接之间双向转发数据。
 func (ns *netstack) handleTCPConnection(local, remote net.Conn) {
 	logger := log.GetLogger()
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	// local(gVisor) → remote(Proxy)
-	go func() {
-		defer wg.Done()
-		if _, err := io.Copy(remote, local); err != nil {
-			logger.Error(nil, "Error copying from gVisor to Proxy", "err", err)
-		}
-	}()
-
-	// remote(Proxy) → local(gVisor)
-	go func() {
-		defer wg.Done()
-		if _, err := io.Copy(local, remote); err != nil {
-			logger.Error(nil, "Error copying from Proxy to gVisor", "err", err)
-		}
-	}()
-
-	wg.Wait()
+	err1, err2 := utils.RelayConnections(local, remote, "local", "remote")
+	if err1 != nil {
+		logger.Error(err1, "Error handling TCP connection")
+	}
+	if err2 != nil {
+		logger.Error(err2, "Error handling TCP connection")
+	}
 }
 
 // setSocketOptions 为 TCP endpoint 设置 Socket 选项。

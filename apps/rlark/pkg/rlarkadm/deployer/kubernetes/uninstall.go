@@ -3,7 +3,9 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"slices"
 
+	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/component"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/constants"
@@ -42,7 +44,7 @@ func (d *Installer) Uninstall(cfg *types.DeployConfig, purge bool) error {
 				return err
 			}
 		}
-		if err := deleteRBAC(ctx, clientset, &c); err != nil {
+		if err := deleteRBAC(ctx, clientset, cfg, &c); err != nil {
 			return err
 		}
 		logger.Info("component removed", "name", c.Name)
@@ -64,6 +66,11 @@ func (d *Installer) Uninstall(cfg *types.DeployConfig, purge bool) error {
 	}
 
 	if purge {
+		if cfg.UsesKubernetesManagementAPI() {
+			if err := removeManagementSecretFinalizers(ctx, clientset, constants.Namespace); err != nil {
+				return err
+			}
+		}
 		if err := clientset.CoreV1().Namespaces().Delete(ctx, constants.Namespace, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("delete namespace %s: %w", constants.Namespace, err)
 		}
@@ -71,6 +78,40 @@ func (d *Installer) Uninstall(cfg *types.DeployConfig, purge bool) error {
 	}
 
 	logger.Info("plane uninstalled", "plane", cfg.Plane, "namespace", constants.Namespace)
+	return nil
+}
+
+var protectedManagementSecrets = map[string][]string{
+	"rlark-tls":                {"rlark.io/tls-secret-protection"},
+	common.TLSCASecretName:     {"rlark.io/ca-secret-protection"},
+	"rlark-client-ca":          {"rlark.io/ca-secret-protection"},
+	common.AdminCertSecretName: {"rlark.io/admin-cert-secret-protection"},
+}
+
+func removeManagementSecretFinalizers(ctx context.Context, clientset kubernetes.Interface, namespace string) error {
+	secrets := clientset.CoreV1().Secrets(namespace)
+	for name, ownedFinalizers := range protectedManagementSecrets {
+		secret, err := secrets.Get(ctx, name, metav1.GetOptions{})
+		if errors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("get protected secret %s/%s: %w", namespace, name, err)
+		}
+		finalizers := secret.Finalizers[:0]
+		for _, finalizer := range secret.Finalizers {
+			if !slices.Contains(ownedFinalizers, finalizer) {
+				finalizers = append(finalizers, finalizer)
+			}
+		}
+		if len(finalizers) == len(secret.Finalizers) {
+			continue
+		}
+		secret.Finalizers = finalizers
+		if _, err := secrets.Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("remove finalizers from secret %s/%s: %w", namespace, name, err)
+		}
+	}
 	return nil
 }
 
@@ -133,8 +174,8 @@ func deleteSecret(ctx context.Context, clientset *kubernetes.Clientset, name str
 	return nil
 }
 
-func deleteRBAC(ctx context.Context, clientset *kubernetes.Clientset, c *types.Component) error {
-	sa, cr, crb := component.RBAC(c)
+func deleteRBAC(ctx context.Context, clientset *kubernetes.Clientset, cfg *types.DeployConfig, c *types.Component) error {
+	sa, cr, crb := component.RBAC(cfg, c)
 	if sa == nil {
 		return nil
 	}

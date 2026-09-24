@@ -74,7 +74,6 @@ Controller-Manager runs in the control plane, coordinating the lifecycle of high
 | Domain Controller   | Manage Domain CRD, allocate IP subnets, sign DomainPeer certificates         | [domain/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/domain/)     |
 | Task Controller     | Watch Task status, sync to corresponding Job                                 | [task/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/task/)         |
 | Node Controller     | Watch Node registration/offline events                                       | [node/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/node/)         |
-| Workflow Controller | DAG orchestration, schedule Jobs in dependency order                         | [workflow/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/workflow/) |
 
 **Job State Machine**:
 
@@ -196,11 +195,12 @@ func (a *containerNetworkAdapter) GetContainerNetworkDial(...) (utils.Dial, erro
 
 Per-Domain SSH connection pool. Design highlights:
 
-- At most one SSH connection per Domain (ssh.Client multiplexing)
+- Each Domain starts with one SSH connection and grows up to four connections when all existing connections have active channels
+- New channels use the least-loaded connection; idle physical connections are reclaimed by background GC
 - Auto-reconnect on disconnect; concurrent requests wait during reconnection instead of creating separate connections
 - Exponential backoff on reconnection failure (1s → 2s → 4s → ... → 30s)
-- Background GC closes idle connections (default 10 min timeout)
-- Thread-safe; read lock on normal path, no blocking
+- Background GC closes idle connections (default 24 hour timeout)
+- Data-path activity timestamps are updated atomically and rate-limited to avoid a mutex on every read and write
 
 ### 4.6 Embodied Runtime
 
@@ -315,7 +315,6 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    wf["Workflow<br/><i>Cluster</i>"]
     job["Job<br/><i>Cluster</i>"]
     task["Task<br/><i>Namespaced</i>"]
     node["Node<br/><i>Namespaced</i>"]
@@ -351,4 +350,3 @@ iptables/CNI solutions require modifying node network configuration with high pr
 - Runs in userspace; creating TUN devices still requires privileged access
 - gVisor netstack supports the required network protocol handling
 - Can be injected as a Sidecar container, decoupled from business containers
-

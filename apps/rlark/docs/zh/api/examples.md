@@ -2,15 +2,14 @@
 
 本页提供 RLark Gateway HTTP API 的端到端调用示例，重点围绕 **Kubernetes 运行时**（`agentType=Kubernetes`）展开。资源操作和字段定义请查看 [API 参考](reference.md)，机器可读的接口契约请查看 [OpenAPI 规范](../../api/swagger.yaml)。
 
-!!! warning "认证限制"
-    登录接口只校验内置 Web UI 凭据，不会返回可用于后续请求的 Bearer token 或会话 cookie，其他 Gateway API 也不会根据该结果执行授权。以下命令只应在可信网络中运行，或通过强制实施认证和授权的入口访问。
+请先登录，并在后续 Gateway API 请求中以 `Authorization: Bearer <token>` 携带响应中的 `token`。token 默认 8 小时过期。
 
 ## 约定
 
 - 独立运行的 Gateway 默认监听 `http://localhost:8080`。通过 `rlarkadm` 部署时，Gateway 在集群内部暴露于 `8090` 端口，浏览器流量经由 UI 服务路由。
 - CRD API 根路径：`/api/v1/rlinf.io/v1alpha1`。
 - `nodes`、`tasks` 等命名空间级资源必须在查询字符串中指定 `namespace=<namespace>`。
-- `jobs`、`workflows` 等集群级资源不使用命名空间查询参数。
+- `jobs` 等集群级资源不使用命名空间查询参数。
 - `spec.agentType` 可取 `Kubernetes`、`Docker` 或 `Raw`。目前仅实现 Kubernetes 运行时，Docker 和 Raw 尚在规划中。
 - `spec.role` 为必填字段，可取 `Actor`、`Rollout` 或 `Env`。
 - `kubernetes.workload.template` 是 Kubernetes `corev1.PodTemplateSpec`。
@@ -93,6 +92,41 @@ echo "$JOB_ID" # jo-<16 位十六进制字符>
 
 镜像、命令、环境变量、资源和卷应放在 `kubernetes.workload.template.spec.containers` 下，而不是作为 Task 的顶层字段。
 
+### 通过 HostNetwork 访问未适配设备
+
+如果 embodied-runtime 尚未适配某个网络设备，但设备能从数据面节点直接访问，可以在 Task 的 PodTemplate 中显式启用宿主机网络：
+
+```json
+{
+  "nodeSelector": {"kubernetes.io/hostname": "worker-1"},
+  "kubernetes": {
+    "workload": {
+      "kind": "Deployment",
+      "replicas": 1,
+      "template": {
+        "metadata": {"labels": {"app": "vendor-device-client"}},
+        "spec": {
+          "hostNetwork": true,
+          "dnsPolicy": "ClusterFirstWithHostNet",
+          "containers": [
+            {
+              "name": "app",
+              "image": "registry.example.com/vendor/device-sdk:latest",
+              "command": ["sh", "-c"],
+              "args": ["./device-client --address 192.168.10.20"]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+这种方式不会提供 embodied-runtime 的设备发现、资源隔离、controller、CLI 或 SDK 注入，设备驱动和生命周期管理由业务镜像负责。`hostNetwork` 会降低网络隔离并可能造成端口冲突，只应在可信数据面和专用设备节点使用。不要为此开启 `RLARK_ENABLE_UNSAFE_TASK_PRIVILEGES`；该变量会对多个任务全局启用旧版 privileged/hostNetwork 模式。
+
+完整的原生接入与兼容方案见 [embodied-runtime 部署与使用样例](../../../embodied-runtime/docs/examples.zh-CN.md#未适配设备)。
+
 ```bash
 # 按标签列出 Job。
 curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/jobs?labelSelector=framework=ppo"
@@ -124,80 +158,7 @@ curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/tasks?namespace=default&labelSelec
 curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/tasks/ppo-cartpole-actor-head?namespace=default"
 ```
 
-## 4. 创建 Workflow
-
-Workflow 包含通过依赖关系连接的 Job 模板。每个 `jobTemplates[].spec` 都是完整的 Job spec。
-
-```bash
-curl -X POST "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/workflows" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "apiVersion": "rlinf.io/v1alpha1",
-    "kind": "Workflow",
-    "metadata": {"name": "training-pipeline"},
-    "spec": {
-      "jobTemplates": [
-        {
-          "name": "prepare",
-          "dependencies": [],
-          "spec": {
-            "tasks": [
-              {
-                "name": "prepare-data",
-                "role": "Env",
-                "agentType": "Kubernetes",
-                "kubernetes": {
-                  "workload": {
-                    "kind": "Deployment",
-                    "replicas": 1,
-                    "template": {
-                      "spec": {
-                        "containers": [
-                          {"name": "prepare", "image": "registry.example.com/rl/prepare:v1"}
-                        ]
-                      }
-                    }
-                  }
-                }
-              }
-            ]
-          }
-        },
-        {
-          "name": "train",
-          "dependencies": ["prepare"],
-          "spec": {
-            "tasks": [
-              {
-                "name": "trainer",
-                "head": true,
-                "role": "Actor",
-                "agentType": "Kubernetes",
-                "kubernetes": {
-                  "workload": {
-                    "kind": "Deployment",
-                    "replicas": 1,
-                    "template": {
-                      "spec": {
-                        "containers": [
-                          {"name": "trainer", "image": "registry.example.com/rl/train:v1"}
-                        ]
-                      }
-                    }
-                  }
-                }
-              }
-            ]
-          }
-        }
-      ]
-    }
-  }'
-
-curl "$RLARK_GATEWAY/api/v1/rlinf.io/v1alpha1/workflows/training-pipeline"
-```
-
-## 5. UI 凭据校验
+## 4. UI 凭据校验
 
 仅接受内置用户名 `admin` 和 `user`。成功响应为 `{"ok":true,"role":"admin"}` 或 `{"ok":true,"role":"user"}`。
 

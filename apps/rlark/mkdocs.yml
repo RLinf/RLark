@@ -58,7 +58,6 @@ plugins:
             "Console Access and Navigation": 控制台访问与导航
             "Find Compute Resources": 查找算力资源
             "Submit and Manage Jobs": 提交和管理任务
-            "Build Workflows": 构建工作流
             "Attach Storage": 挂载存储
             "Connect with SSH Keys": 使用 SSH 密钥连接
             "RL Training Best Practices": "RL 训练最佳实践"
@@ -106,7 +105,6 @@ nav:
     - Console Access and Navigation: user-guide/console.md
     - Find Compute Resources: user-guide/clusters-nodes.md
     - Submit and Manage Jobs: user-guide/jobs.md
-    - Build Workflows: user-guide/workflows.md
     - Attach Storage: user-guide/storage.md
     - Connect with SSH Keys: user-guide/ssh-keys.md
   - Administrator Guide:

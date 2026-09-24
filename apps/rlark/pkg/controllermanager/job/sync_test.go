@@ -1,9 +1,11 @@
 package job
 
 import (
+	"reflect"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 )
@@ -101,6 +103,125 @@ func TestBuildTaskCarriesRestartAnnotation(t *testing.T) {
 	if taskEqual(task, job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"}) {
 		t.Fatal("task with an old restart annotation should require an update")
 	}
+}
+
+func TestBuildTaskCarriesJobTags(t *testing.T) {
+	job := &rlarkv1alpha1.Job{Spec: rlarkv1alpha1.JobSpec{
+		Tags: []rlarkv1alpha1.JobTag{{Key: "team", Values: []string{"research", "platform"}}},
+	}}
+	task := buildTask(job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"}, "job-worker", "default")
+
+	if !reflect.DeepEqual(task.Spec.Tags, job.Spec.Tags) {
+		t.Fatalf("task tags = %#v, want %#v", task.Spec.Tags, job.Spec.Tags)
+	}
+
+	job.Spec.Tags[0].Values[0] = "infrastructure"
+	if task.Spec.Tags[0].Values[0] != "research" {
+		t.Fatalf("task tags should not share backing storage with job tags: %#v", task.Spec.Tags)
+	}
+}
+
+func TestValidateHeadTask(t *testing.T) {
+	tmpl := func(name string, head bool, replicas *int32) rlarkv1alpha1.JobTaskTemplate {
+		return rlarkv1alpha1.JobTaskTemplate{
+			Name: name,
+			Head: head,
+			TaskSpec: rlarkv1alpha1.TaskSpec{
+				Kubernetes: &rlarkv1alpha1.KubernetesTaskSpec{
+					Workload: &rlarkv1alpha1.KubernetesWorkloadSpec{Replicas: replicas},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name    string
+		tasks   []rlarkv1alpha1.JobTaskTemplate
+		wantErr bool
+	}{
+		{
+			name: "head with single pod is valid",
+			tasks: []rlarkv1alpha1.JobTaskTemplate{
+				tmpl("head", true, ptr.To(int32(1))),
+				tmpl("worker", false, ptr.To(int32(4))),
+			},
+		},
+		{
+			name: "head with unset replicas defaults to one and is valid",
+			tasks: []rlarkv1alpha1.JobTaskTemplate{
+				{Name: "head", Head: true},
+			},
+		},
+		{
+			name: "head with multiple pods is invalid",
+			tasks: []rlarkv1alpha1.JobTaskTemplate{
+				tmpl("head", true, ptr.To(int32(2))),
+			},
+			wantErr: true,
+		},
+		{
+			name: "head with zero pods is invalid",
+			tasks: []rlarkv1alpha1.JobTaskTemplate{
+				tmpl("head", true, ptr.To(int32(0))),
+			},
+			wantErr: true,
+		},
+		{
+			name: "multiple head tasks are invalid",
+			tasks: []rlarkv1alpha1.JobTaskTemplate{
+				tmpl("head-a", true, ptr.To(int32(1))),
+				tmpl("head-b", true, ptr.To(int32(1))),
+			},
+			wantErr: true,
+		},
+		{
+			name:  "no head task is valid",
+			tasks: []rlarkv1alpha1.JobTaskTemplate{tmpl("worker", false, ptr.To(int32(3)))},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := &rlarkv1alpha1.Job{Spec: rlarkv1alpha1.JobSpec{Tasks: tt.tasks}}
+			err := validateHeadTask(job)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestMarkJobInvalid(t *testing.T) {
+	job := &rlarkv1alpha1.Job{}
+	if !markJobInvalid(job, "boom") {
+		t.Fatal("expected the job to change on first invalidation")
+	}
+	if job.Status.Phase != rlarkv1alpha1.JobPhaseFailed {
+		t.Fatalf("phase = %q, want %q", job.Status.Phase, rlarkv1alpha1.JobPhaseFailed)
+	}
+	if job.Status.EndTime == nil {
+		t.Fatal("expected EndTime to be set")
+	}
+	cond := findCondition(job.Status.Conditions, jobConditionValidated)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Message != "boom" {
+		t.Fatalf("unexpected validated condition: %+v", cond)
+	}
+
+	if markJobInvalid(job, "boom") {
+		t.Fatal("expected no change when the invalid state is unchanged")
+	}
+}
+
+func findCondition(conditions []metav1.Condition, condType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == condType {
+			return &conditions[i]
+		}
+	}
+	return nil
 }
 
 func jobWithTaskPhases(stopped bool, phase rlarkv1alpha1.JobPhase, phases ...rlarkv1alpha1.TaskPhase) *rlarkv1alpha1.Job {

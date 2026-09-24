@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "rootDir": "src",
+    "outDir": "dist/test",
+    "sourceMap": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true
+  },
+  "include": [
+    "src/api.ts",
+    "src/backend.ts",
+    "src/utils/crd.ts",
+    "src/utils/deployYaml.ts",
+    "src/utils/imageReference.ts",
+    "src/utils/job.ts",
+    "src/utils/jobPhase.ts",
+    "src/utils/nodeBatchMetadata.ts",
+    "src/utils/nodeResources.ts",
+    "src/utils/nodeVisibility.ts",
+    "src/utils/resourceAvailability.ts",
+    "src/utils/route.ts",
+    "src/utils/sshKeys.ts",
+    "src/utils/terminalKeyboard.ts"
+  ]
+}

@@ -3,6 +3,8 @@ package task
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"sort"
 
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
@@ -36,7 +38,6 @@ func (r *pushDeploymentReconciler) Reconcile(ctx context.Context, req reconcile.
 
 	taskName := deploy.Annotations[ManagementTaskNameAnnotation]
 	taskNamespace := deploy.Annotations[ManagementTaskNamespaceAnnotation]
-	taskUID := deploy.Annotations[ManagementTaskUIDAnnotation]
 
 	if taskName == "" || taskNamespace == "" {
 		logger.V(1).Info("Deployment has no management-task annotation, skipping")
@@ -53,19 +54,15 @@ func (r *pushDeploymentReconciler) Reconcile(ctx context.Context, req reconcile.
 		return reconcile.Result{}, nil
 	}
 
-	// AgentType check
-	if mgmtTask.Spec.AgentType != rlarkv1alpha1.AgentType(r.c.AgentType) {
-		logger.Info(fmt.Sprintf("Task AgentType %s does not match controller AgentType %s, skipping", mgmtTask.Spec.AgentType, r.c.AgentType))
+	if !pushOwnsTask(&mgmtTask, r.c.AgentType, &deploy, rlarkv1alpha1.KubernetesWorkloadDeployment) {
+		logger.Info("Deployment no longer owns management Task status, skipping")
 		return reconcile.Result{}, nil
 	}
 
-	// UID match check
-	if string(mgmtTask.UID) != taskUID {
-		logger.Info("management Task UID mismatch with annotation, skipping")
-		return reconcile.Result{}, nil
+	phase, message, pods, err := deploymentPhase(ctx, r.c.LocalKubeClient, &deploy)
+	if err != nil {
+		return reconcile.Result{}, err
 	}
-
-	phase, message, pods := deploymentPhase(ctx, logger, r.c.LocalKubeClient, &deploy)
 	observedNodes := podNodeNames(pods)
 	// pullProgress aggregation is now performed by the control-plane Task
 	// reconciler from Node.status.pullProgress, so the cluster-agent no
@@ -73,11 +70,11 @@ func (r *pushDeploymentReconciler) Reconcile(ctx context.Context, req reconcile.
 	return updateMgmtTaskStatus(ctx, logger, r.c.ManagementClient, &mgmtTask, phase, message, observedNodes)
 }
 
-func deploymentPhase(ctx context.Context, logger logr.Logger, localClient client.Client, deploy *appsv1.Deployment) (rlarkv1alpha1.TaskPhase, string, []corev1.Pod) {
+func deploymentPhase(ctx context.Context, localClient client.Client, deploy *appsv1.Deployment) (rlarkv1alpha1.TaskPhase, string, []corev1.Pod, error) {
 	phase, message := deploymentStatusPhase(deploy)
-	pods, err := listTaskPods(ctx, localClient, deploy.Namespace, deploy.Spec.Selector.MatchLabels)
+	pods, err := listTaskPods(ctx, localClient, deploy, deploy.Spec.Selector.MatchLabels)
 	if err != nil {
-		logger.Error(err, "failed to list pods")
+		return "", "", nil, err
 	}
 	// Override to Failed when any pod container is in an abnormal state
 	// (CrashLoopBackOff, ImagePullBackOff, OOMKilled, etc.) so operators
@@ -88,12 +85,12 @@ func deploymentPhase(ctx context.Context, logger logr.Logger, localClient client
 	}
 	if phase == rlarkv1alpha1.TaskPhasePending {
 		if found, err := hasFailedSchedulingEvent(ctx, localClient, deploy.Namespace, pods); err != nil {
-			logger.Error(err, "failed to list pod scheduling events")
+			return "", "", nil, err
 		} else if found {
 			message = "FailedScheduling"
 		}
 	}
-	return phase, message, pods
+	return phase, message, pods, nil
 }
 
 func deploymentStatusPhase(deploy *appsv1.Deployment) (rlarkv1alpha1.TaskPhase, string) {
@@ -101,16 +98,20 @@ func deploymentStatusPhase(deploy *appsv1.Deployment) (rlarkv1alpha1.TaskPhase, 
 	if desired == 0 {
 		return rlarkv1alpha1.TaskPhaseStopped, ""
 	}
+	if deploy.Status.ObservedGeneration < deploy.Generation {
+		return rlarkv1alpha1.TaskPhasePending, ""
+	}
 	for _, cond := range deploy.Status.Conditions {
+		if cond.Type == appsv1.DeploymentProgressing && cond.Status == corev1.ConditionFalse && cond.Reason == "ProgressDeadlineExceeded" {
+			return rlarkv1alpha1.TaskPhaseFailed, cond.Message
+		}
 		if cond.Type == appsv1.DeploymentReplicaFailure && cond.Status == corev1.ConditionTrue {
 			return rlarkv1alpha1.TaskPhaseFailed, cond.Message
 		}
 	}
-	if deploy.Status.ReadyReplicas >= desired && deploy.Status.Replicas >= desired {
+	if deploy.Status.UpdatedReplicas == desired && deploy.Status.ReadyReplicas == desired &&
+		deploy.Status.AvailableReplicas == desired && deploy.Status.Replicas == desired {
 		return rlarkv1alpha1.TaskPhaseRunning, ""
-	}
-	if deploy.Status.UnavailableReplicas > 0 {
-		return rlarkv1alpha1.TaskPhaseFailed, fmt.Sprintf("deployment replicas unavailable %d", deploy.Status.UnavailableReplicas)
 	}
 	return rlarkv1alpha1.TaskPhasePending, ""
 }
@@ -183,27 +184,83 @@ func hasFailedSchedulingEvent(ctx context.Context, localClient client.Client, na
 		if event.InvolvedObject.Kind != "Pod" || event.Reason != "FailedScheduling" {
 			continue
 		}
-		if _, ok := podNames[event.InvolvedObject.Name]; ok {
+		if _, ok := podNames[event.InvolvedObject.Name]; ok && (event.InvolvedObject.UID == "" || event.InvolvedObject.UID == podUID(pods, event.InvolvedObject.Name)) {
 			return true, nil
 		}
 	}
 	return false, nil
 }
 
+func podUID(pods []corev1.Pod, name string) types.UID {
+	for i := range pods {
+		if pods[i].Name == name {
+			return pods[i].UID
+		}
+	}
+	return ""
+}
+
 // --- shared helper functions for push reconcilers ---
 
 // listTaskPods lists the local pods backing a workload via its selector labels.
-func listTaskPods(ctx context.Context, localClient client.Client, namespace string, labels map[string]string) ([]corev1.Pod, error) {
+func listTaskPods(ctx context.Context, localClient client.Client, workload client.Object, labels map[string]string) ([]corev1.Pod, error) {
 	var podList corev1.PodList
 	labelSelector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchLabels: labels})
 	if err != nil {
 		return nil, fmt.Errorf("failed to build label selector: %w", err)
 	}
 
-	if err := localClient.List(ctx, &podList, client.InNamespace(namespace), client.MatchingLabelsSelector{Selector: labelSelector}); err != nil {
+	if err := localClient.List(ctx, &podList, client.InNamespace(workload.GetNamespace()), client.MatchingLabelsSelector{Selector: labelSelector}); err != nil {
 		return nil, fmt.Errorf("failed to list Pods: %w", err)
 	}
-	return podList.Items, nil
+	pods := podList.Items[:0]
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		owner := metav1.GetControllerOf(pod)
+		if owner == nil {
+			continue
+		}
+		if owner.Kind == workloadKind(workload) && owner.Name == workload.GetName() && owner.UID == workload.GetUID() {
+			pods = append(pods, *pod)
+			continue
+		}
+		if _, ok := workload.(*appsv1.Deployment); !ok || owner.Kind != "ReplicaSet" {
+			continue
+		}
+		var rs appsv1.ReplicaSet
+		if err := localClient.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: pod.Namespace}, &rs); err != nil {
+			if client.IgnoreNotFound(err) != nil {
+				return nil, err
+			}
+			continue
+		}
+		if rs.UID != owner.UID {
+			continue
+		}
+		depOwner := metav1.GetControllerOf(&rs)
+		if depOwner != nil && depOwner.Kind == "Deployment" && depOwner.Name == workload.GetName() && depOwner.UID == workload.GetUID() {
+			pods = append(pods, *pod)
+		}
+	}
+	return pods, nil
+}
+
+func workloadKind(obj client.Object) string {
+	switch obj.(type) {
+	case *appsv1.Deployment:
+		return "Deployment"
+	case *appsv1.StatefulSet:
+		return "StatefulSet"
+	case *appsv1.DaemonSet:
+		return "DaemonSet"
+	default:
+		return ""
+	}
+}
+
+func pushOwnsTask(task *rlarkv1alpha1.Task, agentType string, workload client.Object, kind rlarkv1alpha1.KubernetesWorkloadKind) bool {
+	return task.Spec.AgentType == rlarkv1alpha1.AgentType(agentType) && workloadOwnershipForTask(workload, task) != workloadConflict &&
+		task.Spec.Kubernetes != nil && task.Spec.Kubernetes.Workload != nil && task.Spec.Kubernetes.Workload.Kind == kind
 }
 
 // podNodeNames returns the node names where the given pods are scheduled.
@@ -214,7 +271,22 @@ func podNodeNames(pods []corev1.Pod) []string {
 			nodes = append(nodes, pod.Spec.NodeName)
 		}
 	}
+	sort.Strings(nodes)
+	nodes = slicesCompact(nodes)
 	return nodes
+}
+
+func slicesCompact(values []string) []string {
+	if len(values) == 0 {
+		return values
+	}
+	out := values[:1]
+	for _, value := range values[1:] {
+		if value != out[len(out)-1] {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // updateMgmtTaskStatus reports the workload phase/message/observedNodes to the
@@ -227,6 +299,7 @@ func podNodeNames(pods []corev1.Pod) []string {
 func updateMgmtTaskStatus(ctx context.Context, logger logr.Logger, mgmtClient client.Client, mgmtTask *rlarkv1alpha1.Task, phase rlarkv1alpha1.TaskPhase, message string, observedNodes []string) (reconcile.Result, error) {
 	stopped := phase == rlarkv1alpha1.TaskPhaseStopped
 	unchanged := mgmtTask.Status.Phase == phase && mgmtTask.Status.Message == message &&
+		reflect.DeepEqual(mgmtTask.Status.ObservedNodes, observedNodes) &&
 		(!stopped || (len(mgmtTask.Status.PullProgress) == 0 && len(mgmtTask.Status.Events) == 0))
 
 	if unchanged {
@@ -241,9 +314,7 @@ func updateMgmtTaskStatus(ctx context.Context, logger logr.Logger, mgmtClient cl
 		mgmtTask.Status.PullProgress = nil
 		mgmtTask.Status.Events = nil
 	}
-	if len(observedNodes) > 0 {
-		mgmtTask.Status.ObservedNodes = observedNodes
-	}
+	mgmtTask.Status.ObservedNodes = observedNodes
 
 	if err := mgmtClient.Status().Patch(ctx, mgmtTask, client.MergeFrom(original)); err != nil {
 		logger.Error(err, "failed to report Task status to management cluster")

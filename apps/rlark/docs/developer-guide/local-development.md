@@ -66,7 +66,7 @@ rlark-gateway \
 rlark-controller-manager \
   --server-address=https://localhost:8443 \
   --db-config=apps/rlark/docs/examples/db-config.yaml \
-  --leader-elect=false \
+  --leader-election=false \
   --metrics-bind-address=:0 \
   --health-probe-bind-address=:0
 ```

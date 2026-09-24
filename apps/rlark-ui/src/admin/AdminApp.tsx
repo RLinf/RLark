@@ -6,14 +6,17 @@ import {
   CloudCog,
   Eye,
   EyeOff,
-  Settings,
 } from "lucide-react";
 import { type Copy, type Lang, type Theme, copy } from "../i18n";
 import { adminNavItems } from "../constants";
 import { ApiPage } from "../pages/Api";
 import { DomainsPage } from "../pages/Domains";
 import { ClusterManagementPage } from "../pages/ClusterManagement";
-import { StorageClassesPage, StorageClassCreatePage } from "../pages/Storage";
+import {
+  StorageClassesPage,
+  StorageClassCreatePage,
+  StorageClassFilesPage,
+} from "../pages/Storage";
 import { CreateClusterPage } from "./CreateCluster";
 import { AddonsPage } from "./Addons";
 import { AdminPage } from "./AdminPage";
@@ -21,12 +24,17 @@ import { AdminDashboard } from "./AdminDashboard";
 import { Header, Logo, PlatformFooter } from "../components/shared";
 import { useBackendMode, usePersistentState } from "../hooks";
 import { SSHKeysPage } from "../pages/SSHKeys";
-import {
-  ImageRegistriesPage,
-  ImageRegistryCreatePage,
-} from "../pages/ImageRegistries";
+import { ImageRegistriesPage } from "../pages/ImageRegistries";
 import { SystemConfigPage } from "../pages/SystemConfig";
 import { JobsPage } from "../pages/Jobs";
+import { filesPath, parseAdminRoute } from "../utils/route";
+import {
+  clearAuthSession,
+  hasAuthSession,
+  storeAuthSession,
+  UNAUTHORIZED_EVENT,
+} from "../api";
+import { authApi } from "../backend";
 
 export function AdminLogin({
   lang,
@@ -61,31 +69,27 @@ export function AdminLogin({
     }
     setLoading(true);
     setError("");
-    fetch("/api/v1/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: username.trim(), password }),
-    })
-      .then((resp) =>
-        resp.ok
-          ? resp.json()
-          : Promise.reject(
-              new Error(
-                resp.status === 401
-                  ? zh
-                    ? "账号或密码错误"
-                    : "Invalid credentials"
-                  : `HTTP ${resp.status}`,
-              ),
-            ),
-      )
-      .then(() => {
+    authApi
+      .login(username.trim(), password)
+      .then((result) => {
+        if (!result.token || result.role !== "admin") {
+          throw new Error(
+            zh ? "该账号没有管理员权限" : "Administrator access required",
+          );
+        }
+        storeAuthSession(result.token, result.role);
         sessionStorage.setItem("rlark-admin-auth", "1");
         sessionStorage.setItem("rlark-admin-user-name", username.trim());
         onLogin(username.trim());
       })
       .catch((err) => {
-        setError(err.message);
+        setError(
+          err.status === 401
+            ? zh
+              ? "账号或密码错误"
+              : "Invalid credentials"
+            : err.message,
+        );
         setLoading(false);
       });
   };
@@ -105,7 +109,7 @@ export function AdminLogin({
                 className="user-login-brand-logo brand-logo-light"
               />
               <img
-                src={`/rlark-logo-${lang}-dark.png`}
+                src={`/rlark-logo-${lang}-dark.svg`}
                 alt="RLark"
                 className="user-login-brand-logo brand-logo-dark"
               />
@@ -205,8 +209,7 @@ export function AdminApp() {
   const [loggedIn, setLoggedIn] = useState(
     () =>
       import.meta.env.DEV ||
-      (typeof sessionStorage !== "undefined" &&
-        sessionStorage.getItem("rlark-admin-auth") === "1"),
+      (typeof sessionStorage !== "undefined" && hasAuthSession("admin")),
   );
   const [userName, setUserName] = useState(
     () => sessionStorage.getItem("rlark-admin-user-name") || "admin",
@@ -217,50 +220,9 @@ export function AdminApp() {
     false,
   );
   const [storageRefreshKey, setStorageRefreshKey] = useState(0);
-  const [adminPage, setAdminPage] = useState(() => {
-    const p = window.location.pathname
-      .replace(/^\/admin\/?/, "")
-      .replace(/\/+$/, "");
-    const parts = p.split("/").filter(Boolean);
-    const valid = [
-      "dashboard",
-      "clusters-list",
-      "create-cluster",
-      "clusters-nodes",
-      "addons",
-      "jobs",
-      "domains",
-      "api",
-      "config",
-      "storageClass",
-      "image-registries",
-      "ssh-keys",
-    ];
-    if (valid.includes(parts[0])) return parts[0];
-    return parts.length > 0 ? "clusters-nodes" : "dashboard";
-  });
-  const [adminSub, setAdminSub] = useState(() => {
-    const p = window.location.pathname
-      .replace(/^\/admin\/?/, "")
-      .replace(/\/+$/, "");
-    const parts = p.split("/").filter(Boolean);
-    const explicitPages = [
-      "dashboard",
-      "clusters-list",
-      "create-cluster",
-      "clusters-nodes",
-      "addons",
-      "jobs",
-      "domains",
-      "api",
-      "config",
-      "storageClass",
-      "image-registries",
-      "ssh-keys",
-    ];
-    const subParts = explicitPages.includes(parts[0]) ? parts.slice(1) : parts;
-    return subParts.length > 0 ? decodeURIComponent(subParts.join("/")) : "";
-  });
+  const initialRoute = parseAdminRoute();
+  const [adminPage, setAdminPage] = useState(initialRoute.page);
+  const [adminSub, setAdminSub] = useState(initialRoute.sub);
   const c = copy[lang];
   const zh = lang === "zh";
 
@@ -281,39 +243,17 @@ export function AdminApp() {
 
   useEffect(() => {
     const onPop = () => {
-      const p = window.location.pathname
-        .replace(/^\/admin\/?/, "")
-        .replace(/\/+$/, "");
-      const parts = p.split("/").filter(Boolean);
-      const valid = [
-        "dashboard",
-        "clusters-list",
-        "create-cluster",
-        "clusters-nodes",
-        "addons",
-        "jobs",
-        "domains",
-        "api",
-        "config",
-        "storageClass",
-        "image-registries",
-        "access-control",
-        "ssh-keys",
-      ];
-      setAdminPage(
-        valid.includes(parts[0])
-          ? parts[0]
-          : parts.length > 0
-            ? "clusters-nodes"
-            : "dashboard",
-      );
-      const subParts = valid.includes(parts[0]) ? parts.slice(1) : parts;
-      setAdminSub(
-        subParts.length > 0 ? decodeURIComponent(subParts.join("/")) : "",
-      );
+      const route = parseAdminRoute();
+      setAdminPage(route.page);
+      setAdminSub(route.sub);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  useEffect(() => {
+    const onUnauthorized = () => setLoggedIn(false);
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
   if (!loggedIn) {
     return (
@@ -435,8 +375,7 @@ export function AdminApp() {
           userName={userName}
           onCreate={() => navigate("create-cluster")}
           onLogout={() => {
-            sessionStorage.removeItem("rlark-admin-auth");
-            sessionStorage.removeItem("rlark-admin-user-name");
+            clearAuthSession();
             setLoggedIn(false);
           }}
           createLabel={zh ? "创建集群" : "Create Cluster"}
@@ -476,10 +415,8 @@ export function AdminApp() {
           />
         )}
         {adminPage === "api" && <ApiPage copy={c} />}
-        {adminPage === "create-cluster" && (
-          <CreateClusterPage copy={c} lang={lang} />
-        )}
-        {adminPage === "addons" && <AddonsPage copy={c} lang={lang} />}
+        {adminPage === "create-cluster" && <CreateClusterPage lang={lang} />}
+        {adminPage === "addons" && <AddonsPage lang={lang} />}
         {adminPage === "config" && <SystemConfigPage copy={c} />}
         {adminPage === "storageClass" && adminSub === "create" && (
           <StorageClassCreatePage
@@ -494,27 +431,29 @@ export function AdminApp() {
             selectedName={adminSub}
             onSelect={(name?: string) => navigate("storageClass", name)}
             onCreate={() => navigate("storageClass", "create")}
+            onBrowseFiles={(cluster, storageClass) =>
+              window.open(filesPath(cluster, storageClass, true), "_blank")
+            }
             refreshKey={storageRefreshKey}
           />
         )}
-        {adminPage === "image-registries" && adminSub === "create" && (
-          <ImageRegistryCreatePage
+        {adminPage === "files" && (
+          <StorageClassFilesPage
             copy={c}
-            onBack={() => navigate("image-registries")}
-            onCreated={() => setStorageRefreshKey((key) => key + 1)}
+            sub={adminSub}
+            onBack={() => navigate("storageClass")}
           />
         )}
-        {adminPage === "image-registries" && adminSub !== "create" && (
+        {adminPage === "image-registries" && (
           <ImageRegistriesPage
             copy={c}
-            selectedName={adminSub || undefined}
-            onSelect={(name?: string) =>
-              navigate("image-registries", name ?? "")
-            }
-            onCreate={() => navigate("image-registries", "create")}
+            selectedID={adminSub || undefined}
+            onSelect={(id?: string) => navigate("image-registries", id ?? "")}
           />
         )}
-        {adminPage === "ssh-keys" && <SSHKeysPage copy={c} />}
+        {adminPage === "ssh-keys" && (
+          <SSHKeysPage copy={c} userName={userName} />
+        )}
         <PlatformFooter />
       </main>
     </div>

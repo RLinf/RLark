@@ -22,6 +22,8 @@
 
 进入管理后台或集群页面查看可用集群：
 
+> **截图说明：** 截图来自示例环境，资源名称和数据仅供说明，实际环境会有所不同。
+
 ![集群列表](../../images/ui/first-login-cluster-list.png)
 
 记录集群名称和节点标签。这些信息将在配置任务节点选择器时使用。
@@ -96,6 +98,7 @@ ssh-keygen -t ed25519 -C "rlark-training"
 4. 点击 **创建**
 
 网络域会为加入的 Worker 分配虚拟 IP，并通过 SSH 隧道建立跨集群流量转发。
+末字节为 `.0` 或 `.255` 的 IPv4 地址始终保留，不会被自动分配；该规则同样适用于大于 `/24` 的 CIDR。
 
 !!! warning "CIDR 不能重叠"
     网络域的 CIDR 不能与任何集群的 Pod CIDR 或 Service CIDR 重叠，也不能与其他网络域重叠。
@@ -218,6 +221,5 @@ ssh-keygen -t ed25519 -C "rlark-training"
 ## 下一步
 
 - [创建训练任务](jobs.md) — 详细字段参考
-- [工作流](workflows.md) — 多角色和异构 Worker
 - [在任务中使用存储](storage.md) — hostPath 和对象存储配置
 - [通过 SSH 连接 Worker](ssh-keys.md) — SSH 到运行中的 Worker

@@ -43,6 +43,8 @@ rlarkadm install -f deploy-data-plane.yaml
 
 Do not combine cluster and node modes in one Deployment for a multi-node Kubernetes data plane. `rlarkadm` creates the correct Deployment and DaemonSet, certificate Secret, RBAC, socket mounts, and container-runtime mount.
 
+`rlarkadm` assigns the node Agent a dedicated `rlark-agent-node` ServiceAccount. Its local-cluster RBAC is limited to reading the current Node and listing/watching Node events; it does not inherit the cluster Agent's resource-management permissions.
+
 ### Verification
 
 ```bash

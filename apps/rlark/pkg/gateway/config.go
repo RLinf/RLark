@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"time"
+
 	"github.com/spf13/pflag"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
@@ -19,6 +21,9 @@ type Config struct {
 
 	// ServerAddress is the address of the rlark-server for certificate signing.
 	ServerAddress string
+
+	// JWTTokenTTL is the lifetime of a UI access token.
+	JWTTokenTTL time.Duration
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -26,6 +31,7 @@ func DefaultConfig() Config {
 	return Config{
 		Address:          ":8080",
 		ServerAddress:    "https://rlark-server.rlark-system.svc:8443",
+		JWTTokenTTL:      8 * time.Hour,
 		KubeClientConfig: configs.DefaultKubernetesClientConfig(),
 	}
 }
@@ -35,6 +41,7 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.Address, "addr", c.Address, "The address the API gateway binds to.")
 	fs.StringVar(&c.DBConfigPath, "db-config", c.DBConfigPath, "The file path to the database configuration (e.g., YAML or JSON).")
 	fs.StringVar(&c.ServerAddress, "server-address", c.ServerAddress, "The address of the rlark-server for certificate signing.")
+	fs.DurationVar(&c.JWTTokenTTL, "jwt-token-ttl", c.JWTTokenTTL, "The lifetime of UI JWT access tokens.")
 
 	c.KubeClientConfig.SetupFlags(fs)
 }

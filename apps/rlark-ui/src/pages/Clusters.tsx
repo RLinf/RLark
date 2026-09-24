@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   Activity,
+  AlertCircle,
   Check,
   ChevronRight,
   CloudCog,
@@ -34,17 +35,20 @@ import {
   formatResourceQuantity,
   getGPUResourceKey,
   getNodeDeviceModel,
+  getNodeDiskUsage,
   getNodeCategories,
   getNodeCategory,
   getNodeGPUModel,
   getNodeLocation,
   getNodeResourceSummary,
+  getResourceUsagePercent,
   isBusinessWorkerNode,
   parseResourceQuantity,
 } from "../utils/nodes";
 import {
   compareSortValues,
   MetricCard,
+  RefreshOverlay,
   SortButton,
   StatusBadge,
   type SortDirection,
@@ -115,24 +119,14 @@ export function ClustersPage({
     if (isInitial) setLoading(true);
     setError("");
     try {
-      const [nodesResponse, tasksResponse, podsResponse] = await Promise.all([
-        fetch("/api/v1/rlinf.io/v1alpha1/nodes"),
-        fetch("/api/v1/rlinf.io/v1alpha1/tasks"),
-        fetch("/api/v1/rlinf.io/v1alpha1/pods"),
+      const [nodes, tasks, pods] = await Promise.all([
+        nodesApi.list(),
+        tasksApi.list(),
+        podsApi.list(),
       ]);
-      if (!nodesResponse.ok || !tasksResponse.ok || !podsResponse.ok) {
-        throw new Error(
-          `HTTP ${nodesResponse.status}/${tasksResponse.status}/${podsResponse.status}`,
-        );
-      }
-      const [nodesData, tasksData, podsData] = await Promise.all([
-        nodesResponse.json(),
-        tasksResponse.json(),
-        podsResponse.json(),
-      ]);
-      setRealNodes(nodesData.items ?? []);
+      setRealNodes(nodes);
       const taskJobs = new Map<string, string>(
-        (tasksData.items ?? []).map(
+        tasks.map(
           (task: {
             metadata?: { name?: string; labels?: Record<string, string> };
           }) => [
@@ -145,7 +139,10 @@ export function ClustersPage({
         string,
         { jobs: Set<string>; workers: number }
       >();
-      for (const pod of podsData.items ?? []) {
+      for (const pod of pods as Array<{
+        spec?: { taskName?: string };
+        status?: { phase?: string; node?: string };
+      }>) {
         if (pod.status?.phase !== "Running" || !pod.status?.node) continue;
         const nodeName = pod.status.node as string;
         const current = workloadMap.get(nodeName) ?? {
@@ -290,8 +287,11 @@ export function ClustersPage({
   return (
     <div
       className={`page-content resource-page cluster-page${
-        resourceView === "clusters" ? " cluster-overview-page" : ""
-      }`}
+        resourceView === "clusters"
+          ? " cluster-overview-page refreshable-region page-refresh-region"
+          : ""
+      }${resourceView === "clusters" && refreshing ? " is-refreshing" : ""}`}
+      aria-busy={resourceView === "clusters" ? refreshing : undefined}
     >
       <div className="section-heading">
         <div>
@@ -406,6 +406,10 @@ export function ClustersPage({
           />
         </section>
       )}
+      <RefreshOverlay
+        visible={resourceView === "clusters" && refreshing}
+        label={zh ? "正在刷新集群概览" : "Refreshing cluster overview"}
+      />
     </div>
   );
 }
@@ -566,24 +570,17 @@ export function NodeDetailReal({
   const [nodeWorkers, setNodeWorkers] = useState<NodeWorker[]>([]);
   useAutoRefresh(
     async () => {
-      const [tasksResponse, podsResponse] = await Promise.all([
-        fetch("/api/v1/rlinf.io/v1alpha1/tasks"),
-        fetch("/api/v1/rlinf.io/v1alpha1/pods"),
-      ]);
-      if (!tasksResponse.ok || !podsResponse.ok) {
-        throw new Error(`HTTP ${tasksResponse.status}/${podsResponse.status}`);
-      }
-      const [tasksBody, podsBody] = await Promise.all([
-        tasksResponse.json(),
-        podsResponse.json(),
+      const [taskItems, podItems] = await Promise.all([
+        tasksApi.list(),
+        podsApi.list(),
       ]);
       const tasks = new Map<string, Record<string, unknown>>(
-        (tasksBody.items ?? []).map((task: Record<string, unknown>) => [
+        (taskItems as unknown as Record<string, unknown>[]).map((task) => [
           (task as { metadata?: { name?: string } }).metadata?.name ?? "",
           task,
         ]),
       );
-      const workers: NodeWorker[] = (podsBody.items ?? [])
+      const workers: NodeWorker[] = (podItems as Record<string, unknown>[])
         .filter(
           (pod: { status?: { node?: string } }) =>
             pod.status?.node === node.metadata.name,
@@ -669,13 +666,13 @@ export function NodeDetailReal({
   const pullProgress = node.status?.pullProgress ?? [];
   const getPercent = (key: string) => {
     const rawUsed = used[key];
-    if (!rawUsed && (capacity[key] ?? allocatable[key])) return 0;
+    if (!rawUsed && (allocatable[key] ?? capacity[key])) return 0;
     if (rawUsed?.endsWith("%"))
       return Math.min(100, Math.max(0, Number.parseFloat(rawUsed)));
     const usedNumber = parseResourceQuantity(key, rawUsed);
     const capacityNumber = parseResourceQuantity(
       key,
-      capacity[key] ?? allocatable[key],
+      allocatable[key] ?? capacity[key],
     );
     return usedNumber !== null && capacityNumber !== null && capacityNumber > 0
       ? Math.min(
@@ -686,13 +683,13 @@ export function NodeDetailReal({
   };
   const formatUsedResource = (key: string) => {
     const raw = used[key];
-    if (!raw && (capacity[key] ?? allocatable[key])) {
+    if (!raw && (allocatable[key] ?? capacity[key])) {
       return formatResourceQuantity(key, "0");
     }
     if (raw?.endsWith("%")) {
       const capacityValue = parseResourceQuantity(
         key,
-        capacity[key] ?? allocatable[key],
+        allocatable[key] ?? capacity[key],
       );
       const percent = Number.parseFloat(raw);
       if (capacityValue !== null && Number.isFinite(percent)) {
@@ -705,15 +702,16 @@ export function NodeDetailReal({
     return formatResourceQuantity(key, raw);
   };
   const formatAvailableResource = (key: string) => {
-    const available = parseResourceQuantity(
-      key,
-      allocatable[key] ?? capacity[key],
-    );
-    const requested = parseResourceQuantity(key, used[key]);
-    if (available === null) return "—";
+    const total = parseResourceQuantity(key, allocatable[key] ?? capacity[key]);
+    const requested = used[key]?.endsWith("%")
+      ? total !== null
+        ? (total * Number.parseFloat(used[key])) / 100
+        : null
+      : parseResourceQuantity(key, used[key]);
+    if (total === null) return "—";
     return formatResourceQuantity(
       key,
-      String(Math.max(0, available - (requested ?? 0))),
+      String(Math.max(0, total - (requested ?? 0))),
     );
   };
   const gpuResourceKey = getGPUResourceKey(node);
@@ -739,8 +737,18 @@ export function NodeDetailReal({
       .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
       .join(" ");
   };
-  const hasDiskPressure = node.status?.diskPressure === true;
-  const diskPressureKnown = node.status?.diskPressure !== undefined;
+  const diskKey = "ephemeral-storage";
+  const diskUsage = getNodeDiskUsage(node);
+  const diskPercent =
+    diskUsage?.percent ??
+    getResourceUsagePercent(
+      diskKey,
+      used[diskKey],
+      allocatable[diskKey] ?? capacity[diskKey],
+    );
+  const diskWarning =
+    node.status?.diskPressure === true ||
+    (diskPercent !== null && diskPercent >= 90);
   const resourceItems = [
     { key: "cpu", label: "CPU", icon: Cpu, available: true },
     {
@@ -754,7 +762,9 @@ export function NodeDetailReal({
       label: zh ? "磁盘" : "Storage",
       icon: HardDrive,
       available: Boolean(
-        capacity["ephemeral-storage"] ?? allocatable["ephemeral-storage"],
+        diskUsage ??
+        allocatable["ephemeral-storage"] ??
+        capacity["ephemeral-storage"],
       ),
     },
     {
@@ -871,81 +881,92 @@ export function NodeDetailReal({
               </div>
               <div className="node-capacity-grid">
                 {resourceItems.map(({ key, label, icon: Icon, available }) => {
-                  if (key === "ephemeral-storage") {
-                    return (
-                      <div
-                        className={`node-capacity-card node-pressure-card ${
-                          hasDiskPressure ? "is-warning" : ""
-                        }`}
-                        key={key}
-                      >
-                        <div className="node-capacity-title">
-                          <span>
-                            <Icon size={16} />
-                          </span>
-                          <strong>{zh ? "磁盘压力" : "Disk pressure"}</strong>
-                          <b>
-                            {diskPressureKnown
-                              ? hasDiskPressure
-                                ? zh
-                                  ? "存在"
-                                  : "Detected"
-                                : zh
-                                  ? "正常"
-                                  : "Normal"
-                              : zh
-                                ? "未知"
-                                : "Unknown"}
-                          </b>
-                        </div>
-                        <div className="node-capacity-track">
-                          <i
-                            style={{ width: hasDiskPressure ? "100%" : "0%" }}
-                          />
-                        </div>
-                        <div className="node-capacity-amounts">
-                          <span>
-                            <em>{zh ? "状态" : "Status"}</em>
-                            <strong>
-                              {diskPressureKnown
-                                ? hasDiskPressure
-                                  ? zh
-                                    ? "节点存在磁盘压力"
-                                    : "Node has disk pressure"
-                                  : zh
-                                    ? "节点无磁盘压力"
-                                    : "No disk pressure"
-                                : zh
-                                  ? "未上报"
-                                  : "Not reported"}
-                            </strong>
-                          </span>
-                          <span>
-                            <em>{zh ? "可分配容量" : "Allocatable"}</em>
-                            <strong>
-                              {available
-                                ? formatResourceQuantity(
-                                    key,
-                                    allocatable[key] ?? capacity[key],
-                                  )
-                                : "—"}
-                            </strong>
-                          </span>
-                          <small>
-                            {zh ? "来自节点健康状态" : "From node health"}
-                          </small>
-                        </div>
-                      </div>
-                    );
-                  }
-                  const percent = available ? getPercent(key) : null;
+                  const percent =
+                    key === "ephemeral-storage"
+                      ? diskPercent
+                      : available
+                        ? getPercent(key)
+                        : null;
+                  const usedLabel =
+                    key === "ephemeral-storage" && diskUsage
+                      ? zh
+                        ? "已使用"
+                        : "Used"
+                      : zh
+                        ? "已请求"
+                        : "Requested";
+                  const usedValue =
+                    key === "ephemeral-storage" && diskUsage
+                      ? formatResourceQuantity(key, String(diskUsage.usedBytes))
+                      : formatUsedResource(key);
+                  const totalValue =
+                    key === "ephemeral-storage" && diskUsage
+                      ? formatResourceQuantity(
+                          key,
+                          String(diskUsage.capacityBytes),
+                        )
+                      : formatResourceQuantity(
+                          key,
+                          allocatable[key] ?? capacity[key],
+                        );
+                  const availableValue =
+                    key === "ephemeral-storage" && diskUsage
+                      ? formatResourceQuantity(
+                          key,
+                          String(diskUsage.availableBytes),
+                        )
+                      : formatAvailableResource(key);
                   return (
-                    <div className="node-capacity-card" key={key}>
+                    <div
+                      className={`node-capacity-card${
+                        key === "ephemeral-storage" && diskWarning
+                          ? " is-warning"
+                          : ""
+                      }`}
+                      key={key}
+                    >
                       <div className="node-capacity-title">
                         <span>
                           <Icon size={16} />
                         </span>
                         <strong>{label}</strong>
+                        {key === "ephemeral-storage" && diskWarning && (
+                          <span
+                            className="node-capacity-alert"
+                            tabIndex={0}
+                            aria-label={
+                              zh
+                                ? "查看磁盘异常详情"
+                                : "View disk alert details"
+                            }
+                          >
+                            <AlertCircle size={16} />
+                            <span
+                              className="node-capacity-alert-tooltip"
+                              role="status"
+                            >
+                              <strong>
+                                {zh
+                                  ? "健康与容量告警"
+                                  : "Health & capacity alert"}
+                              </strong>
+                              <small>
+                                {node.status?.diskPressure
+                                  ? zh
+                                    ? "节点存在磁盘压力，请及时清理空间"
+                                    : "Node disk pressure detected; free up space"
+                                  : zh
+                                    ? `磁盘使用率已达到 ${diskPercent ?? 90}%，请及时清理空间`
+                                    : `Disk usage reached ${diskPercent ?? 90}%; free up space`}
+                              </small>
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                      <div className="node-capacity-progress">
+                        <div className="node-capacity-track">
+                          <i style={{ width: `${percent ?? 0}%` }} />
+                        </div>
                         <b>
                           {available
                             ? percent === null
@@ -956,41 +977,25 @@ export function NodeDetailReal({
                               : "None"}
                         </b>
                       </div>
-                      <div className="node-capacity-track">
-                        <i style={{ width: `${percent ?? 0}%` }} />
-                      </div>
                       <div className="node-capacity-amounts">
                         <span>
-                          <em>{zh ? "已请求" : "Requested"}</em>
+                          <em>{usedLabel}</em>
                           <strong>
-                            {available
-                              ? formatUsedResource(key)
-                              : zh
-                                ? "无"
-                                : "None"}
+                            {available ? usedValue : zh ? "无" : "None"}
                           </strong>
                         </span>
                         <span>
                           <em>{zh ? "总量" : "Total"}</em>
                           <strong>
-                            {available
-                              ? formatResourceQuantity(
-                                  key,
-                                  capacity[key] ?? allocatable[key],
-                                )
-                              : zh
-                                ? "无"
-                                : "None"}
+                            {available ? totalValue : zh ? "无" : "None"}
                           </strong>
                         </span>
-                        <small>
-                          {zh ? "剩余" : "Available"}{" "}
-                          {available
-                            ? formatAvailableResource(key)
-                            : zh
-                              ? "无"
-                              : "None"}
-                        </small>
+                        <span>
+                          <em>{zh ? "剩余量" : "Available"}</em>
+                          <strong>
+                            {available ? availableValue : zh ? "无" : "None"}
+                          </strong>
+                        </span>
                       </div>
                     </div>
                   );
@@ -1176,9 +1181,14 @@ function NodeWorkerTable({
     sshJumpPort?: string;
   }>({});
   useEffect(() => {
-    fetch("/api/v1/system-config")
-      .then((response) => (response.ok ? response.json() : {}))
-      .then(setSSHConfig)
+    systemConfigApi
+      .get()
+      .then((config) =>
+        setSSHConfig({
+          sshJumpHost: config.ssh?.jumpHost || config.sshJumpHost,
+          sshJumpPort: config.ssh?.jumpPort || config.sshJumpPort,
+        }),
+      )
       .catch(() => setSSHConfig({}));
   }, []);
   const requestTextFor = useCallback(
@@ -1481,3 +1491,4 @@ function NodeWorkerTable({
     </div>
   );
 }
+import { nodesApi, podsApi, systemConfigApi, tasksApi } from "../backend";

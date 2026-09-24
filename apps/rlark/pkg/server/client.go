@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/rancher/remotedialer"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
+	"github.com/rlinf/rlark/apps/rlark/pkg/remotedialer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )

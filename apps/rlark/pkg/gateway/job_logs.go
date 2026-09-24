@@ -98,10 +98,11 @@ func (g *Gateway) rlinfv1alpha1JobLogs(c *gin.Context) {
 	podName := c.Query("pod")
 	rawQuery := c.Query("query")
 	cursor := c.Query("cursor")
+	reverse := c.Query("order") != "asc"
 
 	if timeRangeProvided {
 		if querier := g.getLogQuerier(ctx); querier != nil {
-			result, err := g.queryJobLogsFromBackend(ctx, querier, jobName, fromTime, toTime, taskName, podName, rawQuery, cursor)
+			result, err := g.queryJobLogsFromBackend(ctx, querier, jobName, fromTime, toTime, taskName, podName, rawQuery, cursor, reverse)
 			if err == nil {
 				c.JSON(http.StatusOK, gin.H{
 					"source":     "backend",
@@ -119,7 +120,64 @@ func (g *Gateway) rlinfv1alpha1JobLogs(c *gin.Context) {
 	g.serveJobPodLogs(c, jobName)
 }
 
-func (g *Gateway) queryJobLogsFromBackend(ctx context.Context, querier logquery.Querier, jobName string, from, to time.Time, taskName, podName, rawQuery, cursor string) (*logquery.Result, error) {
+// rlinfv1alpha1JobLogLabelValues 返回指定 Job 在指定时间范围内，某个标签（如 pod）的所有唯一值。
+// 用于前端 Worker 下拉框，支持查询已停止任务的历史日志。
+func (g *Gateway) rlinfv1alpha1JobLogLabelValues(c *gin.Context) {
+	logger := log.FromContext(c.Request.Context())
+	ctx := c.Request.Context()
+	jobName := c.Param("name")
+
+	// 时间范围参数
+	var fromTime, toTime time.Time
+	if v := c.Query("from"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			fromTime = t
+		}
+	}
+	if v := c.Query("to"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			toTime = t
+		}
+	}
+
+	// 标签名参数，默认为 "pod"
+	label := c.Query("label")
+	if label == "" {
+		label = "pod"
+	}
+
+	// 可选过滤参数
+	taskName := c.Query("task")
+	podName := c.Query("pod")
+
+	// 构建过滤器
+	filters := map[string]string{}
+	if taskName != "" {
+		filters["task"] = taskName
+	}
+	if podName != "" {
+		filters["pod"] = podName
+	}
+
+	// 获取日志查询器
+	querier := g.getLogQuerier(ctx)
+	if querier == nil {
+		c.JSON(http.StatusOK, gin.H{"values": []string{}})
+		return
+	}
+
+	// 调用 LabelValues 接口
+	values, err := querier.LabelValues(ctx, label, fromTime, toTime, filters)
+	if err != nil {
+		logger.Error(err, "failed to query label values", "job", jobName, "label", label)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to query label values: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"values": values})
+}
+
+func (g *Gateway) queryJobLogsFromBackend(ctx context.Context, querier logquery.Querier, jobName string, from, to time.Time, taskName, podName, rawQuery, cursor string, reverse bool) (*logquery.Result, error) {
 	if to.IsZero() {
 		to = time.Now()
 	}
@@ -137,12 +195,13 @@ func (g *Gateway) queryJobLogsFromBackend(ctx context.Context, querier logquery.
 	labels["container"] = "main"
 
 	return querier.Query(ctx, logquery.Query{
-		Raw:    rawQuery,
-		From:   from,
-		To:     to,
-		Limit:  99,
-		Labels: labels,
-		Cursor: cursor,
+		Raw:     rawQuery,
+		From:    from,
+		To:      to,
+		Limit:   99,
+		Labels:  labels,
+		Cursor:  cursor,
+		Reverse: reverse,
 	})
 }
 

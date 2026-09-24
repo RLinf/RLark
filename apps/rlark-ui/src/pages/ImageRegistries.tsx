@@ -6,33 +6,137 @@ import {
   Lock,
   Pencil,
   Plus,
-  RefreshCw,
   Trash2,
   X,
 } from "lucide-react";
 import type { Copy } from "../i18n";
+import { PageToolbar, RefreshOverlay } from "../components/shared";
 
-interface ImageRegistryItem {
-  name: string;
-  registry: string;
-  username: string;
+type ClusterSelectionMode = "None" | "Selected" | "All";
+type ClusterSelection = { mode: ClusterSelectionMode; clusters: string[] };
+type ClusterOption = { id: string; name: string };
+
+function useClusterOptions() {
+  const [clusters, setClusters] = useState<ClusterOption[]>([]);
+  useEffect(() => {
+    clustersApi
+      .list<{ id?: string; name?: string }>()
+      .then((items) =>
+        setClusters(
+          items.map((cluster: { id?: string; name?: string }) => ({
+            id: (cluster.name || cluster.id || "").replace(/^rlark-/, ""),
+            name: (cluster.name || cluster.id || "").replace(/^rlark-/, ""),
+          })),
+        ),
+      )
+      .catch(() => setClusters([]));
+  }, []);
+  return clusters;
+}
+
+function selectionLabel(selection: ClusterSelection, zh: boolean) {
+  if (selection.mode === "None") return zh ? "仅保存" : "Stored only";
+  if (selection.mode === "All") return zh ? "所有集群" : "All clusters";
+  return zh
+    ? `${selection.clusters.length} 个集群`
+    : `${selection.clusters.length} clusters`;
+}
+
+function ClusterSelectionFields({
+  zh,
+  selection,
+  clusters,
+  onChange,
+}: {
+  zh: boolean;
+  selection: ClusterSelection;
+  clusters: ClusterOption[];
+  onChange: (selection: ClusterSelection) => void;
+}) {
+  const options = Array.from(
+    new Set([...clusters.map((cluster) => cluster.id), ...selection.clusters]),
+  ).sort();
+  return (
+    <div className="form-section">
+      <strong>{zh ? "分发范围" : "Distribution Scope"}</strong>
+      <div className="form-grid">
+        <label>
+          {zh ? "模式" : "Mode"}
+          <select
+            value={selection.mode}
+            onChange={(event) =>
+              onChange({
+                mode: event.target.value as ClusterSelectionMode,
+                clusters:
+                  event.target.value === "Selected" ? selection.clusters : [],
+              })
+            }
+          >
+            <option value="None">{zh ? "仅保存" : "Stored only"}</option>
+            <option value="Selected">
+              {zh ? "指定集群" : "Selected clusters"}
+            </option>
+            <option value="All">{zh ? "所有集群" : "All clusters"}</option>
+          </select>
+        </label>
+      </div>
+      {selection.mode === "Selected" && (
+        <div className="registry-cluster-options">
+          {options.length === 0 ? (
+            <p>{zh ? "暂无可选集群" : "No clusters available"}</p>
+          ) : (
+            options.map((id) => {
+              const option = clusters.find((cluster) => cluster.id === id);
+              return (
+                <label
+                  key={id}
+                  className={selection.clusters.includes(id) ? "active" : ""}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selection.clusters.includes(id)}
+                    onChange={() =>
+                      onChange({
+                        mode: "Selected",
+                        clusters: selection.clusters.includes(id)
+                          ? selection.clusters.filter(
+                              (cluster) => cluster !== id,
+                            )
+                          : [...selection.clusters, id].sort(),
+                      })
+                    }
+                  />
+                  <span>
+                    <strong>{option?.name || id}</strong>
+                    {option?.name && option.name !== id && <small>{id}</small>}
+                  </span>
+                </label>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ImageRegistriesPage({
   copy: c,
-  selectedName,
+  selectedID,
   onSelect,
   onCreate,
 }: {
   copy: Copy;
-  selectedName?: string;
-  onSelect?: (name?: string) => void;
+  selectedID?: string;
+  onSelect?: (id?: string) => void;
   onCreate?: () => void;
 }) {
   const zh = c.nav.overview === "总览";
   const [items, setItems] = useState<ImageRegistryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ImageRegistryItem | null>(
     null,
   );
@@ -41,10 +145,7 @@ export function ImageRegistriesPage({
     setLoading(true);
     setError("");
     try {
-      const resp = await fetch("/api/v1/image-registries");
-      if (!resp.ok) throw new Error(await resp.text());
-      const data = await resp.json();
-      setItems(data || []);
+      setItems(await imageRegistriesApi.list());
     } catch (e) {
       setError(String(e));
     } finally {
@@ -56,23 +157,17 @@ export function ImageRegistriesPage({
     fetchItems();
   }, []);
 
-  const handleDelete = async (name: string) => {
+  const handleDelete = async (item: ImageRegistryItem) => {
     if (
       !confirm(
         zh
-          ? `确认删除镜像仓库凭据 "${name}"？`
-          : `Delete image registry "${name}"?`,
+          ? `确认删除“${item.name}”（${item.registry}）？分发副本将异步清理。`
+          : `Delete “${item.name}” (${item.registry})? Distributed copies will be removed asynchronously.`,
       )
     )
       return;
     try {
-      const resp = await fetch(
-        `/api/v1/image-registries/${encodeURIComponent(name)}`,
-        {
-          method: "DELETE",
-        },
-      );
-      if (!resp.ok) throw new Error(await resp.text());
+      await imageRegistriesApi.remove(item.id);
       fetchItems();
     } catch (e) {
       setError(String(e));
@@ -82,9 +177,14 @@ export function ImageRegistriesPage({
   const providers = Array.from(
     new Set(items.map((i) => i.registry).filter(Boolean)),
   );
+  const filteredItems = items.filter((item) =>
+    `${item.name} ${item.registry} ${item.username}`
+      .toLowerCase()
+      .includes(query.trim().toLowerCase()),
+  );
 
-  if (selectedName) {
-    const item = items.find((i) => i.name === selectedName);
+  if (selectedID) {
+    const item = items.find((i) => i.id === selectedID);
     if (item) {
       return (
         <>
@@ -126,7 +226,10 @@ export function ImageRegistriesPage({
           </p>
         </div>
         <div className="section-actions">
-          <button className="primary-button" onClick={() => onCreate?.()}>
+          <button
+            className="primary-button"
+            onClick={() => setCreateOpen(true)}
+          >
             <Plus size={17} />
             {zh ? "添加凭据" : "Add Registry"}
           </button>
@@ -175,7 +278,24 @@ export function ImageRegistriesPage({
         </div>
       )}
 
-      <section className="table-panel">
+      <PageToolbar
+        placeholder={
+          zh
+            ? "搜索名称、仓库或用户名..."
+            : "Search name, registry or username..."
+        }
+        value={query}
+        onChange={setQuery}
+        count={filteredItems.length}
+        copy={c}
+        onRefresh={fetchItems}
+        refreshing={loading}
+      />
+
+      <section
+        className={`table-panel refreshable-region${loading ? " is-refreshing" : ""}`}
+        aria-busy={loading}
+      >
         <div className="storage-table-heading">
           <div>
             <strong>{zh ? "凭据列表" : "Registries"}</strong>
@@ -185,32 +305,21 @@ export function ImageRegistriesPage({
                 : "Manage private registry credentials"}
             </small>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span>
-              {zh ? `共 ${items.length} 项` : `${items.length} items`}
-            </span>
-            <button
-              className="icon-button"
-              title={zh ? "刷新" : "Refresh"}
-              aria-label={zh ? "刷新" : "Refresh"}
-              aria-busy={loading}
-              disabled={loading}
-              onClick={fetchItems}
-            >
-              <RefreshCw
-                size={16}
-                className={loading ? "job-action-loading" : ""}
-              />
-            </button>
-          </div>
+          <span>
+            {zh
+              ? `共 ${filteredItems.length} 项`
+              : `${filteredItems.length} items`}
+          </span>
         </div>
-        {loading ? (
+        {filteredItems.length === 0 ? (
           <p className="muted" style={{ padding: "20px" }}>
-            {zh ? "加载中…" : "Loading…"}
-          </p>
-        ) : items.length === 0 ? (
-          <p className="muted" style={{ padding: "20px" }}>
-            {zh ? "暂无镜像仓库凭据" : "No image registries"}
+            {loading
+              ? zh
+                ? "加载中…"
+                : "Loading…"
+              : zh
+                ? "暂无镜像仓库凭据"
+                : "No image registries"}
           </p>
         ) : (
           <table>
@@ -219,15 +328,16 @@ export function ImageRegistriesPage({
                 <th>{zh ? "名称" : "Name"}</th>
                 <th>{zh ? "仓库地址" : "Registry"}</th>
                 <th>{zh ? "用户名" : "Username"}</th>
-                <th></th>
+                <th>{zh ? "分发范围" : "Scope"}</th>
+                <th className="table-actions-col">{zh ? "操作" : "Actions"}</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
+              {filteredItems.map((item) => (
                 <tr
-                  key={item.name}
+                  key={item.id}
                   style={{ cursor: "pointer" }}
-                  onClick={() => onSelect?.(item.name)}
+                  onClick={() => onSelect?.(item.id)}
                 >
                   <td style={{ fontWeight: 500 }}>
                     <div
@@ -248,21 +358,43 @@ export function ImageRegistriesPage({
                     </code>
                   </td>
                   <td className="muted">{item.username}</td>
-                  <td onClick={(e) => e.stopPropagation()}>
-                    <button
-                      className="icon-button danger"
-                      title={zh ? "删除" : "Delete"}
-                      onClick={() => handleDelete(item.name)}
-                    >
-                      <Trash2 size={15} />
-                    </button>
+                  <td>{selectionLabel(item.clusterSelection, zh)}</td>
+                  <td
+                    className="table-actions-col"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="row-actions">
+                      <button
+                        type="button"
+                        className="icon-button danger"
+                        title={zh ? "删除" : "Delete"}
+                        aria-label={zh ? "删除" : "Delete"}
+                        onClick={() => handleDelete(item)}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
+        <RefreshOverlay
+          visible={loading}
+          label={zh ? "正在刷新镜像仓库列表" : "Refreshing registry list"}
+        />
       </section>
+      {createOpen && (
+        <ImageRegistryCreatePage
+          copy={c}
+          onBack={() => setCreateOpen(false)}
+          onCreated={() => {
+            void fetchItems();
+            onCreate?.();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -293,7 +425,7 @@ function ImageRegistryDetailPage({
           </p>
           <div className="storage-detail-badges">
             <span>{zh ? "dockerconfigjson" : "dockerconfigjson"}</span>
-            <span>{zh ? "自动注入已启用" : "Auto-injection enabled"}</span>
+            <span>{selectionLabel(item.clusterSelection, zh)}</span>
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -322,6 +454,16 @@ function ImageRegistryDetailPage({
             <div>
               <span className="muted">{zh ? "名称" : "Name"}</span>
               <strong>{item.name}</strong>
+            </div>
+            <div>
+              <span className="muted">{zh ? "分发范围" : "Distribution"}</span>
+              <strong>{selectionLabel(item.clusterSelection, zh)}</strong>
+            </div>
+            <div>
+              <span className="muted">
+                {zh ? "目标命名空间" : "Target Namespace"}
+              </span>
+              <strong>rlark-system</strong>
             </div>
             <div>
               <span className="muted">{zh ? "仓库地址" : "Registry"}</span>
@@ -370,11 +512,13 @@ export function ImageRegistryCreatePage({
   const zh = c.nav.overview === "总览";
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const clusters = useClusterOptions();
   const [form, setForm] = useState({
     name: "",
     registry: "",
     username: "",
     password: "",
+    clusterSelection: { mode: "All", clusters: [] } as ClusterSelection,
   });
 
   useEffect(() => {
@@ -390,21 +534,13 @@ export function ImageRegistryCreatePage({
     setSubmitting(true);
     setError("");
     try {
-      const resp = await fetch("/api/v1/image-registries", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.name.trim(),
-          registry: form.registry.trim(),
-          username: form.username.trim(),
-          password: form.password,
-        }),
+      await imageRegistriesApi.create({
+        name: form.name.trim(),
+        registry: form.registry.trim(),
+        username: form.username.trim(),
+        password: form.password,
+        clusterSelection: form.clusterSelection,
       });
-      if (!resp.ok) {
-        const msg = await resp.text();
-        setError(msg || `HTTP ${resp.status}`);
-        return;
-      }
       onCreated?.();
       onBack();
     } catch (err) {
@@ -499,6 +635,14 @@ export function ImageRegistryCreatePage({
               </label>
             </div>
           </div>
+          <ClusterSelectionFields
+            zh={zh}
+            selection={form.clusterSelection}
+            clusters={clusters}
+            onChange={(clusterSelection) =>
+              setForm({ ...form, clusterSelection })
+            }
+          />
           {error && (
             <div className="cert-error" style={{ marginBottom: 12 }}>
               {error}
@@ -521,7 +665,9 @@ export function ImageRegistryCreatePage({
                 !form.name.trim() ||
                 !form.registry.trim() ||
                 !form.username.trim() ||
-                !form.password.trim()
+                !form.password.trim() ||
+                (form.clusterSelection.mode === "Selected" &&
+                  form.clusterSelection.clusters.length === 0)
               }
             >
               {submitting
@@ -553,10 +699,13 @@ function ImageRegistryEditModal({
   const zh = c.nav.overview === "总览";
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const clusters = useClusterOptions();
   const [form, setForm] = useState({
+    name: item.name,
     registry: item.registry,
     username: item.username,
     password: "",
+    clusterSelection: item.clusterSelection,
   });
 
   useEffect(() => {
@@ -572,23 +721,13 @@ function ImageRegistryEditModal({
     setSubmitting(true);
     setError("");
     try {
-      const resp = await fetch(
-        `/api/v1/image-registries/${encodeURIComponent(item.name)}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            registry: form.registry.trim(),
-            username: form.username.trim(),
-            ...(form.password ? { password: form.password } : {}),
-          }),
-        },
-      );
-      if (!resp.ok) {
-        const msg = await resp.text();
-        setError(msg || `HTTP ${resp.status}`);
-        return;
-      }
+      await imageRegistriesApi.update(item.id, {
+        name: form.name.trim(),
+        registry: form.registry.trim(),
+        username: form.username.trim(),
+        ...(form.password ? { password: form.password } : {}),
+        clusterSelection: form.clusterSelection,
+      });
       onSaved();
     } catch (err) {
       setError(String(err));
@@ -633,7 +772,13 @@ function ImageRegistryEditModal({
             <div className="form-grid">
               <label>
                 {zh ? "名称" : "Name"}
-                <input value={item.name} disabled style={{ opacity: 0.6 }} />
+                <input
+                  value={form.name}
+                  onChange={(event) =>
+                    setForm({ ...form, name: event.target.value })
+                  }
+                  required
+                />
               </label>
               <label>
                 {zh ? "仓库地址" : "Registry"} *
@@ -672,6 +817,14 @@ function ImageRegistryEditModal({
               </label>
             </div>
           </div>
+          <ClusterSelectionFields
+            zh={zh}
+            selection={form.clusterSelection}
+            clusters={clusters}
+            onChange={(clusterSelection) =>
+              setForm({ ...form, clusterSelection })
+            }
+          />
           {error && (
             <div className="cert-error" style={{ marginBottom: 12 }}>
               {error}
@@ -690,7 +843,12 @@ function ImageRegistryEditModal({
               type="submit"
               className="primary-button"
               disabled={
-                submitting || !form.registry.trim() || !form.username.trim()
+                submitting ||
+                !form.name.trim() ||
+                !form.registry.trim() ||
+                !form.username.trim() ||
+                (form.clusterSelection.mode === "Selected" &&
+                  form.clusterSelection.clusters.length === 0)
               }
             >
               {submitting
@@ -707,3 +865,8 @@ function ImageRegistryEditModal({
     </div>
   );
 }
+import {
+  clustersApi,
+  imageRegistriesApi,
+  type ImageRegistryItem,
+} from "../backend";

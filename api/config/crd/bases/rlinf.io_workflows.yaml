@@ -63,6 +63,24 @@ spec:
                           type: string
                         stopped:
                           type: boolean
+                        tags:
+                          items:
+                            description: |-
+                              JobTag 表示一个任务标签，由 key 和多个 value 组成。
+                              key 和每个 value 长度均不超过 10 个字符；一个任务最多 10 个标签；
+                              每个标签最多包含 10 个不同的 value。
+                            properties:
+                              key:
+                                type: string
+                              values:
+                                items:
+                                  type: string
+                                type: array
+                            required:
+                            - key
+                            - values
+                            type: object
+                          type: array
                         tasks:
                           items:
                             properties:
@@ -122,10 +140,14 @@ spec:
                                         additionalProperties:
                                           format: int32
                                           type: integer
+                                        description: 'Deprecated: use Template.Spec.Volumes[].Ephemeral.VolumeClaimTemplate.Spec.Resources.Requests
+                                          instead.'
                                         type: object
                                       pvcStorageMap:
                                         additionalProperties:
                                           type: string
+                                        description: 'Deprecated: use Template.Spec.Volumes[].Ephemeral.VolumeClaimTemplate.Spec.StorageClassName
+                                          instead.'
                                         type: object
                                       replicas:
                                         format: int32
@@ -9412,6 +9434,24 @@ spec:
                                 type: string
                               sshPublicKey:
                                 type: string
+                              tags:
+                                items:
+                                  description: |-
+                                    JobTag 表示一个任务标签，由 key 和多个 value 组成。
+                                    key 和每个 value 长度均不超过 10 个字符；一个任务最多 10 个标签；
+                                    每个标签最多包含 10 个不同的 value。
+                                  properties:
+                                    key:
+                                      type: string
+                                    values:
+                                      items:
+                                        type: string
+                                      type: array
+                                  required:
+                                  - key
+                                  - values
+                                  type: object
+                                type: array
                               tensorBoardDir:
                                 type: string
                             required:
@@ -9421,6 +9461,8 @@ spec:
                       type: object
                   type: object
                 type: array
+              stopped:
+                type: boolean
             type: object
           status:
             properties:
@@ -9495,6 +9537,13 @@ spec:
                   type: object
                 type: array
               phase:
+                enum:
+                - Pending
+                - Running
+                - Stopping
+                - Stopped
+                - Succeeded
+                - Failed
                 type: string
               startTime:
                 format: date-time

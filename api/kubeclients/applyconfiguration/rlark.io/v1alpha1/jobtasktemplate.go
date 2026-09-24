@@ -152,3 +152,16 @@ func (b *JobTaskTemplateApplyConfiguration) WithSSHPublicKey(value string) *JobT
 	b.TaskSpecApplyConfiguration.SSHPublicKey = &value
 	return b
 }
+
+// WithTags adds the given value to the Tags field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Tags field.
+func (b *JobTaskTemplateApplyConfiguration) WithTags(values ...*JobTagApplyConfiguration) *JobTaskTemplateApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithTags")
+		}
+		b.TaskSpecApplyConfiguration.Tags = append(b.TaskSpecApplyConfiguration.Tags, *values[i])
+	}
+	return b
+}

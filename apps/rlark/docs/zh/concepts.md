@@ -5,7 +5,6 @@
 RLark 采用多层资源抽象，从底层基础设施到上层具身智能工作负载逐层封装：
 
 ```
-Workflow  ──── 工作流（DAG 编排多个 Job）
   │
   └── Job  ──── 训练作业（一个完整的具身智能任务）
         │
@@ -146,7 +145,7 @@ status:
 
 业务平台的节点总数和集群详情节点列表包含带有 RLark 分类 Label 的可用 Worker；旧版 `rlark.io/node-category` 值及明确上报 GPU 或具身设备资源的未标注节点仍兼容展示。带有 Kubernetes `master` 或 `control-plane` 角色标签的节点仍只在管理平台中展示，不作为业务任务 Worker 统计和展示。
 
-节点详情中的 CPU、内存和 GPU 占用量按运行 Worker 的 Kubernetes `resources.requests` 汇总，反映调度器已预留资源，不代表 metrics-server 的实时硬件利用率。详情页同时列出该节点上的 Worker、所属 Job、角色、IP、资源申请和运行状态。
+节点详情中的 CPU、内存和 GPU 占用量按运行 Worker 的 Kubernetes `resources.requests` 汇总，反映调度器已预留资源，不代表 metrics-server 的实时硬件利用率。磁盘数据单独来自 kubelet Stats Summary：Agent 汇总 nodefs 与独立 imagefs，并在二者指向同一文件系统时避免重复计算。页面展示真实已使用、总量和剩余量，使用率达到 90% 或 kubelet 上报 `DiskPressure=True` 时显示告警。详情页同时列出该节点上的 Worker、所属 Job、角色、IP、资源申请和运行状态。
 
 ## 5. Node 调度控制（Cordon/Uncordon）
 
@@ -228,11 +227,16 @@ status:
 
 ```
 (空) ──init──▶ Pending ──tasks-running──▶ Running
-                              │                  │
-                              │ any-task-failed  │ all-tasks-succeeded
-                              ▼                  ▼
-                          Failed            Succeeded
+                     │             │              │
+                     │ stop        │ stop         │ all-tasks-succeeded
+                     ▼             ▼              ▼
+                  Stopping ──cleanup-complete──▶ Stopped    Succeeded
+                     ▲
+                     │ failed-run stop/restart cleanup
+                   Failed
 ```
+
+`Stopping` 是过渡状态：RLark 会删除子 Task，并等待其 Worker 和任务 PVC 清理完成。停止后再启动终态 Job 时，会先删除原 Task、Worker 和任务 PVC，再执行全新运行。
 
 ### 与 Task 的关系
 
@@ -247,19 +251,23 @@ Job Controller 调谐完成后：
 
 ### 概念
 
-将 `spec.stopped: true` 设置为 Job 会通知 Job 控制器停止所有关联的工作负载（Pod、Deployment、StatefulSet），但不删除 Job 资源。将其设置回 `false`（或移除该字段）会重新启动工作负载。
+将 Job 的 `spec.stopped` 设为 `true` 会启动有序停止流程，但不删除 Job 资源。RLark 等待 Job 及其所有子 Task 和 Worker 停止期间显示 `Stopping`，完成后进入 `Stopped`；清除此字段可再次启动已停止的 Job。
 
 ### 工作原理
 
-1. **停止**：当 `spec.stopped` 设置为 `true` 时，Job 控制器检测到变化并删除底层 Kubernetes 工作负载（Deployment/StatefulSet），同时保留 Job CR
-2. **重启**：当 `spec.stopped` 被移除或设置为 `false` 时，Job 控制器根据 Task 模板重新创建工作负载
-3. **状态保留**：Job 的 phase 和 status 字段在停止/重启周期中保持不变
+1. **停止**：RLark 删除子 Task CR，等待其底层工作负载和 PVC 清理完成，同时保留 Job CR 和配置
+2. **启动**：清除 `Stopped` Job 的 `spec.stopped` 后，按模板重新创建 Task、工作负载和空的任务 PVC
+3. **重启**：先清理当前 Task、Worker 和任务 PVC，再重新创建；`Succeeded` 和 `Failed` Job 都会按模板开始一轮全新运行
+4. **终态结果**：停止终态 Job 时，会在新一轮运行开始前保留已完成 Task 的状态结果
+5. **删除**：先执行停止并等待完成，再删除 Job 和子 Task；任务 PVC 会删除，hostPath 数据不会删除
 
 ### 关键特性
 
-- **非破坏性**：停止 Job 不会删除 Job CR 或其 Task
-- **持久化状态**：PVC 和其他持久化资源不受停止影响
-- **Web UI 集成**：Web UI 在 Job 列表中提供一键停止/启动按钮
+- **保留配置**：停止保留 Job CR 和配置，但不保留任务 PVC 数据
+- **全新重建**：启动和重启会创建空的任务 PVC，应先将需要保留的输出复制到其他位置
+- **Web UI 集成**：Web UI 提供停止、启动、重启和删除操作，并根据生命周期状态控制可用性
+
+停止 Workflow 时，RLark 会删除当前运行的全部 Job，包括已经完成的 Job。恢复 Workflow 会创建一轮全新执行，从 DAG 起点重新运行，不复用上一轮的完成状态。
 
 ## 8. Task（任务单元）
 
@@ -339,60 +347,7 @@ graph LR
     Env <-->|"观测"| Camera
 ```
 
-## 9. Workflow（工作流）
-
-Workflow 是**多 Job 的 DAG 编排**，支持有依赖关系的训练流水线。
-
-### 概念
-
-一个 Workflow 包含多个 Job 模板，每个模板可通过 `dependencies` 声明前置依赖。Workflow Controller 按拓扑顺序调度 Job：前置 Job 成功后，依赖它的 Job 才能启动。
-
-### 关键属性
-
-```yaml
-apiVersion: rlinf.io/v1alpha1
-kind: Workflow
-metadata:
-  name: training-pipeline-v1
-spec:
-  jobTemplates:
-    - name: prepare-data
-      dependencies: []            # 无依赖，立即启动
-      spec:
-        tasks:
-          - name: prep
-            role: Env
-            agentType: Kubernetes
-            kubernetes: ...
-    - name: train
-      dependencies: ["prepare-data"]  # 等 prepare-data 成功后才启动
-      spec:
-        tasks:
-          - name: actor-head
-            head: true
-            role: Actor
-            agentType: Kubernetes
-            kubernetes: ...
-    - name: evaluate
-      dependencies: ["train"]
-      spec:
-        tasks: ...
-```
-
-### 典型流水线
-
-```
-数据准备 ──▶ 模型训练 ──▶ 模型评估
- prepare      train       evaluate
-```
-
-### 状态机
-
-与 Job 类似，Workflow 的状态由各 Job 的状态汇总决定：
-- 所有 Job 成功 → Workflow Succeeded
-- 任一 Job 失败 → Workflow Failed
-
-## 10. Pod（容器实例）
+## 9. Pod（容器实例）
 
 Pod CR 是数据面 Pod 的**控制面镜像**，由 Agent 的 Push 控制器上报。
 
@@ -406,11 +361,10 @@ Pod CR 是数据面 Pod 的**控制面镜像**，由 Agent 的 Push 控制器上
 - **SSH 查找**：Server 的 PodCache 基于 Pod CR 快速定位 Pod 所在 Agent
 - **日志查询**：Gateway 通过 Pod CR 找到 Pod 所在 Agent，转发日志请求
 
-## 11. 资源关系总结
+## 9. 资源关系总结
 
 ```mermaid
 graph TD
-    wf["Workflow<br/>(Cluster scoped)<br/>DAG 编排"] -->|"1:N"| job["Job<br/>(Cluster scoped)<br/>训练任务定义"]
     job -->|"1:N"| task["Task<br/>(Namespaced: agent-{id})<br/>任务执行单元"]
     task -->|"1:1 (K8s workload)"| workload["Deployment /<br/>DaemonSet /<br/>StatefulSet<br/>(本地 k8s 集群)"]
     workload -->|"1:N"| pod["Pod + Sidecar<br/>Agent Push 上报 → Pod CR"]
@@ -418,7 +372,7 @@ graph TD
     node["Node<br/>(Namespaced)<br/>计算节点信息"]
 ```
 
-## 12. 命名约定
+## 9. 命名约定
 
 | 命名空间前缀 | 含义 | 示例 |
 |-------------|------|------|
@@ -427,7 +381,7 @@ graph TD
 | Label `rlinf.io/job` | Pod/Task 所属 Job | `rlinf.io/job=ppo-cartpole-v1` |
 | Annotation `rlinf.io/ray-role` | Ray 集群角色 | `head` / `worker` |
 
-## 13. Ray 集群集成
+## 9. Ray 集群集成
 
 RLark 支持通过 Task 注解声明式创建 Ray 集群：
 
@@ -449,38 +403,52 @@ annotations:
 
 ## 14. 对象存储与 PVC
 
-RLark 支持通过 Task 的 `pvcStorageMap` 为训练任务挂载持久化存储卷。
+RLark 通过 Kubernetes 通用临时卷为训练任务挂载远程存储。
 
 ### 概念
 
-当 Task 指定 `pvcStorageMap` 时，Agent 的 Pull 控制器在创建工作负载前自动创建指定 StorageClass 的 PVC，并在任务删除时自动清理。
+每个 Pod 根据卷中的 `ephemeral.volumeClaimTemplate` 获得一个 PVC。该 PVC 由 Kubernetes 管理并随 Pod 删除。
 
 ### 配置方式
 
 ```yaml
 kubernetes:
   workload:
-    pvcStorageMap:
-      my-data-pvc: "ceph-rbd"    # PVC 名称 → StorageClass 名称
+    template:
+      spec:
+        volumes:
+          - name: data
+            ephemeral:
+              volumeClaimTemplate:
+                spec:
+                  accessModes: [ReadWriteOnce]
+                  storageClassName: ceph-rbd
+                  resources:
+                    requests:
+                      storage: 10Gi
 ```
 
 ### 工作流程
 
-1. Agent 通过 `GET /api/v1/storage/storageclass?clusters=<agent-id>` 查询可用 StorageClass
-2. 创建工作负载时，Agent 调用 `ensurePVCs` 创建指定 StorageClass 的 PVC
-3. PVC 创建在目标命名空间中，作用域为当前 Task
-4. 任务删除时，PVC 自动清理
+1. 前端通过 `GET /api/v1/storage/storageclass?clusters=<agent-id>` 查询可用 StorageClass
+2. 所选存储类和申请容量写入 `volumeClaimTemplate`
+3. Kubernetes 为每个 Pod 创建一个 PVC，并通过所选 StorageClass 绑定存储
+4. Pod 删除时，Kubernetes 自动删除对应 PVC
+
+`pvcStorageMap` 和 `pvcSizeGbMap` 已废弃，仅为兼容已有 Task 保留。新 Task 应使用 `ephemeral.volumeClaimTemplate`。
 
 ## 15. 用户认证
 
-RLark 为 Web UI 提供登录和基于角色的导航。当前 `admin` 与 `user` 的区别**仅是前端门禁**：用于选择管理平台或业务平台，Gateway 不会把这些角色作为 API 授权策略执行。不要将 UI 角色视为安全边界，也不要据此向不受信任的客户端暴露 Gateway。
+RLark 使用短期 JWT access token 认证 Web UI 和 API 请求。经验证的 `admin` 与 `user` 角色用于执行粗粒度 API 授权：平台业务操作对两个角色开放，控制面配置和凭据管理仅允许 `admin`。
 
 ### 认证流程
 
-1. 部署时，`rlarkadm` 生成随机密码并存储在 KCP Secret（`rlark-ui-auth`）中
+1. 部署时，`rlarkadm` 生成随机密码和 JWT 签名密钥，并存储在 KCP Secret（`rlark-ui-auth`）中
 2. Web UI 发送 `POST /api/v1/auth/login` 携带用户名和密码
-3. Gateway 对比 KCP Secret 中的凭据，返回角色
-4. 前端将登录结果存储在 `sessionStorage` 中，并以所选控制台路由作为角色门禁
+3. Gateway 对比 Secret 中的凭据，返回包含主体、角色、签发时间和过期时间的 HS256 JWT
+4. 前端将 token 存储在 `sessionStorage`，后续 API 请求携带 `Authorization: Bearer <token>`；Gateway 在分发受保护路由前验证 token
+
+`user` 可管理 Job、Workflow、Task、Pod、终端会话、SSH 密钥和存储对象，并读取集群、节点、Domain、镜像、StorageClass 和系统配置。节点和 Domain 变更、证书、镜像仓库、系统配置更新、StorageClass 管理以及 Addon 管理要求 `admin`。这是角色级授权，尚未实施逐用户资源所有权隔离，包括 SSH 密钥所有权限制。
 
 ## 16. Addon（组件管理）
 

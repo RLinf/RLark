@@ -2,11 +2,16 @@ package types
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"strings"
 
 	"go.yaml.in/yaml/v2"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+
+	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/constants"
 )
 
 // Plane identifies a deployment plane.
@@ -30,40 +35,50 @@ const (
 
 // DeployConfig holds configuration options.
 type DeployConfig struct {
-	APIVersion            string         `yaml:"apiVersion"`
-	Kind                  string         `yaml:"kind"`
-	Plane                 Plane          `yaml:"plane"`
-	ControlPlaneAddress   string         `yaml:"control-plane-address,omitempty"`
-	DB                    *DBConfig      `yaml:"db,omitempty"`
-	Kubernetes            *KubernetesEnv `yaml:"kubernetes,omitempty"`
-	Docker                *DockerEnv     `yaml:"docker,omitempty"`
-	Raw                   *RawEnv        `yaml:"raw,omitempty"`
-	Cert                  *CertConfig    `yaml:"cert,omitempty"`
-	InsecureSkipTLSVerify bool           `yaml:"insecure-skip-tls-verify,omitempty"`
+	APIVersion          string `json:"apiVersion,omitempty" yaml:"apiVersion"`
+	Kind                string `json:"kind,omitempty" yaml:"kind"`
+	Plane               Plane  `json:"plane,omitempty" yaml:"plane"`
+	ControlPlaneAddress string `json:"controlPlaneAddress,omitempty" yaml:"control-plane-address,omitempty"`
+	// SSHAddress is the control-plane Server SSH address used for cross-cluster
+	// networking, in the form "user@host:port" (e.g. "client@rlark-server:2222").
+	// When empty it is auto-derived from ControlPlaneAddress.
+	SSHAddress            string         `json:"sshAddress,omitempty" yaml:"ssh-address,omitempty"`
+	DB                    *DBConfig      `json:"db,omitempty" yaml:"db,omitempty"`
+	Kubernetes            *KubernetesEnv `json:"kubernetes,omitempty" yaml:"kubernetes,omitempty"`
+	Docker                *DockerEnv     `json:"docker,omitempty" yaml:"docker,omitempty"`
+	Raw                   *RawEnv        `json:"raw,omitempty" yaml:"raw,omitempty"`
+	Cert                  *CertConfig    `json:"cert,omitempty" yaml:"cert,omitempty"`
+	InsecureSkipTLSVerify bool           `json:"insecureSkipTlsVerify,omitempty" yaml:"insecure-skip-tls-verify,omitempty"`
 }
 
 // KubernetesEnv holds environment configuration.
 type KubernetesEnv struct {
-	Kubeconfig             string           `yaml:"kubeconfig,omitempty"`
-	GatewayImage           string           `yaml:"gateway-image"`
-	ControllerManagerImage string           `yaml:"controller-manager-image"`
-	ServerImage            string           `yaml:"server-image"`
-	AgentImage             string           `yaml:"agent-image"`
-	Image                  string           `yaml:"image,omitempty"`
-	KCPImage               string           `yaml:"kcp-image,omitempty"`
-	EtcdImage              string           `yaml:"etcd-image,omitempty"`
-	PostgresqlImage        string           `yaml:"postgresql-image,omitempty"`
-	UIImage                string           `yaml:"ui-image,omitempty"`
-	Replicas               int32            `yaml:"replicas,omitempty"`
-	Storage                *StorageConfig   `yaml:"storage,omitempty"`
-	KCP                    *ComponentConfig `yaml:"kcp,omitempty"`
-	Etcd                   *EtcdConfig      `yaml:"etcd,omitempty"`
-	Postgresql             *ComponentConfig `yaml:"postgresql,omitempty"`
+	ManagementAPI          string `json:"managementApi,omitempty" yaml:"management-api,omitempty"`
+	Kubeconfig             string `json:"kubeconfig,omitempty" yaml:"kubeconfig,omitempty"`
+	GatewayImage           string `json:"gatewayImage,omitempty" yaml:"gateway-image"`
+	ControllerManagerImage string `json:"controllerManagerImage,omitempty" yaml:"controller-manager-image"`
+	ServerImage            string `json:"serverImage,omitempty" yaml:"server-image"`
+	AgentImage             string `json:"agentImage,omitempty" yaml:"agent-image"`
+	Image                  string `json:"image,omitempty" yaml:"image,omitempty"`
+	KCPImage               string `json:"kcpImage,omitempty" yaml:"kcp-image,omitempty"`
+	EtcdImage              string `json:"etcdImage,omitempty" yaml:"etcd-image,omitempty"`
+	PostgresqlImage        string `json:"postgresqlImage,omitempty" yaml:"postgresql-image,omitempty"`
+	UIImage                string `json:"uiImage,omitempty" yaml:"ui-image,omitempty"`
+	// ImagePullPolicy is the pull policy applied to all control/data plane
+	// component containers. One of Always, IfNotPresent, Never. Defaults to
+	// Always when empty.
+	ImagePullPolicy  string           `json:"imagePullPolicy,omitempty" yaml:"image-pull-policy,omitempty"`
+	ImagePullSecrets []string         `json:"imagePullSecrets,omitempty" yaml:"image-pull-secrets,omitempty"`
+	Replicas         int32            `json:"replicas,omitempty" yaml:"replicas,omitempty"`
+	Storage          *StorageConfig   `json:"storage,omitempty" yaml:"storage,omitempty"`
+	KCP              *ComponentConfig `json:"kcp,omitempty" yaml:"kcp,omitempty"`
+	Etcd             *EtcdConfig      `json:"etcd,omitempty" yaml:"etcd,omitempty"`
+	Postgresql       *ComponentConfig `json:"postgresql,omitempty" yaml:"postgresql,omitempty"`
 	// ContainerdSocket is the host path to the containerd socket used by the
 	// node-agent for image pre-pull progress monitoring. Defaults to
 	// /run/containerd/containerd.sock when empty. Set this for non-standard
 	// runtimes such as k3s (/run/k3s/containerd/containerd.sock).
-	ContainerdSocket string `yaml:"containerd-socket,omitempty"`
+	ContainerdSocket string `json:"containerdSocket,omitempty" yaml:"containerd-socket,omitempty"`
 }
 
 // ComponentConfig holds configuration options.
@@ -99,6 +114,9 @@ type DockerEnv struct {
 	EtcdImage              string `yaml:"etcd-image,omitempty"`
 	PostgresqlImage        string `yaml:"postgresql-image,omitempty"`
 	UIImage                string `yaml:"ui-image,omitempty"`
+	// ImagePullPolicy is the pull policy applied to all component containers.
+	// One of Always, IfNotPresent, Never. Defaults to Always when empty.
+	ImagePullPolicy string `yaml:"image-pull-policy,omitempty"`
 }
 
 // RawEnv holds environment configuration.
@@ -140,6 +158,7 @@ type Component struct {
 	WorkloadKind    string
 	ServiceAccount  string
 	RBACRules       []rbacv1.PolicyRule
+	RBACRulesFn     func(cfg *DeployConfig) []rbacv1.PolicyRule
 	Dependencies    []string
 	MetricsPort     int32
 	EnabledFn       func(cfg *DeployConfig) bool
@@ -215,6 +234,29 @@ func (c *DeployConfig) Validate() error {
 		return fmt.Errorf("exactly one of kubernetes/docker/raw must be specified")
 	}
 
+	var pullPolicy string
+	if c.Kubernetes != nil {
+		pullPolicy = c.Kubernetes.ImagePullPolicy
+		if c.Kubernetes.KCP != nil && c.Kubernetes.KCP.Replicas > 1 {
+			return fmt.Errorf("kubernetes.kcp.replicas must be 1")
+		}
+		switch c.Kubernetes.ManagementAPI {
+		case "", "kcp", "kubernetes":
+		default:
+			return fmt.Errorf("kubernetes.management-api must be %q or %q, got %q", "kcp", "kubernetes", c.Kubernetes.ManagementAPI)
+		}
+		if c.Kubernetes.ManagementAPI == "kubernetes" && c.Plane != PlaneControl {
+			return fmt.Errorf("kubernetes.management-api %q is only supported for the control plane", "kubernetes")
+		}
+	} else if c.Docker != nil {
+		pullPolicy = c.Docker.ImagePullPolicy
+	}
+	switch corev1.PullPolicy(pullPolicy) {
+	case "", corev1.PullAlways, corev1.PullIfNotPresent, corev1.PullNever:
+	default:
+		return fmt.Errorf("image-pull-policy must be one of Always, IfNotPresent, Never, got %q", pullPolicy)
+	}
+
 	if c.Plane == PlaneData {
 		if c.Cert == nil {
 			return fmt.Errorf("cert is required for data plane")
@@ -237,6 +279,12 @@ func (c *DeployConfig) Validate() error {
 	return nil
 }
 
+// UsesKubernetesManagementAPI reports whether control-plane state is stored in
+// the target Kubernetes API instead of a separately deployed kcp instance.
+func (c *DeployConfig) UsesKubernetesManagementAPI() bool {
+	return c.Kubernetes != nil && c.Kubernetes.ManagementAPI == "kubernetes"
+}
+
 // EnvMode returns the environment mode.
 func (c *DeployConfig) EnvMode() string {
 	if c.Kubernetes != nil {
@@ -246,4 +294,65 @@ func (c *DeployConfig) EnvMode() string {
 		return "Docker"
 	}
 	return "Raw"
+}
+
+// defaultSSHUser is the user embedded in the auto-derived Server SSH address.
+const defaultSSHUser = "client"
+
+// SSHServerAddress resolves the control-plane Server SSH address in the form
+// "user@host:port". When SSHAddress is explicitly set it is returned as-is;
+// otherwise it is derived from ControlPlaneAddress by extracting its host and
+// combining it with the default SSH user and Server SSH port. An empty string
+// is returned when neither is available.
+func (c *DeployConfig) SSHServerAddress() string {
+	if c.SSHAddress != "" {
+		return c.SSHAddress
+	}
+	host := hostFromAddress(c.ControlPlaneAddress)
+	if host == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s@%s:%d", defaultSSHUser, host, constants.ServerSSHPort)
+}
+
+// hostFromAddress extracts the bare host from a control-plane address that may
+// be a full URL (e.g. "https://rlark-server:8443"), a "host:port" pair, or a
+// bare host. Any scheme and port are stripped.
+func hostFromAddress(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return ""
+	}
+	// Full URL with scheme, e.g. https://host:8443.
+	if strings.Contains(addr, "://") {
+		if u, err := url.Parse(addr); err == nil && u.Hostname() != "" {
+			return u.Hostname()
+		}
+	}
+	// host:port without scheme.
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	// Bare host.
+	return addr
+}
+
+// ImagePullPolicy resolves the configured image pull policy for component
+// containers, defaulting to corev1.PullAlways when unset. Only the Kubernetes
+// and Docker environment modes carry the setting; other modes return the
+// default.
+func (c *DeployConfig) ImagePullPolicy() corev1.PullPolicy {
+	var raw string
+	switch {
+	case c.Kubernetes != nil:
+		raw = c.Kubernetes.ImagePullPolicy
+	case c.Docker != nil:
+		raw = c.Docker.ImagePullPolicy
+	}
+	switch corev1.PullPolicy(raw) {
+	case corev1.PullAlways, corev1.PullIfNotPresent, corev1.PullNever:
+		return corev1.PullPolicy(raw)
+	default:
+		return corev1.PullAlways
+	}
 }

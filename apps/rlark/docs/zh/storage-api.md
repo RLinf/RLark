@@ -79,13 +79,13 @@ Storage API 提供多集群 StorageClass 管理能力。Gateway 通过 Server �
 从所有已关联集群删除指定 StorageClass 和配套 Secret。可通过查询参数 `clusters=agent-a,agent-b` 限制删除范围。
 
 ### 6. 列出存储桶文件
-**GET** `/api/v1/storage/storageclass/{cluster}/{name}/list`
+**GET** `/api/v1/storage/storageclass/{name}/{cluster}/list`
 
 列出指定集群中 StorageClass 存储桶下的文件列表。
 
 #### 路径参数
-- `cluster`：集群 ID（如 `agent-beijing`）
 - `name`：StorageClass 名称
+- `cluster`：集群 ID（如 `agent-beijing`）
 
 #### 响应示例
 ```json
@@ -99,13 +99,13 @@ Storage API 提供多集群 StorageClass 管理能力。Gateway 通过 Server �
 ```
 
 ### 7. 上传文件
-**POST** `/api/v1/storage/storageclass/{cluster}/{name}/upload`
+**POST** `/api/v1/storage/storageclass/{name}/{cluster}/upload`
 
 向指定 StorageClass 存储桶上传文件，使用 multipart/form-data 格式。
 
 #### 路径参数
-- `cluster`：集群 ID
 - `name`：StorageClass 名称
+- `cluster`：集群 ID
 
 #### 请求体
 multipart/form-data，字段 `file` 为上传的文件。
@@ -119,27 +119,27 @@ multipart/form-data，字段 `file` 为上传的文件。
 ```
 
 ### 8. 下载文件
-**GET** `/api/v1/storage/storageclass/{cluster}/{name}/object/*key`
+**GET** `/api/v1/storage/storageclass/{name}/{cluster}/object/*key`
 
 下载指定存储桶中的对象，返回原始文件内容。
 
 #### 路径参数
-- `cluster`：集群 ID
 - `name`：StorageClass 名称
+- `cluster`：集群 ID
 - `key`：对象路径（如 `model-checkpoint.pt` 或 `logs/training.log`）
 
 #### 响应
 - `200`：文件内容（二进制流）
 - `404`：文件不存在
 
-### 7. 删除文件
-**DELETE** `/api/v1/storage/storageclass/{cluster}/{name}/object/*key`
+### 9. 删除文件
+**DELETE** `/api/v1/storage/storageclass/{name}/{cluster}/object/*key`
 
 删除指定存储桶中的对象。
 
 #### 路径参数
-- `cluster`：集群 ID
 - `name`：StorageClass 名称
+- `cluster`：集群 ID
 - `key`：对象路径
 
 #### 响应示例
@@ -211,13 +211,23 @@ curl "http://localhost:8080/api/v1/storage/storageclass/provider"
 
 ## 与 Task PVC 挂载的集成
 
-Task 通过 `pvcStorageMap` 声明需要挂载的 PVC：
+Task 通过 Kubernetes 通用临时卷声明远程存储：
 
 ```yaml
 kubernetes:
   workload:
-    pvcStorageMap:
-      my-data-pvc: "ceph-rbd"
+    template:
+      spec:
+        volumes:
+          - name: data
+            ephemeral:
+              volumeClaimTemplate:
+                spec:
+                  accessModes: [ReadWriteOnce]
+                  storageClassName: ceph-rbd
+                  resources:
+                    requests:
+                      storage: 10Gi
 ```
 
-Agent 的 Pull 控制器在创建 workload 前，调用 `ensurePVCs` 根据 `pvcStorageMap` 创建对应的 PVC。前端通过 Storage API 获取可用 StorageClass 列表供用户选择。
+Kubernetes 根据 `volumeClaimTemplate` 为每个 Pod 创建 PVC，并随 Pod 删除。前端通过 Storage API 获取可用 StorageClass 列表供用户选择。`pvcStorageMap` 和 `pvcSizeGbMap` 已废弃，仅为已有资源保留。

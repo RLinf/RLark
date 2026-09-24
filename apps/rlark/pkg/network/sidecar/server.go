@@ -105,9 +105,8 @@ func (s *Sidecar) Run(ctx context.Context) error {
 	proxy := tun.NewProxy()
 	proxyErr := make(chan error, 1)
 	go func() {
-		if err := proxy.Serve(proxyListener); err != nil {
-			proxyErr <- fmt.Errorf("proxy serve: %w", err)
-		}
+		err := proxy.Serve(proxyListener)
+		proxyErr <- fmt.Errorf("proxy serve: %w", err)
 	}()
 
 	// ─── 3. 启动 TUN client（出站） ───

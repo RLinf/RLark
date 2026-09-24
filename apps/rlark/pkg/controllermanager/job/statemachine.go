@@ -73,21 +73,15 @@ func newJobStateMachine() *fsm.FSM {
 		},
 		"enter_" + string(rlarkv1alpha1.JobPhasePending): func(ctx context.Context, e *fsm.Event) {
 			job := e.Args[0].(*rlarkv1alpha1.Job)
-			if job.Status.StartTime == nil {
+			if e.Src != "" || job.Status.StartTime == nil {
 				now := metav1.Now()
 				job.Status.StartTime = &now
 			}
 			if job.Status.EndTime != nil {
 				job.Status.EndTime = nil
 			}
-			if job.Status.Tasks == nil {
-				job.Status.Tasks = make([]rlarkv1alpha1.JobTaskStatus, 0, len(job.Spec.Tasks))
-				for _, t := range job.Spec.Tasks {
-					job.Status.Tasks = append(job.Status.Tasks, rlarkv1alpha1.JobTaskStatus{
-						Name: t.Name,
-					})
-				}
-			}
+
+			syncTaskStatusSnapshot(job)
 		},
 		"enter_" + string(rlarkv1alpha1.JobPhaseSucceeded): func(ctx context.Context, e *fsm.Event) {
 			job := e.Args[0].(*rlarkv1alpha1.Job)

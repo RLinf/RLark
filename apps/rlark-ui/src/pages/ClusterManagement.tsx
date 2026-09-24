@@ -19,16 +19,28 @@ import {
   isBusinessWorkerNode,
 } from "../utils/nodes";
 import {
-  compareSortValues,
+  ColumnFilterButton,
   MetricCard,
   PageToolbar,
   Pagination,
-  SortButton,
-  type SortDirection,
+  RefreshOverlay,
+  useColumnFilter,
 } from "../components/shared";
+import { ColumnFilterPopover } from "../components/ColumnFilterPopover";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
 
-type ClusterPhaseFilter = "All" | "Online" | "Degraded" | "Offline";
+// 集群类型中文化：数据层保留英文枚举，渲染时映射
+function clusterTypeLabel(type: string, zh: boolean): string {
+  if (!type) return "—";
+  const map: Record<string, { zh: string; en: string }> = {
+    Cloud: { zh: "云集群", en: "Cloud" },
+    Embodied: { zh: "具身集群", en: "Embodied" },
+    Hybrid: { zh: "混合集群", en: "Hybrid" },
+  };
+  const entry = map[type];
+  if (!entry) return type;
+  return zh ? entry.zh : entry.en;
+}
 
 function clusterIDForNode(node: CRDNode) {
   return (
@@ -201,56 +213,30 @@ export function ClusterManagementPage({
   const [clusters, setClusters] = useState<ClusterSummary[]>([]);
   const [detailNodes, setDetailNodes] = useState<CRDNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
-  const [phaseFilter, setPhaseFilter] = useState<ClusterPhaseFilter>("All");
+  // 状态列多选筛选；空数组 = 全部
+  const [phaseFilterValues, setPhaseFilterValues] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [sort, setSort] = useState<{
-    key:
-      | "name"
-      | "type"
-      | "totalNodes"
-      | "onlineNodes"
-      | "offlineNodes"
-      | "rate"
-      | "phase";
-    direction: SortDirection;
-  }>({ key: "name", direction: "asc" });
-  const toggleSort = (key: typeof sort.key) =>
-    setSort((current) => ({
-      key,
-      direction:
-        current.key === key && current.direction === "asc" ? "desc" : "asc",
-    }));
+  const { openKey, anchorRect, openFor, close } = useColumnFilter();
 
   const fetchClusters = async (isInitial = true) => {
     if (isInitial) setLoading(true);
     let resolvedNodes: CRDNode[] = [];
     try {
-      const nodesURL = new URL(
-        "/api/v1/rlinf.io/v1alpha1/nodes",
-        window.location.origin,
-      );
-      if (selectedClusterID) {
-        nodesURL.searchParams.set(
-          "labelSelector",
-          `rlark.io/cluster-id=${selectedClusterID}`,
-        );
-      }
-      const response = await fetch(nodesURL);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = await response.json();
-      resolvedNodes = body.items ?? [];
+      resolvedNodes = await nodesApi.list({
+        labelSelector: selectedClusterID
+          ? `rlark.io/cluster-id=${selectedClusterID}`
+          : undefined,
+      });
     } catch {
       resolvedNodes = [];
     }
 
     let resolvedClusters: ClusterSummary[] = [];
     try {
-      const response = await fetch("/api/v1/clusters");
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = await response.json();
-      const rawClusters = (body.data ?? []) as ClusterSummary[];
+      const rawClusters = await clustersApi.list<ClusterSummary>();
       const clusterTypes = new Map(
         rawClusters.map((cluster) => [
           cluster.id || cluster.name,
@@ -281,12 +267,10 @@ export function ClusterManagementPage({
 
     if (selectedClusterID) {
       try {
-        const response = await fetch(
-          `/api/v1/clusters/${encodeURIComponent(selectedClusterID)}`,
-        );
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const body = await response.json();
-        const detail = body.data as ClusterSummary & { nodes?: CRDNode[] };
+        const detail = await clustersApi.get<
+          ClusterSummary & { nodes?: CRDNode[] }
+        >(selectedClusterID);
+        if (!detail) throw new Error("cluster not found");
         const fullNodes = resolvedNodes.filter(
           (node) => clusterIDForNode(node) === selectedClusterID,
         );
@@ -331,32 +315,27 @@ export function ClusterManagementPage({
 
   useAutoRefresh(fetchClusters, 10000, [selectedClusterID]);
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await fetchClusters(false);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const filteredClusters = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return clusters
-      .filter((cluster) => {
-        const searchable =
-          `${cluster.name} ${cluster.id} ${cluster.type} ${cluster.region} ${cluster.location}`.toLowerCase();
-        return (
-          (!normalized || searchable.includes(normalized)) &&
-          (phaseFilter === "All" || cluster.phase === phaseFilter)
-        );
-      })
-      .sort((a, b) => {
-        const value = (cluster: ClusterSummary) =>
-          sort.key === "rate"
-            ? cluster.totalNodes
-              ? cluster.onlineNodes / cluster.totalNodes
-              : 0
-            : cluster[sort.key];
-        return compareSortValues(
-          value(a),
-          value(b),
-          sort.direction,
-          zh ? "zh-CN" : "en",
-        );
-      });
-  }, [clusters, phaseFilter, query, sort, zh]);
+    return clusters.filter((cluster) => {
+      const searchable =
+        `${cluster.name} ${cluster.id} ${cluster.type} ${cluster.region} ${cluster.location}`.toLowerCase();
+      const phaseHit =
+        phaseFilterValues.length === 0 ||
+        phaseFilterValues.includes(cluster.phase);
+      return (!normalized || searchable.includes(normalized)) && phaseHit;
+    });
+  }, [clusters, phaseFilterValues, query]);
 
   const totalPages = Math.max(1, Math.ceil(filteredClusters.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -364,7 +343,7 @@ export function ClusterManagementPage({
     (currentPage - 1) * pageSize,
     currentPage * pageSize,
   );
-  useEffect(() => setPage(1), [pageSize, phaseFilter, query]);
+  useEffect(() => setPage(1), [pageSize, phaseFilterValues, query]);
 
   const selectedCluster = selectedClusterID
     ? clusters.find((cluster) => cluster.id === selectedClusterID)
@@ -466,7 +445,8 @@ export function ClusterManagementPage({
           <NodeResourceBrowser
             nodes={visibleDetailNodes}
             copy={c}
-            onRefresh={() => fetchClusters(false)}
+            onRefresh={handleRefresh}
+            refreshing={refreshing}
             onSelectNode={onSelectNode}
           />
         </section>
@@ -499,59 +479,24 @@ export function ClusterManagementPage({
         onChange={setQuery}
         count={filteredClusters.length}
         copy={c}
-        onRefresh={() => fetchClusters(false)}
-        filterValue={phaseFilter}
-        onFilterChange={(value) => setPhaseFilter(value as ClusterPhaseFilter)}
-        filterOptions={[
-          { value: "All", label: zh ? "全部状态" : "All statuses" },
-          { value: "Online", label: zh ? "在线" : "Online" },
-          { value: "Degraded", label: zh ? "部分离线" : "Degraded" },
-          { value: "Offline", label: zh ? "离线" : "Offline" },
-        ]}
+        onRefresh={handleRefresh}
+        refreshing={refreshing}
       />
-      <section className="panel cluster-management-table-panel">
+      <section
+        className={`panel cluster-management-table-panel refreshable-region${refreshing ? " is-refreshing" : ""}`}
+        aria-busy={refreshing}
+      >
         <div className="cluster-management-table-head">
-          <SortButton
-            label={zh ? "集群名称" : "Cluster"}
-            active={sort.key === "name"}
-            direction={sort.direction}
-            onClick={() => toggleSort("name")}
-          />
-          <SortButton
-            label={zh ? "类型" : "Type"}
-            active={sort.key === "type"}
-            direction={sort.direction}
-            onClick={() => toggleSort("type")}
-          />
-          <SortButton
-            label={zh ? "节点数" : "Nodes"}
-            active={sort.key === "totalNodes"}
-            direction={sort.direction}
-            onClick={() => toggleSort("totalNodes")}
-          />
-          <SortButton
-            label={zh ? "在线" : "Online"}
-            active={sort.key === "onlineNodes"}
-            direction={sort.direction}
-            onClick={() => toggleSort("onlineNodes")}
-          />
-          <SortButton
-            label={zh ? "离线" : "Offline"}
-            active={sort.key === "offlineNodes"}
-            direction={sort.direction}
-            onClick={() => toggleSort("offlineNodes")}
-          />
-          <SortButton
-            label={zh ? "在线率" : "Rate"}
-            active={sort.key === "rate"}
-            direction={sort.direction}
-            onClick={() => toggleSort("rate")}
-          />
-          <SortButton
+          <span>{zh ? "集群名称" : "Cluster"}</span>
+          <span>{zh ? "类型" : "Type"}</span>
+          <span>{zh ? "节点数" : "Nodes"}</span>
+          <span>{zh ? "在线" : "Online"}</span>
+          <span>{zh ? "离线" : "Offline"}</span>
+          <span>{zh ? "在线率" : "Rate"}</span>
+          <ColumnFilterButton
             label={zh ? "状态" : "Status"}
-            active={sort.key === "phase"}
-            direction={sort.direction}
-            onClick={() => toggleSort("phase")}
+            selectedCount={phaseFilterValues.length}
+            onClick={openFor("phase")}
           />
           <span />
         </div>
@@ -582,11 +527,10 @@ export function ClusterManagementPage({
                     </i>
                     <span>
                       <strong>{cluster.name}</strong>
-                      <small>{cluster.region || cluster.id}</small>
                     </span>
                   </span>
                   <span className="cluster-type-chip">
-                    {cluster.type || "—"}
+                    {clusterTypeLabel(cluster.type, zh)}
                   </span>
                   <strong>{cluster.totalNodes}</strong>
                   <span>{cluster.onlineNodes}</span>
@@ -604,7 +548,26 @@ export function ClusterManagementPage({
             })
           )}
         </div>
+        <RefreshOverlay
+          visible={refreshing}
+          label={zh ? "正在刷新集群列表" : "Refreshing cluster list"}
+        />
       </section>
+      {openKey === "phase" && (
+        <ColumnFilterPopover
+          label={zh ? "状态" : "Status"}
+          options={[
+            { value: "Online", label: zh ? "在线" : "Online" },
+            { value: "Degraded", label: zh ? "部分离线" : "Degraded" },
+            { value: "Offline", label: zh ? "离线" : "Offline" },
+          ]}
+          selected={phaseFilterValues}
+          onChange={setPhaseFilterValues}
+          anchorRect={anchorRect}
+          onClose={close}
+          zh={zh}
+        />
+      )}
       <Pagination
         page={currentPage}
         pageSize={pageSize}
@@ -616,3 +579,4 @@ export function ClusterManagementPage({
     </div>
   );
 }
+import { clustersApi, nodesApi } from "../backend";

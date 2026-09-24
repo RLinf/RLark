@@ -2,6 +2,8 @@
 
 Use this guide to register a public key for RLark SSH bastion authentication and, optionally, select it when creating a Job.
 
+> **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
+
 ![SSH Key Management](../images/ui/ssh-key-ui.png)
 
 ## Task 1: Add a Public Key
@@ -12,7 +14,7 @@ Use this guide to register a public key for RLark SSH bastion authentication and
 4. Paste one OpenSSH public key, such as `ssh-ed25519` or `ssh-rsa`.
 5. Choose **Add** and confirm that the key appears in the list.
 
-RLark validates the public-key format and rejects duplicate keys. The page also shows the configured jump host command when the Server SSH address is available.
+RLark validates the public-key format and requires both the SSH username and public key content to be globally unique. The form shows an inline error before upload when either value already exists. The page also shows the configured jump host command when the Server SSH address is available.
 
 ## Task 2: Select a Key for a Job
 
@@ -21,7 +23,7 @@ RLark validates the public-key format and rejects duplicate keys. The page also 
 3. Review the YAML preview and confirm that `spec.sshPublicKey` contains the selected public key.
 4. Submit the Job.
 
-This selection writes one public key into the Job configuration for workload injection. Registering a key on the SSH Keys page alone does not modify existing Jobs or Pods.
+Each selected public key is written once into the Job configuration for workload injection. Registering a key on the SSH Keys page alone does not modify existing Jobs or Pods. Job details display multiple injected keys in a scrollable list.
 
 ## Task 3: Connect Through the Bastion
 
@@ -57,4 +59,4 @@ Deleting a registered key prevents subsequent bastion authentication with that u
 
 ## API Equivalent
 
-Use `GET` and `POST /api/v1/ssh-user-keys` and `DELETE /api/v1/ssh-user-keys/{index}?user={user}`. See [API Reference](../api/reference.md).
+Use `GET` and `POST /api/v1/ssh-user-keys` and `DELETE /api/v1/ssh-user-keys/{index}?user={user}`. The index is zero-based within that user's registered keys. See [API Reference](../api/reference.md).

@@ -150,7 +150,7 @@ func (q *slsQuerier) Query(ctx context.Context, query Query) (*Result, error) {
 		queryExp,
 		fetchLimit,
 		offset,
-		true,
+		query.Reverse,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("sls GetLogs: %w", err)
@@ -232,4 +232,62 @@ func (q *slsQuerier) Query(ctx context.Context, query Query) (*Result, error) {
 	}
 
 	return result, nil
+}
+
+// LabelValues implements Querier.LabelValues for Aliyun SLS.
+// It uses SLS SQL analysis (SELECT DISTINCT) to get unique values efficiently,
+// avoiding the 100-line limit of raw log queries.
+// NOTE: Requires the target field to have analytics enabled in SLS index config.
+func (q *slsQuerier) LabelValues(ctx context.Context, label string, from, to time.Time, filters map[string]string) ([]string, error) {
+	// 构造过滤条件（WHERE 部分）
+	var conditions []string
+	for k, v := range filters {
+		if k == "" || v == "" {
+			continue
+		}
+		escaped := strings.ReplaceAll(v, `'`, `\'`)
+		conditions = append(conditions, fmt.Sprintf(`"content.%s" = '%s'`, k, escaped))
+	}
+	// 确保目标字段存在（非空）
+	conditions = append(conditions, fmt.Sprintf(`"content.%s" IS NOT NULL`, label))
+	whereClause := strings.Join(conditions, " AND ")
+
+	// 使用 SLS SQL 分析查询 DISTINCT 值
+	// 语法：* | SELECT DISTINCT "content.pod" AS value WHERE ... LIMIT 1000
+	queryExp := fmt.Sprintf(`* | SELECT DISTINCT "content.%s" AS value LIMIT 1000`, label)
+	if whereClause != "" {
+		queryExp = fmt.Sprintf(`* | SELECT DISTINCT "content.%s" AS value WHERE %s LIMIT 1000`, label, whereClause)
+	}
+
+	logs, err := q.client.GetLogs(
+		q.project,
+		q.logstore,
+		"",
+		from.Unix(),
+		to.Unix(),
+		queryExp,
+		1000,
+		0,
+		false,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("sls GetLogs for label values: %w", err)
+	}
+
+	valueSet := make(map[string]struct{})
+	for _, lg := range logs.Logs {
+		for k, v := range lg {
+			// SQL 查询返回的字段名是 "value"（我们在 SELECT 中起的别名）
+			if k == "value" && v != "" {
+				valueSet[v] = struct{}{}
+			}
+		}
+	}
+
+	values := make([]string, 0, len(valueSet))
+	for v := range valueSet {
+		values = append(values, v)
+	}
+
+	return values, nil
 }

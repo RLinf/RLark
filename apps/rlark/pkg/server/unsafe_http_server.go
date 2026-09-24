@@ -50,7 +50,7 @@ func (s *Server) runUnsafeHTTPServer(ctx context.Context) error {
 }
 
 func (s *Server) handleHealthCheck(ctx *gin.Context) {
-	if s.peerBroadcasted {
+	if s.peerBroadcasted.Load() {
 		ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
 	} else {
 		ctx.JSON(http.StatusServiceUnavailable, gin.H{"status": "not ready"})

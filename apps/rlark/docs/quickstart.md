@@ -75,6 +75,24 @@ The script completes these steps:
 | 11 | Create cross-cluster test resources (Workspace, Domain, Job) |
 | 12 | Verify cross-cluster network connectivity |
 
+#### Advanced options
+
+The one-click script accepts environment variables rather than command-line flags:
+
+```bash
+# Create three data plane clusters instead of the default two
+CLUSTER_COUNT=3 bash apps/rlark/docs/examples/quickstart.sh
+
+# Use a different kind node image (default: kindest/node:v1.31.0)
+KIND_IMAGE=kindest/node:v1.32.0 bash apps/rlark/docs/examples/quickstart.sh
+
+# Combine both settings
+CLUSTER_COUNT=3 KIND_IMAGE=kindest/node:v1.32.0 \
+  bash apps/rlark/docs/examples/quickstart.sh
+```
+
+`CLUSTER_COUNT` controls how many `rlark-data-N` clusters are created. `KIND_IMAGE` must name a kind-compatible node image; the script first checks the local Docker image cache, then tries Docker Hub and its configured mirror.
+
 ### 2. Sign in to the UI
 
 After the script completes, start the UI locally:
@@ -90,7 +108,7 @@ Open `http://localhost:5173/admin`. Use the credentials from the script output:
 | Service | URL | Purpose |
 |---------|-----|---------|
 | Admin Console | `http://localhost:5173/admin` | Cluster onboarding, nodes, certificates |
-| Platform | `http://localhost:5173` | Jobs, Workers, Workflows, storage |
+| Platform | `http://localhost:5173` | Jobs, Workers, storage |
 | Gateway API | `http://localhost:9000` | Automation |
 
 ### 3. Clean Up
@@ -123,6 +141,12 @@ This script:
 
 !!! tip "Keep the terminal open"
     The UI dev server runs in the foreground. Keep this terminal open while you use the UI. Press `Ctrl+C` to stop the UI when done.
+
+To start only the control plane without installing Node.js or running the UI dev server, pass `--no-ui`:
+
+```bash
+bash apps/rlark/docs/examples/quickstart-cp.sh --no-ui
+```
 
 The output shows:
 
@@ -180,6 +204,22 @@ bash apps/rlark/docs/examples/quickstart-dp.sh \
   --cluster-id my-cluster-2
 ```
 
+The script derives the number of kind clusters from the number of repeated `--cluster-id` options. Use `--cluster-name` to change the kind cluster name prefix (the default is `rlark-data`); an index is always appended, even for one cluster:
+
+```bash
+# Creates edge-1 and edge-2 for the two cluster IDs
+bash apps/rlark/docs/examples/quickstart-dp.sh \
+  --cluster-id my-cluster-1 \
+  --cluster-id my-cluster-2 \
+  --cluster-name edge
+
+# Override the kind node image (default: kindest/node:v1.31.0)
+KIND_IMAGE=kindest/node:v1.32.0 \
+  bash apps/rlark/docs/examples/quickstart-dp.sh --cluster-id my-cluster
+```
+
+`CLUSTER_COUNT` is not an input for `quickstart-dp.sh`; it is calculated internally from the supplied cluster IDs. Set `CLUSTER_COUNT` only when running the one-click `quickstart.sh` script.
+
 ### 4. Verify the Cluster and Nodes
 
 **Using the UI:** Admin Console → Clusters and Nodes. Verify both clusters are online and their nodes are synchronized.
@@ -202,6 +242,8 @@ curl -s "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
    - **Node count**: 1
    - **Image**: `rayproject/ray:2.9.0-py310`
    - **Run Script**: `echo hello from RLark; sleep 3600`
+
+> **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
 
 ![Configure the Job worker and placement](images/ui/create-job-worker-configuration.png)
 
@@ -255,7 +297,7 @@ kubectl --kubeconfig /tmp/kind-kubeconfig-2 exec -n rlark-system \
 
 Expected output: `200`
 
-See [Networking and Security](admin-guide/network-security.md) for details.
+See [Networking and Security](admin-guide/network-security.md) for details. Reusable manifests: [domain.yaml](examples/domain.yaml) and [cross-cluster-ping.yaml](examples/cross-cluster-ping.yaml).
 
 ### 7. Clean Up
 

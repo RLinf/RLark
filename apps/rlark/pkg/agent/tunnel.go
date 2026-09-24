@@ -2,14 +2,14 @@ package agent
 
 import (
 	"context"
+	"math/rand"
 	"net"
 	"net/http"
 	"time"
 
-	"github.com/rancher/remotedialer"
-
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/remotedialer"
 )
 
 func (a *Agent) runTunnel(ctx context.Context, role string) error {
@@ -29,6 +29,7 @@ func (a *Agent) runTunnel(ctx context.Context, role string) error {
 		header.Set(apis.RemoteDialerRoleHeader, role)
 	}
 	connect := func() error {
+		startedAt := time.Now()
 		ws, _, err := a.serverClient.DialWebsocket(ctx, header)
 		if err != nil {
 			return err
@@ -42,6 +43,9 @@ func (a *Agent) runTunnel(ctx context.Context, role string) error {
 		defer session.Close()
 
 		_, err = session.Serve(sessCtx)
+		stage, duration := session.Diagnostics()
+		logger.Info("tunnel session ended", "role", role, "duration", duration, "stage", stage)
+		_ = startedAt
 		return err
 	}
 
@@ -52,8 +56,7 @@ func (a *Agent) runTunnel(ctx context.Context, role string) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		default:
-			time.Sleep(5 * time.Second)
+		case <-time.After(time.Duration(4_000+rand.Intn(2_001)) * time.Millisecond):
 		}
 	}
 }

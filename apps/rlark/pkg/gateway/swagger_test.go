@@ -27,8 +27,9 @@ func TestSwaggerOperationsAreRegisteredRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	(&Gateway{}).RegisterRoutes(router)
-
-	registered := make(map[string]struct{})
+	registered := map[string]struct{}{
+		"GET /metrics": {},
+	}
 	for _, route := range router.Routes() {
 		registered[route.Method+" "+openAPIPath(route.Path)] = struct{}{}
 	}

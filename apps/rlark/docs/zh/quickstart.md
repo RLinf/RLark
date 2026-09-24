@@ -76,6 +76,24 @@ bash apps/rlark/docs/examples/quickstart.sh
 | 11 | 创建跨集群测试资源（Workspace、Domain、Job） |
 | 12 | 验证跨集群网络连通性 |
 
+#### 高级选项
+
+一键脚本通过环境变量接受高级配置，而不是命令行参数：
+
+```bash
+# 创建 3 个数据面集群，而不是默认的 2 个
+CLUSTER_COUNT=3 bash apps/rlark/docs/examples/quickstart.sh
+
+# 使用其他 kind 节点镜像（默认：kindest/node:v1.31.0）
+KIND_IMAGE=kindest/node:v1.32.0 bash apps/rlark/docs/examples/quickstart.sh
+
+# 同时设置两项
+CLUSTER_COUNT=3 KIND_IMAGE=kindest/node:v1.32.0 \
+  bash apps/rlark/docs/examples/quickstart.sh
+```
+
+`CLUSTER_COUNT` 控制创建多少个 `rlark-data-N` 集群。`KIND_IMAGE` 必须是 kind 兼容的节点镜像；脚本会先检查本地 Docker 镜像缓存，再尝试从 Docker Hub 和配置的镜像源拉取。
+
 ### 2. 登录 UI
 
 脚本完成后，启动本地 UI：
@@ -91,7 +109,7 @@ VITE_DATA_MODE=backend npm run dev
 | 服务 | 地址 | 用途 |
 |------|------|------|
 | 管理平台 | `http://localhost:5173/admin` | 集群纳管、节点、证书 |
-| 业务平台 | `http://localhost:5173` | 任务、Worker、工作流、存储 |
+| 业务平台 | `http://localhost:5173` | 任务、Worker、存储 |
 | Gateway API | `http://localhost:9000` | 自动化 |
 
 ### 3. 清理环境
@@ -125,6 +143,12 @@ bash apps/rlark/docs/examples/quickstart-cp.sh
 
 !!! tip "保持终端打开"
     UI 开发服务器运行在前台。请保持此终端打开以便使用 UI。完成后按 `Ctrl+C` 停止。
+
+如果只需启动控制面、不安装 Node.js 或运行 UI 开发服务器，请传入 `--no-ui`：
+
+```bash
+bash apps/rlark/docs/examples/quickstart-cp.sh --no-ui
+```
 
 输出示例：
 
@@ -182,6 +206,22 @@ bash apps/rlark/docs/examples/quickstart-dp.sh \
   --cluster-id my-cluster-2
 ```
 
+脚本根据重复传入的 `--cluster-id` 数量确定 kind 集群数量。可用 `--cluster-name` 修改 kind 集群名称前缀（默认 `rlark-data`）；即使只有一个集群，也始终会追加序号：
+
+```bash
+# 为两个集群 ID 创建 edge-1 和 edge-2
+bash apps/rlark/docs/examples/quickstart-dp.sh \
+  --cluster-id my-cluster-1 \
+  --cluster-id my-cluster-2 \
+  --cluster-name edge
+
+# 覆盖 kind 节点镜像（默认：kindest/node:v1.31.0）
+KIND_IMAGE=kindest/node:v1.32.0 \
+  bash apps/rlark/docs/examples/quickstart-dp.sh --cluster-id my-cluster
+```
+
+`CLUSTER_COUNT` 不是 `quickstart-dp.sh` 的输入；该脚本会根据传入的集群 ID 在内部计算它。仅在运行一键脚本 `quickstart.sh` 时设置 `CLUSTER_COUNT`。
+
 ### 4. 验证集群和节点
 
 **通过 UI：** 管理平台 → 集群与节点。确认两个集群均在线且节点已同步。
@@ -204,6 +244,8 @@ curl -s "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
    - **节点数**：1
    - **镜像**：`rayproject/ray:2.9.0-py310`
    - **运行脚本**：`echo hello from RLark; sleep 3600`
+
+> **截图说明：** 截图来自示例环境，资源名称和数据仅供说明，实际环境会有所不同。
 
 ![配置任务 Worker 与调度位置](../images/ui/create-job-worker-configuration.png)
 
@@ -256,7 +298,7 @@ kubectl --kubeconfig /tmp/kind-kubeconfig-2 exec -n rlark-system \
 
 预期输出：`200`
 
-详见 [网络与安全](admin-guide/network-security.md)。
+详见 [网络与安全](admin-guide/network-security.md)。可复用清单：[domain.yaml](../examples/domain.yaml) 和 [cross-cluster-ping.yaml](../examples/cross-cluster-ping.yaml)。
 
 ### 7. 清理环境
 

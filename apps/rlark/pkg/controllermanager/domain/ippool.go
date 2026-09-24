@@ -13,8 +13,8 @@ import (
 // prior allocations from DomainStatus on reconciliation).
 //
 // Usable IP range logic:
-//   - IPv4 /31 and /32: all IPs usable (RFC 3021 PtP).
-//   - Other IPv4: first (network) and last (broadcast) excluded.
+//   - IPv4: addresses ending in .0 or .255 are always excluded.
+//   - Other IPv4 network and broadcast addresses are also excluded.
 //   - IPv6 /127 and /128: all IPs usable.
 //   - Other IPv6: first (subnet-router anycast) excluded.
 type IPPool struct {
@@ -79,7 +79,7 @@ func (p *IPPool) MarkAllocated(ip string) {
 func (p *IPPool) Allocate() (string, error) {
 	for cur := p.first; ; cur = cur.Next() {
 		ipStr := cur.String()
-		if !p.allocated[ipStr] {
+		if isAutoAssignable(cur) && !p.allocated[ipStr] {
 			p.allocated[ipStr] = true
 			return ipStr, nil
 		}
@@ -88,6 +88,14 @@ func (p *IPPool) Allocate() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no available IP in pool %s", p.cidr)
+}
+
+func isAutoAssignable(addr netip.Addr) bool {
+	if !addr.Is4() {
+		return true
+	}
+	lastOctet := addr.As4()[3]
+	return lastOctet != 0 && lastOctet != 255
 }
 
 // PrefixLength returns the prefix length.

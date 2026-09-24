@@ -159,6 +159,20 @@ spec:
                 type: array
               reason:
                 type: string
+              storage:
+                description: NodeStorageStatus reports kubelet filesystem usage in
+                  bytes.
+                properties:
+                  availableBytes:
+                    format: int64
+                    type: integer
+                  capacityBytes:
+                    format: int64
+                    type: integer
+                  usedBytes:
+                    format: int64
+                    type: integer
+                type: object
               used:
                 additionalProperties:
                   anyOf:

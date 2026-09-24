@@ -65,6 +65,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.JobSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("JobStatus"):
 		return &rlarkiov1alpha1.JobStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("JobTag"):
+		return &rlarkiov1alpha1.JobTagApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("JobTaskStatus"):
 		return &rlarkiov1alpha1.JobTaskStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("JobTaskTemplate"):
@@ -83,14 +85,16 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.NodeSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeStatus"):
 		return &rlarkiov1alpha1.NodeStatusApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("PullProgress"):
-		return &rlarkiov1alpha1.PullProgressApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeStorageStatus"):
+		return &rlarkiov1alpha1.NodeStorageStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Pod"):
 		return &rlarkiov1alpha1.PodApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PodSpec"):
 		return &rlarkiov1alpha1.PodSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PodStatus"):
 		return &rlarkiov1alpha1.PodStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("PullProgress"):
+		return &rlarkiov1alpha1.PullProgressApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("RawTaskSpec"):
 		return &rlarkiov1alpha1.RawTaskSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Task"):

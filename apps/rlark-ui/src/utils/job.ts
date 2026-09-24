@@ -1,5 +1,21 @@
-import type { JobType } from "../data";
+import type { JobTag, JobType } from "../data";
 import type { RoleResource } from "../types";
+
+// 任务名称限制：1-64 个字符，支持中英文、数字、中划线（-）、下划线（_）和英文句号（.）
+export const JOB_DISPLAY_NAME_MAX_LENGTH = 64;
+export const JOB_DISPLAY_NAME_PATTERN = /^[A-Za-z0-9\u4e00-\u9fa5._-]{1,64}$/;
+
+export function isValidJobDisplayName(name: string): boolean {
+  return JOB_DISPLAY_NAME_PATTERN.test(name);
+}
+
+// 角色名称与任务名称使用相同的字符与长度限制
+export const ROLE_NAME_MAX_LENGTH = JOB_DISPLAY_NAME_MAX_LENGTH;
+export const ROLE_NAME_PATTERN = JOB_DISPLAY_NAME_PATTERN;
+
+export function isValidRoleName(name: string): boolean {
+  return ROLE_NAME_PATTERN.test(name);
+}
 
 const TASK_ROLE_MAP: Record<string, "Actor" | "Rollout" | "Env"> = {
   Actor: "Actor",
@@ -143,57 +159,6 @@ export function toVolumeName(mountPath: string): string {
   return name;
 }
 
-export function computePvcStorageMap(
-  role: string,
-  mounts: Array<{
-    type: "host" | "storage";
-    objectStorage: string;
-    mountPath: string;
-    hostPath: string;
-    pvcSizeGb: number;
-  }>,
-  jobName?: string,
-): Record<string, string> | undefined {
-  const roleSlug = toResourceName(role);
-  const storageMounts = mounts.filter((m) => m.type === "storage");
-  if (storageMounts.length === 0) return undefined;
-  const map: Record<string, string> = {};
-  const jobSlug = jobName ? toResourceName(jobName) : "";
-  storageMounts.forEach((m) => {
-    const volName = toVolumeName(m.mountPath);
-    const claimName = jobSlug
-      ? `pvc-${jobSlug}-${roleSlug}-${volName}`
-      : `pvc-${roleSlug}-${volName}`;
-    map[claimName] = m.objectStorage ?? "";
-  });
-  return map;
-}
-
-export function computePvcSizeGbMap(
-  role: string,
-  mounts: Array<{
-    type: "host" | "storage";
-    mountPath: string;
-    pvcSizeGb: number;
-  }>,
-  jobName?: string,
-): Record<string, number> | undefined {
-  const roleSlug = toResourceName(role);
-  const storageMounts = mounts.filter((m) => m.type === "storage");
-  if (storageMounts.length === 0) return undefined;
-  const map: Record<string, number> = {};
-  const jobSlug = jobName ? toResourceName(jobName) : "";
-  storageMounts.forEach((m) => {
-    const volName =
-      m.mountPath.replace(/\//g, "-").replace(/^-|-$/g, "") || "vol";
-    const claimName = jobSlug
-      ? `pvc-${jobSlug}-${roleSlug}-${volName}`
-      : `pvc-${roleSlug}-${volName}`;
-    map[claimName] = Math.min(200, Math.max(1, m.pvcSizeGb));
-  });
-  return map;
-}
-
 export function automaticNetworkDomain(domains: Array<{ name: string }>) {
   return (
     [...domains].sort((left, right) => left.name.localeCompare(right.name))[0]
@@ -212,6 +177,7 @@ export function generateJobCRD(opts: {
   domain: string;
   tensorBoardDir?: string;
   sshPublicKey?: string;
+  tags?: JobTag[];
 }) {
   const tasks = opts.roles
     .map((role) => {
@@ -227,8 +193,6 @@ export function generateJobCRD(opts: {
         { name: "RLARK_TASK_ROLE", value: role },
       ];
       const taskName = toResourceName(role);
-      const jobSlug = toResourceName(opts.name);
-
       const hostMounts = roleMounts.filter((m) => m.type === "host");
       const storageMounts = roleMounts.filter((m) => m.type === "storage");
 
@@ -239,21 +203,25 @@ export function generateJobCRD(opts: {
 
       const storageVolumes = storageMounts.map((m) => {
         const volName = toVolumeName(m.mountPath);
-        const claimName = `pvc-${jobSlug}-${taskName}-${volName}`;
+        const pvcSizeGb =
+          m.pvcSizeGb === "" ? 10 : Math.min(200, Math.max(1, m.pvcSizeGb));
         return {
           name: volName,
-          persistentVolumeClaim: {
-            claimName,
+          ephemeral: {
+            volumeClaimTemplate: {
+              spec: {
+                accessModes: ["ReadWriteOnce"],
+                ...(m.objectStorage
+                  ? { storageClassName: m.objectStorage }
+                  : {}),
+                resources: {
+                  requests: { storage: `${pvcSizeGb}Gi` },
+                },
+              },
+            },
           },
         };
       });
-
-      const pvcStorageMap = computePvcStorageMap(
-        taskName,
-        roleMounts,
-        opts.name,
-      );
-      const pvcSizeGbMap = computePvcSizeGbMap(taskName, roleMounts, opts.name);
 
       const allVolumeMounts = roleMounts.map((m) => ({
         name: toVolumeName(m.mountPath),
@@ -275,8 +243,6 @@ export function generateJobCRD(opts: {
           workload: {
             kind: "StatefulSet",
             replicas: res ? Number(res.replicas) : 1,
-            ...(pvcStorageMap ? { pvcStorageMap } : {}),
-            ...(pvcSizeGbMap ? { pvcSizeGbMap } : {}),
             template: {
               spec: {
                 containers: [
@@ -345,6 +311,31 @@ export function generateJobCRD(opts: {
       tasks,
       ...(opts.domain ? { domain: opts.domain } : {}),
       ...(opts.sshPublicKey ? { sshPublicKey: opts.sshPublicKey } : {}),
+      ...(opts.tags && opts.tags.length > 0
+        ? {
+            tags: [
+              ...new Map(
+                opts.tags
+                  .filter((t) => t.key.trim() && t.value.trim())
+                  .map((t) => [
+                    t.key.trim(),
+                    {
+                      key: t.key.trim(),
+                      values: opts
+                        .tags!.filter(
+                          (item) => item.key.trim() === t.key.trim(),
+                        )
+                        .map((item) => item.value.trim())
+                        .filter(
+                          (value, index, values) =>
+                            value && values.indexOf(value) === index,
+                        ),
+                    },
+                  ]),
+              ).values(),
+            ],
+          }
+        : {}),
     },
   };
 }

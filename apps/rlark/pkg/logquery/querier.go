@@ -40,6 +40,11 @@ type Query struct {
 	// Empty means "start from the beginning of the time range". Each backend
 	// interprets the token in its own way; callers must treat it as opaque.
 	Cursor string
+
+	// Reverse controls the order of returned entries.
+	//   true  (default): newest first (倒序，最新日志在前)
+	//   false: oldest first (正序，最旧日志在前)
+	Reverse bool
 }
 
 // Entry is a single log line.
@@ -63,6 +68,11 @@ type Result struct {
 type Querier interface {
 	// Query runs a one-shot query against the backend.
 	Query(ctx context.Context, q Query) (*Result, error)
+
+	// LabelValues returns all unique values for a given label within the
+	// specified time range and optional filters. This is used to populate
+	// dropdowns (e.g. "pod", "task") for historical log browsing.
+	LabelValues(ctx context.Context, label string, from, to time.Time, filters map[string]string) ([]string, error)
 }
 
 // NewQuerier constructs a Querier for the given config. Returns an error if
@@ -86,6 +96,8 @@ func ValidateConfig(cfg *Config) error {
 		return fmt.Errorf("log config is nil")
 	}
 	switch cfg.Backend {
+	case "none":
+		return nil
 	case "sls":
 		return validateSLSConfig(cfg.Config)
 	default:

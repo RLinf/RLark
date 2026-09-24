@@ -1,12 +1,10 @@
 import type { JobType } from "../data";
 import type { DAGNode, DAGEdge, RoleResource } from "../types";
-import { computePvcStorageMap } from "./job";
 
 export function makeDefaultRoleResources(
   type: JobType,
   roles: string[],
   clusterDisplayNames: string[] = [],
-  jobName?: string,
 ): Record<string, RoleResource> {
   const rr: Record<string, RoleResource> = {};
   roles.forEach((role, index) => {
@@ -32,7 +30,6 @@ export function makeDefaultRoleResources(
       prepareScript: "",
       envs: [{ key: "RLARK_TASK_ROLE", value: role }],
       mounts,
-      pvcStorageMap: computePvcStorageMap(role, mounts, jobName),
     };
   });
   return rr;

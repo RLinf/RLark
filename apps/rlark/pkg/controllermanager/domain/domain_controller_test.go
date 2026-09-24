@@ -19,6 +19,31 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 )
 
+type countingClient struct {
+	client.Client
+	updates       int
+	statusUpdates int
+}
+
+func (c *countingClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	c.updates++
+	return c.Client.Update(ctx, obj, opts...)
+}
+
+func (c *countingClient) Status() client.StatusWriter {
+	return &countingStatusWriter{SubResourceWriter: c.Client.Status(), parent: c}
+}
+
+type countingStatusWriter struct {
+	client.SubResourceWriter
+	parent *countingClient
+}
+
+func (w *countingStatusWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	w.parent.statusUpdates++
+	return w.SubResourceWriter.Update(ctx, obj, opts...)
+}
+
 func newTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -26,6 +51,19 @@ func newTestScheme(t *testing.T) *runtime.Scheme {
 		t.Fatalf("failed to add scheme: %v", err)
 	}
 	return scheme
+}
+
+func newTestClientBuilder(t *testing.T) *fake.ClientBuilder {
+	t.Helper()
+	return fake.NewClientBuilder().
+		WithScheme(newTestScheme(t)).
+		WithIndex(&rlarkv1alpha1.Pod{}, podDomainField, func(obj client.Object) []string {
+			pod := obj.(*rlarkv1alpha1.Pod)
+			if pod.Spec.Domain == "" {
+				return nil
+			}
+			return []string{pod.Spec.Domain}
+		})
 }
 
 func validCertPEM(t *testing.T) (string, string) {
@@ -93,8 +131,7 @@ func makeDomainPeer(name, namespace, certPEM, keyPEM string) *rlarkv1alpha1.Doma
 func doReconcile(t *testing.T, objs ...client.Object) (rlarkv1alpha1.Domain, map[string][]rlarkv1alpha1.DomainPeer) {
 	t.Helper()
 	scheme := newTestScheme(t)
-	cl := fake.NewClientBuilder().
-		WithScheme(scheme).
+	cl := newTestClientBuilder(t).
 		WithObjects(objs...).
 		WithStatusSubresource(&rlarkv1alpha1.Domain{}).
 		Build()
@@ -140,6 +177,93 @@ func allocMap(t *testing.T, d rlarkv1alpha1.Domain) map[string]string {
 		m[a.Pod] = a.IP
 	}
 	return m
+}
+
+func TestReconcileSkipsUnchangedDomainAndPeerUpdates(t *testing.T) {
+	const (
+		domainName = "test-domain"
+		namespace  = "cluster-a"
+	)
+	certPEM, keyPEM := validCertPEM(t)
+	domain := &rlarkv1alpha1.Domain{
+		ObjectMeta: metav1.ObjectMeta{Name: domainName},
+		Spec:       rlarkv1alpha1.DomainSpec{CIDR: "10.244.0.0/29"},
+		Status: rlarkv1alpha1.DomainStatus{IPAllocations: []rlarkv1alpha1.DomainIPAllocation{{
+			IP: "10.244.0.1", Pod: namespace + "/rlark-system/pod-a",
+		}}},
+	}
+	pod := makePod("uid-a", namespace, domainName, "rlark-system", "pod-a", "node-a", "10.0.0.1", rlarkv1alpha1.PodPhaseRunning)
+	peer := makeDomainPeer(domainName, namespace, certPEM, keyPEM)
+	peer.Spec.PrefixLen = 29
+	peer.Spec.Pods = []rlarkv1alpha1.DomainPodInfo{{
+		GlobalNamespace: namespace,
+		Namespace:       "rlark-system",
+		Name:            "pod-a",
+		UID:             "uid-a",
+		Node:            "node-a",
+		IP:              "10.244.0.1",
+		LocalIP:         "10.0.0.1",
+	}}
+	scheme := newTestScheme(t)
+	wrapped := &countingClient{Client: newTestClientBuilder(t).
+		WithObjects(domain, pod, peer).
+		WithStatusSubresource(&rlarkv1alpha1.Domain{}).
+		Build()}
+	r := &Reconciler{Client: wrapped, Scheme: scheme}
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: domainName}}); err != nil {
+		t.Fatal(err)
+	}
+	if wrapped.statusUpdates != 0 || wrapped.updates != 0 {
+		t.Fatalf("unchanged Domain caused writes: status=%d peers=%d", wrapped.statusUpdates, wrapped.updates)
+	}
+}
+
+func TestReconcileSkipsPodWithoutNetworkStatus(t *testing.T) {
+	const (
+		domainName = "test-domain"
+		namespace  = "cluster-a"
+	)
+	certPEM, keyPEM := validCertPEM(t)
+	domain := &rlarkv1alpha1.Domain{
+		ObjectMeta: metav1.ObjectMeta{Name: domainName},
+		Spec:       rlarkv1alpha1.DomainSpec{CIDR: "10.244.0.0/29"},
+	}
+	pod := makePod("uid-a", namespace, domainName, "rlark-system", "pod-a", "", "", rlarkv1alpha1.PodPhasePending)
+	peer := makeDomainPeer(domainName, namespace, certPEM, keyPEM)
+
+	updated, peersByNS := doReconcile(t, domain, pod, peer)
+	if len(updated.Status.IPAllocations) != 0 {
+		t.Fatalf("expected no allocation for incomplete Pod status, got %d", len(updated.Status.IPAllocations))
+	}
+	if len(peersByNS[namespace]) != 1 {
+		t.Fatalf("expected existing DomainPeer to be retained, got %d", len(peersByNS[namespace]))
+	}
+	if len(peersByNS[namespace][0].Spec.Pods) != 0 {
+		t.Fatalf("expected incomplete Pod to be excluded from DomainPeer, got %d pods", len(peersByNS[namespace][0].Spec.Pods))
+	}
+}
+
+func TestReconcileListsOnlyPodsInDomain(t *testing.T) {
+	certPEM, keyPEM := validCertPEM(t)
+	domain := &rlarkv1alpha1.Domain{
+		ObjectMeta: metav1.ObjectMeta{Name: "domain-a"},
+		Spec:       rlarkv1alpha1.DomainSpec{CIDR: "10.244.0.0/29"},
+	}
+	podA := makePod("uid-a", "cluster-a", domain.Name, "rlark-system", "pod-a", "node-a", "10.0.0.1", rlarkv1alpha1.PodPhaseRunning)
+	podB := makePod("uid-b", "cluster-b", "domain-b", "rlark-system", "pod-b", "node-b", "10.0.0.2", rlarkv1alpha1.PodPhaseRunning)
+	peer := makeDomainPeer(domain.Name, podA.Namespace, certPEM, keyPEM)
+
+	updated, peersByNS := doReconcile(t, domain, podA, podB, peer)
+	if len(updated.Status.IPAllocations) != 1 {
+		t.Fatalf("expected one allocation, got %d", len(updated.Status.IPAllocations))
+	}
+	if got := updated.Status.IPAllocations[0].Pod; got != "cluster-a/rlark-system/pod-a" {
+		t.Fatalf("unexpected allocation for indexed Domain query: %s", got)
+	}
+	if _, exists := peersByNS[podB.Namespace]; exists {
+		t.Fatal("Pod from another Domain created a DomainPeer")
+	}
 }
 
 // TestReconcile_PodRestartReusesIP verifies that when a pod is recreated
@@ -201,6 +325,73 @@ func TestReconcile_PodRestartReusesIP(t *testing.T) {
 		if p.Name == "env-1" && p.IP != "10.244.0.1" {
 			t.Errorf("peer pod env-1 IP: expected 10.244.0.1, got %s", p.IP)
 		}
+	}
+}
+
+// TestReconcile_TerminalPodKeepsDomainPeer verifies that the controller does
+// not remove a cluster's DomainPeer during the gap between a container exit
+// and its workload becoming active again. The Pod CR still exists throughout
+// that gap, and its network sidecar may still be serving connections.
+func TestReconcile_TerminalPodKeepsDomainPeer(t *testing.T) {
+	const (
+		domainName = "test-domain"
+		ns         = "cluster-1"
+	)
+	certPEM, keyPEM := validCertPEM(t)
+	peer := makeDomainPeer(domainName, ns, certPEM, keyPEM)
+	peer.Spec.PrefixLen = 29
+	peer.Spec.Pods = []rlarkv1alpha1.DomainPodInfo{{
+		GlobalNamespace: ns,
+		Namespace:       "rlark-system",
+		Name:            "env-0",
+		UID:             "uid-env0",
+		Node:            "node-1",
+		IP:              "10.244.0.1",
+		LocalIP:         "10.42.0.1",
+	}}
+
+	domain := &rlarkv1alpha1.Domain{
+		ObjectMeta: metav1.ObjectMeta{Name: domainName},
+		Spec:       rlarkv1alpha1.DomainSpec{CIDR: "10.244.0.0/29"},
+		Status: rlarkv1alpha1.DomainStatus{IPAllocations: []rlarkv1alpha1.DomainIPAllocation{{
+			IP:  "10.244.0.1",
+			Pod: ns + "/rlark-system/env-0",
+		}}},
+	}
+
+	_, peersByNS := doReconcile(t,
+		domain,
+		peer,
+		makePod("uid-env0", ns, domainName, "rlark-system", "env-0", "node-1", "10.42.0.1", rlarkv1alpha1.PodPhaseSucceeded),
+	)
+
+	peers := peersByNS[ns]
+	if len(peers) != 1 {
+		t.Fatalf("expected DomainPeer to be retained while terminal Pod CR exists, got %d", len(peers))
+	}
+	if len(peers[0].Spec.Pods) != 1 || peers[0].Spec.Pods[0].IP != "10.244.0.1" {
+		t.Fatalf("expected existing route to be retained, got %+v", peers[0].Spec.Pods)
+	}
+}
+
+func TestReconcile_RemovedPodDeletesDomainPeer(t *testing.T) {
+	const (
+		domainName = "test-domain"
+		ns         = "cluster-1"
+	)
+	certPEM, keyPEM := validCertPEM(t)
+	domain := &rlarkv1alpha1.Domain{
+		ObjectMeta: metav1.ObjectMeta{Name: domainName},
+		Spec:       rlarkv1alpha1.DomainSpec{CIDR: "10.244.0.0/29"},
+	}
+
+	_, peersByNS := doReconcile(t,
+		domain,
+		makeDomainPeer(domainName, ns, certPEM, keyPEM),
+	)
+
+	if peers := peersByNS[ns]; len(peers) != 0 {
+		t.Fatalf("expected stale DomainPeer to be deleted after all Pod CRs are removed, got %d", len(peers))
 	}
 }
 

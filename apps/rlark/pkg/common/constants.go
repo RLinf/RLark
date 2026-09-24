@@ -8,7 +8,10 @@ const (
 	SSHUserKeySecretName = "rlark-ssh-keys"
 
 	// UIAuthSecretName is the KCP Secret holding UI auth credentials.
-	UIAuthSecretName = "rlark-ui-auth"
+	UIAuthSecretName       = "rlark-ui-auth"
+	UIAuthAdminPasswordKey = "admin-password"
+	UIAuthUserPasswordKey  = "user-password"
+	UIAuthJWTSigningKey    = "jwt-signing-key"
 
 	// AdminCertSecretName is the KCP Secret holding the admin signing cert.
 	AdminCertSecretName = "rlark-admin-cert"
@@ -25,8 +28,10 @@ const (
 	// AgentCertSecretPrefix is the prefix for per-cluster agent cert secrets.
 	AgentCertSecretPrefix = "rlark-agent-cert-"
 
-	// ImageRegistrySecretLabel is the label on Secrets that hold image registry credentials.
-	ImageRegistrySecretLabel = "rlark.io/image-registry"
+	ImageRegistryReplicationLabel  = "rlark.io/image-registry-replication"
+	ImageRegistryDeliveryLabel     = "rlark.io/image-registry-delivery"
+	ImageRegistryCredentialLabel   = "rlark.io/image-registry-credential"
+	ImageRegistryCredentialDataKey = "credential.json"
 
 	// ImageRegistryAnnotationRegistry is the annotation storing the registry URL.
 	ImageRegistryAnnotationRegistry = "rlark.io/registry"
@@ -46,6 +51,8 @@ const (
 	SystemConfigKeySSH = "ssh"
 	// SystemConfigKeyLog stores log backend config as a JSON object.
 	SystemConfigKeyLog = "log"
+	// SystemConfigKeyDeployment stores data-plane deployment YAML defaults as a JSON object.
+	SystemConfigKeyDeployment = "deployment"
 )
 
 // Constants used by the package.

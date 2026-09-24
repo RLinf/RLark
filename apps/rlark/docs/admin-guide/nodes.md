@@ -34,13 +34,16 @@ Administrators can control whether a node accepts new workload by toggling its s
 
 Open the administrator console → Nodes to view and manage nodes:
 
+> **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
+
 ![Node detail](../images/ui/first-login-node-detail.png)
 
 Node details include:
 - Scheduling status (schedulable / cordoned)
 - Node type, access mode, OS, architecture
 - Agent version
-- Resource usage: CPU, memory, GPU
+- Resource usage: CPU, memory, disk, GPU, and embodied-device resources
+- Disk warnings when usage reaches 90% or kubelet reports `DiskPressure=True`
 - Associated jobs running on the node
 
 ## Using the UI

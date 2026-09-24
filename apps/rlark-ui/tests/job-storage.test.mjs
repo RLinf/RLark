@@ -4,6 +4,7 @@ import {
   generateJobCRD,
   generateJobResourceName,
 } from "../dist/test/utils/job.js";
+import { crdToJob } from "../dist/test/utils/crd.js";
 
 function storageResource(mounts) {
   return {
@@ -49,12 +50,12 @@ test("caps generated PVC storage size at 200 Gi", () => {
   });
 
   const workload = crd.spec.tasks[0].kubernetes.workload;
-  const claimName =
-    workload.template.spec.volumes[0].persistentVolumeClaim.claimName;
-  assert.equal(workload.pvcSizeGbMap[claimName], 200);
+  const claimSpec =
+    workload.template.spec.volumes[0].ephemeral.volumeClaimTemplate.spec;
+  assert.equal(claimSpec.resources.requests.storage, "200Gi");
 });
 
-test("maps a selected storage class to the generated PVC claim name", () => {
+test("generates an ephemeral volume claim for selected storage", () => {
   const resourceName = "jo-0123456789abcdef";
   const mounts = [
     {
@@ -77,10 +78,49 @@ test("maps a selected storage class to the generated PVC claim name", () => {
   });
 
   const workload = crd.spec.tasks[0].kubernetes.workload;
-  const claimName =
-    workload.template.spec.volumes[0].persistentVolumeClaim.claimName;
+  const volume = workload.template.spec.volumes[0];
+  const claimSpec = volume.ephemeral.volumeClaimTemplate.spec;
 
-  assert.equal(claimName, "pvc-jo-0123456789abcdef-actor-data");
-  assert.equal(workload.pvcStorageMap[claimName], "fast-storage");
-  assert.equal(workload.pvcSizeGbMap[claimName], 20);
+  assert.equal(volume.name, "data");
+  assert.equal(volume.persistentVolumeClaim, undefined);
+  assert.deepEqual(claimSpec.accessModes, ["ReadWriteOnce"]);
+  assert.equal(claimSpec.storageClassName, "fast-storage");
+  assert.equal(claimSpec.resources.requests.storage, "20Gi");
+  assert.equal(workload.pvcStorageMap, undefined);
+  assert.equal(workload.pvcSizeGbMap, undefined);
+  assert.equal(
+    workload.template.spec.containers[0].volumeMounts[0].name,
+    volume.name,
+  );
+});
+
+test("reads ephemeral volume storage settings from a job CRD", () => {
+  const crd = generateJobCRD({
+    name: "jo-0123456789abcdef",
+    type: "Custom",
+    headerRole: "actor",
+    roles: ["actor"],
+    roleResources: {
+      actor: storageResource([
+        {
+          type: "storage",
+          objectStorage: "fast-storage",
+          mountPath: "/data",
+          hostPath: "",
+          pvcSizeGb: 20,
+        },
+      ]),
+    },
+    runScript: "echo ready",
+    domain: "",
+  });
+
+  const job = crdToJob(crd);
+  assert.deepEqual(job.mounts[0], {
+    type: "storage",
+    objectStorage: "fast-storage",
+    mountPath: "/data",
+    hostPath: "",
+    pvcSizeGb: 20,
+  });
 });

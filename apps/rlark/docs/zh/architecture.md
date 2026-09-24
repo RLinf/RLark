@@ -14,7 +14,7 @@ RLark 是一个面向跨集群具身智能场景的云原生纳管平台，核�
 
 RLark 采用**控制面—数据面**分离架构，控制面使用 kcp 作为兼容 Kubernetes 的 API Server，Agent 将云端 GPU 集群与端侧 Kubernetes 节点统一接入控制面。可选的 **embodied-runtime** Device Plugin 部署到配有机械臂（ROS 1/2）或摄像头硬件的 Kubernetes 节点，将这些设备作为 Kubernetes 资源暴露；后续将通过 Docker 和 Raw 数据面运行时适配更多轻量端侧环境。
 
-![系统架构](../images/architecture.svg)
+![系统架构](../images/architecture-zh.svg)
 
 ## 3. 控制面组件
 
@@ -74,7 +74,6 @@ Controller-Manager 运行在控制面，负责协调高层资源的生命周期�
 | Domain Controller   | 管理 Domain CRD，分配 IP 子网，签发 DomainPeer 证书                 | [domain/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/domain/)     |
 | Task Controller     | 监听 Task 状态，同步到对应的 Job                                   | [task/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/task/)         |
 | Node Controller     | 监听 Node 注册/离线事件                                         | [node/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/node/)         |
-| Workflow Controller | DAG 编排，按依赖顺序调度 Job                                      | [workflow/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/workflow/) |
 
 **Job 状态机**：
 
@@ -196,11 +195,12 @@ func (a *containerNetworkAdapter) GetContainerNetworkDial(...) (utils.Dial, erro
 
 按 Domain 维护的 SSH 连接池，设计要点：
 
-- 每个 Domain 至多一个 SSH 连接（ssh.Client 多路复用）
+- 每个 Domain 从一条 SSH 连接开始；现有连接均承载活跃 channel 时按需扩展，默认最多四条
+- 新 channel 选择负载最低的连接，空闲物理连接由后台 GC 回收
 - 连接断开时自动重连，重连期间并发请求等待而非各自新建
 - 重连失败指数退避（1s → 2s → 4s → ... → 30s）
-- 后台 GC 关闭空闲超时连接（默认 10 分钟）
-- 线程安全，正常路径读锁无阻塞
+- 后台 GC 关闭空闲超时连接（默认 24 小时）
+- 数据路径上的活跃时间使用原子、限频更新，避免每次读写获取互斥锁
 
 ### 4.6 Embodied Runtime
 
@@ -315,7 +315,6 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    wf["Workflow<br/><i>Cluster</i>"]
     job["Job<br/><i>Cluster</i>"]
     task["Task<br/><i>Namespaced</i>"]
     node["Node<br/><i>Namespaced</i>"]
@@ -351,4 +350,3 @@ iptables/CNI 方案需要修改节点网络配置，权限要求高。TUN + gVis
 - 运行在用户态，但创建 TUN 设备仍需要 privileged 权限
 - gVisor netstack 处理所需的网络协议
 - 可以作为 Sidecar 容器注入，与业务容器解耦
-

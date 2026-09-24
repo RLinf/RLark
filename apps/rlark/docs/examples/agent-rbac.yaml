@@ -12,7 +12,7 @@ metadata:
   name: rlark-agent
 rules:
 - apiGroups: [""]
-  resources: ["nodes", "pods", "services", "configmaps", "secrets", "namespaces", "persistentvolumeclaims", "events"]
+  resources: ["nodes", "pods", "pods/log", "services", "configmaps", "secrets", "namespaces", "persistentvolumeclaims", "events"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["apps"]
   resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]

@@ -79,13 +79,13 @@ Updates the object storage configuration and associated clusters for the specifi
 Deletes the specified StorageClass and its corresponding Secret from all associated clusters. Use the `clusters=agent-a,agent-b` query parameter to limit the deletion scope.
 
 ### 6. List Bucket Files
-**GET** `/api/v1/storage/storageclass/{cluster}/{name}/list`
+**GET** `/api/v1/storage/storageclass/{name}/{cluster}/list`
 
 Lists files in the StorageClass bucket in the specified cluster.
 
 #### Path Parameters
-- `cluster`: Cluster ID, such as `agent-beijing`
 - `name`: StorageClass name
+- `cluster`: Cluster ID, such as `agent-beijing`
 
 #### Example Response
 ```json
@@ -99,13 +99,13 @@ Lists files in the StorageClass bucket in the specified cluster.
 ```
 
 ### 7. Upload a File
-**POST** `/api/v1/storage/storageclass/{cluster}/{name}/upload`
+**POST** `/api/v1/storage/storageclass/{name}/{cluster}/upload`
 
 Uploads a file to the specified StorageClass bucket using multipart/form-data.
 
 #### Path Parameters
-- `cluster`: Cluster ID
 - `name`: StorageClass name
+- `cluster`: Cluster ID
 
 #### Request Body
 Use multipart/form-data with the uploaded file in the `file` field.
@@ -119,13 +119,13 @@ Use multipart/form-data with the uploaded file in the `file` field.
 ```
 
 ### 8. Download a File
-**GET** `/api/v1/storage/storageclass/{cluster}/{name}/object/*key`
+**GET** `/api/v1/storage/storageclass/{name}/{cluster}/object/*key`
 
 Downloads an object from the specified bucket and returns the raw file content.
 
 #### Path Parameters
-- `cluster`: Cluster ID
 - `name`: StorageClass name
+- `cluster`: Cluster ID
 - `key`: Object path, such as `model-checkpoint.pt` or `logs/training.log`
 
 #### Response
@@ -133,13 +133,13 @@ Downloads an object from the specified bucket and returns the raw file content.
 - `404`: File not found
 
 ### 9. Delete a File
-**DELETE** `/api/v1/storage/storageclass/{cluster}/{name}/object/*key`
+**DELETE** `/api/v1/storage/storageclass/{name}/{cluster}/object/*key`
 
 Deletes an object from the specified bucket.
 
 #### Path Parameters
-- `cluster`: Cluster ID
 - `name`: StorageClass name
+- `cluster`: Cluster ID
 - `key`: Object path
 
 #### Example Response
@@ -211,13 +211,23 @@ curl "http://localhost:8080/api/v1/storage/storageclass/provider"
 
 ## Integration with Task PVC Mounts
 
-A Task declares the PVCs it needs to mount through `pvcStorageMap`:
+A Task declares remote storage through a Kubernetes generic ephemeral volume:
 
 ```yaml
 kubernetes:
   workload:
-    pvcStorageMap:
-      my-data-pvc: "ceph-rbd"
+    template:
+      spec:
+        volumes:
+          - name: data
+            ephemeral:
+              volumeClaimTemplate:
+                spec:
+                  accessModes: [ReadWriteOnce]
+                  storageClassName: ceph-rbd
+                  resources:
+                    requests:
+                      storage: 10Gi
 ```
 
-Before creating a workload, the Agent pull controller calls `ensurePVCs` to create the required PVCs from `pvcStorageMap`. The frontend uses the Storage API to retrieve available StorageClasses for users to select.
+Kubernetes creates a PVC for each Pod from `volumeClaimTemplate` and removes it with the Pod. The frontend uses the Storage API to retrieve available StorageClasses for users to select. `pvcStorageMap` and `pvcSizeGbMap` are deprecated and retained only for existing resources.

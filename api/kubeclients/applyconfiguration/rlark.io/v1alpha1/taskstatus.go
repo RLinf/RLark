@@ -34,8 +34,14 @@ type TaskStatusApplyConfiguration struct {
 	Message          *string                          `json:"message,omitempty"`
 	RetryCount       *int32                           `json:"retryCount,omitempty"`
 	TensorBoardProxy *string                          `json:"tensorBoardProxy,omitempty"`
-	PullProgress     []PullProgressApplyConfiguration `json:"pullProgress,omitempty"`
-	Events           []NodeEventApplyConfiguration    `json:"events,omitempty"`
+	// PullProgress 由数据面节点上的 image pull monitor 上报，仅在 Pod 处于
+	// ContainerCreating（尚未 Running）期间由 cluster-agent 聚合写入。Pod 进入
+	// Running 后被清空。供前端展示镜像拉取进度/速度。
+	PullProgress []PullProgressApplyConfiguration `json:"pullProgress,omitempty"`
+	// Events 在 Task 处于 Pending 期间由控制面 Task reconciler 从各节点
+	// Node.status.events 聚合而来，包含 DiskPressure 等 Warning 事件及镜像
+	// 拉取/调度相关事件。Task 离开 Pending 后被清空。
+	Events []NodeEventApplyConfiguration `json:"events,omitempty"`
 }
 
 // TaskStatusApplyConfiguration constructs a declarative configuration of the TaskStatus type for use with
@@ -116,7 +122,7 @@ func (b *TaskStatusApplyConfiguration) WithTensorBoardProxy(value string) *TaskS
 }
 
 // WithPullProgress adds the given value to the PullProgress field in the declarative configuration
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the PullProgress field.
 func (b *TaskStatusApplyConfiguration) WithPullProgress(values ...*PullProgressApplyConfiguration) *TaskStatusApplyConfiguration {
 	for i := range values {
@@ -129,7 +135,7 @@ func (b *TaskStatusApplyConfiguration) WithPullProgress(values ...*PullProgressA
 }
 
 // WithEvents adds the given value to the Events field in the declarative configuration
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Events field.
 func (b *TaskStatusApplyConfiguration) WithEvents(values ...*NodeEventApplyConfiguration) *TaskStatusApplyConfiguration {
 	for i := range values {

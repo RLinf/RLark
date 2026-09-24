@@ -26,7 +26,7 @@ The Embodied Runtime has three layers:
 |-------|-----------|-------------|
 | Device Plugin | `device-plugin` | Registers device resources (`rlinf.io/device-*`) with Kubernetes |
 | Controllers | `ros-controller`, `ros2-controller`, `camera-controller` | gRPC services that manage device lifecycle |
-| Webhook | Mutating Webhook | Automatically injects `devinit` sidecar for macvlan networking |
+| Webhook | Mutating Webhook | Optionally injects a `devinit` init container for macvlan networking |
 
 ### How It Works
 
@@ -46,9 +46,12 @@ The Embodied Runtime has three layers:
 
 ### Helm (Recommended)
 
+Direct deployment with the Embodied Runtime Helm chart supports ROS 2 through `config.ros2`. The RLark addon catalog currently does not expose ROS 2 configuration, so use the chart directly when ROS 2 is required.
+
 ```bash
-helm install embodied-runtime ./charts/embodied-runtime \
+helm install embodied-runtime ./apps/embodied-runtime/charts/embodied-runtime \
   --namespace rlark-system \
+  --create-namespace \
   --set config.ros.enabled=true \
   --set config.camera.enabled=true
 ```
@@ -59,18 +62,18 @@ Configure the device plugin with the devices available on your nodes:
 
 ```yaml
 # device-plugin-config.yaml
+device_count: 1
+
 host_devices:
-  - name: rlinf.io/device-webcam
-    count: 2
-    devices:
-      - /dev/video0
-      - /dev/video1
+  - host_path: /dev/video0
+  - host_path: /dev/ttyUSB0
+    permissions: rw
 
 host_macvlans:
-  - name: rlinf.io/device-franka
-    count: 1
-    parent_interface: eth0
-    robot_ip: 192.168.1.100
+  - host_nic: eno1
+    name: macvlan0
+    ip: 172.16.0.0/24
+    # gateway: 172.16.0.1
 
 camera:
   enabled: true
@@ -91,10 +94,9 @@ For simple devices like USB cameras, use `host_devices` to pass through device f
 
 ```yaml
 host_devices:
-  - name: rlinf.io/device-webcam
-    count: 1
-    devices:
-      - /dev/video0
+  - host_path: /dev/video0
+    # container_path: /dev/video0
+    # permissions: rwm
 ```
 
 ### Macvlan for Network Robots
@@ -103,13 +105,13 @@ For robots with fixed IP addresses on the network, use `host_macvlans`:
 
 ```yaml
 host_macvlans:
-  - name: rlinf.io/device-franka
-    count: 1
-    parent_interface: eth0
-    robot_ip: 192.168.1.100
+  - host_nic: eno1
+    name: macvlan0
+    ip: 172.16.0.0/24
+    # gateway: 172.16.0.1
 ```
 
-The mutating webhook automatically injects a `devinit` sidecar that creates the macvlan interface in the Worker container.
+The webhook is disabled by default. Set `webhook.enabled=true` and provide a non-empty `config.hostMacvlans` list to render it. It then injects a `devinit` init container that creates the macvlan interface in the Worker pod's network namespace.
 
 ### Controller Pods
 
@@ -121,7 +123,7 @@ After deployment, verify the Embodied Runtime is working:
 
 ```bash
 # 1. Check device plugin is running
-kubectl get pods -n rlark-system -l app=device-plugin
+kubectl get pods -n rlark-system -l app.kubernetes.io/name=embodied-runtime,app.kubernetes.io/component=device-plugin
 
 # 2. Verify device resources are registered
 kubectl describe node <node-name> | grep rlinf.io/device

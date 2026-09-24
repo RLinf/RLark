@@ -45,7 +45,7 @@ clean-samples: ## Remove sample CRs
 	rm -rf $(SAMPLES_DIR)
 
 $(CONTROLLER_GEN):
-	GOBIN=$(shell go env GOPATH)/bin go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5
+	GOBIN=$(shell go env GOPATH)/bin go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.18.0
 
 ##@ Help
 

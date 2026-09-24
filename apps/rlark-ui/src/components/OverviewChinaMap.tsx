@@ -479,7 +479,7 @@ export function OverviewChinaMap({
                 </g>
               )}
               <g className="china-city-pins">
-                {cities.map((city, index) => {
+                {cities.map((city) => {
                   const point = project(city.lon, city.lat);
                   return (
                     <g

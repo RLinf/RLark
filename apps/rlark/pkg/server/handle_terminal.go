@@ -54,7 +54,7 @@ func (s *Server) handleTerminalProxy(c *gin.Context) {
 	agentWs, _, err := agentWsDialer.Dial(agentURL, nil)
 	if err != nil {
 		logger.Error(err, "failed to dial agent terminal WebSocket")
-		_ = browserWs.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("failed to connect to agent: %v\r\n", err)))
+		_ = browserWs.WriteMessage(websocket.TextMessage, fmt.Appendf(nil, "failed to connect to agent: %v\r\n", err))
 		return
 	}
 	defer func() { _ = agentWs.Close() }()

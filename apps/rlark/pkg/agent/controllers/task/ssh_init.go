@@ -1,25 +1,24 @@
 package task
 
 import (
-	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 )
 
 const (
-	sshServerInitContainerName = "rlark-sshd-init"
-	sshServerVolumeName        = "rlark-sshd"
-	sshServerBinPath           = "/usr/local/bin/rlark-sshd"
-	sshServerBinDst            = "/sshd/rlark-sshd"
-	sshServerDstDir            = "/sshd"
+	rlarkToolsInitContainerName = "rlark-tools-init"
+	rlarkToolsVolumeName        = "rlark-tools"
+	rlarkToolsBinPath           = "/usr/local/bin/rlark-tools"
+	rlarkToolsBinDst            = "/rlark-tools/rlark-tools"
+	rlarkToolsDstDir            = "/rlark-tools"
 )
 
-func applySSHServer(template *corev1.PodTemplateSpec, mgmtTask *rlarkv1alpha1.Task, image string) {
-	if image == "" || mgmtTask.Spec.SSHPublicKey == "" {
+func applyRLarkTools(template *corev1.PodTemplateSpec, image string) {
+	if image == "" {
 		return
 	}
 
 	template.Spec.Volumes = append(template.Spec.Volumes, corev1.Volume{
-		Name: sshServerVolumeName,
+		Name: rlarkToolsVolumeName,
 		VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
@@ -31,21 +30,21 @@ func applySSHServer(template *corev1.PodTemplateSpec, mgmtTask *rlarkv1alpha1.Ta
 			continue
 		}
 		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
-			Name:      sshServerVolumeName,
-			MountPath: sshServerDstDir,
+			Name:      rlarkToolsVolumeName,
+			MountPath: rlarkToolsDstDir,
 		})
 		break
 	}
 
 	template.Spec.InitContainers = append(template.Spec.InitContainers, corev1.Container{
-		Name:            sshServerInitContainerName,
+		Name:            rlarkToolsInitContainerName,
 		Image:           image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"cp", sshServerBinPath, sshServerBinDst},
+		Command:         []string{"cp", rlarkToolsBinPath, rlarkToolsBinDst},
 		VolumeMounts: []corev1.VolumeMount{
 			{
-				Name:      sshServerVolumeName,
-				MountPath: sshServerDstDir,
+				Name:      rlarkToolsVolumeName,
+				MountPath: rlarkToolsDstDir,
 			},
 		},
 	})

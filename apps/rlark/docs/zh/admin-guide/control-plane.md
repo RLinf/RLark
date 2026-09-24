@@ -10,7 +10,7 @@
 | PostgreSQL | 配置顶层 `db` 块时使用的可选持久化存储 | 5432 |
 | rlark-server | 证书管理、Agent 隧道、SSH、健康检查和指标 | 8443（HTTPS/WSS）、2222（SSH）、8888（内部 HTTP） |
 | rlark-gateway | 控制台和 CLI 的 REST API 网关 | 8090 |
-| rlark-controller-manager | Job/Workflow/Domain 调和 | 8080（指标）、8081（健康检查） |
+| rlark-controller-manager | Job/Domain 调和 | 8080（指标）、8081（健康检查） |
 | rlark-ui | Web 管理控制台和 `/api/` 反向代理 | 80 |
 
 Gateway 独立二进制默认监听 `:8080`，`rlarkadm` 部署时会覆盖为 `:8090`。
