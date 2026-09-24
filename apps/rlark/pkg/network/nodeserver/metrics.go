@@ -94,7 +94,7 @@ func (m *nodeServerMetrics) IncSSHReconnect(domain string) {
 	m.sshReconnectTotal.WithLabelValues(domain).Inc()
 }
 
-// OnReconnect returns a callback suitable for SSHDialerConfig.OnReconnect.
+// OnReconnect returns a callback suitable for sshdialer.Config.OnReconnect.
 func OnReconnect() func(domainID string) {
 	return func(domainID string) {
 		metrics.IncSSHReconnect(domainID)

@@ -19,6 +19,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	nodeservermetrics "github.com/rlinf/rlark/apps/rlark/pkg/network/nodeserver"
+	"github.com/rlinf/rlark/apps/rlark/pkg/network/sshdialer"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
@@ -72,7 +73,7 @@ type containerNetworkAdapter struct {
 	domainPeerLister    listerv1alpha1.DomainPeerLister
 	managementPodLister listerv1alpha1.PodLister
 	sshAddr             string
-	sshDialer           *SSHDialer
+	sshDialerManager    *sshdialer.DialerManager
 
 	enableSameClusterDirect  bool
 	enableCrossClusterDirect bool
@@ -99,7 +100,7 @@ func NewContainerNetworkAdapter(
 		domainPeerLister:    domainPeerLister,
 		managementPodLister: managementPodLister,
 		sshAddr:             sshAddr,
-		sshDialer: NewSSHDialer(SSHDialerConfig{
+		sshDialerManager: sshdialer.NewDialerManager(sshdialer.Config{
 			HostKeyCallback:         hostKeyCallback,
 			OnReconnect:             nodeservermetrics.OnReconnect(),
 			MaxConnectionsPerDomain: sshMaxConnectionsPerDomain,
@@ -112,7 +113,7 @@ func NewContainerNetworkAdapter(
 }
 
 func (a *containerNetworkAdapter) Close() error {
-	return a.sshDialer.Close()
+	return a.sshDialerManager.Close()
 }
 
 // makeHostKeyCallback 解析 SSH 主机公钥字符串，返回对应的 HostKeyCallback。
@@ -243,7 +244,13 @@ func (a *containerNetworkAdapter) GetContainerNetworkDial(ctx context.Context, c
 		target := fmt.Sprintf("%s.%s.%s.agent-node:5700", targetPod.LocalIP, targetPod.Node, agentID)
 		logger.V(1).Info("Target pod is in a different cluster, using control plane proxy", "targetPod", target)
 		return func(ctx context.Context) (net.Conn, error) {
-			conn, err := a.sshDialer.DialContext(ctx, cred.DomainID, a.sshAddr, dpeer.Spec.Cert, dpeer.Spec.Key, target)
+			dialer := a.sshDialerManager.GetDialer(sshdialer.DomainInfo{
+				ID:          cred.DomainID,
+				SSHAddress:  a.sshAddr,
+				Certificate: dpeer.Spec.Cert,
+				PrivateKey:  dpeer.Spec.Key,
+			})
+			conn, err := dialer.DialContext(ctx, "tcp", target)
 			status := "success"
 			if err != nil {
 				status = "error"

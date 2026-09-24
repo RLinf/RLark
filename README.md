@@ -36,22 +36,7 @@ Manage cross-cluster embodied intelligence workloads through a unified cloud-nat
 
 ## Roadmap
 
-### Available Today
-
-- Kubernetes-based management of cloud GPU clusters and edge devices
-- Declarative Job/Task orchestration for distributed training and Ray workloads
-- Cross-cluster resource management through Domain and Node CRDs
-- Cross-cluster Pod networking over TUN devices, gVisor netstack, and SSH tunnels
-- X.509 and SSH certificate-based authentication
-- Prometheus metrics, real-time Pod logs, and a web management UI
-
-### Planned
-
-- Docker runtime support for lightweight data planes
-- Raw runtime support for hosts and edge devices without a container orchestrator
-- More complete account, role, and permission management
-- Continued web UI usability and workflow improvements
-- Cross-cluster network throughput, latency, and resource-efficiency optimizations
+See the [RLark Roadmap](ROADMAP.md) for planned runtime, account management, and custom workload resource improvements.
 
 ## Architecture Overview
 

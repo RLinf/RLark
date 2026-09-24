@@ -169,11 +169,9 @@ Data plane agent. Deployed on each cluster or node. Manages node registration, T
 | `--pod-orphan-sweep-interval` | duration | `5m` | Interval between agent-scoped management Pod orphan sweeps |
 | `--pod-orphan-sweep-page-size` | int | `200` | Management Pods processed per orphan sweep page |
 | `--pod-stale-ttl` | duration | `15m` | Time a missing local Pod is retained as `Unknown`/stale before its management Pod is deleted |
-
-The Pod orphan sweep is a fallback for missed local delete events. It deletes only agent-scoped mirrors whose local Pod UID or verified management Task UID is no longer current. Legacy mirrors are adopted only when the UID-named mirror, live local Pod annotations, management namespace, Task UID, and available domain all agree; ambiguous legacy objects remain untouched and require manual cleanup. A delayed delete intentionally preserves a same-name replacement, so stale mirrors may remain until the next sweep interval.
 | `--rlark-server-ssh-address` | string | `""` | RLark server SSH address (user@host:port) |
 | `--rlark-server-ssh-host-key` | string | `""` | RLark server SSH host key |
-| `--ssh-max-connections-per-domain` | int | `4` | Maximum adaptive physical SSH connections per Domain |
+| `--ssh-max-connections-per-domain` | int | `4` | Upper bound for physical SSH connections per Domain; the pool adds transports as per-connection channel load grows |
 | `--image` | string | `""` | RLark network sidecar image |
 | `--enable-same-cluster-direct` | bool | `true` | Enable same-cluster direct Pod access |
 | `--enable-cross-cluster-direct` | bool | `true` | Enable cross-cluster direct Pod access |
@@ -190,6 +188,10 @@ The Pod orphan sweep is a fallback for missed local delete events. It deletes on
 | `--kube-qps` | float32 | `5000` | Kubernetes client QPS |
 | `--kube-burst` | int | `8000` | Kubernetes client burst |
 | `--kube-timeout` | duration | `0` | Kubernetes client request timeout |
+
+The Pod orphan sweep is a fallback for missed local delete events. It deletes only agent-scoped mirrors whose local Pod UID or verified management Task UID is no longer current. Legacy mirrors are adopted only when the UID-named mirror, live local Pod annotations, management namespace, Task UID, and available domain all agree; ambiguous legacy objects remain untouched and require manual cleanup. A delayed delete intentionally preserves a same-name replacement, so stale mirrors may remain until the next sweep interval.
+
+The SSH pool starts with one transport per active Domain and expands in the background when a transport carries sustained channel load, up to `--ssh-max-connections-per-domain`. Requests continue on existing transports while expansion is in progress, and idle transports are reclaimed automatically.
 
 !!! tip "`--mode` values"
     - `cluster`: Cluster-level agent only, manages cluster-wide resources

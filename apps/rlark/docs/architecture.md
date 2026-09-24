@@ -185,21 +185,27 @@ func (a *containerNetworkAdapter) GetContainerNetworkDial(...) (utils.Dial, erro
         return dialer.DialContext(ctx, "tcp", net.JoinHostPort(targetPod.LocalIP, "5700"))
     }
     // 2. Cross-cluster → SSH tunnel
-    return a.sshDialer.DialContext(ctx, domainID, sshAddr, cert, key, target)
+    dialer := a.sshDialerManager.GetDialer(sshdialer.DomainInfo{
+        ID: domainID, SSHAddress: sshAddr, Certificate: cert, PrivateKey: key,
+    })
+    return dialer.DialContext(ctx, "tcp", target)
 }
 ```
 
-### 4.5 SSHDialer
+### 4.5 SSH Dialer Manager
 
-**Key File**: [container/ssh\_dialer.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/agent/container/ssh_dialer.go)
+**Key Package**: [network/sshdialer](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/network/sshdialer)
 
-Per-Domain SSH connection pool. Design highlights:
+`DialerManager` owns the connection pools and `GetDialer(DomainInfo)` returns a dialer bound to one Domain. Design highlights:
 
-- Each Domain starts with one SSH connection and grows up to four connections when all existing connections have active channels
-- New channels use the least-loaded connection; idle physical connections are reclaimed by background GC
-- Auto-reconnect on disconnect; concurrent requests wait during reconnection instead of creating separate connections
+- Each Domain establishes one shared, multiplexed SSH transport during recovery; concurrent callers wait for the same bounded handshake instead of creating a reconnect storm
+- New channels use the least-loaded healthy connection; idle physical connections are reclaimed by background GC
+- Caller cancellation only stops that caller from waiting and does not cancel or penalize the shared recovery attempt
+- Definite transport failures are closed immediately; channel-local timeouts stay isolated, while keepalive timeouts drain active channels before forced closure
 - Exponential backoff on reconnection failure (1s → 2s → 4s → ... → 30s)
-- Background GC closes idle connections (default 24 hour timeout)
+- SSH handshakes have a hard timeout, and manager shutdown cancels pending reconnects
+- Certificate, private-key, or endpoint changes advance a Domain generation and drain transports created from the old generation
+- Background GC closes idle or over-age connections and evicts inactive Domain entries (default 24 hour timeout)
 - Data-path activity timestamps are updated atomically and rate-limited to avoid a mutex on every read and write
 
 ### 4.6 Embodied Runtime
@@ -238,7 +244,7 @@ sequenceDiagram
     participant SA as Sidecar A
     participant NS as NodeServer A
     participant CNA as ContainerNetworkAdapter
-    participant SD as SSHDialer
+    participant SD as SSH Dialer Manager
     participant SRV as Server
     participant NB as NodeServer B
     participant SB as Sidecar Proxy B

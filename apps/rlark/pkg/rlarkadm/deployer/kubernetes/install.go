@@ -89,7 +89,7 @@ func (d *Installer) Install(cfg *types.DeployConfig, certBundle *cert.Bundle) er
 	for _, c := range component.ComponentsForPlane(cfg) {
 		c.HealthCheckFn = health.K8sWorkloadHealthCheck(clientset, c)
 		if c.Name == constants.ComponentKCP {
-			c.PostDeployFn = extractKCPKubeconfigFn(ctx, clientset, kubeconfig)
+			c.PostDeployFn = initializeKCPManagementAPIFn(ctx, clientset, kubeconfig)
 		}
 		if err := ensureRBAC(ctx, clientset, cfg, &c); err != nil {
 			return err
@@ -116,16 +116,6 @@ func (d *Installer) Install(cfg *types.DeployConfig, certBundle *cert.Bundle) er
 			if err := c.PostDeployFn(cfg); err != nil {
 				return err
 			}
-		}
-	}
-
-	// 始终 apply CRD，无论 KCP 是否新部署
-	if cfg.Plane == types.PlaneControl && !cfg.UsesKubernetesManagementAPI() {
-		if err := createUIAuthSecretInKCP(ctx, clientset, kubeconfig); err != nil {
-			return err
-		}
-		if err := applyKCP(ctx, clientset, kubeconfig); err != nil {
-			return err
 		}
 	}
 
@@ -226,17 +216,35 @@ func installCRDsToKubernetes(ctx context.Context, client apiextensionsclient.Int
 
 func ensureUIAuthSecretInKubernetes(ctx context.Context, clientset kubernetes.Interface, namespace string) error {
 	if secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, common.UIAuthSecretName, metav1.GetOptions{}); err == nil {
-		if len(secret.Data[common.UIAuthJWTSigningKey]) >= 32 {
+		if len(secret.Data[common.UIAuthAdminPasswordKey]) > 0 &&
+			len(secret.Data[common.UIAuthUserPasswordKey]) > 0 &&
+			len(secret.Data[common.UIAuthJWTSigningKey]) >= 32 {
 			return nil
-		}
-		signingKey, err := generateSecret(32)
-		if err != nil {
-			return fmt.Errorf("generate JWT signing key: %w", err)
 		}
 		if secret.Data == nil {
 			secret.Data = make(map[string][]byte)
 		}
-		secret.Data[common.UIAuthJWTSigningKey] = signingKey
+		if len(secret.Data[common.UIAuthAdminPasswordKey]) == 0 {
+			password, err := generatePassword(16)
+			if err != nil {
+				return fmt.Errorf("generate admin password: %w", err)
+			}
+			secret.Data[common.UIAuthAdminPasswordKey] = []byte(password)
+		}
+		if len(secret.Data[common.UIAuthUserPasswordKey]) == 0 {
+			password, err := generatePassword(16)
+			if err != nil {
+				return fmt.Errorf("generate user password: %w", err)
+			}
+			secret.Data[common.UIAuthUserPasswordKey] = []byte(password)
+		}
+		if len(secret.Data[common.UIAuthJWTSigningKey]) < 32 {
+			signingKey, err := generateSecret(32)
+			if err != nil {
+				return fmt.Errorf("generate JWT signing key: %w", err)
+			}
+			secret.Data[common.UIAuthJWTSigningKey] = signingKey
+		}
 		if _, err := clientset.CoreV1().Secrets(namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("update ui auth secret: %w", err)
 		}
@@ -359,16 +367,15 @@ func ensureRBAC(ctx context.Context, clientset *kubernetes.Clientset, cfg *types
 	return nil
 }
 
-// extractKCPKubeconfigFn returns a PostDeployFn that extracts admin.kubeconfig
-// from the KCP pod and creates a ConfigMap for other components to mount.
-func extractKCPKubeconfigFn(ctx context.Context, clientset *kubernetes.Clientset, kubeconfig string) func(cfg *types.DeployConfig) error {
+// initializeKCPManagementAPIFn initializes resources required by components
+// immediately after kcp is healthy and before those components are deployed.
+func initializeKCPManagementAPIFn(ctx context.Context, clientset *kubernetes.Clientset, kubeconfig string) func(cfg *types.DeployConfig) error {
 	return func(cfg *types.DeployConfig) error {
-		return extractAndApplyKCP(ctx, clientset, kubeconfig)
+		if err := extractAndApplyKCP(ctx, clientset, kubeconfig); err != nil {
+			return err
+		}
+		return createUIAuthSecretInKCP(ctx, clientset, kubeconfig)
 	}
-}
-
-func applyKCP(ctx context.Context, clientset *kubernetes.Clientset, kubeconfig string) error {
-	return extractAndApplyKCP(ctx, clientset, kubeconfig)
 }
 
 func extractAndApplyKCP(ctx context.Context, clientset *kubernetes.Clientset, kubeconfig string) error {
