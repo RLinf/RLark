@@ -10,7 +10,7 @@ fi
 
 # Phase 0: Start rlark-tools sshd if the binary is available
 if [ -n "$RLARK_SSH_PUBLIC_KEY" ] && [ -x /rlark-tools/rlark-tools ]; then
-    nohup /rlark-tools/rlark-tools sshd -port 22 > /tmp/rlark-sshd.log 2>&1 &
+    nohup /rlark-tools/rlark-tools sshd --port 22 > /tmp/rlark-sshd.log 2>&1 &
     echo "rlark-tools sshd started on port 22"
 elif [ -n "$RLARK_SSH_PUBLIC_KEY" ]; then
     mkdir -p ~/.ssh && chmod 700 ~/.ssh

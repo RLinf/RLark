@@ -10,7 +10,7 @@ fi
 
 # Phase 0: Inject SSH public key into authorized_keys
 if [ -n "$RLARK_SSH_PUBLIC_KEY" ] && [ -x /rlark-tools/rlark-tools ]; then
-    nohup /rlark-tools/rlark-tools sshd -port 2222 > /tmp/rlark-sshd.log 2>&1 &
+    nohup /rlark-tools/rlark-tools sshd --port 2222 > /tmp/rlark-sshd.log 2>&1 &
     echo "rlark-tools sshd started on port 2222"
 elif [ -n "$RLARK_SSH_PUBLIC_KEY" ]; then
     mkdir -p ~/.ssh && chmod 700 ~/.ssh
