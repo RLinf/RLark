@@ -147,6 +147,18 @@ You can open an interactive terminal directly into the main container of any run
 
 From the Worker list, click **Terminal** on any running Worker. This opens `/bin/bash` by default in the Worker's main container. The browser establishes a WebSocket to Gateway, which proxies the session through Server to Agent and then execs into the container. The user does not need to log in with SSH.
 
+### Troubleshooting Permission Errors
+
+If the terminal reports `cannot create resource "pods/exec"`, the data-plane Agent's ServiceAccount lacks permission to execute commands in containers. Ask an administrator to grant the Agent `create` access to `pods/exec` in the target data-plane cluster. For quickstart deployments, reapply the updated RBAC manifest from the repository root:
+
+```bash
+kubectl --kubeconfig <data-plane-kubeconfig> apply -f apps/rlark/docs/examples/agent-rbac.yaml
+kubectl --kubeconfig <data-plane-kubeconfig> auth can-i create pods --subresource=exec \
+  -n rlark-system --as=system:serviceaccount:rlark-system:rlark-agent
+```
+
+Once the check returns `yes`, reopen the terminal; no Agent or Worker restart is required. Apply these permissions to the data-plane Kubernetes cluster, not the control-plane kcp instance.
+
 ### Diagnostic Commands
 
 Once inside the terminal, you can run diagnostic commands to inspect the container environment:

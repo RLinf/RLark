@@ -143,6 +143,18 @@ RLark 支持以下任务类型，每种类型预配置了适合该工作负载�
 
 在 Worker 列表中点击任意运行中 Worker 的**终端**操作，默认会在其主容器中打开 `/bin/bash`。浏览器通过 WebSocket 连接 Gateway，再由 Gateway 经 Server 代理到 Agent，最终 exec 进入容器；用户无需进行 SSH 登录。
 
+### 权限错误排查
+
+如果终端提示 `cannot create resource "pods/exec"`，说明数据面 Agent 的 ServiceAccount 缺少执行容器命令的权限。请管理员在目标数据面集群为 Agent 授予 `pods/exec` 的 `create` 权限。使用快速开始部署的集群，可以在仓库根目录重新应用更新后的 RBAC 清单：
+
+```bash
+kubectl --kubeconfig <数据面-kubeconfig> apply -f apps/rlark/docs/examples/agent-rbac.yaml
+kubectl --kubeconfig <数据面-kubeconfig> auth can-i create pods --subresource=exec \
+  -n rlark-system --as=system:serviceaccount:rlark-system:rlark-agent
+```
+
+确认返回 `yes` 后重新打开终端，无需重启 Agent 或 Worker。该权限配置在数据面 Kubernetes 集群中，不是在控制面的 kcp 中。
+
 ### 诊断命令
 
 进入终端后可运行诊断命令检查容器环境：
