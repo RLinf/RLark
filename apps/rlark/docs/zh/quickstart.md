@@ -188,6 +188,10 @@ bash apps/rlark/docs/examples/quickstart-cp.sh --no-ui
 bash apps/rlark/docs/examples/quickstart-dp.sh --cluster-id my-cluster
 ```
 
+在运行控制面 quickstart 脚本的同一台机器上执行。脚本自动使用管理员凭据登录，
+也支持通过环境变量 `RLARK_TOKEN` 提供管理员访问令牌。
+重复运行会重建对应的 kind 集群，请确认其中没有需要保留的数据。
+
 脚本会：
 - 创建 kind 集群
 - 根据集群 ID 向 Gateway 自动申请 Agent 证书（无需 UI 中的 deploy-conf.yaml）
