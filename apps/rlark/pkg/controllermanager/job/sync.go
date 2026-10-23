@@ -10,7 +10,6 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -22,11 +21,75 @@ import (
 
 const jobLabel = "rlinf.io/job"
 
+// taskJobField indexes Tasks by the name in their jobLabel label. The builder
+// always stamps the label, and adoption backfills it, so a Task that belongs to
+// a Job is always indexed under the Job name.
+const taskJobField = "rlinf.io/job-owner"
+
+// indexTaskByJob is the field indexer function registered for taskJobField.
+func indexTaskByJob(obj client.Object) []string {
+	task, ok := obj.(*rlarkv1alpha1.Task)
+	if !ok || task.Labels[jobLabel] == "" {
+		return nil
+	}
+	return []string{task.Labels[jobLabel]}
+}
+
+// listJobTasks returns the Tasks labelled as belonging to job. The lookup goes
+// through taskJobField so the controller does not scan every Task in the
+// cluster. Membership is only narrowed here; ownership still has to be proven
+// by the caller from authoritative metadata.
+func (r *Reconciler) listJobTasks(ctx context.Context, job *rlarkv1alpha1.Job) ([]*rlarkv1alpha1.Task, error) {
+	var tasks rlarkv1alpha1.TaskList
+	if err := r.List(ctx, &tasks, client.MatchingFields{taskJobField: job.Name}); err != nil {
+		return nil, fmt.Errorf("list Tasks for Job %s: %w", job.Name, err)
+	}
+	candidates := make([]*rlarkv1alpha1.Task, 0, len(tasks.Items))
+	for i := range tasks.Items {
+		candidates = append(candidates, &tasks.Items[i])
+	}
+	return candidates, nil
+}
+
+// findOwnedTasksByTemplate maps each Job task template to the Task that already
+// exists for it. Discovery is ownership-driven rather than derived from the
+// template's nodeSelector, so observing and stopping a Job keeps working after
+// the Nodes a template selected have been removed.
+func (r *Reconciler) findOwnedTasksByTemplate(
+	ctx context.Context,
+	job *rlarkv1alpha1.Job,
+) (map[string]*rlarkv1alpha1.Task, error) {
+	candidates, err := r.listJobTasks(ctx, job)
+	if err != nil {
+		return nil, err
+	}
+
+	byTemplate := make(map[string]*rlarkv1alpha1.Task, len(job.Spec.Tasks))
+	for _, t := range job.Spec.Tasks {
+		taskName := utils.ChildName(job.Name, t.Name)
+		for _, task := range candidates {
+			if task.Annotations[utils.ChildTemplateAnnotation] != t.Name && task.Name != taskName {
+				continue
+			}
+			if _, _, err := utils.ClassifyChild(task, job.UID, rlarkv1alpha1.GroupVersion.String(), "Job", jobLabel, job.Name, t.Name); err != nil {
+				return nil, fmt.Errorf("task %s/%s ownership conflict: %w", task.Namespace, task.Name, err)
+			}
+			byTemplate[t.Name] = task
+			break
+		}
+	}
+	return byTemplate, nil
+}
+
 func (r *Reconciler) syncTaskStatuses(
 	ctx context.Context,
 	job *rlarkv1alpha1.Job,
 ) (bool, error) {
 	statusMap := buildTaskStatusMap(job)
+	tasksByTemplate, err := r.findOwnedTasksByTemplate(ctx, job)
+	if err != nil {
+		return false, err
+	}
 	changed := false
 
 	for _, t := range job.Spec.Tasks {
@@ -35,21 +98,9 @@ func (r *Reconciler) syncTaskStatuses(
 			continue
 		}
 
-		taskName := utils.ChildName(job.Name, t.Name)
-		taskNamespace, err := r.resolveTaskNamespace(ctx, &t)
-		if err != nil {
-			return false, err
-		}
-		var task rlarkv1alpha1.Task
-		err = r.Get(ctx, types.NamespacedName{Name: taskName, Namespace: taskNamespace}, &task)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				continue
-			}
-			return false, fmt.Errorf("get Task %s/%s: %w", taskNamespace, taskName, err)
-		}
-		if _, _, err := utils.ClassifyChild(&task, job.UID, rlarkv1alpha1.GroupVersion.String(), "Job", jobLabel, job.Name, t.Name); err != nil {
-			return false, fmt.Errorf("task %s/%s ownership conflict: %w", taskNamespace, taskName, err)
+		task := tasksByTemplate[t.Name]
+		if task == nil {
+			continue
 		}
 		if utils.SyncStatusEntry(ts, string(task.Status.Phase), task.Status.Message) {
 			changed = true
@@ -134,17 +185,17 @@ func (r *Reconciler) reconcileTaskInNamespace(
 		if !task.DeletionTimestamp.IsZero() {
 			return nil, controller.ErrRequeueAfterChildCleanup
 		}
-		controllerStopped := task.Annotations[StoppedAnnotation] == "true" && task.Spec.Kubernetes != nil &&
-			task.Spec.Kubernetes.Workload != nil && task.Spec.Kubernetes.Workload.Replicas != nil &&
-			*task.Spec.Kubernetes.Workload.Replicas == 0
-		resuming := controllerStopped && !job.Spec.Stopped
+		if task.Annotations[RestartedAtAnnotation] != job.Annotations[RestartedAtAnnotation] {
+			if err := client.IgnoreNotFound(r.Delete(ctx, &task)); err != nil {
+				return nil, fmt.Errorf("delete Task %s/%s for Job restart: %w", taskNamespace, taskName, err)
+			}
+			return nil, controller.ErrRequeueAfterChildCleanup
+		}
+		resuming := task.Spec.Suspended && !job.Spec.Suspended
 		if (!taskTerminal(&task) || resuming) && !taskEqual(&task, job, t) {
 			desired := buildTask(job, t, taskName, taskNamespace)
 			task.Spec = desired.Spec
 			task.Annotations = utils.MergeAnnotations(task.Annotations, desired.Annotations)
-			if resuming {
-				delete(task.Annotations, StoppedAnnotation)
-			}
 			if err := r.Update(ctx, &task); err != nil {
 				return nil, fmt.Errorf("update Task %s/%s: %w", taskNamespace, taskName, err)
 			}
@@ -190,6 +241,12 @@ func (r *Reconciler) ensureTaskOwnership(ctx context.Context, job *rlarkv1alpha1
 	if !legacy {
 		return nil
 	}
+	// Backfill the Job label as well, so the adopted Task is discoverable
+	// through taskJobField by name and not only by owner reference UID.
+	if task.Labels == nil {
+		task.Labels = map[string]string{}
+	}
+	task.Labels[jobLabel] = job.Name
 	task.Annotations = utils.MergeAnnotations(task.Annotations, map[string]string{
 		utils.ParentUIDAnnotation: string(job.UID), utils.ChildTemplateAnnotation: template,
 	})
@@ -232,13 +289,12 @@ func (r *Reconciler) pruneTasksInNamespaces(ctx context.Context, job *rlarkv1alp
 		template := &job.Spec.Tasks[i]
 		desired[namespaces[i]+"/"+utils.ChildName(job.Name, template.Name)] = template.Name
 	}
-	var tasks rlarkv1alpha1.TaskList
-	if err := r.List(ctx, &tasks, client.MatchingLabels{jobLabel: job.Name}); err != nil {
-		return false, fmt.Errorf("list Tasks for Job %s: %w", job.Name, err)
+	tasks, err := r.listJobTasks(ctx, job)
+	if err != nil {
+		return false, err
 	}
 	waiting := false
-	for i := range tasks.Items {
-		task := &tasks.Items[i]
+	for _, task := range tasks {
 		template, keep := desired[task.Namespace+"/"+task.Name]
 		if keep {
 			if _, _, err := utils.ClassifyChild(task, job.UID, rlarkv1alpha1.GroupVersion.String(), "Job", jobLabel, job.Name, template); err != nil {
@@ -252,13 +308,7 @@ func (r *Reconciler) pruneTasksInNamespaces(ctx context.Context, job *rlarkv1alp
 		}
 		waiting = true
 		if task.Status.Phase != rlarkv1alpha1.TaskPhaseStopped {
-			if task.Annotations == nil {
-				task.Annotations = map[string]string{}
-			}
-			task.Annotations[StoppedAnnotation] = "true"
-			if task.Spec.Kubernetes != nil && task.Spec.Kubernetes.Workload != nil {
-				task.Spec.Kubernetes.Workload.Replicas = ptr.To(int32(0))
-			}
+			task.Spec.Suspended = true
 			if err := r.Update(ctx, task); err != nil {
 				return false, fmt.Errorf("stop pruned Task %s/%s: %w", task.Namespace, task.Name, err)
 			}
@@ -276,8 +326,7 @@ func (r *Reconciler) pruneTasksInNamespaces(ctx context.Context, job *rlarkv1alp
 func taskEqual(existing *rlarkv1alpha1.Task, job *rlarkv1alpha1.Job, t rlarkv1alpha1.JobTaskTemplate) bool {
 	desired := buildTask(job, t, existing.Name, existing.Namespace)
 	return reflect.DeepEqual(existing.Spec, desired.Spec) &&
-		existing.Annotations[RestartedAtAnnotation] == desired.Annotations[RestartedAtAnnotation] &&
-		existing.Annotations[StoppedAnnotation] == desired.Annotations[StoppedAnnotation]
+		existing.Annotations[RestartedAtAnnotation] == desired.Annotations[RestartedAtAnnotation]
 }
 
 func (r *Reconciler) reconcileWithStateMachine(
@@ -286,12 +335,12 @@ func (r *Reconciler) reconcileWithStateMachine(
 ) (bool, error) {
 	logger := log.FromContext(ctx).WithValues("job", job.Name)
 
-	if job.Spec.Stopped {
+	if job.Spec.Suspended {
 		return r.reconcileStoppedJob(ctx, job)
 	}
 
-	if err := validateHeadTask(job); err != nil {
-		logger.Error(err, "invalid ray head task configuration")
+	if err := validateTaskTemplates(job); err != nil {
+		logger.Error(err, "invalid Task template configuration")
 		return markJobInvalid(job, err.Error()), nil
 	}
 
@@ -299,6 +348,9 @@ func (r *Reconciler) reconcileWithStateMachine(
 	f.SetState(string(job.Status.Phase))
 
 	changed := syncTaskStatusSnapshot(job)
+	if markJobValid(job) {
+		changed = true
+	}
 
 	if f.Can(EventInit) {
 		if err := f.Event(ctx, EventInit, job); err != nil {
@@ -383,7 +435,25 @@ func markTaskStatusesStopped(job *rlarkv1alpha1.Job) bool {
 }
 
 // jobConditionValidated is the type of the condition recording spec validation.
-const jobConditionValidated = "Validated"
+const jobConditionValidated = rlarkv1alpha1.ConditionTypeValidated
+
+// Reason values for the Job Validated condition. They are stable, CamelCase
+// identifiers consumed by clients.
+const (
+	jobReasonSpecValidated      = "SpecValidated"
+	jobReasonInvalidRayHeadTask = "InvalidRayHeadTask"
+)
+
+// markJobValid records that the current spec passed validation, clearing a
+// stale Validated=False left behind by a previously invalid spec.
+func markJobValid(job *rlarkv1alpha1.Job) bool {
+	return apimeta.SetStatusCondition(&job.Status.Conditions, metav1.Condition{
+		Type:               jobConditionValidated,
+		Status:             metav1.ConditionTrue,
+		Reason:             jobReasonSpecValidated,
+		ObservedGeneration: job.Generation,
+	})
+}
 
 // markJobInvalid marks the Job as Failed due to an invalid spec and records the
 // reason in a "Validated" condition. It returns whether the Job object changed.
@@ -403,7 +473,7 @@ func markJobInvalid(job *rlarkv1alpha1.Job, message string) bool {
 	if apimeta.SetStatusCondition(&job.Status.Conditions, metav1.Condition{
 		Type:               jobConditionValidated,
 		Status:             metav1.ConditionFalse,
-		Reason:             "InvalidRayHeadTask",
+		Reason:             jobReasonInvalidRayHeadTask,
 		Message:            message,
 		ObservedGeneration: job.Generation,
 	}) {
@@ -425,7 +495,7 @@ func (r *Reconciler) evaluateJobEvent(job *rlarkv1alpha1.Job) string {
 		string(rlarkv1alpha1.TaskPhaseStopped),
 	)
 
-	if job.Spec.Stopped {
+	if job.Spec.Suspended {
 		if s.AllStopped && s.HasItems {
 			return EventJobStopped
 		}

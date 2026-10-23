@@ -2,11 +2,11 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -14,6 +14,9 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	rlarkiov1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"
+	"github.com/rlinf/rlark/apps/rlark/pkg/db"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
 // tensorBoardPort is the default TensorBoard listening port inside the task pod.
@@ -26,29 +29,40 @@ const tensorBoardPort = "6006"
 func (g *Gateway) handleTaskTensorBoardProxy(c *gin.Context) {
 	taskName := c.Param("name")
 	if taskName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "task name is required"})
+		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, "task name is required")
 		return
 	}
 
 	if g.config.ServerAddress == "" {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server-address is not configured"})
+		respondError(c, http.StatusServiceUnavailable, CodeNotConfigured, "server-address is not configured")
 		return
 	}
 
-	podName, err := g.findPodLocalNameForTask(c.Request.Context(), taskName)
+	pod, err := g.findPodForTask(c.Request.Context(), taskName)
 	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		respondError(c, http.StatusServiceUnavailable, CodeUpstreamUnavailable, err.Error())
+		return
+	}
+
+	// The tenant boundary is taken from the Pod that serves TensorBoard, which
+	// inherits the identity of its Task. Checking it here keeps a refusal an
+	// ordinary HTTP response instead of a proxied one.
+	scope, scopeOK := g.tenantScopeFor(c, "pods")
+	if !scopeOK {
+		return
+	}
+	if !authorizeTenantObject(c, scope, tenant.IDOf(pod)) {
 		return
 	}
 
 	// Rewrite the request path so the server's podproxy handler receives
 	// /api/podproxy/<localPodName>:<port>/<original-path>.
 	path := c.Param("path")
-	c.Request.URL.Path = "/api/podproxy/" + podName + ":" + tensorBoardPort + path
+	c.Request.URL.Path = "/api/podproxy/" + pod.Spec.PodName + ":" + tensorBoardPort + path
 
 	serverURL, err := url.Parse(g.config.ServerAddress)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("parse server address: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("parse server address: %v", err))
 		return
 	}
 
@@ -78,36 +92,36 @@ func (g *Gateway) handleTaskTensorBoardProxy(c *gin.Context) {
 	proxy.ServeHTTP(c.Writer, c.Request)
 }
 
-// findPodLocalNameForTask lists the rlark Pod CRs associated with the given task
-// (via the rlark.io/task-name label) and returns the local data-plane pod name
-// (spec.podName) of the first matching running pod. It reads from the pod
+// findPodForTask lists the rlark Pod CRs associated with the given task
+// (via the rlark.io/task-name label) and returns the first matching running pod
+// that already has a local data-plane name (spec.podName). It reads from the pod
 // informer cache rather than issuing a direct API server List on every call.
-func (g *Gateway) findPodLocalNameForTask(ctx context.Context, taskName string) (string, error) {
+func (g *Gateway) findPodForTask(ctx context.Context, taskName string) (*rlarkiov1alpha1.Pod, error) {
 	selector := labels.SelectorFromSet(labels.Set{
 		rlarkiov1alpha1.PodLabelTaskName: taskName,
 	})
 	pods, err := g.podLister.List(selector)
 	if err != nil {
-		return "", fmt.Errorf("list pods for task %s: %w", taskName, err)
+		return nil, fmt.Errorf("list pods for task %s: %w", taskName, err)
 	}
 	if len(pods) == 0 {
-		return "", fmt.Errorf("no pod found for task %s", taskName)
+		return nil, fmt.Errorf("no pod found for task %s", taskName)
 	}
 	for _, pod := range pods {
 		if pod.Spec.PodName == "" {
 			continue
 		}
 		if pod.Status.Phase == rlarkiov1alpha1.PodPhaseRunning {
-			return pod.Spec.PodName, nil
+			return pod, nil
 		}
 	}
 	// Fall back to the first pod with a local name even if not Running yet.
 	for _, pod := range pods {
 		if pod.Spec.PodName != "" {
-			return pod.Spec.PodName, nil
+			return pod, nil
 		}
 	}
-	return "", fmt.Errorf("no ready pod found for task %s", taskName)
+	return nil, fmt.Errorf("no ready pod found for task %s", taskName)
 }
 
 // taskTensorBoardProxyPath returns the relative gateway URL that proxies to the
@@ -116,20 +130,33 @@ func taskTensorBoardProxyPath(taskName string) string {
 	return "/api/v1/rlinf.io/v1alpha1/tasks/" + taskName + "/tensorboard/"
 }
 
-// injectTensorBoardProxy sets status.tensorBoardProxy on the task when
-// spec.tensorBoardDir is configured.
+// injectTensorBoardProxy sets status.tensorBoardProxy when a valid TensorBoard
+// environment with a non-empty log directory is configured.
 func injectTensorBoardProxy(task *rlarkiov1alpha1.Task) {
 	if task == nil {
 		return
 	}
-	if task.Spec.TensorBoardDir == nil || *task.Spec.TensorBoardDir == "" {
+	if !hasTensorBoardEnvironment(task.Spec.Environments) {
 		return
 	}
 	task.Status.TensorBoardProxy = taskTensorBoardProxyPath(task.Name)
 }
 
+func hasTensorBoardEnvironment(environments []rlarkiov1alpha1.TaskEnvironment) bool {
+	for _, environment := range environments {
+		if environment.Type != taskapi.EnvironmentTypeTensorBoard || environment.Version != taskapi.EnvironmentVersionTensorBoardV1 {
+			continue
+		}
+		parameters, err := taskapi.DecodeParametersStrict[taskapi.TensorBoardEnvironmentParametersV1](environment.Parameters)
+		if err == nil && parameters.LogDir != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // injectTensorBoardProxyIntoMap sets status.tensorBoardProxy on a DB-backed
-// task representation (map[string]any) when spec.tensorBoardDir is configured.
+// task representation (map[string]any) when a TensorBoard environment is configured.
 func injectTensorBoardProxyIntoMap(item map[string]any) {
 	if item == nil {
 		return
@@ -138,8 +165,8 @@ func injectTensorBoardProxyIntoMap(item map[string]any) {
 	if !ok {
 		return
 	}
-	tbd, _ := spec["tensorBoardDir"].(string)
-	if tbd == "" {
+	environments, ok := spec["environments"].([]any)
+	if !ok || !hasTensorBoardEnvironmentMap(environments) {
 		return
 	}
 	meta, ok := item["metadata"].(map[string]any)
@@ -156,6 +183,23 @@ func injectTensorBoardProxyIntoMap(item map[string]any) {
 		item["status"] = status
 	}
 	status["tensorBoardProxy"] = taskTensorBoardProxyPath(name)
+}
+
+func hasTensorBoardEnvironmentMap(environments []any) bool {
+	for _, value := range environments {
+		environment, ok := value.(map[string]any)
+		if !ok || environment["type"] != taskapi.EnvironmentTypeTensorBoard || environment["version"] != taskapi.EnvironmentVersionTensorBoardV1 {
+			continue
+		}
+		parameters, ok := environment["parameters"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if logDir, _ := parameters["logDir"].(string); logDir != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Task list/get handlers with tensorBoardProxy injection ---
@@ -181,13 +225,25 @@ func (g *Gateway) rlinfv1alpha1GetTaskWithProxy(c *gin.Context) {
 func (g *Gateway) listTasksDBWithProxy(c *gin.Context) {
 	store, ok := g.stores["tasks"]
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "resource not configured"})
+		respondError(c, http.StatusInternalServerError, CodeNotConfigured, "resource not configured")
 		return
 	}
-	opts := g.parseListOptions(c)
+	scope, ok := g.tenantScopeFor(c, "tasks")
+	if !ok {
+		return
+	}
+	if !authorizeTenantQuery(c, scope) {
+		return
+	}
+	opts, err := g.parseListOptions(c)
+	if err != nil {
+		respondInvalidQueryParam(c, err)
+		return
+	}
+	scope.restrictListOptions(&opts)
 	result, err := store.List(c.Request.Context(), opts)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
 	for i := range result.Items {
@@ -199,18 +255,25 @@ func (g *Gateway) listTasksDBWithProxy(c *gin.Context) {
 func (g *Gateway) getTaskDBWithProxy(c *gin.Context) {
 	store, ok := g.stores["tasks"]
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "resource not configured"})
+		respondError(c, http.StatusInternalServerError, CodeNotConfigured, "resource not configured")
+		return
+	}
+	scope, ok := g.tenantScopeFor(c, "tasks")
+	if !ok {
 		return
 	}
 	name := c.Param("name")
 	namespace := c.Query("namespace")
 	obj, err := store.Get(c.Request.Context(), namespace, name)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		if errors.Is(err, db.ErrNotFound) {
+			respondError(c, http.StatusNotFound, CodeResourceNotFound, "not found")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	if !authorizeTenantObject(c, scope, tenantIDOfMap(obj)) {
 		return
 	}
 	injectTensorBoardProxyIntoMap(obj)
@@ -222,32 +285,35 @@ func (g *Gateway) getTaskDBWithProxy(c *gin.Context) {
 func (g *Gateway) listTasksKubeWithProxy(c *gin.Context) {
 	a, ok := g.accessors["tasks"]
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown resource: tasks"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "unknown resource: tasks")
 		return
 	}
 
 	ctx := c.Request.Context()
 	namespace := c.Query("namespace")
 
-	opts := metav1.ListOptions{}
-	if limit := c.Query("limit"); limit != "" {
-		if n, err := strconv.Atoi(limit); err == nil {
-			opts.Limit = int64(n)
-		}
+	scope, ok := g.tenantScopeFor(c, "tasks")
+	if !ok {
+		return
 	}
-	if cont := c.Query("continue"); cont != "" {
-		opts.Continue = cont
+	if !authorizeTenantQuery(c, scope) {
+		return
 	}
-	if fs := c.Query("fieldSelector"); fs != "" {
-		opts.FieldSelector = fs
-	}
-	if ls := c.Query("labelSelector"); ls != "" {
-		opts.LabelSelector = ls
+
+	opts, err := parseKubeListOptions(c)
+	if err != nil {
+		respondInvalidQueryParam(c, err)
+		return
 	}
 
 	result, err := a.list(ctx, namespace, opts)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondKubeError(c, err.Error(), err)
+		return
+	}
+
+	if err := scope.restrictKubeList(result); err != nil {
+		respondError(c, http.StatusInternalServerError, CodeInternalError, "failed to apply tenant scope")
 		return
 	}
 
@@ -256,13 +322,13 @@ func (g *Gateway) listTasksKubeWithProxy(c *gin.Context) {
 			injectTensorBoardProxy(&taskList.Items[i])
 		}
 	}
-	c.JSON(http.StatusOK, result)
+	c.JSON(http.StatusOK, withListEnvelope(normalizedTenantObject(result), int(opts.Limit)))
 }
 
 func (g *Gateway) getTaskKubeWithProxy(c *gin.Context) {
 	a, ok := g.accessors["tasks"]
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown resource: tasks"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "unknown resource: tasks")
 		return
 	}
 
@@ -270,9 +336,25 @@ func (g *Gateway) getTaskKubeWithProxy(c *gin.Context) {
 	name := c.Param("name")
 	namespace := c.Query("namespace")
 
+	scope, ok := g.tenantScopeFor(c, "tasks")
+	if !ok {
+		return
+	}
+
 	result, err := a.get(ctx, namespace, name, metav1.GetOptions{})
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		// Map the error to its real status instead of reporting every failure as
+		// a missing resource; a transport or API error is not a 404.
+		respondKubeError(c, err.Error(), err)
+		return
+	}
+
+	tenantID, err := tenantIDOfObject(result)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, CodeInternalError, "failed to inspect object metadata")
+		return
+	}
+	if !authorizeTenantObject(c, scope, tenantID) {
 		return
 	}
 

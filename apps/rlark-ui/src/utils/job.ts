@@ -1,5 +1,6 @@
 import type { JobTag, JobType } from "../data";
 import type { RoleResource } from "../types";
+import type { CRDJob, CRDJobTask } from "../crdModels";
 
 // 任务名称限制：1-64 个字符，支持中英文、数字、中划线（-）、下划线（_）和英文句号（.）
 export const JOB_DISPLAY_NAME_MAX_LENGTH = 64;
@@ -178,7 +179,7 @@ export function generateJobCRD(opts: {
   tensorBoardDir?: string;
   sshPublicKey?: string;
   tags?: JobTag[];
-}) {
+}): CRDJob {
   const tasks = opts.roles
     .map((role) => {
       const res = opts.roleResources[role];
@@ -231,72 +232,92 @@ export function generateJobCRD(opts: {
       return {
         name: taskName,
         head: isHead,
-        agentType: "Kubernetes",
         role: mapTaskRole(role),
-        nodeSelector: res ? parseNodeSelector(res.nodeSelector) : {},
-        prepareScript: res?.prepareScript ?? "",
-        ...(isHead ? { runScript: opts.runScript } : {}),
-        ...(isHead && opts.tensorBoardDir
-          ? { tensorBoardDir: opts.tensorBoardDir }
-          : {}),
-        kubernetes: {
-          workload: {
-            kind: "StatefulSet",
-            replicas: res ? Number(res.replicas) : 1,
-            template: {
-              spec: {
-                containers: [
-                  {
-                    name: "main",
-                    image: res?.image ?? "",
-                    env: envVars.length > 0 ? envVars : undefined,
-                    volumeMounts:
-                      allVolumeMounts.length > 0 ? allVolumeMounts : undefined,
-                    resources: res
-                      ? {
-                          requests: {
-                            ...(res.cpu ? { cpu: res.cpu } : {}),
-                            ...(res.memory ? { memory: res.memory } : {}),
-                            ...(res.gpu && res.gpu !== "0"
-                              ? { "nvidia.com/gpu": res.gpu }
-                              : {}),
-                            ...Object.fromEntries(
-                              (res.devices ?? [])
-                                .filter(
-                                  (d) =>
-                                    d.name && d.quantity && d.quantity !== "0",
-                                )
-                                .map((d) => [d.name, d.quantity]),
-                            ),
-                          },
-                          limits: {
-                            ...(res.gpu && res.gpu !== "0"
-                              ? { "nvidia.com/gpu": res.gpu }
-                              : {}),
-                            ...Object.fromEntries(
-                              (res.devices ?? [])
-                                .filter(
-                                  (d) =>
-                                    d.name && d.quantity && d.quantity !== "0",
-                                )
-                                .map((d) => [d.name, d.quantity]),
-                            ),
-                          },
-                        }
-                      : undefined,
-                  },
-                ],
-                volumes: [
-                  ...(containerVolumes.length > 0 ? containerVolumes : []),
-                  ...(storageVolumes.length > 0 ? storageVolumes : []),
-                ],
-              },
+        placement: {
+          nodeSelector: res ? parseNodeSelector(res.nodeSelector) : {},
+        },
+        runtime: { kind: "Kubernetes" },
+        workload: {
+          kind: "rlinf.io/ray",
+          version: "v1",
+          parameters: {
+            role: isHead ? "head" : "worker",
+            ...(res?.prepareScript
+              ? { prepare: { inline: res.prepareScript } }
+              : {}),
+            ...(isHead && opts.runScript
+              ? { run: { inline: opts.runScript } }
+              : {}),
+          },
+          carrier: {
+            type: "rlinf.io/kubernetes-statefulset",
+            version: "v1",
+            parameters: { replicas: res ? Number(res.replicas) : 1 },
+          },
+          template: {
+            spec: {
+              containers: [
+                {
+                  name: "main",
+                  image: res?.image ?? "",
+                  env: envVars.length > 0 ? envVars : undefined,
+                  volumeMounts:
+                    allVolumeMounts.length > 0 ? allVolumeMounts : undefined,
+                  resources: res
+                    ? {
+                        requests: {
+                          ...(res.cpu ? { cpu: res.cpu } : {}),
+                          ...(res.memory ? { memory: res.memory } : {}),
+                          ...(res.gpu && res.gpu !== "0"
+                            ? { "nvidia.com/gpu": res.gpu }
+                            : {}),
+                          ...Object.fromEntries(
+                            (res.devices ?? [])
+                              .filter(
+                                (d) =>
+                                  d.name && d.quantity && d.quantity !== "0",
+                              )
+                              .map((d) => [d.name, d.quantity]),
+                          ),
+                        },
+                        limits: {
+                          ...(res.gpu && res.gpu !== "0"
+                            ? { "nvidia.com/gpu": res.gpu }
+                            : {}),
+                          ...Object.fromEntries(
+                            (res.devices ?? [])
+                              .filter(
+                                (d) =>
+                                  d.name && d.quantity && d.quantity !== "0",
+                              )
+                              .map((d) => [d.name, d.quantity]),
+                          ),
+                        },
+                      }
+                    : undefined,
+                },
+              ],
+              volumes: [
+                ...(containerVolumes.length > 0 ? containerVolumes : []),
+                ...(storageVolumes.length > 0 ? storageVolumes : []),
+              ],
             },
           },
         },
+        environments:
+          isHead && opts.tensorBoardDir
+            ? [
+                {
+                  type: "rlinf.io/tensorboard",
+                  version: "v1",
+                  parameters: { logDir: opts.tensorBoardDir },
+                },
+              ]
+            : undefined,
       };
     })
-    .filter(Boolean);
+    .filter((task): task is Exclude<typeof task, null> => task !== null)
+    .map((task): CRDJobTask => task);
 
   return {
     apiVersion: "rlinf.io/v1alpha1",

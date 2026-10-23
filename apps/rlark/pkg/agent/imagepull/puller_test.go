@@ -80,6 +80,31 @@ func TestMatchNodeSelector(t *testing.T) {
 	}
 }
 
+func TestRuntimeKindMatchesAgent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		kind      rlarkv1alpha1.RuntimeKind
+		agentType rlarkv1alpha1.AgentType
+		want      bool
+	}{
+		{name: "Kubernetes", kind: rlarkv1alpha1.RuntimeKindKubernetes, agentType: rlarkv1alpha1.AgentTypeKubernetes, want: true},
+		{name: "Docker", kind: "Docker", agentType: rlarkv1alpha1.AgentTypeDocker, want: true},
+		{name: "Raw", kind: "Raw", agentType: rlarkv1alpha1.AgentTypeRaw, want: true},
+		{name: "mismatch", kind: rlarkv1alpha1.RuntimeKindKubernetes, agentType: rlarkv1alpha1.AgentTypeDocker, want: false},
+		{name: "unknown", kind: "example.io/custom", agentType: rlarkv1alpha1.AgentTypeKubernetes, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := runtimeKindMatchesAgent(tt.kind, tt.agentType); got != tt.want {
+				t.Errorf("runtimeKindMatchesAgent(%q, %q) = %v, want %v", tt.kind, tt.agentType, got, tt.want)
+			}
+		})
+	}
+}
+
 func mkTask(uid, rv string, agentType rlarkv1alpha1.AgentType, images []string, selector map[string]string) *rlarkv1alpha1.Task {
 	task := &rlarkv1alpha1.Task{
 		ObjectMeta: metav1.ObjectMeta{
@@ -89,13 +114,13 @@ func mkTask(uid, rv string, agentType rlarkv1alpha1.AgentType, images []string, 
 			ResourceVersion: rv,
 		},
 		Spec: rlarkv1alpha1.TaskSpec{
-			AgentType:    agentType,
-			NodeSelector: selector,
-			Docker:       &rlarkv1alpha1.DockerTaskSpec{},
+			Runtime:   rlarkv1alpha1.TaskRuntimeSpec{Kind: rlarkv1alpha1.RuntimeKind(agentType)},
+			Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: selector},
+			Workload:  rlarkv1alpha1.TaskWorkloadSpec{Template: &corev1.PodTemplateSpec{}},
 		},
 	}
 	for _, img := range images {
-		task.Spec.Docker.Containers = append(task.Spec.Docker.Containers, rlarkv1alpha1.DockerContainerSpec{Image: img})
+		task.Spec.Workload.Template.Spec.Containers = append(task.Spec.Workload.Template.Spec.Containers, corev1.Container{Image: img})
 	}
 	return task
 }
@@ -146,7 +171,7 @@ func TestHandle_ResourceVersionChangePullsOnlyNewImages(t *testing.T) {
 	}
 }
 
-func TestHandle_AgentTypeMismatchSkips(t *testing.T) {
+func TestHandle_RuntimeKindMismatchSkips(t *testing.T) {
 	rt := &fakeExecPuller{}
 	p := newTestPuller(t, rt, rlarkv1alpha1.AgentTypeKubernetes, "node1", fake.NewSimpleClientset())
 

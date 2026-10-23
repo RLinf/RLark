@@ -20,10 +20,21 @@ RLark validates the public-key format and requires both the SSH username and pub
 
 1. Open **Jobs** and start creating a Job.
 2. In **Common Config**, choose an uploaded key under **SSH Public Key Injection**.
-3. Review the YAML preview and confirm that `spec.sshPublicKey` contains the selected public key.
+3. Review the YAML preview and confirm that every applicable Task template contains this Environment declaration:
+
+   ```yaml
+   environments:
+     - type: rlinf.io/ssh
+       version: v1
+       parameters:
+         authorizedKeys:
+           - ssh-ed25519 AAAA...
+   ```
 4. Submit the Job.
 
-Each selected public key is written once into the Job configuration for workload injection. Registering a key on the SSH Keys page alone does not modify existing Jobs or Pods. Job details display multiple injected keys in a scrollable list.
+Each selected public key is written into the applicable Task template's `rlinf.io/ssh/v1` Environment. Registering or changing a record on the SSH Keys page alone does not modify existing Jobs or Tasks. Job details display multiple configured keys in a scrollable list.
+
+For built-in Ray-on-Kubernetes workloads, the Agent stores the Task's selected public key in a Task-incarnation-owned Secret, mounts its `authorized_key` item read-only at `/var/run/rlark/ssh/authorized_key` in each main container, and starts `rlark-tools sshd` as an optional supervised service. The mount does not use `subPath`, and `sshd` reopens the file for every authentication attempt. An empty file disables workload key authentication. An SSH service failure can make the Pod unreachable over SSH, but does not stop the Task. This automatic service lifecycle does not apply to Docker, Raw, or arbitrary custom workload implementations.
 
 ## Task 3: Connect Through the Bastion
 
@@ -40,18 +51,19 @@ The outer SSH username must match the username attached to the registered key. T
 
 ## Task 4: Delete or Rotate a Key
 
-1. Add the replacement public key and use it for newly created Jobs.
+1. Add the replacement public key and select it in the Job configuration.
 2. Verify access with the replacement private key.
 3. Delete the old key from **SSH Keys**.
-4. Recreate or separately update workloads that already contain the old key.
+4. Ensure existing Jobs/Tasks have been updated or replaced so their workload SSH configuration no longer contains the old key.
 
-Deleting a registered key prevents subsequent bastion authentication with that username/key pair. It does not remove a public key already copied into a running workload.
+Deleting a registered key prevents subsequent bastion authentication with that username/key pair. It does not edit an existing Job or Task whose SSH Environment already contains the old key. Rotate workload access by replacing or clearing `parameters.authorizedKeys`. The projected file update is eventually consistent with kubelet propagation; revocation is not guaranteed to be instantaneous.
 
 ## Security Notes
 
 - Key records are keyed by the entered SSH username, not isolated by the current console session.
 - Anyone holding a matching private key can authenticate as that SSH username.
 - Never upload or place private keys in Job YAML, scripts, or environment variables.
+- Do not copy `/var/run/rlark/ssh/authorized_key` into a durable file or configure the SSH service to cache its resolved path or an open file descriptor; doing so prevents rotation and revocation from taking effect.
 - Verify the bastion host-key fingerprint before first use and rotate keys regularly.
 
 !!! warning "Current security boundaries"

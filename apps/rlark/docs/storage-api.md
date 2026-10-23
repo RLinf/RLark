@@ -2,17 +2,17 @@
 
 ## Overview
 
-The Storage API provides multi-cluster StorageClass management. The Gateway queries StorageClass information from each data-plane Agent through the Server proxy, aggregates the results, and returns them.
+The Storage API manages RLark StorageClass declarations across multiple clusters. The Gateway stores each declaration in the management plane, and the Replication and Delivery controllers asynchronously distribute the generated rclone CSI StorageClass and its Secret to the selected data-plane clusters.
 
 ## API Endpoints
 
 ### 1. List StorageClasses
 **GET** `/api/v1/storage/storageclass`
 
-Queries the StorageClass list from Agents in the specified clusters through the Server proxy. Default StorageClasses (`default`, `local-path`, and `hostpath`) are filtered out, and the results are grouped by name.
+Lists StorageClass declarations managed by RLark from the management plane. It does not query Agents or verify the live state of data-plane resources.
 
 #### Query Parameters
-- `clusters` (optional): A comma-separated list of cluster IDs, for example `?clusters=agent-beijing,agent-shanghai`. If omitted, all clusters are queried.
+- `clusters` (optional): A comma-separated list of cluster IDs, for example `?clusters=agent-beijing,agent-shanghai`. When supplied, the response includes only declarations whose configured target clusters intersect with the specified IDs. If omitted, all managed declarations are returned.
 
 #### Example Response
 ```json
@@ -37,7 +37,7 @@ Queries the StorageClass list from Agents in the specified clusters through the 
 | Field | Type | Description |
 |------|------|------|
 | `name` | `string` | StorageClass name |
-| `clusters` | `[]string` | IDs of the clusters where this StorageClass is available |
+| `clusters` | `[]string` | Configured target cluster IDs for this StorageClass |
 | `description` | `string` | Human-readable description |
 | `bucket` | `string` | Bucket name |
 | `provider` | `string` | Storage provider type, such as s3, gcs, or azureblob |
@@ -66,17 +66,17 @@ Lists the supported storage providers, including 31 providers such as AWS S3, Al
 ### 3. Create a StorageClass
 **POST** `/api/v1/storage/storageclass`
 
-Creates a new rclone CSI StorageClass resource and its corresponding Secret in one or more clusters.
+Creates a StorageClass declaration in the management plane. Replication and Delivery controllers asynchronously distribute the generated rclone CSI StorageClass and its Secret to the requested target clusters.
 
 ### 4. Update a StorageClass
 **PUT** `/api/v1/storage/storageclass/{name}`
 
-Updates the object storage configuration and associated clusters for the specified StorageClass. The `clusters` field in the request is the desired final set of clusters; the StorageClass is removed from clusters no longer included in that set. During an update, `access_key_secret` may be left empty, and the Gateway will attempt to reuse the key from an existing Secret.
+Updates the object storage configuration and target clusters for the specified StorageClass declaration. The `clusters` field is the desired final target-cluster set; the distribution workflow cleans up resources from clusters omitted from that set. During an update, `access_key_secret` may be left empty, and the Gateway reuses the existing key.
 
 ### 5. Delete a StorageClass
 **DELETE** `/api/v1/storage/storageclass/{name}`
 
-Deletes the specified StorageClass and its corresponding Secret from all associated clusters. Use the `clusters=agent-a,agent-b` query parameter to limit the deletion scope.
+Deletes the StorageClass declaration. Distribution finalizers asynchronously remove its Delivery declarations and generated StorageClass and Secret from all associated clusters.
 
 ### 6. List Bucket Files
 **GET** `/api/v1/storage/storageclass/{name}/{cluster}/list`
@@ -152,21 +152,26 @@ Deletes an object from the specified bucket.
 
 ## Implementation Notes
 
-### Multi-cluster Proxy Architecture
+### Control-plane Distribution Architecture
 
 ```
-Gateway ──▶ Server ──▶ Agent (cluster A) ──▶ K8s API (list StorageClasses)
-                  ──▶ Agent (cluster B) ──▶ K8s API (list StorageClasses)
+Gateway ──▶ Management-plane StorageClass declaration
+                         │
+                         ▼
+              Replication Controller ──▶ Delivery Controller ──▶ K8s API
 ```
 
-1. After receiving a request, the Gateway parses the `clusters` parameter to determine the target clusters.
-2. It queries each Agent through the Server proxy endpoint (`/api/proxy/{agentID}/api/kubernetes/apis/storage.k8s.io/v1/storageclasses`).
-3. Each Agent queries StorageClass resources in its local Kubernetes cluster.
-4. The Gateway aggregates the results by filtering out default StorageClasses, grouping entries by name, and combining their cluster information.
+1. The Gateway validates a StorageClass request and stores a replication declaration in the management plane.
+2. The Replication Controller creates Delivery declarations for the configured target clusters.
+3. Each Delivery Controller applies the generated rclone CSI Secret and cluster-scoped StorageClass to its local Kubernetes cluster.
+4. Updates replace the desired target-cluster set; deletion triggers asynchronous cleanup through distribution finalizers.
+
+A listed declaration represents configured distribution intent. Before provisioning a PVC, ensure delivery has completed and the target cluster has a working rclone CSI driver, valid object-storage credentials, and network connectivity to the storage service.
 
 ### File Structure
-- **`../pkg/gateway/storage_handler.go`** - Storage API handlers
-- **`../pkg/gateway/clusters_handler.go`** - Cluster list aggregation
+- **`../pkg/gateway/storage_handler.go`** - Storage API handlers and generated manifests
+- **`../pkg/controllermanager/replication/controller.go`** - Control-plane replication controller
+- **`../pkg/agent/controllers/delivery/controller.go`** - Data-plane delivery controller
 - **`../pkg/gateway/router.go`** - Route registration
 
 ### Data Structures
@@ -188,18 +193,14 @@ type Provider struct {
 }
 ```
 
-### Agent RBAC Requirements
-
-The Agent requires read access to the `storageclasses` resource in the `storage.k8s.io` API group. `rlarkadm` configures this permission automatically during deployment.
-
 ## Usage Examples
 
-### List StorageClasses in All Clusters
+### List All Managed StorageClasses
 ```bash
 curl "http://localhost:8080/api/v1/storage/storageclass"
 ```
 
-### List StorageClasses in a Specific Cluster
+### List StorageClasses Targeting a Specific Cluster
 ```bash
 curl "http://localhost:8080/api/v1/storage/storageclass?clusters=agent-beijing"
 ```
@@ -214,20 +215,19 @@ curl "http://localhost:8080/api/v1/storage/storageclass/provider"
 A Task declares remote storage through a Kubernetes generic ephemeral volume:
 
 ```yaml
-kubernetes:
-  workload:
-    template:
-      spec:
-        volumes:
-          - name: data
-            ephemeral:
-              volumeClaimTemplate:
-                spec:
-                  accessModes: [ReadWriteOnce]
-                  storageClassName: ceph-rbd
-                  resources:
-                    requests:
-                      storage: 10Gi
+workload:
+  template:
+    spec:
+      volumes:
+        - name: data
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: ceph-rbd
+                resources:
+                  requests:
+                    storage: 10Gi
 ```
 
-Kubernetes creates a PVC for each Pod from `volumeClaimTemplate` and removes it with the Pod. The frontend uses the Storage API to retrieve available StorageClasses for users to select. `pvcStorageMap` and `pvcSizeGbMap` are deprecated and retained only for existing resources.
+Kubernetes creates a PVC for each Pod from `volumeClaimTemplate` and removes it with the Pod. The current Web UI writes this generic ephemeral-volume form and uses the Storage API to retrieve RLark-managed StorageClass declarations for the selected cluster. `pvcStorageMap` and `pvcSizeGbMap` are not part of the canonical Task schema; old resources that depend on those fields must be replaced during a breaking upgrade.

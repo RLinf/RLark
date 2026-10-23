@@ -12,6 +12,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -32,6 +34,34 @@ const (
 	// AddonResourceVersionAnnotation annotates local resources linking back to the management Addon CR.
 	AddonResourceVersionAnnotation = "rlark.io/addon-resource-version"
 )
+
+// Reason values for the Addon Ready condition. They are stable, CamelCase
+// identifiers consumed by clients.
+const (
+	addonReasonReady      = "AddonReady"
+	addonReasonFailed     = "AddonFailed"
+	addonReasonInstalling = "AddonInstalling"
+	addonReasonUpgrading  = "AddonUpgrading"
+	addonReasonUnknown    = "AddonPhaseUnknown"
+)
+
+// addonReadiness maps an Addon phase onto the Ready condition. Ready is the
+// structured companion of Phase: clients read the boolean conclusion and its
+// machine-readable Reason without having to know the phase vocabulary.
+func addonReadiness(phase rlarkv1alpha1.AddonPhase) (metav1.ConditionStatus, string) {
+	switch phase {
+	case rlarkv1alpha1.AddonPhaseReady:
+		return metav1.ConditionTrue, addonReasonReady
+	case rlarkv1alpha1.AddonPhaseFailed:
+		return metav1.ConditionFalse, addonReasonFailed
+	case rlarkv1alpha1.AddonPhaseInstalling:
+		return metav1.ConditionFalse, addonReasonInstalling
+	case rlarkv1alpha1.AddonPhaseUpgrading:
+		return metav1.ConditionFalse, addonReasonUpgrading
+	default:
+		return metav1.ConditionUnknown, addonReasonUnknown
+	}
+}
 
 type pullReconciler struct {
 	c *Controller
@@ -333,13 +363,42 @@ func (r *pullReconciler) checkFailedPods(ctx context.Context, mgmtAddon *rlarkv1
 }
 
 func (r *pullReconciler) updateStatus(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon, phase rlarkv1alpha1.AddonPhase, message string) {
-	if mgmtAddon.Status.Phase == phase && mgmtAddon.Status.Message == message {
-		return
+	changed := false
+
+	if mgmtAddon.Status.Phase != phase {
+		mgmtAddon.Status.Phase = phase
+		changed = true
 	}
-	mgmtAddon.Status.Phase = phase
-	mgmtAddon.Status.Message = message
-	if phase == rlarkv1alpha1.AddonPhaseReady {
+	if mgmtAddon.Status.Message != message {
+		mgmtAddon.Status.Message = message
+		changed = true
+	}
+	if phase == rlarkv1alpha1.AddonPhaseReady && mgmtAddon.Status.Version != mgmtAddon.Spec.Version {
 		mgmtAddon.Status.Version = mgmtAddon.Spec.Version
+		changed = true
+	}
+
+	// ObservedGeneration is part of the controller contract: consumers compare it
+	// against metadata.generation to detect stale phase / conditions. It must be
+	// advanced even when phase and message happen to be unchanged, otherwise a
+	// Spec-only change would leave the status silently stale.
+	if mgmtAddon.Status.ObservedGeneration != mgmtAddon.Generation {
+		mgmtAddon.Status.ObservedGeneration = mgmtAddon.Generation
+		changed = true
+	}
+
+	readyStatus, reason := addonReadiness(phase)
+	if apimeta.SetStatusCondition(&mgmtAddon.Status.Conditions, metav1.Condition{
+		Type:    rlarkv1alpha1.ConditionTypeReady,
+		Status:  readyStatus,
+		Reason:  reason,
+		Message: message,
+	}) {
+		changed = true
+	}
+
+	if !changed {
+		return
 	}
 	if err := r.c.ManagementClient.Status().Update(ctx, mgmtAddon); err != nil {
 		log.FromContext(ctx).Error(err, "failed to update addon status", "phase", phase)

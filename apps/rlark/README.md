@@ -4,7 +4,7 @@ RLark core is the control plane and data plane platform for cross-cluster embodi
 
 ## Directory Structure
 
-```
+```text
 apps/rlark/
 ├── cmd/          # Entry points
 │   ├── server/              # Control plane Server
@@ -29,24 +29,32 @@ apps/rlark/
 │   ├── apis/                # API types
 │   ├── configs/             # Configuration
 │   └── utils/               # Shared utilities
-└── docs/         # RLark core documentation
-    ├── architecture.md      # Technical architecture
+└── docs/         # RLark core documentation and Read the Docs source
+    ├── overview/             # Product capabilities
+    ├── user-guide/           # Platform user workflows
+    ├── admin-guide/          # Deployment, onboarding, security, operations
+    ├── developer-guide/      # Development, debugging, and extensions
+    ├── reference/            # CLI, CRD, configuration, and changelog
+    ├── api/                  # API reference and examples
+    ├── zh/                   # Chinese documentation mirroring the English structure
+    ├── architecture.md       # Technical architecture
     ├── concepts.md           # Core concepts (Domain, Job, Task)
-    ├── quickstart.md         # Local development setup
-    ├── deployment.md         # Production deployment guide
-    ├── storage-api.md        # Storage API documentation
-    ├── ui-behavior.md        # Web console behavior
-    └── api/                  # API reference and examples
+    ├── quickstart.md         # One-click and UI-based evaluation flows
+    ├── deployment.md         # Complete deployment reference
+    └── storage-api.md        # Storage API documentation
 ```
 
 ## Documentation
 
+The complete English and Chinese documentation is published on [Read the Docs](https://rlark.readthedocs.io/en/latest/). Its audience-oriented source structure is described in [docs/README.md](docs/README.md).
+
+- [Quick Start](docs/quickstart.md) — one-click CLI and UI-based evaluation flows
+- [Platform User Guide](docs/user-guide/index.md) — console, compute resources, jobs, storage, and SSH keys
+- [Administrator Guide](docs/admin-guide/index.md) — control plane, data plane, devices, networking, and operations
+- [Developer Guide](docs/developer-guide/index.md) — local development, project layout, debugging, and extensions
+- [Reference](docs/reference/index.md) — CLI, API, CRD, configuration, and changelog
 - [Architecture](docs/architecture.md) — complete technical architecture
-- [Core Concepts](docs/concepts.md) — Domain, Job, Task, etc.
-- [Quick Start](docs/quickstart.md) — local development setup
-- [Deployment Guide](docs/deployment.md) — production deployment
-- [API Reference](docs/api/reference.md) — REST API reference
-- [API Examples](docs/api/examples.md) — end-to-end API usage
+- [Core Concepts](docs/concepts.md) — Domain, Job, Task, and related concepts
 
 ## Build
 

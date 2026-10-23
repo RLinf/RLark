@@ -1,7 +1,7 @@
 package sync
 
 import (
-	"github.com/uptrace/bun"
+	"github.com/rlinf/rlark/apps/rlark/pkg/persistence"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	controllerconfig "sigs.k8s.io/controller-runtime/pkg/controller"
@@ -36,12 +36,12 @@ type TaskReconciler struct {
 // +kubebuilder:rbac:groups=rlinf.io,resources=tasks/finalizers,verbs=update
 
 // NewTaskReconciler creates a new TaskReconciler.
-func NewTaskReconciler(maxConcurrentReconciles int, client client.Client, db *bun.DB) *TaskReconciler {
+func NewTaskReconciler(maxConcurrentReconciles int, client client.Client, backend persistence.Backend) *TaskReconciler {
 	return &TaskReconciler{
 		maxConcurrentReconciles: maxConcurrentReconciles,
 		genericReconciler: &genericReconciler[*rlarkv1alpha1.Task]{
 			client:  client,
-			db:      db,
+			backend: backend,
 			handler: newTaskSyncHandler(),
 			newObj:  func() *rlarkv1alpha1.Task { return &rlarkv1alpha1.Task{} },
 		},

@@ -17,9 +17,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.domain
-      name: Domain
-      type: string
+    - jsonPath: .spec.prefixLen
+      name: PrefixLen
+      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date

@@ -79,7 +79,7 @@ func TestDeleteOwnedJobsWaitsForCleanupAndFiltersOwnerUID(t *testing.T) {
 func TestStoppedWorkflowDeletesAllJobsIncludingTerminal(t *testing.T) {
 	wf := &rlarkv1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "workflow", UID: types.UID("workflow-uid")},
-		Spec: rlarkv1alpha1.WorkflowSpec{Stopped: true, JobTemplates: []rlarkv1alpha1.WorkflowJobTemplate{
+		Spec: rlarkv1alpha1.WorkflowSpec{Suspended: true, JobTemplates: []rlarkv1alpha1.WorkflowJobTemplate{
 			{Name: "running"}, {Name: "succeeded"},
 		}},
 		Status: rlarkv1alpha1.WorkflowStatus{Phase: rlarkv1alpha1.WorkflowPhaseRunning, Jobs: []rlarkv1alpha1.WorkflowJobStatus{
@@ -91,7 +91,7 @@ func TestStoppedWorkflowDeletesAllJobsIncludingTerminal(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: name, Finalizers: []string{"jobs.rlinf.io/task-cleanup"}, OwnerReferences: []metav1.OwnerReference{{
 				APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Workflow", Name: wf.Name, UID: wf.UID, Controller: boolPtr(true),
 			}}},
-			Spec: rlarkv1alpha1.JobSpec{Stopped: stopped}, Status: rlarkv1alpha1.JobStatus{Phase: phase},
+			Spec: rlarkv1alpha1.JobSpec{Suspended: stopped}, Status: rlarkv1alpha1.JobStatus{Phase: phase},
 		}
 	}
 	running := owned("running", rlarkv1alpha1.JobPhaseRunning, false)

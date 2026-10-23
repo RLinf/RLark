@@ -7,6 +7,8 @@ import (
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -106,9 +108,9 @@ func (r *Reconciler) reconcileJob(
 		if !jobTerminal(&job) {
 			desired := buildJob(wf, jt, jobName)
 			marker := string(wf.UID)
-			workflowStopped := wf.Spec.Stopped || job.Annotations[rlarkv1alpha1.WorkflowStoppedByAnnotation] == marker
+			workflowStopped := wf.Spec.Suspended || job.Annotations[rlarkv1alpha1.WorkflowStoppedByAnnotation] == marker
 			if workflowStopped {
-				desired.Spec.Stopped = true
+				desired.Spec.Suspended = true
 				desired.Annotations[rlarkv1alpha1.WorkflowStoppedByAnnotation] = marker
 			}
 			if !reflect.DeepEqual(job.Spec, desired.Spec) ||
@@ -177,6 +179,17 @@ func (r *Reconciler) reconcileWithStateMachine(
 	ctx context.Context,
 	wf *rlarkv1alpha1.Workflow,
 ) (bool, error) {
+	logger := log.FromContext(ctx).WithValues("workflow", wf.Name)
+
+	// An invalid Spec cannot be fixed by retrying: record the conclusion in the
+	// Validated condition and enter Failed instead of requeueing forever.
+	if !wf.Spec.Suspended {
+		if _, err := newDAG(wf.Spec.JobTemplates); err != nil {
+			logger.Error(err, "invalid Workflow DAG")
+			return markWorkflowInvalid(wf, err.Error()), nil
+		}
+	}
+
 	f := newWorkflowStateMachine()
 	f.SetState(string(wf.Status.Phase))
 
@@ -185,6 +198,9 @@ func (r *Reconciler) reconcileWithStateMachine(
 		oldTemplates[i] = wf.Status.Jobs[i].Name
 	}
 	changed := syncJobStatusSnapshot(wf)
+	if !wf.Spec.Suspended && markWorkflowValid(wf) {
+		changed = true
+	}
 	waiting, err := r.pruneJobsWithTemplates(ctx, wf, oldTemplates)
 	if err != nil {
 		return false, err
@@ -200,14 +216,14 @@ func (r *Reconciler) reconcileWithStateMachine(
 		changed = true
 	}
 
-	if wf.Spec.Stopped && f.Can(EventStop) {
+	if wf.Spec.Suspended && f.Can(EventStop) {
 		if err := f.Event(ctx, EventStop, wf); err != nil {
 			return false, err
 		}
 		changed = true
 	}
 
-	resuming := !wf.Spec.Stopped && f.Can(EventResume)
+	resuming := !wf.Spec.Suspended && f.Can(EventResume)
 	if resuming {
 		if err := f.Event(ctx, EventResume, wf); err != nil {
 			return false, err
@@ -217,7 +233,7 @@ func (r *Reconciler) reconcileWithStateMachine(
 		return changed, nil
 	}
 
-	if !wf.Spec.Stopped && f.Can(EventStart) {
+	if !wf.Spec.Suspended && f.Can(EventStart) {
 		if err := f.Event(ctx, EventStart, wf); err != nil {
 			return false, err
 		}
@@ -231,7 +247,7 @@ func (r *Reconciler) reconcileWithStateMachine(
 	if syncChanged {
 		changed = true
 	}
-	if wf.Spec.Stopped {
+	if wf.Spec.Suspended {
 		waiting, err := r.deleteOwnedJobs(ctx, wf)
 		if err != nil {
 			return false, err
@@ -251,7 +267,7 @@ func (r *Reconciler) reconcileWithStateMachine(
 		return changed, nil
 	}
 
-	if !wf.Spec.Stopped && wf.Status.Phase == rlarkv1alpha1.WorkflowPhaseRunning {
+	if !wf.Spec.Suspended && wf.Status.Phase == rlarkv1alpha1.WorkflowPhaseRunning {
 		dagChanged, err := r.reconcileDAG(ctx, wf, log.FromContext(ctx))
 		if err != nil {
 			return false, err
@@ -270,6 +286,55 @@ func (r *Reconciler) reconcileWithStateMachine(
 	}
 
 	return changed, nil
+}
+
+// workflowConditionValidated is the type of the condition recording spec validation.
+const workflowConditionValidated = rlarkv1alpha1.ConditionTypeValidated
+
+// Reason values for the Workflow Validated condition. They are stable,
+// CamelCase identifiers consumed by clients.
+const (
+	workflowReasonSpecValidated = "SpecValidated"
+	workflowReasonInvalidDAG    = "InvalidJobDAG"
+)
+
+// markWorkflowInvalid marks the Workflow as Failed due to an invalid spec and
+// records the reason in a "Validated" condition. It returns whether the
+// Workflow object changed.
+func markWorkflowInvalid(wf *rlarkv1alpha1.Workflow, message string) bool {
+	changed := false
+
+	if wf.Status.Phase != rlarkv1alpha1.WorkflowPhaseFailed {
+		wf.Status.Phase = rlarkv1alpha1.WorkflowPhaseFailed
+		changed = true
+	}
+	if wf.Status.EndTime == nil {
+		now := metav1.Now()
+		wf.Status.EndTime = &now
+		changed = true
+	}
+	if apimeta.SetStatusCondition(&wf.Status.Conditions, metav1.Condition{
+		Type:               workflowConditionValidated,
+		Status:             metav1.ConditionFalse,
+		Reason:             workflowReasonInvalidDAG,
+		Message:            message,
+		ObservedGeneration: wf.Generation,
+	}) {
+		changed = true
+	}
+
+	return changed
+}
+
+// markWorkflowValid records that the current spec passed validation, clearing a
+// stale Validated=False left behind by a previously invalid spec.
+func markWorkflowValid(wf *rlarkv1alpha1.Workflow) bool {
+	return apimeta.SetStatusCondition(&wf.Status.Conditions, metav1.Condition{
+		Type:               workflowConditionValidated,
+		Status:             metav1.ConditionTrue,
+		Reason:             workflowReasonSpecValidated,
+		ObservedGeneration: wf.Generation,
+	})
 }
 
 func markJobStatusesStopped(wf *rlarkv1alpha1.Workflow) bool {
@@ -335,7 +400,7 @@ func (r *Reconciler) evaluateWorkflowEvent(wf *rlarkv1alpha1.Workflow) string {
 		string(rlarkv1alpha1.JobPhaseRunning),
 		string(rlarkv1alpha1.JobPhaseStopped),
 	)
-	if wf.Spec.Stopped && (!s.HasItems || s.AllStopped) {
+	if wf.Spec.Suspended && (!s.HasItems || s.AllStopped) {
 		return EventAllJobsStopped
 	}
 	if s.AnyFailed {

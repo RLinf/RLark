@@ -25,6 +25,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
 const (
@@ -64,6 +65,8 @@ type imageRegistryItem struct {
 	Registry         string           `json:"registry"`
 	Username         string           `json:"username"`
 	ClusterSelection clusterSelection `json:"clusterSelection"`
+	TenantID         string           `json:"tenantID"`
+	CreatedBy        string           `json:"createdBy,omitempty"`
 }
 
 type createImageRegistryRequest struct {
@@ -271,6 +274,7 @@ func imageRegistryItemFromSecret(secret *corev1.Secret) (imageRegistryItem, erro
 	}
 	return imageRegistryItem{
 		ID: id, Name: credential.Name, Registry: credential.Registry, Username: credential.Username, ClusterSelection: selection,
+		TenantID: tenant.IDOf(secret), CreatedBy: secret.Annotations[tenant.CreatedByAnnotation],
 	}, nil
 }
 
@@ -307,7 +311,7 @@ func (g *Gateway) handleListImageRegistries(c *gin.Context) {
 	secrets, err := listImageRegistrySecrets(c.Request.Context(), g.rawClient, g.managementNamespace())
 	if err != nil {
 		logger.Error(err, "failed to list image registry secrets")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to list image registries: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to list image registries: %v", err))
 		return
 	}
 	items := make([]imageRegistryItem, 0, len(secrets))
@@ -315,7 +319,7 @@ func (g *Gateway) handleListImageRegistries(c *gin.Context) {
 		item, err := imageRegistryItemFromSecret(&secrets[i])
 		if err != nil {
 			logger.Error(err, "invalid image registry secret", "secret", secrets[i].Name)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid image registry data"})
+			respondError(c, http.StatusInternalServerError, CodeInternalError, "invalid image registry data")
 			return
 		}
 		items = append(items, item)
@@ -332,21 +336,21 @@ func (g *Gateway) handleListImageRegistries(c *gin.Context) {
 func (g *Gateway) handleGetImageRegistry(c *gin.Context) {
 	id := c.Param("id")
 	if err := validateImageRegistryID(id); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, err.Error())
 		return
 	}
 	secret, err := getImageRegistrySecret(c.Request.Context(), g.rawClient, g.managementNamespace(), id)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "image registry not found"})
+			respondError(c, http.StatusNotFound, CodeResourceNotFound, "image registry not found")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get image registry: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to get image registry: %v", err))
 		return
 	}
 	item, err := imageRegistryItemFromSecret(secret)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid image registry data"})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, "invalid image registry data")
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -355,12 +359,12 @@ func (g *Gateway) handleGetImageRegistry(c *gin.Context) {
 func (g *Gateway) handleCreateImageRegistry(c *gin.Context) {
 	var req createImageRegistryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "invalid request body")
 		return
 	}
 	credential, err := normalizeImageRegistryCredential(req.Name, req.Registry, req.Username, req.Password, req.ClusterSelection)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 		return
 	}
 
@@ -368,42 +372,43 @@ func (g *Gateway) handleCreateImageRegistry(c *gin.Context) {
 		id := newImageRegistryID()
 		secret, err := buildImageRegistryReplicationSecret(g.managementNamespace(), id, credential)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 			return
 		}
+		tenant.SetIdentity(secret, tenant.DefaultID, c.GetString(authSubjectKey))
 		if _, err := g.rawClient.CoreV1().Secrets(g.managementNamespace()).Create(c.Request.Context(), secret, metav1.CreateOptions{}); err != nil {
 			if errors.IsAlreadyExists(err) {
 				continue
 			}
 			log.FromContext(c.Request.Context()).Error(err, "failed to create image registry replication")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to create image registry: %v", err)})
+			respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to create image registry: %v", err))
 			return
 		}
 		item, _ := imageRegistryItemFromSecret(secret)
 		c.JSON(http.StatusCreated, item)
 		return
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to allocate image registry id"})
+	respondError(c, http.StatusInternalServerError, CodeInternalError, "failed to allocate image registry id")
 }
 
 func (g *Gateway) handleUpdateImageRegistry(c *gin.Context) {
 	id := c.Param("id")
 	if err := validateImageRegistryID(id); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, err.Error())
 		return
 	}
 	var req updateImageRegistryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "invalid request body")
 		return
 	}
 	if req.Password != nil && *req.Password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "password must not be empty"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "password must not be empty")
 		return
 	}
 	selection, err := normalizeClusterSelection(req.ClusterSelection)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 		return
 	}
 	password := "placeholder"
@@ -411,7 +416,7 @@ func (g *Gateway) handleUpdateImageRegistry(c *gin.Context) {
 		password = *req.Password
 	}
 	if _, err := normalizeImageRegistryCredential(req.Name, req.Registry, req.Username, password, selection); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 		return
 	}
 
@@ -447,10 +452,10 @@ func (g *Gateway) handleUpdateImageRegistry(c *gin.Context) {
 	})
 	if err != nil {
 		if errors.IsNotFound(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "image registry not found"})
+			respondError(c, http.StatusNotFound, CodeResourceNotFound, "image registry not found")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update image registry: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to update image registry: %v", err))
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -459,23 +464,23 @@ func (g *Gateway) handleUpdateImageRegistry(c *gin.Context) {
 func (g *Gateway) handleDeleteImageRegistry(c *gin.Context) {
 	id := c.Param("id")
 	if err := validateImageRegistryID(id); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, err.Error())
 		return
 	}
 	if _, err := getImageRegistrySecret(c.Request.Context(), g.rawClient, g.managementNamespace(), id); err != nil {
 		if errors.IsNotFound(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "image registry not found"})
+			respondError(c, http.StatusNotFound, CodeResourceNotFound, "image registry not found")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get image registry: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to get image registry: %v", err))
 		return
 	}
 	if err := g.rawClient.CoreV1().Secrets(g.managementNamespace()).Delete(c.Request.Context(), imageRegistryReplicationName(id), metav1.DeleteOptions{}); err != nil {
 		if errors.IsNotFound(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "image registry not found"})
+			respondError(c, http.StatusNotFound, CodeResourceNotFound, "image registry not found")
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to delete image registry: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to delete image registry: %v", err))
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{"ok": true})

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/kubernetes"
@@ -63,6 +64,9 @@ func (a *Agent) startDrain() {
 func (a *Agent) init(ctx context.Context) error {
 	_ = ctx
 	var err error
+	if err := validateTaskRuntimeResyncPeriod(a.config.Mode, a.config.TaskRuntimeResyncPeriod); err != nil {
+		return err
+	}
 	if err := a.config.ControllerConcurrency.Validate(); err != nil {
 		return fmt.Errorf("validate controller concurrency: %w", err)
 	}
@@ -75,7 +79,6 @@ func (a *Agent) init(ctx context.Context) error {
 	if a.config.PodStaleTTL <= 0 {
 		return fmt.Errorf("pod stale TTL must be positive")
 	}
-
 	// Initialize server client
 	a.serverClient, err = server.NewClientFromConfig(a.config.ClientConfig)
 	if err != nil {
@@ -124,6 +127,13 @@ func (a *Agent) init(ctx context.Context) error {
 	// Initialize local listener and dialer
 	a.localListener, a.localDialer = utils.NetPipeWithBuffer(65536)
 
+	return nil
+}
+
+func validateTaskRuntimeResyncPeriod(mode string, period time.Duration) error {
+	if mode != "node" && period < 0 {
+		return fmt.Errorf("task Runtime resync period must not be negative")
+	}
 	return nil
 }
 

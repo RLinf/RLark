@@ -98,6 +98,11 @@ func (r *pushNodeReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 		return reconcile.Result{RequeueAfter: HeartbeatInterval}, nil
 	}
 
+	if k8sNode.Labels["rlark.io/enabled"] != "true" {
+		logger.Info("skipping unmanaged local Kubernetes Node")
+		return reconcile.Result{}, nil
+	}
+
 	var podList corev1.PodList
 	localCachedClient := r.c.LocalKubeCachedClient
 	if localCachedClient == nil {
@@ -124,7 +129,6 @@ func (r *pushNodeReconciler) buildRLarkNodeFromK8sNode(k8sNode *corev1.Node, pod
 	for k, v := range k8sNode.Labels {
 		labels[k] = v
 	}
-	labels[rlarkv1alpha1.LabelClusterID] = r.c.ManagementNamespace
 	labels[rlarkv1alpha1.LabelAgentType] = r.c.AgentType
 
 	annotations := make(map[string]string)
@@ -146,7 +150,6 @@ func (r *pushNodeReconciler) buildRLarkNodeFromK8sNode(k8sNode *corev1.Node, pod
 			Unschedulable: k8sNode.Spec.Unschedulable,
 		},
 		Status: rlarkv1alpha1.NodeStatus{
-			Phase:        r.getPhase(k8sNode),
 			DiskPressure: diskPressure(k8sNode),
 			Capacity:     k8sNode.Status.Capacity,
 			Allocatable:  k8sNode.Status.Allocatable,
@@ -308,27 +311,6 @@ func addResourceList(target, values corev1.ResourceList) {
 	}
 }
 
-func (r *pushNodeReconciler) getPhase(k8sNode *corev1.Node) rlarkv1alpha1.NodePhase {
-	if k8sNode == nil {
-		return rlarkv1alpha1.NodeOffline
-	}
-
-	if k8sNode.Spec.Unschedulable {
-		return rlarkv1alpha1.NodeOffline
-	}
-
-	for _, cond := range k8sNode.Status.Conditions {
-		if cond.Type == corev1.NodeReady {
-			if cond.Status == corev1.ConditionTrue {
-				return rlarkv1alpha1.NodeOnline
-			}
-			return rlarkv1alpha1.NodeOffline
-		}
-	}
-
-	return rlarkv1alpha1.NodeOffline
-}
-
 func (r *pushNodeReconciler) updateManagementNode(ctx context.Context, logger logr.Logger, desiredNode *rlarkv1alpha1.Node, storageCollected bool) (reconcile.Result, error) {
 	var mgmtNode rlarkv1alpha1.Node
 	err := r.c.ManagementClient.Get(ctx, types.NamespacedName{Name: desiredNode.Name, Namespace: desiredNode.Namespace}, &mgmtNode)
@@ -346,7 +328,8 @@ func (r *pushNodeReconciler) updateManagementNode(ctx context.Context, logger lo
 		return reconcile.Result{RequeueAfter: HeartbeatInterval}, nil
 	}
 
-	mgmtNode.Spec = desiredNode.Spec
+	mgmtNode.Spec.AgentType = desiredNode.Spec.AgentType
+	mgmtNode.Spec.Unschedulable = desiredNode.Spec.Unschedulable
 	mgmtNode.Labels = mergeManagementMetadata(
 		mgmtNode.Labels,
 		desiredNode.Labels,
@@ -358,22 +341,18 @@ func (r *pushNodeReconciler) updateManagementNode(ctx context.Context, logger lo
 		return reconcile.Result{RequeueAfter: HeartbeatInterval}, err
 	}
 
-	// Preserve status fields owned by other node-agent components; the push
-	// controller only refreshes K8s-derived Node fields (Capacity, Addresses,
-	// DiskPressure condition, …) and must not clobber data that other
-	// components are actively writing via the status subresource.
-	//   - pullProgress: owned by the image puller (imagepull.Puller)
-	//   - events: owned by the node events watcher (nodeevents.Watcher)
-	desiredNode.Status.PullProgress = mgmtNode.Status.PullProgress
-	desiredNode.Status.Events = mgmtNode.Status.Events
-	if !storageCollected {
-		// Keep the last successful nodefs/imagefs result when kubelet stats are
-		// unavailable or incomplete during this reconciliation.
-		desiredNode.Status.Storage = mgmtNode.Status.Storage
+	beforeStatus := mgmtNode.DeepCopy()
+	mgmtNode.Status.NodeInfo = desiredNode.Status.NodeInfo
+	mgmtNode.Status.Addresses = desiredNode.Status.Addresses
+	mgmtNode.Status.DiskPressure = desiredNode.Status.DiskPressure
+	mgmtNode.Status.Capacity = desiredNode.Status.Capacity
+	mgmtNode.Status.Allocatable = desiredNode.Status.Allocatable
+	mgmtNode.Status.Used = desiredNode.Status.Used
+	if storageCollected {
+		mgmtNode.Status.Storage = desiredNode.Status.Storage
 	}
-	mgmtNode.Status = desiredNode.Status
-	if err := r.c.ManagementClient.Status().Update(ctx, &mgmtNode); err != nil {
-		logger.Error(err, "failed to update management Node status")
+	if err := r.c.ManagementClient.Status().Patch(ctx, &mgmtNode, client.MergeFrom(beforeStatus)); err != nil {
+		logger.Error(err, "patch management Node status")
 		return reconcile.Result{RequeueAfter: HeartbeatInterval}, err
 	}
 

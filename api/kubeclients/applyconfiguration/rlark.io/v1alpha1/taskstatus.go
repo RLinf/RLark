@@ -26,7 +26,13 @@ import (
 // TaskStatusApplyConfiguration represents a declarative configuration of the TaskStatus type for use
 // with apply.
 type TaskStatusApplyConfiguration struct {
-	Phase            *rlarkiov1alpha1.TaskPhase       `json:"phase,omitempty"`
+	Phase *rlarkiov1alpha1.TaskPhase `json:"phase,omitempty"`
+	// ObservedGeneration 是数据面 Agent 最近一次完成本地工作负载调谐时所观测到的
+	// metadata.generation。它是控制器契约而非 API Server 保证：消费者在读取
+	// phase / message / observedNodes 之前，应比较本字段与 metadata.generation
+	// 以识别过期状态。
+	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// ObservedNodes 是当前承载该 Task 工作负载的节点名，由数据面 Agent 排序去重后上报。
 	ObservedNodes    []string                         `json:"observedNodes,omitempty"`
 	Conditions       []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 	StartTime        *metav1.Time                     `json:"startTime,omitempty"`
@@ -55,6 +61,14 @@ func TaskStatus() *TaskStatusApplyConfiguration {
 // If called multiple times, the Phase field is set to the value of the last call.
 func (b *TaskStatusApplyConfiguration) WithPhase(value rlarkiov1alpha1.TaskPhase) *TaskStatusApplyConfiguration {
 	b.Phase = &value
+	return b
+}
+
+// WithObservedGeneration sets the ObservedGeneration field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedGeneration field is set to the value of the last call.
+func (b *TaskStatusApplyConfiguration) WithObservedGeneration(value int64) *TaskStatusApplyConfiguration {
+	b.ObservedGeneration = &value
 	return b
 }
 

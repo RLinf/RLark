@@ -66,7 +66,7 @@ SSH keys allow you to connect to your Workers for debugging and inspection.
 ssh-keygen -t ed25519 -C "rlark-training"
 ```
 
-The key will be available for injection into your Workers. When selected in a job, the public key is added to `~/.ssh/authorized_keys` inside every Worker container.
+The key will be available for selection by Jobs. For built-in Ray-on-Kubernetes workloads, the selected key is delivered through a Task-owned Secret, mounted read-only at `/var/run/rlark/ssh/authorized_key` in each Worker main container, and served by an optional `rlark-tools sshd` process managed by the workload supervisor. SSH availability does not determine Task success.
 
 ### Rotate Keys
 

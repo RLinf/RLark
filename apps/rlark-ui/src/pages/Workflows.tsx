@@ -22,13 +22,8 @@ import {
   type JobType,
 } from "../data";
 import type { Copy } from "../i18n";
-import type {
-  CRDWorkflow,
-  DAGEdge,
-  DAGNode,
-  RoleResource,
-  WorkflowJobDef,
-} from "../types";
+import type { DAGEdge, DAGNode, RoleResource, WorkflowJobDef } from "../types";
+import type { CRDWorkflow } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
 import { crdToWorkflow } from "../utils/crd";
 import { hasCycle, makeDefaultRoleResources } from "../utils/dag";
@@ -118,8 +113,14 @@ export function WorkflowDetailPage({
     >
   >({});
 
-  const sorted = [...templates];
-  const depMap = new Map(templates.map((t) => [t.name, t.dependencies ?? []]));
+  const namedTemplates = templates.filter(
+    (template): template is typeof template & { name: string } =>
+      Boolean(template.name),
+  );
+  const sorted = [...namedTemplates];
+  const depMap = new Map(
+    namedTemplates.map((t) => [t.name, t.dependencies ?? []]),
+  );
   const layerOf = new Map<string, number>();
   const calcLayer = (name: string): number => {
     if (layerOf.has(name)) return layerOf.get(name)!;
@@ -132,7 +133,7 @@ export function WorkflowDetailPage({
     layerOf.set(name, max + 1);
     return max + 1;
   };
-  templates.forEach((t) => calcLayer(t.name));
+  namedTemplates.forEach((t) => calcLayer(t.name));
 
   const layers = new Map<number, string[]>();
   sorted.forEach((t) => {
@@ -143,7 +144,7 @@ export function WorkflowDetailPage({
 
   const layoutNodes = useMemo(
     () =>
-      templates.map((t) => {
+      namedTemplates.map((t) => {
         const layer = layerOf.get(t.name) ?? 0;
         const col = layers.get(layer) ?? [];
         const idx = col.indexOf(t.name);
@@ -160,7 +161,7 @@ export function WorkflowDetailPage({
 
   const allEdges = useMemo(() => {
     const edges: { from: string; to: string }[] = [];
-    templates.forEach((t) => {
+    namedTemplates.forEach((t) => {
       (t.dependencies ?? []).forEach((dep) => {
         edges.push({ from: dep, to: t.name });
       });
@@ -466,7 +467,7 @@ export function WorkflowsPage({
       await workflowsApi.remove(name);
       setWorkflows((prev) =>
         prev.map((w) =>
-          w.metadata.name === name
+          w.metadata?.name === name
             ? {
                 ...w,
                 metadata: {
@@ -489,8 +490,11 @@ export function WorkflowsPage({
       await workflowsApi.setStopped(name, stopped);
       setWorkflows((prev) =>
         prev.map((workflow) =>
-          workflow.metadata.name === name
-            ? { ...workflow, spec: { ...workflow.spec, stopped } }
+          workflow.metadata?.name === name
+            ? {
+                ...workflow,
+                spec: { ...workflow.spec, suspended: stopped },
+              }
             : workflow,
         ),
       );
@@ -889,19 +893,18 @@ export function CreateWorkflowModal({
     setStorageClassFetched(false);
     try {
       const data = await storageClassesApi.list<{
-        name?: string;
+        name: string;
         description?: string;
         bucket?: string;
-      }>(cluster);
-      const list: Array<{ name: string; description: string; bucket: string }> =
-        [];
-      for (const [key, value] of Object.entries(data)) {
-        list.push({
-          name: value.name ?? key,
-          description: value.description ?? "",
-          bucket: value.bucket ?? "",
-        });
-      }
+        clusters?: string[];
+      }>();
+      const list = Object.values(data)
+        .filter((item) => !cluster || item.clusters?.includes(cluster))
+        .map((item) => ({
+          name: item.name,
+          description: item.description ?? "",
+          bucket: item.bucket ?? "",
+        }));
       setStorageClasses(list);
     } catch (e) {
       console.warn("Failed to fetch storage classes:", e);
@@ -1108,7 +1111,7 @@ export function CreateWorkflowModal({
       runScript: job.runScript,
       domain: automaticNetworkDomain(domains),
     });
-    return { domain: crd.spec.domain, tasks: crd.spec.tasks };
+    return { domain: crd.spec?.domain, tasks: crd.spec?.tasks };
   };
 
   const buildWorkflowCRD = () => {

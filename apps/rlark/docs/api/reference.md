@@ -4,7 +4,9 @@ This page lists the HTTP routes registered by the Gateway in [`pkg/gateway/route
 
 Except for `POST /api/v1/auth/login` and `/metrics`, Gateway routes require the JWT returned by login in the `Authorization: Bearer <token>` header. Tokens expire after 8 hours by default; configure the lifetime with `--jwt-token-ttl`. A missing or invalid token returns `401`; an authenticated `user` calling an admin-only route returns `403`.
 
-Admin-only operations are Node and Domain mutations, all certificate, image registry, and Addon routes, system configuration updates, plus StorageClass provider and mutation routes. System configuration reads and all SSH key operations accept either authenticated role. Authorization is role-based and does not yet isolate resources, including SSH keys, by individual user.
+Admin-only operations are Node and Domain mutations, all certificate, image registry, and Addon routes, system configuration updates, plus StorageClass provider and mutation routes. System configuration reads and all SSH key operations accept either authenticated role.
+
+Authorization combines role with tenant scope. Workflow, Job, Task, and Pod routes are restricted to the tenants the caller belongs to: an out-of-scope `?tenant=` filter or create body returns `403`, and a named object owned by another tenant returns `404` so that the name is not confirmed. An `admin` caller is unrestricted. Every other resource, including SSH keys, is still only role-based and is not isolated by individual user. See [Tenant scope enforcement](../developer-guide/api-conventions.md#51-tenant-scope-enforcement) for the full model.
 
 Path parameters are written as `{name}` below; Gin uses the equivalent `:name` syntax in the router. Namespaced CRD routes require the `namespace` query parameter.
 
@@ -13,7 +15,8 @@ Path parameters are written as `{name}` below; Gin uses the equivalent `:name` s
 | Resource | Scope | Routes |
 |----------|-------|--------|
 | `nodes` | Namespaced | `GET, POST /api/v1/rlinf.io/v1alpha1/nodes`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/nodes/{name}` |
-| `jobs` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/jobs`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/jobs/{name}`; `GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs`; `GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs/label-values`; `GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/metrics` |
+| `workflows` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/workflows`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/workflows/{name}` |
+| `jobs` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/jobs`; `GET /api/v1/rlinf.io/v1alpha1/jobs/tags`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/jobs/{name}`; `GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs`; `GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs/label-values`; `GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/metrics` |
 | `tasks` | Namespaced | `GET, POST /api/v1/rlinf.io/v1alpha1/tasks`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/tasks/{name}`; all methods on `/api/v1/rlinf.io/v1alpha1/tasks/{name}/tensorboard/{path}` |
 | `pods` | Namespaced | `GET /api/v1/rlinf.io/v1alpha1/pods`; `GET, PATCH /api/v1/rlinf.io/v1alpha1/pods/{name}`; `GET /api/v1/rlinf.io/v1alpha1/pods/{name}/events`; `GET /api/v1/rlinf.io/v1alpha1/pods/{name}/terminal` |
 | `domains` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/domains`; `GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/domains/{name}` |
@@ -94,6 +97,8 @@ Image registry credentials use an immutable `ir-<16 lowercase hexadecimal charac
 | `GET` | `/api/v1/storage/storageclass/{name}/{cluster}/list` |
 | `POST` | `/api/v1/storage/storageclass/{name}/{cluster}/upload` |
 | `GET, DELETE` | `/api/v1/storage/storageclass/{name}/{cluster}/object/{key}` |
+
+StorageClass routes manage control-plane declarations. Replication and Delivery controllers asynchronously distribute generated rclone CSI resources to the configured target clusters; listing returns managed declarations rather than live Agent queries.
 
 ## Addons
 

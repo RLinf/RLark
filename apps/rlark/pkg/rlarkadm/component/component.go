@@ -1163,6 +1163,11 @@ func DaemonSet(cfg *types.DeployConfig, c *types.Component) *appsv1.DaemonSet {
 		}
 	}
 
+	ds.Spec.Template.Spec.NodeSelector = resolveComponentNodeSelector(cfg, c.Name)
+	if c.Name == constants.ComponentAgentNode {
+		ds.Spec.Template.Spec.NodeSelector = map[string]string{"rlark.io/enabled": "true"}
+	}
+
 	return ds
 }
 

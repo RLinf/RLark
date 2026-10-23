@@ -1,6 +1,11 @@
 package common
 
 const (
+	// TaskAgentCleanupFinalizer proves that a data-plane Agent claimed a Task
+	// before creating or mutating Runtime resources. Only that Agent removes it,
+	// after confirming that all Agent-owned Runtime cleanup is complete.
+	TaskAgentCleanupFinalizer = "rlark.io/agent-cleanup"
+
 	// SecretNamespace is the namespace where management cluster secrets live.
 	SecretNamespace = "default"
 

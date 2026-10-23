@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -33,6 +34,147 @@ func mkEvent(typ, reason, message, source, kind, name string, last time.Time, co
 		Type: typ, Reason: reason, Message: message, Source: source,
 		ObjectKind: kind, ObjectName: name,
 		LastTime: metav1.NewTime(last), Count: count,
+	}
+}
+
+func mkPullNode(name, namespace string, progress []rlarkv1alpha1.PullProgress) *rlarkv1alpha1.Node {
+	return &rlarkv1alpha1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Status:     rlarkv1alpha1.NodeStatus{PullProgress: progress},
+	}
+}
+
+// mkPullTask builds a Pending Task whose common workload template references
+// the given images, so aggregatePullProgress has something to filter against.
+func mkPullTask(observedNodes []string, images ...string) *rlarkv1alpha1.Task {
+	containers := make([]corev1.Container, 0, len(images))
+	for i, img := range images {
+		containers = append(containers, corev1.Container{Name: "c" + string(rune('0'+i)), Image: img})
+	}
+	return &rlarkv1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: "t1", Namespace: "rlark-system"},
+		Spec: rlarkv1alpha1.TaskSpec{
+			Workload: rlarkv1alpha1.TaskWorkloadSpec{
+				Template: &corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{Containers: containers},
+				},
+			},
+		},
+		Status: rlarkv1alpha1.TaskStatus{
+			Phase:         rlarkv1alpha1.TaskPhasePending,
+			ObservedNodes: observedNodes,
+		},
+	}
+}
+
+func TestAggregatePullProgressEmptyObservedReturnsNil(t *testing.T) {
+	r := &Reconciler{Client: fake.NewClientBuilder().WithScheme(newTestScheme(t)).Build()}
+
+	if got := r.aggregatePullProgress(context.Background(), mkPullTask(nil, "img:a")); got != nil {
+		t.Errorf("expected nil for empty observedNodes, got %v", got)
+	}
+}
+
+func TestAggregatePullProgressNoSpecImagesReturnsNil(t *testing.T) {
+	scheme := newTestScheme(t)
+	nodeA := mkPullNode("node-a", "rlark-system", []rlarkv1alpha1.PullProgress{
+		{Image: "img:a", Status: "Pulling"},
+	})
+	r := &Reconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeA).Build()}
+
+	// A Task with no container images cannot attribute any pull to itself.
+	task := mkPullTask([]string{"node-a"})
+	if got := r.aggregatePullProgress(context.Background(), task); got != nil {
+		t.Errorf("expected nil when the spec references no images, got %v", got)
+	}
+}
+
+// Node names may repeat in ObservedNodes and the map iteration order is
+// random, so the aggregation must deduplicate nodes and produce a stable
+// (image, node) order regardless of how ObservedNodes is written.
+func TestAggregatePullProgressDeduplicatesNodesAndSortsStably(t *testing.T) {
+	scheme := newTestScheme(t)
+	nodeA := mkPullNode("node-a", "rlark-system", []rlarkv1alpha1.PullProgress{
+		{Image: "img:b", Status: "Pulling", Message: "a/b"},
+		{Image: "img:a", Status: "Pulling", Message: "a/a"},
+	})
+	nodeB := mkPullNode("node-b", "rlark-system", []rlarkv1alpha1.PullProgress{
+		{Image: "img:a", Status: "Pulling", Message: "b/a"},
+	})
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeA, nodeB).Build()
+	r := &Reconciler{Client: c}
+
+	// node-b listed first and node-a listed twice: the result must still be
+	// ordered by image, then by node.
+	task := mkPullTask([]string{"node-b", "node-a", "node-b"}, "img:a", "img:b")
+
+	got := r.aggregatePullProgress(context.Background(), task)
+	want := []string{"a/a", "b/a", "a/b"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d entries, got %d: %+v", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i].Message != w {
+			t.Errorf("entry %d message = %q, want %q", i, got[i].Message, w)
+		}
+	}
+
+	// Re-aggregating the same observed state must be byte-identical,
+	// otherwise the pullProgressEqual guard never holds and the controller
+	// rewrites status forever.
+	again := r.aggregatePullProgress(context.Background(), task)
+	if !pullProgressEqual(got, again) {
+		t.Errorf("aggregation is not stable across calls: %+v vs %+v", got, again)
+	}
+}
+
+func TestAggregatePullProgressFiltersUnreferencedImages(t *testing.T) {
+	scheme := newTestScheme(t)
+	nodeA := mkPullNode("node-a", "rlark-system", []rlarkv1alpha1.PullProgress{
+		{Image: "img:a", Status: "Pulling"},
+		{Image: "other:1", Status: "Pulling"},
+	})
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeA).Build()
+	r := &Reconciler{Client: c}
+
+	got := r.aggregatePullProgress(context.Background(), mkPullTask([]string{"node-a"}, "img:a"))
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry after filtering, got %d: %+v", len(got), got)
+	}
+	if got[0].Image != "img:a" {
+		t.Errorf("image = %q, want img:a", got[0].Image)
+	}
+}
+
+func TestAggregatePullProgressMissingNodeIsSkipped(t *testing.T) {
+	scheme := newTestScheme(t)
+	nodeA := mkPullNode("node-a", "rlark-system", []rlarkv1alpha1.PullProgress{
+		{Image: "img:a", Status: "Pulling"},
+	})
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeA).Build()
+	r := &Reconciler{Client: c}
+
+	// node-b has not reported yet; the aggregation must skip it.
+	got := r.aggregatePullProgress(context.Background(), mkPullTask([]string{"node-a", "node-b"}, "img:a"))
+	if len(got) != 1 {
+		t.Fatalf("expected 1 entry (node-b skipped), got %d", len(got))
+	}
+}
+
+func TestAggregatePullProgressCapsMaxAggregated(t *testing.T) {
+	scheme := newTestScheme(t)
+
+	progress := make([]rlarkv1alpha1.PullProgress, 0, maxAggregatedPullProgress+5)
+	for i := 0; i < maxAggregatedPullProgress+5; i++ {
+		progress = append(progress, rlarkv1alpha1.PullProgress{Image: "img:a", Status: "Pulling", Downloaded: int64(i)})
+	}
+	nodeA := mkPullNode("node-a", "rlark-system", progress)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nodeA).Build()
+	r := &Reconciler{Client: c}
+
+	got := r.aggregatePullProgress(context.Background(), mkPullTask([]string{"node-a"}, "img:a"))
+	if len(got) != maxAggregatedPullProgress {
+		t.Fatalf("expected %d entries (capped), got %d", maxAggregatedPullProgress, len(got))
 	}
 }
 

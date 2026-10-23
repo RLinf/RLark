@@ -160,6 +160,7 @@ Data plane agent. Deployed on each cluster or node. Manages node registration, T
 | `--leader-election-id` | string | `hostname-pid` | Leader election identity |
 | `--metrics-bind-address` | string | `:8081` | Metrics endpoint bind address |
 | `--task-pull-controller-workers` | int | `8` | Maximum concurrent Task pull reconciles |
+| `--task-runtime-resync-period` | duration | `15m` | Base period for cluster-mode shared Task Runtime repair scans; intervals use 80–120% jitter, `0` disables scans, and negative values are invalid; node-only mode accepts the shared flag but does not run the scanner |
 | `--addon-pull-controller-workers` | int | `8` | Maximum concurrent Addon pull reconciles |
 | `--task-deployment-push-controller-workers` | int | `8` | Maximum concurrent Task Deployment push reconciles |
 | `--task-daemonset-push-controller-workers` | int | `8` | Maximum concurrent Task DaemonSet push reconciles |
@@ -245,14 +246,24 @@ The `sshd` subcommand provides SSH access to running Task Pods. The agent always
 | ------ | ------ | --------- | ------------- |
 | `--port` | string | `22` | SSH listen port |
 | `--shell` | string | `""` | Shell binary path (default: /bin/bash) |
+| `--authorized-key-file` | string list | `/var/run/rlark/ssh/authorized_key` | Authorized-key files reopened for every authentication attempt; repeat the flag or provide a comma-separated list |
 
-**Environment variables:**
+The Kubernetes workload Environment Handler mounts a Task-incarnation Secret at the default path. The mount is a directory projection without `subPath`, allowing kubelet to publish Secret updates. Empty files contribute no keys; public-key authentication is disabled when every configured source is empty. Every explicitly configured file must remain readable—if any read fails, that authentication attempt fails closed rather than silently using a subset. Updates are eventually consistent with kubelet Secret projection and are not guaranteed to revoke access instantaneously. `RLARK_SSH_PUBLIC_KEY` and the user's `~/.ssh/authorized_keys` are not fallback sources; use repeated `--authorized-key-file` flags when starting `rlark-tools sshd` outside the built-in workload path.
 
-| Variable | Description |
-| ---------- | ------------- |
-| `RLARK_SSH_PUBLIC_KEY` | SSH public key for authorized_keys |
+```bash
+rlark-tools sshd \
+  --authorized-key-file=/var/run/rlark/ssh/authorized_key \
+  --authorized-key-file=/etc/rlark/admin_authorized_keys
+```
 
-The Agent environment variable `RLARK_ENABLE_UNSAFE_TASK_PRIVILEGES=true` enables the legacy task mode that grants all task containers privileged access and enables host networking for tasks other than Ray heads. It is disabled by default and should only be used in trusted clusters.
+## Agent Task Execution Environment Variables
+
+| Variable | Default | Description |
+| ---------- | --------- | ------------- |
+| `RLARK_TENSORBOARD_IMAGE` | `rlinf/tensorboard:2.15.1-rc1` | Trusted TensorBoard image used by the Kubernetes Environment Handler. Empty values also use the default. This variable is a transitional configuration mechanism and is expected to move to validated typed Agent configuration. |
+| `RLARK_ENABLE_UNSAFE_TASK_PRIVILEGES` | `false` | Set to exactly `true` to enable the legacy unsafe Task mode. |
+
+The unsafe Task mode grants privileged access during Workload compilation to the containers and init containers already declared in the Task Pod template. It also enables host networking for tasks other than Ray heads. Containers added later by Environment binding are not covered by this legacy privilege override; each trusted Environment Handler declares its own required security context. In particular, the cross-domain network sidecar remains privileged with `NET_ADMIN` through its trusted Network profile, while RLark Tools and TensorBoard retain their own declared permissions. Enable this mode only in trusted clusters.
 
 ## Storage Provider Configuration
 

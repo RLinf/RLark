@@ -111,9 +111,8 @@ export function SSHKeysPage({
         await sshKeysApi.create(newUser.trim(), newKey.trim());
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) {
-          const data = error.body as { error?: string };
           setError(
-            data.error === "public key name already exists"
+            errorMessage(error.body) === "public key name already exists"
               ? zh
                 ? "公钥名称已存在，请使用其他名称。"
                 : "The public key name already exists. Use another name."
@@ -558,5 +557,5 @@ export function SSHKeysPage({
     </div>
   );
 }
-import { ApiError } from "../api";
+import { ApiError, errorMessage } from "../api";
 import { sshKeysApi, systemConfigApi, type SSHKeyItem } from "../backend";

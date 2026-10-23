@@ -16,7 +16,8 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import type { Copy } from "../i18n";
-import type { CRDDomain, CRDJob, CRDNode } from "../types";
+import type { CRDDomain, CRDNode } from "../types";
+import type { CRDJob } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
 import { formatChinaDateTime } from "../utils/time";
 import { RefreshOverlay } from "../components/shared";
@@ -37,9 +38,10 @@ const emptyData: DashboardData = {
 
 function jobDisplayName(job: CRDJob) {
   return (
-    job.metadata.annotations?.["rlark.io/display-name"] ??
-    job.metadata.labels?.["rlark.io/display-name"] ??
-    job.metadata.name
+    job.metadata?.annotations?.["rlark.io/display-name"] ??
+    job.metadata?.labels?.["rlark.io/display-name"] ??
+    job.metadata?.name ??
+    ""
   );
 }
 
@@ -123,12 +125,12 @@ export function AdminDashboard({
     () =>
       [
         ...data.jobs.map((job) => ({
-          id: `job-${job.metadata.name}`,
+          id: `job-${job.metadata?.name ?? ""}`,
           type: zh ? "任务" : "Job",
           name: jobDisplayName(job),
-          resourceName: job.metadata.name,
+          resourceName: job.metadata?.name ?? "",
           state: job.status?.phase ?? "Pending",
-          time: job.metadata.creationTimestamp,
+          time: job.metadata?.creationTimestamp,
           target: "jobs",
         })),
         ...data.nodes.map((node) => ({
@@ -383,8 +385,8 @@ export function AdminDashboard({
             ))}
             {summary.pendingJobs.slice(0, 3).map((job) => (
               <button
-                key={job.metadata.name}
-                onClick={() => onNavigate("jobs", job.metadata.name)}
+                key={job.metadata?.name ?? ""}
+                onClick={() => onNavigate("jobs", job.metadata?.name ?? "")}
               >
                 <span className="pending">
                   <Activity size={15} />

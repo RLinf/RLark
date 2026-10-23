@@ -23,7 +23,7 @@ func TestBuildClusterInfoUsesCityMetadata(t *testing.T) {
 		},
 	}}
 
-	info := buildClusterInfo("cluster-a", nodes)
+	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes)
 	if info.Location != "annotation-city" {
 		t.Fatalf("expected annotation city, got %q", info.Location)
 	}
@@ -37,7 +37,7 @@ func TestBuildClusterInfoFallsBackToCityLabel(t *testing.T) {
 		}},
 	}}
 
-	info := buildClusterInfo("cluster-a", nodes)
+	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes)
 	if info.Location != "label-city" {
 		t.Fatalf("expected label city, got %q", info.Location)
 	}
@@ -64,7 +64,7 @@ func TestBuildClusterInfoBooleanCategoryLabel(t *testing.T) {
 		},
 	}
 
-	info := buildClusterInfo("cluster-a", nodes)
+	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes)
 	if info.Type != "Cloud" {
 		t.Fatalf("expected Cloud, got %q (cloud=%d embodied=%d robots=%d)",
 			info.Type, info.CloudNodes, info.EmbodiedNodes, info.Robots)
@@ -75,6 +75,18 @@ func TestBuildClusterInfoBooleanCategoryLabel(t *testing.T) {
 }
 
 // 两种 label 形式同时存在时也要合并识别（去重）
+func TestBuildClusterInfoUsesClusterStatus(t *testing.T) {
+	cluster := rlarkv1alpha1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"},
+		Status:     rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterDowngraded},
+	}
+
+	info := buildClusterInfo(cluster, nil)
+	if info.Phase != rlarkv1alpha1.ClusterDowngraded {
+		t.Fatalf("expected Downgraded, got %q", info.Phase)
+	}
+}
+
 func TestBuildClusterInfoMixedCategoryLabelForms(t *testing.T) {
 	nodes := []rlarkv1alpha1.Node{
 		{
@@ -93,7 +105,7 @@ func TestBuildClusterInfoMixedCategoryLabelForms(t *testing.T) {
 		},
 	}
 
-	info := buildClusterInfo("cluster-a", nodes)
+	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes)
 	if info.Type != "Hybrid" {
 		t.Fatalf("expected Hybrid, got %q (cloud=%d embodied=%d robots=%d)",
 			info.Type, info.CloudNodes, info.EmbodiedNodes, info.Robots)

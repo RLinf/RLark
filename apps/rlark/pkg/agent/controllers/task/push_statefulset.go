@@ -4,13 +4,13 @@ import (
 	"context"
 
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	raykubernetes "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/workload/ray/kubernetes"
 )
 
 // pushStatefulSetReconciler watches local StatefulSets and reports status to management Task.
@@ -48,51 +48,14 @@ func (r *pushStatefulSetReconciler) Reconcile(ctx context.Context, req reconcile
 		return reconcile.Result{}, nil
 	}
 
-	if !pushOwnsTask(&mgmtTask, r.c.AgentType, &sts, rlarkv1alpha1.KubernetesWorkloadStatefulSet) {
+	if !pushOwnsTask(&mgmtTask, r.c.AgentType, &sts, raykubernetes.CarrierStatefulSet) {
 		logger.Info("StatefulSet no longer owns management Task status, skipping")
 		return reconcile.Result{}, nil
 	}
 
-	phase, message, pods, err := statefulSetPhase(ctx, r.c.LocalKubeClient, &sts)
-	if err != nil {
+	if err := r.c.emitRuntimeTrigger(ctx, &mgmtTask, kubernetesWorkloadRef(&mgmtTask, &sts, raykubernetes.CarrierStatefulSet)); err != nil {
+		logger.Error(err, "failed to emit Task Runtime trigger")
 		return reconcile.Result{}, err
 	}
-	observedNodes := podNodeNames(pods)
-	return updateMgmtTaskStatus(ctx, logger, r.c.ManagementClient, &mgmtTask, phase, message, observedNodes)
-}
-
-func statefulSetPhase(ctx context.Context, localClient client.Client, sts *appsv1.StatefulSet) (rlarkv1alpha1.TaskPhase, string, []corev1.Pod, error) {
-	desired := computeDesiredReplicas(sts.Spec.Replicas)
-	var phase rlarkv1alpha1.TaskPhase
-	switch {
-	case desired == 0:
-		phase = rlarkv1alpha1.TaskPhaseStopped
-	case sts.Status.ObservedGeneration >= sts.Generation && sts.Status.UpdatedReplicas == desired &&
-		sts.Status.ReadyReplicas == desired && sts.Status.CurrentReplicas == desired &&
-		sts.Status.CurrentRevision != "" && sts.Status.CurrentRevision == sts.Status.UpdateRevision:
-		phase = rlarkv1alpha1.TaskPhaseRunning
-	default:
-		phase = rlarkv1alpha1.TaskPhasePending
-	}
-
-	pods, err := listTaskPods(ctx, localClient, sts, sts.Spec.Selector.MatchLabels)
-	if err != nil {
-		return "", "", nil, err
-	}
-	// Override to Failed when any pod container is in an abnormal state
-	// (CrashLoopBackOff, ImagePullBackOff, OOMKilled, etc.) so operators
-	// see the failure immediately instead of a misleading Running/Pending.
-	var message string
-	if podMsg, found := podFailureMessage(pods); found && phase != rlarkv1alpha1.TaskPhaseSucceeded {
-		phase = rlarkv1alpha1.TaskPhaseFailed
-		message = podMsg
-	}
-	if phase == rlarkv1alpha1.TaskPhasePending {
-		if found, err := hasFailedSchedulingEvent(ctx, localClient, sts.Namespace, pods); err != nil {
-			return "", "", nil, err
-		} else if found {
-			message = "FailedScheduling"
-		}
-	}
-	return phase, message, pods, nil
+	return reconcile.Result{}, nil
 }

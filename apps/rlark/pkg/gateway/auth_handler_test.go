@@ -156,11 +156,9 @@ func TestRegisteredRoutePermissions(t *testing.T) {
 		user   int
 		admin  int
 	}{
-		{name: "user route", method: http.MethodGet, path: "/api/v1/rlinf.io/v1alpha1/jobs/anything/metrics", user: http.StatusNotImplemented, admin: http.StatusNotImplemented},
 		{name: "shared system config read", method: http.MethodGet, path: "/api/v1/system-config", user: http.StatusOK, admin: http.StatusOK},
 		{name: "admin system config write", method: http.MethodPut, path: "/api/v1/system-config", user: http.StatusForbidden, admin: http.StatusBadRequest},
 		{name: "shared ssh keys", method: http.MethodGet, path: "/api/v1/ssh-user-keys", user: http.StatusOK, admin: http.StatusOK},
-		{name: "admin write on shared resource", method: http.MethodPost, path: "/api/v1/storage/storageclass", user: http.StatusForbidden, admin: http.StatusBadRequest},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

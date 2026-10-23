@@ -184,6 +184,8 @@ volumes:
 | `--leader-election` | `true` | 是否启用 Leader 选举 |
 | `--metrics-bind-address` | `:8080` | 指标监听地址 |
 | `--health-probe-bind-address` | `:8081` | `/healthz` 和 `/readyz` 监听地址 |
+| `--archive-ttl` | `5m` | 终态资源在 kcp 中保留的时长，超时后归档删除 |
+| `--enable-secret-backend` | `false` | 使用 Kubernetes Secret 作为持久化后端（测试模式，仅在未配置 PostgreSQL 时生效） |
 
 ### 5.3 Gateway
 
@@ -192,6 +194,7 @@ volumes:
 | `--kubeconfig` | `$KUBECONFIG` | 控制面 kubeconfig |
 | `--addr` | `:8080` | 独立二进制默认值；`rlarkadm` 会覆盖为 `:8090` |
 | `--db-config` | `""` | 数据库配置文件路径 |
+| `--enable-secret-backend` | `false` | 使用 Kubernetes Secret 作为持久化后端（测试模式，仅在未配置 PostgreSQL 时生效） |
 | `--server-address` | `https://rlark-server.rlark-system.svc:8443` | 用于证书签发的 Server 地址 |
 
 ### 5.4 Agent

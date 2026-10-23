@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,60 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/logquery"
 )
+
+const (
+	// defaultLogQueryLimit is the backend page size used when the caller does
+	// not ask for one.
+	defaultLogQueryLimit = 99
+	// maxLogQueryLimit bounds a single backend log page so that one request
+	// cannot ask the backend for an unbounded result set.
+	maxLogQueryLimit = 1000
+)
+
+// parseLogTimeRange reads the RFC 3339 log window from the query string.
+//
+// A malformed value must be rejected instead of being dropped: "from" decides
+// whether the backend is queried at all, so silently ignoring it would answer a
+// historical query with current Pod logs and look like missing data.
+func parseLogTimeRange(c *gin.Context) (from, to time.Time, fromProvided bool, err error) {
+	if v := c.Query("from"); v != "" {
+		parsed, perr := time.Parse(time.RFC3339, v)
+		if perr != nil {
+			return time.Time{}, time.Time{}, false, invalidParam("from", "must be an RFC 3339 timestamp")
+		}
+		from = parsed
+		fromProvided = true
+	}
+	if v := c.Query("to"); v != "" {
+		parsed, perr := time.Parse(time.RFC3339, v)
+		if perr != nil {
+			return time.Time{}, time.Time{}, false, invalidParam("to", "must be an RFC 3339 timestamp")
+		}
+		to = parsed
+	}
+	if fromProvided && !to.IsZero() && to.Before(from) {
+		return time.Time{}, time.Time{}, false, invalidParam("to", "must not be earlier than from")
+	}
+	return from, to, fromProvided, nil
+}
+
+// parseLogLimit reads the backend page size from the query string.
+func parseLogLimit(c *gin.Context) (int, error) {
+	v := c.Query("limit")
+	if v == "" {
+		return defaultLogQueryLimit, nil
+	}
+	n, err := strconv.Atoi(v)
+	switch {
+	case err != nil:
+		return 0, invalidParam("limit", "must be an integer")
+	case n <= 0:
+		return 0, invalidParam("limit", "must be greater than 0")
+	case n > maxLogQueryLimit:
+		return 0, invalidParam("limit", fmt.Sprintf("must not exceed %d", maxLogQueryLimit))
+	}
+	return n, nil
+}
 
 type podLogInfo struct {
 	TaskName string `json:"taskName"`
@@ -78,19 +133,24 @@ func (g *Gateway) rlinfv1alpha1JobLogs(c *gin.Context) {
 	ctx := c.Request.Context()
 	jobName := c.Param("name")
 
-	// 从日志后端存储查询
-	var fromTime, toTime time.Time
-	var timeRangeProvided bool
-	if v := c.Query("from"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			fromTime = t
-			timeRangeProvided = true
-		}
+	// Logs are derived from the Job, so they follow the tenant boundary of the
+	// Job object. The check reads the stored Job because neither the path nor
+	// the query carries a tenant identity. Job is cluster scoped, so the
+	// lookup namespace is empty.
+	if !g.authorizeTenantObjectByName(c, "jobs", "", jobName) {
+		return
 	}
-	if v := c.Query("to"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			toTime = t
-		}
+
+	// 从日志后端存储查询
+	fromTime, toTime, timeRangeProvided, err := parseLogTimeRange(c)
+	if err != nil {
+		respondInvalidQueryParam(c, err)
+		return
+	}
+	limit, err := parseLogLimit(c)
+	if err != nil {
+		respondInvalidQueryParam(c, err)
+		return
 	}
 
 	// Optional filters for backend query
@@ -102,7 +162,7 @@ func (g *Gateway) rlinfv1alpha1JobLogs(c *gin.Context) {
 
 	if timeRangeProvided {
 		if querier := g.getLogQuerier(ctx); querier != nil {
-			result, err := g.queryJobLogsFromBackend(ctx, querier, jobName, fromTime, toTime, taskName, podName, rawQuery, cursor, reverse)
+			result, err := g.queryJobLogsFromBackend(ctx, querier, jobName, fromTime, toTime, taskName, podName, rawQuery, cursor, reverse, limit)
 			if err == nil {
 				c.JSON(http.StatusOK, gin.H{
 					"source":     "backend",
@@ -127,17 +187,17 @@ func (g *Gateway) rlinfv1alpha1JobLogLabelValues(c *gin.Context) {
 	ctx := c.Request.Context()
 	jobName := c.Param("name")
 
-	// 时间范围参数
-	var fromTime, toTime time.Time
-	if v := c.Query("from"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			fromTime = t
-		}
+	// The label vocabulary describes the Job logs, so it follows the same
+	// tenant boundary as the log entries themselves.
+	if !g.authorizeTenantObjectByName(c, "jobs", "", jobName) {
+		return
 	}
-	if v := c.Query("to"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			toTime = t
-		}
+
+	// 时间范围参数
+	fromTime, toTime, _, err := parseLogTimeRange(c)
+	if err != nil {
+		respondInvalidQueryParam(c, err)
+		return
 	}
 
 	// 标签名参数，默认为 "pod"
@@ -170,14 +230,14 @@ func (g *Gateway) rlinfv1alpha1JobLogLabelValues(c *gin.Context) {
 	values, err := querier.LabelValues(ctx, label, fromTime, toTime, filters)
 	if err != nil {
 		logger.Error(err, "failed to query label values", "job", jobName, "label", label)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to query label values: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, fmt.Sprintf("failed to query label values: %v", err))
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"values": values})
 }
 
-func (g *Gateway) queryJobLogsFromBackend(ctx context.Context, querier logquery.Querier, jobName string, from, to time.Time, taskName, podName, rawQuery, cursor string, reverse bool) (*logquery.Result, error) {
+func (g *Gateway) queryJobLogsFromBackend(ctx context.Context, querier logquery.Querier, jobName string, from, to time.Time, taskName, podName, rawQuery, cursor string, reverse bool, limit int) (*logquery.Result, error) {
 	if to.IsZero() {
 		to = time.Now()
 	}
@@ -198,7 +258,7 @@ func (g *Gateway) queryJobLogsFromBackend(ctx context.Context, querier logquery.
 		Raw:     rawQuery,
 		From:    from,
 		To:      to,
-		Limit:   99,
+		Limit:   limit,
 		Labels:  labels,
 		Cursor:  cursor,
 		Reverse: reverse,
@@ -213,7 +273,7 @@ func (g *Gateway) serveJobPodLogs(c *gin.Context, jobName string) {
 		LabelSelector: fmt.Sprintf("rlinf.io/job=%s", jobName),
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("list tasks: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("list tasks: %v", err))
 		return
 	}
 

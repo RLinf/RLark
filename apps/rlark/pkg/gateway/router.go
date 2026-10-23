@@ -4,6 +4,11 @@ import "github.com/gin-gonic/gin"
 
 // RegisterRoutes registers the routes.
 func (g *Gateway) RegisterRoutes(r gin.IRouter) {
+	// Installed here rather than by the caller so that every route served by the
+	// gateway, including the ones mounted by tests, reports a correlation ID in
+	// its error bodies.
+	r.Use(RequestIDMiddleware())
+
 	auth := r.Group("/api/v1/auth")
 	{
 		auth.POST("/login", g.handleLogin)
@@ -15,6 +20,17 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 	adminRlinfv1alpha1 := rlinfv1alpha1.Group("", requireAdmin())
 
 	api.GET("/api-reference", g.handleAPIReference)
+	users := api.Group("/users")
+	{
+		users.GET("/me", g.handleGetUser)
+		users.GET("/:id", g.handleGetUser)
+	}
+	adminAPI.GET("/users", g.handleListUsers)
+	tenants := api.Group("/tenants")
+	{
+		tenants.GET("", g.handleListTenants)
+		tenants.GET("/:id", g.handleGetTenant)
+	}
 
 	// Clusters API
 	clusters := api.Group("/clusters")
@@ -55,9 +71,9 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		jobs.PUT("/:name", g.rlinfv1alpha1UpdateJob)
 		jobs.PATCH("/:name", g.rlinfv1alpha1PatchJob)
 		jobs.DELETE("/:name", g.rlinfv1alpha1DeleteJob)
+		jobs.POST("/:name/start", g.rlinfv1alpha1StartJob)
 		jobs.GET("/:name/logs", g.rlinfv1alpha1JobLogs)
 		jobs.GET("/:name/logs/label-values", g.rlinfv1alpha1JobLogLabelValues)
-		jobs.GET("/:name/metrics", g.rlinfv1alpha1JobMetrics)
 	}
 
 	tasks := rlinfv1alpha1.Group("/tasks")
@@ -180,7 +196,7 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 
 // --- Node handlers ---
 
-func (g *Gateway) rlinfv1alpha1ListNodes(c *gin.Context)  { g.handleList("nodes")(c) }
+func (g *Gateway) rlinfv1alpha1ListNodes(c *gin.Context)  { g.handleListNodes(c) }
 func (g *Gateway) rlinfv1alpha1CreateNode(c *gin.Context) { g.handleKubeCreate("nodes")(c) }
 func (g *Gateway) rlinfv1alpha1GetNode(c *gin.Context)    { g.handleGet("nodes")(c) }
 func (g *Gateway) rlinfv1alpha1UpdateNode(c *gin.Context) { g.handleKubeUpdate("nodes")(c) }
@@ -205,12 +221,7 @@ func (g *Gateway) rlinfv1alpha1GetJob(c *gin.Context)      { g.handleGet("jobs")
 func (g *Gateway) rlinfv1alpha1UpdateJob(c *gin.Context)   { g.handleKubeUpdate("jobs")(c) }
 func (g *Gateway) rlinfv1alpha1PatchJob(c *gin.Context)    { g.handleKubePatch("jobs")(c) }
 func (g *Gateway) rlinfv1alpha1DeleteJob(c *gin.Context)   { g.handleKubeDelete("jobs")(c) }
-
-// --- Job sub-resource handlers ---
-
-func (g *Gateway) rlinfv1alpha1JobMetrics(c *gin.Context) {
-	c.JSON(501, gin.H{"message": "not implemented"})
-}
+func (g *Gateway) rlinfv1alpha1StartJob(c *gin.Context)    { g.handleStartJob(c) }
 
 // --- Task handlers ---
 

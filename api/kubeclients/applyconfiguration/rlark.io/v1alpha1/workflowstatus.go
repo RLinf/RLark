@@ -26,11 +26,15 @@ import (
 // WorkflowStatusApplyConfiguration represents a declarative configuration of the WorkflowStatus type for use
 // with apply.
 type WorkflowStatusApplyConfiguration struct {
-	Phase      *rlarkiov1alpha1.WorkflowPhase        `json:"phase,omitempty"`
-	Jobs       []WorkflowJobStatusApplyConfiguration `json:"jobs,omitempty"`
-	Conditions []v1.ConditionApplyConfiguration      `json:"conditions,omitempty"`
-	StartTime  *metav1.Time                          `json:"startTime,omitempty"`
-	EndTime    *metav1.Time                          `json:"endTime,omitempty"`
+	Phase *rlarkiov1alpha1.WorkflowPhase `json:"phase,omitempty"`
+	// ObservedGeneration 是 Workflow 控制器最近一次完成调谐时所观测到的
+	// metadata.generation。它是控制器契约而非 API Server 保证：消费者在读取
+	// phase / conditions 之前，应比较本字段与 metadata.generation 以识别过期状态。
+	ObservedGeneration *int64                                `json:"observedGeneration,omitempty"`
+	Jobs               []WorkflowJobStatusApplyConfiguration `json:"jobs,omitempty"`
+	Conditions         []v1.ConditionApplyConfiguration      `json:"conditions,omitempty"`
+	StartTime          *metav1.Time                          `json:"startTime,omitempty"`
+	EndTime            *metav1.Time                          `json:"endTime,omitempty"`
 }
 
 // WorkflowStatusApplyConfiguration constructs a declarative configuration of the WorkflowStatus type for use with
@@ -44,6 +48,14 @@ func WorkflowStatus() *WorkflowStatusApplyConfiguration {
 // If called multiple times, the Phase field is set to the value of the last call.
 func (b *WorkflowStatusApplyConfiguration) WithPhase(value rlarkiov1alpha1.WorkflowPhase) *WorkflowStatusApplyConfiguration {
 	b.Phase = &value
+	return b
+}
+
+// WithObservedGeneration sets the ObservedGeneration field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedGeneration field is set to the value of the last call.
+func (b *WorkflowStatusApplyConfiguration) WithObservedGeneration(value int64) *WorkflowStatusApplyConfiguration {
+	b.ObservedGeneration = &value
 	return b
 }
 

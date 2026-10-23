@@ -37,12 +37,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.AddonSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AddonStatus"):
 		return &rlarkiov1alpha1.AddonStatusApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("DockerContainerSpec"):
-		return &rlarkiov1alpha1.DockerContainerSpecApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("DockerTaskSpec"):
-		return &rlarkiov1alpha1.DockerTaskSpecApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("DockerVolumeRef"):
-		return &rlarkiov1alpha1.DockerVolumeRefApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("Cluster"):
+		return &rlarkiov1alpha1.ClusterApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterSpec"):
+		return &rlarkiov1alpha1.ClusterSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterStatus"):
+		return &rlarkiov1alpha1.ClusterStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Domain"):
 		return &rlarkiov1alpha1.DomainApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DomainIPAllocation"):
@@ -57,8 +57,6 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.DomainSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DomainStatus"):
 		return &rlarkiov1alpha1.DomainStatusApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("EnvVar"):
-		return &rlarkiov1alpha1.EnvVarApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Job"):
 		return &rlarkiov1alpha1.JobApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("JobSpec"):
@@ -71,10 +69,6 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.JobTaskStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("JobTaskTemplate"):
 		return &rlarkiov1alpha1.JobTaskTemplateApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("KubernetesTaskSpec"):
-		return &rlarkiov1alpha1.KubernetesTaskSpecApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("KubernetesWorkloadSpec"):
-		return &rlarkiov1alpha1.KubernetesWorkloadSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Node"):
 		return &rlarkiov1alpha1.NodeApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeEvent"):
@@ -95,14 +89,22 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.PodStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PullProgress"):
 		return &rlarkiov1alpha1.PullProgressApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("RawTaskSpec"):
-		return &rlarkiov1alpha1.RawTaskSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Task"):
 		return &rlarkiov1alpha1.TaskApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TaskEnvironment"):
+		return &rlarkiov1alpha1.TaskEnvironmentApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TaskPlacementSpec"):
+		return &rlarkiov1alpha1.TaskPlacementSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TaskRuntimeSpec"):
+		return &rlarkiov1alpha1.TaskRuntimeSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskSpec"):
 		return &rlarkiov1alpha1.TaskSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskStatus"):
 		return &rlarkiov1alpha1.TaskStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TaskWorkloadCarrier"):
+		return &rlarkiov1alpha1.TaskWorkloadCarrierApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TaskWorkloadSpec"):
+		return &rlarkiov1alpha1.TaskWorkloadSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Workflow"):
 		return &rlarkiov1alpha1.WorkflowApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("WorkflowJobStatus"):

@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -111,7 +112,7 @@ func TestStoppedWorkflowCompletesAfterJobsDisappear(t *testing.T) {
 	wf := &rlarkv1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "wf", UID: types.UID("wf-uid")},
 		Spec: rlarkv1alpha1.WorkflowSpec{
-			Stopped:      true,
+			Suspended:    true,
 			JobTemplates: []rlarkv1alpha1.WorkflowJobTemplate{{Name: "train"}},
 		},
 		Status: rlarkv1alpha1.WorkflowStatus{Phase: rlarkv1alpha1.WorkflowPhaseStopping, Jobs: []rlarkv1alpha1.WorkflowJobStatus{{Name: "train", Phase: rlarkv1alpha1.JobPhaseRunning}}},
@@ -201,7 +202,7 @@ func TestWorkflowResumeWaitsForTerminatingJob(t *testing.T) {
 
 func TestStoppedWorkflowPreservesTerminalJobStatuses(t *testing.T) {
 	wf := &rlarkv1alpha1.Workflow{
-		Spec: rlarkv1alpha1.WorkflowSpec{Stopped: true, JobTemplates: []rlarkv1alpha1.WorkflowJobTemplate{
+		Spec: rlarkv1alpha1.WorkflowSpec{Suspended: true, JobTemplates: []rlarkv1alpha1.WorkflowJobTemplate{
 			{Name: "done"}, {Name: "failed"}, {Name: "running"},
 		}},
 		Status: rlarkv1alpha1.WorkflowStatus{Phase: rlarkv1alpha1.WorkflowPhaseStopping, Jobs: []rlarkv1alpha1.WorkflowJobStatus{
@@ -341,6 +342,66 @@ func TestPruneJobsDeletesOwnerOnlyRemovedJob(t *testing.T) {
 	}
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(job), &rlarkv1alpha1.Job{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("owner-only removed Job still exists: %v", err)
+	}
+}
+
+func TestInvalidDAGFailsWorkflowWithoutRequeue(t *testing.T) {
+	wf := &rlarkv1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "wf", UID: types.UID("wf-uid"), Generation: 3},
+		Spec: rlarkv1alpha1.WorkflowSpec{JobTemplates: []rlarkv1alpha1.WorkflowJobTemplate{
+			{Name: "train", Dependencies: []string{"missing"}},
+		}},
+	}
+	scheme := workflowTestScheme(t)
+	r := &Reconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build(), Scheme: scheme}
+
+	// An invalid Spec is not repairable by retrying, so the reconciler must not
+	// return an error (which would requeue forever) and must instead record the
+	// conclusion in the Validated condition.
+	changed, err := r.ReconcileStateMachine(context.Background(), wf)
+	if err != nil {
+		t.Fatalf("invalid DAG returned error: %v", err)
+	}
+	if !changed || wf.Status.Phase != rlarkv1alpha1.WorkflowPhaseFailed || wf.Status.EndTime == nil {
+		t.Fatalf("invalid DAG did not fail the Workflow: changed=%v status=%#v", changed, wf.Status)
+	}
+	cond := apimeta.FindStatusCondition(wf.Status.Conditions, workflowConditionValidated)
+	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != workflowReasonInvalidDAG {
+		t.Fatalf("unexpected Validated condition: %#v", wf.Status.Conditions)
+	}
+	if cond.ObservedGeneration != wf.Generation || wf.Status.ObservedGeneration != wf.Generation {
+		t.Fatalf("stale observedGeneration: condition=%d status=%d want=%d", cond.ObservedGeneration, wf.Status.ObservedGeneration, wf.Generation)
+	}
+	if _, err := r.ReconcileStateMachine(context.Background(), wf); err != nil {
+		t.Fatalf("second reconcile of invalid DAG returned error: %v", err)
+	}
+}
+
+func TestValidSpecClearsStaleValidatedCondition(t *testing.T) {
+	wf := &rlarkv1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "wf", UID: types.UID("wf-uid"), Generation: 4},
+		Spec:       rlarkv1alpha1.WorkflowSpec{JobTemplates: []rlarkv1alpha1.WorkflowJobTemplate{{Name: "train"}}},
+		Status: rlarkv1alpha1.WorkflowStatus{
+			Conditions: []metav1.Condition{{
+				Type:               workflowConditionValidated,
+				Status:             metav1.ConditionFalse,
+				Reason:             workflowReasonInvalidDAG,
+				ObservedGeneration: 3,
+			}},
+		},
+	}
+	scheme := workflowTestScheme(t)
+	r := &Reconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build(), Scheme: scheme}
+
+	if _, err := r.ReconcileStateMachine(context.Background(), wf); err != nil {
+		t.Fatal(err)
+	}
+	cond := apimeta.FindStatusCondition(wf.Status.Conditions, workflowConditionValidated)
+	if cond == nil || cond.Status != metav1.ConditionTrue || cond.Reason != workflowReasonSpecValidated {
+		t.Fatalf("stale Validated=False was not cleared: %#v", wf.Status.Conditions)
+	}
+	if cond.ObservedGeneration != wf.Generation {
+		t.Fatalf("Validated condition observedGeneration = %d, want %d", cond.ObservedGeneration, wf.Generation)
 	}
 }
 

@@ -35,9 +35,13 @@ func TestManagementSecretsUseConfiguredNamespace(t *testing.T) {
 		),
 	}
 
-	admin, user, err := gateway.readUIAuthSecret()
-	if err != nil || admin != "admin" || user != "user" {
-		t.Fatalf("readUIAuthSecret() = %q, %q, %v", admin, user, err)
+	provider := secretUserProvider{client: gateway.rawClient, namespace: gateway.managementNamespace()}
+	users, err := provider.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(users) != 2 || users[0].Username != "admin" || users[1].Username != "user" {
+		t.Fatalf("List() = %#v", users)
 	}
 	cert, key, ca, err := gateway.getKCPAdminCerts()
 	if err != nil || string(cert) != "cert" || string(key) != "key" || string(ca) != "ca" {

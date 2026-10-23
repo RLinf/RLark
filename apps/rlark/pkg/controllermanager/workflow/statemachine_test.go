@@ -35,7 +35,7 @@ func TestWorkflowStopAndResumeTransitions(t *testing.T) {
 func TestEvaluateStoppedWorkflow(t *testing.T) {
 	r := &Reconciler{}
 	wf := &rlarkv1alpha1.Workflow{
-		Spec: rlarkv1alpha1.WorkflowSpec{Stopped: true},
+		Spec: rlarkv1alpha1.WorkflowSpec{Suspended: true},
 		Status: rlarkv1alpha1.WorkflowStatus{Jobs: []rlarkv1alpha1.WorkflowJobStatus{
 			{Name: "one", Phase: rlarkv1alpha1.JobPhaseStopped},
 			{Name: "two", Phase: rlarkv1alpha1.JobPhaseStopped},
@@ -48,7 +48,7 @@ func TestEvaluateStoppedWorkflow(t *testing.T) {
 
 func TestEvaluateStoppedWorkflowWithoutDispatchedJobs(t *testing.T) {
 	r := &Reconciler{}
-	wf := &rlarkv1alpha1.Workflow{Spec: rlarkv1alpha1.WorkflowSpec{Stopped: true}}
+	wf := &rlarkv1alpha1.Workflow{Spec: rlarkv1alpha1.WorkflowSpec{Suspended: true}}
 	if event := r.evaluateWorkflowEvent(wf); event != EventAllJobsStopped {
 		t.Fatalf("event = %q, want %q", event, EventAllJobsStopped)
 	}

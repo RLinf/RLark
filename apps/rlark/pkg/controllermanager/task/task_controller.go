@@ -31,6 +31,11 @@ const pullProgressRequeueInterval = 3 * time.Second
 // pathological noisy node from drowning out the rest of the Task status.
 const maxAggregatedEvents = 100
 
+// maxAggregatedPullProgress caps how many pull-progress entries are surfaced
+// on a single Task, matching the TaskStatus.PullProgress MaxItems bound in the
+// CRD schema so an oversized aggregation can never be rejected on write.
+const maxAggregatedPullProgress = 100
+
 // Reconciler reconciles Task resources.
 //
 // It owns two slices of Task.status while the Task is Pending:
@@ -119,6 +124,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 // aggregatePullProgress collects Node.status.pullProgress entries from every
 // node listed in task.Status.ObservedNodes, filtered to images referenced by
 // the task spec. Returns nil when no in-flight pulls are observed.
+//
+// The result is sorted by (image, node) and capped to maxAggregatedPullProgress
+// so that repeated reconciles over the same observed state produce a
+// byte-identical slice. Without this, iterating the node map would yield a
+// random order on every reconcile, defeat the pullProgressEqual guard below,
+// and cause needless status writes (and watch churn) forever.
 func (r *Reconciler) aggregatePullProgress(ctx context.Context, task *rlarkv1alpha1.Task) []rlarkv1alpha1.PullProgress {
 	if len(task.Status.ObservedNodes) == 0 {
 		return nil
@@ -132,18 +143,25 @@ func (r *Reconciler) aggregatePullProgress(ctx context.Context, task *rlarkv1alp
 		return nil
 	}
 
-	// Deduplicate node names: ObservedNodes may list a node multiple times
-	// (e.g. multi-replica workloads scheduling several pods per node).
+	// Deduplicate and sort node names: ObservedNodes may list a node multiple
+	// times (e.g. multi-replica workloads scheduling several pods per node),
+	// and iterating the map directly would be order-random.
+	nodes := make([]string, 0, len(task.Status.ObservedNodes))
 	seen := make(map[string]struct{}, len(task.Status.ObservedNodes))
 	for _, n := range task.Status.ObservedNodes {
 		if n == "" {
 			continue
 		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
 		seen[n] = struct{}{}
+		nodes = append(nodes, n)
 	}
+	sort.Strings(nodes)
 
 	var aggregated []rlarkv1alpha1.PullProgress
-	for nodeName := range seen {
+	for _, nodeName := range nodes {
 		var node rlarkv1alpha1.Node
 		if err := r.Get(ctx, types.NamespacedName{Name: nodeName, Namespace: task.Namespace}, &node); err != nil {
 			continue
@@ -154,6 +172,16 @@ func (r *Reconciler) aggregatePullProgress(ctx context.Context, task *rlarkv1alp
 			}
 			aggregated = append(aggregated, p)
 		}
+	}
+
+	// Sort stably by image so the slice is deterministic. Entries were
+	// collected in sorted-node order, so this yields a stable total order even
+	// when several nodes are pulling the same image.
+	sort.SliceStable(aggregated, func(i, j int) bool {
+		return aggregated[i].Image < aggregated[j].Image
+	})
+	if len(aggregated) > maxAggregatedPullProgress {
+		aggregated = aggregated[:maxAggregatedPullProgress]
 	}
 	return aggregated
 }

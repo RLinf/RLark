@@ -10,8 +10,9 @@ import (
 func TestDefaultControllerConcurrency(t *testing.T) {
 	config := DefaultConfig()
 	got := config.ControllerConcurrency
-	if got.Job != 8 || got.Task != 8 || got.Workflow != 8 || got.Node != 8 || got.Domain != 8 ||
-		got.JobSync != 8 || got.TaskSync != 8 || got.WorkflowSync != 8 || got.NodeSync != 8 {
+	if got.Job != 8 || got.Task != 8 || got.Workflow != 8 || got.Node != 8 || got.Domain != 8 || got.Cluster != 8 ||
+		got.JobSync != 8 || got.TaskSync != 8 || got.WorkflowSync != 8 || got.NodeSync != 8 ||
+		got.Archive != 8 {
 		t.Fatalf("default controller concurrency = %+v, want all 8", got)
 	}
 	if err := got.Validate(); err != nil {
@@ -29,16 +30,19 @@ func TestControllerConcurrencyFlags(t *testing.T) {
 		"--workflow-controller-workers=3",
 		"--node-controller-workers=4",
 		"--domain-controller-workers=5",
-		"--job-sync-controller-workers=6",
-		"--task-sync-controller-workers=7",
-		"--workflow-sync-controller-workers=8",
-		"--node-sync-controller-workers=9",
+		"--cluster-controller-workers=6",
+		"--job-sync-controller-workers=7",
+		"--task-sync-controller-workers=8",
+		"--workflow-sync-controller-workers=9",
+		"--node-sync-controller-workers=10",
+		"--archive-controller-workers=11",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	want := ControllerConcurrencyConfig{
-		Job: 1, Task: 2, Workflow: 3, Node: 4, Domain: 5,
-		JobSync: 6, TaskSync: 7, WorkflowSync: 8, NodeSync: 9,
+		Job: 1, Task: 2, Workflow: 3, Node: 4, Domain: 5, Cluster: 6,
+		JobSync: 7, TaskSync: 8, WorkflowSync: 9, NodeSync: 10,
+		Archive: 11,
 	}
 	if config.ControllerConcurrency != want {
 		t.Fatalf("controller concurrency = %+v, want %+v", config.ControllerConcurrency, want)

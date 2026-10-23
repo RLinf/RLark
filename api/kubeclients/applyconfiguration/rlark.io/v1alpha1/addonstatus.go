@@ -25,9 +25,14 @@ import (
 // AddonStatusApplyConfiguration represents a declarative configuration of the AddonStatus type for use
 // with apply.
 type AddonStatusApplyConfiguration struct {
-	Phase      *rlarkiov1alpha1.AddonPhase      `json:"phase,omitempty"`
-	Version    *string                          `json:"version,omitempty"`
-	Message    *string                          `json:"message,omitempty"`
+	Phase   *rlarkiov1alpha1.AddonPhase `json:"phase,omitempty"`
+	Version *string                     `json:"version,omitempty"`
+	Message *string                     `json:"message,omitempty"`
+	// ObservedGeneration 是 Addon 控制器最近一次完成调谐时所观测到的
+	// metadata.generation。它是控制器契约而非 API Server 保证：消费者在读取
+	// phase / conditions 之前，应比较本字段与 metadata.generation 以识别过期状态。
+	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// Conditions 记录 Addon 的结构化状态结论，当前仅包含 ConditionTypeReady。
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 
@@ -58,6 +63,14 @@ func (b *AddonStatusApplyConfiguration) WithVersion(value string) *AddonStatusAp
 // If called multiple times, the Message field is set to the value of the last call.
 func (b *AddonStatusApplyConfiguration) WithMessage(value string) *AddonStatusApplyConfiguration {
 	b.Message = &value
+	return b
+}
+
+// WithObservedGeneration sets the ObservedGeneration field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedGeneration field is set to the value of the last call.
+func (b *AddonStatusApplyConfiguration) WithObservedGeneration(value int64) *AddonStatusApplyConfiguration {
+	b.ObservedGeneration = &value
 	return b
 }
 

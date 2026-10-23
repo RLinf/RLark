@@ -129,7 +129,7 @@ export function StorageClassesPage({
   const [editingClass, setEditingClass] = useState<StorageClass | null>(null);
 
   const selected = useMemo(
-    () => realClasses.find((sc) => sc.name === selectedName),
+    () => realClasses.find((sc) => sc.id === selectedName),
     [realClasses, selectedName],
   );
 
@@ -138,9 +138,9 @@ export function StorageClassesPage({
     setLoading(true);
     try {
       const data = await storageClassesApi.list();
-      const list: StorageClass[] = Object.values(data).map(
-        normalizeStorageClass,
-      );
+      const list: StorageClass[] = Object.values(
+        data as Record<string, unknown>,
+      ).map(normalizeStorageClass);
       setRealClasses(list);
     } catch {
       setRealClasses([]);
@@ -334,7 +334,7 @@ export function StorageClassesPage({
                 <td>
                   <button
                     className="storage-name-cell"
-                    onClick={() => onSelect(sc.name)}
+                    onClick={() => onSelect(sc.id)}
                     aria-label={`${zh ? "查看存储类" : "View storage class"} ${sc.name}`}
                   >
                     <span>
@@ -381,7 +381,7 @@ export function StorageClassesPage({
                           );
                           return;
                         }
-                        onBrowseFiles(cluster, sc.name);
+                        onBrowseFiles(cluster, sc.id);
                       }}
                     >
                       <FolderOpen size={14} />
@@ -659,7 +659,8 @@ export function StorageClassCreatePage({
     setSubmitting(true);
     setError("");
     try {
-      if (isEdit) await storageClassesApi.update(form.name, form);
+      if (isEdit)
+        await storageClassesApi.update(initialStorageClass!.name, form);
       else await storageClassesApi.create(form);
       onCreated?.();
       onBack();

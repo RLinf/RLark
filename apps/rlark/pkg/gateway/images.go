@@ -66,23 +66,17 @@ func (g *Gateway) recordJobImagesLocked(job *rlarkiov1alpha1.Job) {
 func jobImages(job *rlarkiov1alpha1.Job) []string {
 	images := make(map[string]struct{})
 	for _, task := range job.Spec.Tasks {
-		if task.Kubernetes != nil && task.Kubernetes.Workload != nil {
-			for _, container := range task.Kubernetes.Workload.Template.Spec.InitContainers {
-				if container.Image != "" {
-					images[container.Image] = struct{}{}
-				}
-			}
-			for _, container := range task.Kubernetes.Workload.Template.Spec.Containers {
-				if container.Image != "" {
-					images[container.Image] = struct{}{}
-				}
+		if task.Workload.Template == nil {
+			continue
+		}
+		for _, container := range task.Workload.Template.Spec.InitContainers {
+			if container.Image != "" {
+				images[container.Image] = struct{}{}
 			}
 		}
-		if task.Docker != nil {
-			for _, container := range task.Docker.Containers {
-				if container.Image != "" {
-					images[container.Image] = struct{}{}
-				}
+		for _, container := range task.Workload.Template.Spec.Containers {
+			if container.Image != "" {
+				images[container.Image] = struct{}{}
 			}
 		}
 	}

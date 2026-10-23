@@ -2,15 +2,24 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
+
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
+
+// ErrNotFound reports that the requested resource does not exist. Callers must
+// detect it with errors.Is instead of matching driver error text.
+var ErrNotFound = errors.New("resource not found")
 
 // ListOptions controls list query behavior including filtering, sorting, and pagination.
 type ListOptions struct {
@@ -50,10 +59,15 @@ type TagSelector struct {
 	Value string
 }
 
-// ListResult holds the result of a list query.
+// ListResult holds the result of a list query. Limit, Offset and HasMore echo
+// the applied pagination window so that the archive path reports the same
+// envelope as the Kubernetes path and a client does not have to reconstruct it.
 type ListResult struct {
-	Items []map[string]any `json:"items"`
-	Total int              `json:"total"`
+	Items   []map[string]any `json:"items"`
+	Total   int              `json:"total"`
+	Limit   int              `json:"limit"`
+	Offset  int              `json:"offset"`
+	HasMore bool             `json:"hasMore"`
 }
 
 // ResourceStore provides generic CRUD operations for a resource table.
@@ -122,27 +136,18 @@ func (q *ResourceStore) List(ctx context.Context, opts ListOptions) (*ListResult
 
 	// Field selectors (JSONB expressions)
 	for _, fs := range opts.FieldSelector {
-		colExpr := fmt.Sprintf("%s.raw#>>'{%s}'", q.tableAlias, strings.ReplaceAll(fs.Path, ".", ","))
-		baseQuery = applySelector(baseQuery, colExpr, fs.Op, fs.Value)
+		colExpr, colArgs := jsonPathExpr(q.tableAlias, strings.Split(fs.Path, "."))
+		baseQuery = applySelector(baseQuery, colExpr, colArgs, fs.Op, fs.Value)
 	}
 
 	// Label selectors
 	for _, ls := range opts.LabelSelector {
-		colExpr := fmt.Sprintf("%s.raw#>>'{metadata,labels,%s}'", q.tableAlias, ls.Key)
-		baseQuery = applySelector(baseQuery, colExpr, ls.Op, ls.Value)
+		colExpr, colArgs := labelColumnExpr(q.tableAlias, ls.Key)
+		baseQuery = applySelector(baseQuery, colExpr, colArgs, ls.Op, ls.Value)
 	}
 
 	// Tag selectors: values of the same key are ORed; different keys are ANDed.
-	tagValuesByKey := make(map[string][]string)
-	for _, ts := range opts.TagSelector {
-		tagValuesByKey[ts.Key] = append(tagValuesByKey[ts.Key], ts.Value)
-	}
-	for key, values := range tagValuesByKey {
-		baseQuery = baseQuery.Where(
-			"EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(?TableAlias.raw->'spec'->'tags', '[]'::jsonb)) AS tag WHERE tag->>'key' = ? AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(tag->'values', '[]'::jsonb)) AS value WHERE value IN (?)))",
-			bun.Ident(q.tableAlias), key, bun.List(values),
-		)
-	}
+	baseQuery = applyTagSelectors(baseQuery, opts.TagSelector)
 
 	// Count total before pagination
 	total, err := baseQuery.Count(ctx)
@@ -150,25 +155,29 @@ func (q *ResourceStore) List(ctx context.Context, opts ListOptions) (*ListResult
 		return nil, fmt.Errorf("count %s: %w", q.tableName, err)
 	}
 
-	// Build the data query with ordering and pagination
-	query := baseQuery.OrderExpr(q.tableAlias + ".created_at DESC")
-	if len(opts.OrderBy) > 0 {
-		query = baseQuery // reset ordering
-		for _, ob := range opts.OrderBy {
-			parts := strings.SplitN(strings.TrimSpace(ob), " ", 2)
-			col := parts[0]
-			dir := "ASC"
-			if len(parts) == 2 && strings.EqualFold(parts[1], "desc") {
-				dir = "DESC"
-			}
-			switch col {
-			case "name", "namespace", "created_at", "uid":
-				query = query.OrderExpr(fmt.Sprintf("%s.%s %s", q.tableAlias, col, dir))
-			default:
-				query = query.OrderExpr(fmt.Sprintf("%s.raw#>>'{%s}' %s", q.tableAlias, strings.ReplaceAll(col, ".", ","), dir))
-			}
+	// Ordering must be deterministic, otherwise paginating over equal sort keys
+	// can drop or duplicate rows between requests. A "name" tie breaker is
+	// always appended, including for caller supplied ordering.
+	query := baseQuery
+	for _, ob := range opts.OrderBy {
+		parts := strings.SplitN(strings.TrimSpace(ob), " ", 2)
+		col := parts[0]
+		dir := "ASC"
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "desc") {
+			dir = "DESC"
+		}
+		switch col {
+		case "name", "namespace", "created_at", "uid":
+			query = query.OrderExpr(fmt.Sprintf("%s.%s %s", q.tableAlias, col, dir))
+		default:
+			colExpr, colArgs := jsonPathExpr(q.tableAlias, strings.Split(col, "."))
+			query = query.OrderExpr(colExpr+" "+dir, colArgs...)
 		}
 	}
+	if len(opts.OrderBy) == 0 {
+		query = query.OrderExpr(q.tableAlias + ".created_at DESC")
+	}
+	query = query.OrderExpr(q.tableAlias + ".name ASC")
 
 	// Pagination
 	if opts.Limit > 0 {
@@ -193,8 +202,11 @@ func (q *ResourceStore) List(ctx context.Context, opts ListOptions) (*ListResult
 	}
 
 	return &ListResult{
-		Items: items,
-		Total: total,
+		Items:   items,
+		Total:   total,
+		Limit:   opts.Limit,
+		Offset:  opts.Offset,
+		HasMore: opts.Offset+len(items) < total,
 	}, nil
 }
 
@@ -211,6 +223,9 @@ func (q *ResourceStore) Get(ctx context.Context, namespace, name string) (map[st
 	}
 
 	if err := query.Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("get %s/%s from %s: %w", namespace, name, q.tableName, ErrNotFound)
+		}
 		return nil, fmt.Errorf("get %s/%s from %s: %w", namespace, name, q.tableName, err)
 	}
 	var result map[string]any
@@ -305,10 +320,9 @@ func fillBaseFromRaw(base *BaseResourceModel, raw map[string]any) {
 		}
 	}
 
-	// Generate UID if not provided
-	if base.UID == "" {
-		base.UID = uuid.New().String()
-	}
+	// A missing UID stays empty on purpose. Synthesizing one would claim an
+	// object instance identity that the management API never issued, and a
+	// reader could not tell a real UID from a fabricated one.
 
 	// Build ID from namespace + name (latest table pattern)
 	if base.Namespace != "" {
@@ -318,16 +332,89 @@ func fillBaseFromRaw(base *BaseResourceModel, raw map[string]any) {
 	}
 }
 
-// applySelector applies a selector operator to a query.
-func applySelector(query *bun.SelectQuery, colExpr, op, value string) *bun.SelectQuery {
+// jsonPathExpr returns the SQL expression that extracts one JSONB path from the
+// raw document of the given table alias, together with its bind arguments.
+//
+// The path is bound as a text[] parameter instead of being formatted into the
+// statement. Selector paths and label keys come from untrusted query strings, so
+// formatting them into a quoted SQL literal would let a caller terminate the
+// literal and append arbitrary predicates.
+func jsonPathExpr(alias string, path []string) (string, []any) {
+	return fmt.Sprintf("%s.raw #>> ?", alias), []any{pgdialect.Array(path)}
+}
+
+// labelColumnExpr returns the SQL expression that reads one label value for the
+// given table alias, together with its bind arguments.
+//
+// The tenant label is normalized: an object stored without the label, or with an
+// empty value, belongs to the default tenant, exactly as tenant.IDOf reports and
+// as the gateway reports when it serializes an object. A label selector cannot
+// express "value in (...) or label absent", so the missing value is normalized
+// here instead. Filtering in SQL keeps total and the paging counters consistent
+// with the rows the caller is allowed to see.
+func labelColumnExpr(alias, key string) (string, []any) {
+	expr, args := jsonPathExpr(alias, []string{"metadata", "labels", key})
+	if key == tenant.IDLabel {
+		expr = fmt.Sprintf("COALESCE(NULLIF(%s, ''), ?)", expr)
+		args = append(args, tenant.DefaultID)
+	}
+	return expr, args
+}
+
+// applySelector applies a selector operator to a query. colArgs carries the bind
+// arguments of colExpr and must precede the value argument.
+//
+// "!=" uses IS DISTINCT FROM so that an object without the field or label
+// matches, which is the selector semantics Kubernetes defines and the semantics
+// the Kubernetes backed list path already implements. A plain "!=" comparison
+// evaluates to NULL for a missing key and would silently drop those objects.
+func applySelector(query *bun.SelectQuery, colExpr string, colArgs []any, op, value string) *bun.SelectQuery {
+	args := make([]any, 0, len(colArgs)+1)
+	args = append(args, colArgs...)
 	switch op {
 	case "!=":
-		return query.Where(colExpr+" != ?", value)
+		return query.Where(colExpr+" IS DISTINCT FROM ?", append(args, value)...)
 	case "in":
-		return query.Where(colExpr+" = ANY(?)", strings.Split(value, ","))
+		// The candidate list must be bound as a text[] parameter. A plain
+		// []string is rendered as a JSON array, which PostgreSQL rejects with
+		// "malformed array literal".
+		return query.Where(colExpr+" = ANY(?)", append(args, pgdialect.Array(strings.Split(value, ",")))...)
 	default:
-		return query.Where(colExpr+" = ?", value)
+		return query.Where(colExpr+" = ?", append(args, value)...)
 	}
+}
+
+// applyTagSelectors restricts the query to objects carrying the requested tags.
+// Values of the same key are ORed, different keys are ANDed. Keys are applied in
+// a stable order so that the same selector always renders the same SQL.
+//
+// "?TableAlias" is a named placeholder: bun substitutes it from the query model
+// and it does not consume a positional argument. Passing the alias as an
+// argument as well shifts every remaining argument by one position, which makes
+// the key comparison resolve against the table row type and the database reject
+// the statement.
+func applyTagSelectors(query *bun.SelectQuery, selectors []TagSelector) *bun.SelectQuery {
+	if len(selectors) == 0 {
+		return query
+	}
+
+	valuesByKey := make(map[string][]string, len(selectors))
+	keys := make([]string, 0, len(selectors))
+	for _, ts := range selectors {
+		if _, seen := valuesByKey[ts.Key]; !seen {
+			keys = append(keys, ts.Key)
+		}
+		valuesByKey[ts.Key] = append(valuesByKey[ts.Key], ts.Value)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		query = query.Where(
+			"EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(?TableAlias.raw->'spec'->'tags', '[]'::jsonb)) AS tag WHERE tag->>'key' = ? AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(tag->'values', '[]'::jsonb)) AS value WHERE value IN (?)))",
+			key, bun.List(valuesByKey[key]),
+		)
+	}
+	return query
 }
 
 // scanResultsToItems extracts Raw fields from a pointer to a slice of ResourceModel types.

@@ -32,7 +32,14 @@ export interface ClusterSummary {
   type: "Cloud" | "Embodied" | "Hybrid" | string;
   region: string;
   location: string;
-  phase: "Online" | "Degraded" | "Offline" | string;
+  phase:
+    | "Online"
+    | "Offline"
+    | "Downgraded"
+    | "Cordoned"
+    | "Draining"
+    | "Deleted"
+    | string;
   totalNodes: number;
   onlineNodes: number;
   offlineNodes: number;
@@ -43,78 +50,6 @@ export interface ClusterSummary {
   robotModels: string[];
   runningJobs: number;
   description: string;
-}
-
-export interface CRDWorkload {
-  kind: string;
-  replicas: number;
-  /** @deprecated Use template.spec.volumes[].ephemeral.volumeClaimTemplate. */
-  pvcStorageMap?: Record<string, string>;
-  /** @deprecated Use template.spec.volumes[].ephemeral.volumeClaimTemplate. */
-  pvcSizeGbMap?: Record<string, number>;
-  template: {
-    spec: {
-      containers: Array<{
-        name: string;
-        image: string;
-        env: Array<{ name: string; value: string }>;
-        volumeMounts?: Array<{ name: string; mountPath: string }>;
-        resources?: {
-          requests?: Record<string, string>;
-          limits?: Record<string, string>;
-        };
-      }>;
-      volumes?: Array<{
-        name: string;
-        hostPath?: { path: string };
-        persistentVolumeClaim?: { claimName: string };
-        ephemeral?: {
-          volumeClaimTemplate: {
-            spec: {
-              accessModes?: string[];
-              storageClassName?: string;
-              resources?: {
-                requests?: Record<string, string>;
-              };
-            };
-          };
-        };
-      }>;
-    };
-  };
-}
-
-export interface CRDJobTask {
-  name: string;
-  head: boolean;
-  agentType: string;
-  role: string;
-  nodeSelector: Record<string, string>;
-  prepareScript?: string;
-  runScript?: string;
-  tensorBoardDir?: string;
-  kubernetes?: {
-    workload?: CRDWorkload;
-  };
-}
-
-export interface CRDTask {
-  metadata: {
-    name: string;
-    namespace?: string;
-    annotations?: Record<string, string>;
-  };
-  spec?: {
-    kubernetes?: {
-      workload?: CRDWorkload;
-    };
-  };
-  status?: {
-    observedNodes?: string[];
-    tensorBoardProxy?: string;
-    pullProgress?: PullProgressEntry[];
-    events?: NodeEventEntry[];
-  };
 }
 
 export interface CRDPod {
@@ -134,41 +69,6 @@ export interface CRDPod {
   };
 }
 
-export interface CRDJob {
-  apiVersion: string;
-  kind: string;
-  metadata: {
-    name: string;
-    creationTimestamp?: string;
-    deletionTimestamp?: string;
-    labels?: Record<string, string>;
-    annotations?: Record<string, string>;
-  };
-  spec: {
-    domain?: string;
-    stopped?: boolean;
-    sshPublicKey?: string;
-    tasks: CRDJobTask[];
-    // 后端可能仍返回旧格式 {key, value}；新格式是 {key, values[]}
-    tags?: Array<{
-      key: string;
-      values?: string[];
-      value?: string;
-    }>;
-  };
-  status?: {
-    phase: string;
-    startTime?: string;
-    endTime?: string;
-    tasks?: Array<{
-      name: string;
-      phase: string;
-      message: string;
-      observedNodes?: string[];
-    }>;
-  };
-}
-
 export interface CRDDomain {
   apiVersion: string;
   kind: string;
@@ -181,29 +81,6 @@ export interface CRDDomain {
       task: string;
       pod: string;
     }>;
-  };
-}
-
-export interface CRDWorkflowJobTemplate {
-  name: string;
-  dependencies?: string[];
-  spec: { domain?: string; tasks: CRDJobTask[] };
-}
-
-export interface CRDWorkflow {
-  apiVersion: string;
-  kind: string;
-  metadata: {
-    name: string;
-    creationTimestamp?: string;
-    deletionTimestamp?: string;
-  };
-  spec: { jobTemplates: CRDWorkflowJobTemplate[]; stopped?: boolean };
-  status?: {
-    phase: string;
-    jobs?: Array<{ name: string; phase: string; message: string }>;
-    startTime?: string;
-    endTime?: string;
   };
 }
 
@@ -318,6 +195,8 @@ export interface CRDNode {
   status?: {
     phase?: string;
     reason?: string;
+    lastHeartbeatTime?: string;
+    lastStatusChangeTime?: string;
     nodeInfo?: {
       architecture?: string;
       kernelVersion?: string;

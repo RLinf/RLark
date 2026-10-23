@@ -20,7 +20,7 @@ spec:
     - jsonPath: .spec.domain
       name: Domain
       type: string
-    - jsonPath: .spec.node
+    - jsonPath: .status.node
       name: Node
       type: string
     - jsonPath: .status.phase

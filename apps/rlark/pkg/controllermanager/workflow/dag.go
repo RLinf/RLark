@@ -22,9 +22,14 @@ func newDAG(templates []rlarkv1alpha1.WorkflowJobTemplate) (*dag, error) {
 	}
 
 	for _, jt := range templates {
+		if _, dup := d.templates[jt.Name]; dup {
+			return nil, fmt.Errorf("duplicate job template %q", jt.Name)
+		}
 		d.templates[jt.Name] = jt
 		d.inDegree[jt.Name] = len(jt.Dependencies)
 		for _, dep := range jt.Dependencies {
+			// A dependency must already be declared, which also makes the graph
+			// acyclic by construction.
 			if _, ok := d.templates[dep]; !ok {
 				return nil, fmt.Errorf("job %q depends on unknown job %q", jt.Name, dep)
 			}

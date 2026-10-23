@@ -2,13 +2,11 @@ import { request, requestJson, withQuery, type LoginResponse } from "./api.js";
 import type {
   AgentCertListItem,
   CRDDomain,
-  CRDJob,
   CRDNode,
   CRDPod,
-  CRDTask,
-  CRDWorkflow,
   SignAgentCertResponse,
 } from "./types.js";
+import type { CRDJob, CRDTask, CRDWorkflow } from "./crdModels.js";
 
 type ItemList<T> = { items?: T[] };
 type DataResponse<T> = { data?: T };
@@ -170,7 +168,7 @@ export const workflowsApi = {
   setStopped(name: string, stopped: boolean) {
     return request(resourcePath("workflows", name), {
       method: "PATCH",
-      body: { spec: { stopped } },
+      body: { spec: { suspended: stopped } },
     });
   },
 };
@@ -184,9 +182,16 @@ export const jobsApi = {
     return response.items ?? [];
   },
   setStopped(name: string, stopped: boolean) {
-    return request(resourcePath("jobs", name), {
-      method: "PATCH",
-      body: { spec: { stopped } },
+    // 停止：PATCH spec.suspended=true
+    // 启动：POST /start（统一接口，活跃或归档都走这里）
+    if (stopped) {
+      return request(resourcePath("jobs", name), {
+        method: "PATCH",
+        body: { spec: { suspended: true } },
+      });
+    }
+    return request(`${resourcePath("jobs", name)}/start`, {
+      method: "POST",
     });
   },
   logs<T>(name: string, query: Record<string, string | undefined>) {

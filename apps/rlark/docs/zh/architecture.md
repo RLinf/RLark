@@ -122,20 +122,24 @@ graph LR
 **Pull 控制器**（以 Task 为例）：
 
 1. 监听管理面 Task CR 的创建/更新/删除（带 finalizer 保护）
-2. 根据 Task.Spec 构建对应的 K8s 资源（Deployment/DaemonSet/StatefulSet）
-3. 检测 ResourceVersion 变化决定是否需要更新已有 workload
-4. 自动注入 Network Sidecar 容器和 Ray 初始化脚本
-5. 删除时通过 finalizer 清理本地资源后移除 finalizer
+2. 将 Task 解码为 execution snapshot，并选择 Kubernetes Runtime 和面向 Ray 的 Kubernetes Workload Adapter；旧版 Deployment、DaemonSet 或 StatefulSet discriminator 只选择其 carrier kind
+3. 编译声明式对象计划，由 Adapter 选择 ownership、lifecycle、owned field、update mode 和 typed Runtime reconcile profile；向 Adapter 请求有界 identity inventory，读取对应 Runtime 快照，再计算所需操作
+4. 按顺序执行幂等 Apply/Delete；`Replace` 对象先按 UID 校验并删除，再由后续 reconcile 重建；运行中的 Task 在期望 generation 变化后也会重新调谐
+5. 在编译期间应用 Ray bootstrap 等 Workload 自有 Pod 模板修改，再解析显式 Environment requirement，并且只向 Adapter 授权的 PodTemplate target 绑定跨 Domain Network Sidecar
+6. 停止、重启或删除时使用 claim 中冻结的 Workload implementation 生成 identity inventory，不重新编译当前 Spec，并在确认归属明确的主 workload 已消失后才移除 finalizer；仅为兼容升级，删除中的旧 claim 如果两个 selector 字段都缺失，可以从仍受 finalizer 保护的 Task 解码并校验 selector registration，但不编译资源也不写回该 selector；无法解码的已 claim Task会保留 workload 并等待恢复
 
 **Push 控制器**：
 
 1. 监听本地 K8s 资源变化（Pod 创建/删除/状态变更）
-2. 将状态同步到管理面对应的 Pod CR
-3. Node 信息（地址、容量、GPU 数量）定期上报
+2. 定向观测发生变化的 workload root、其拥有的 Pod 和 Pod Event，不执行完整期望计划 diff
+3. 将 workload 状态同步到管理面对应的 Task 和 Pod CR
+4. Node 信息（地址、容量、GPU 数量）定期上报
+
+当前只有进程内 Kubernetes 实现属于生产 workload 路径。项目已经为未来外部实现定义版本化 Runtime Provider 和 Workload Adapter gRPC 合同，但默认 Task controller 尚不选择远程实现。所选 Workload Adapter 会接收完整 Workload configuration，并负责所有 Workload-specific 可选功能；系统不再提供独立 Workload Extension service。详见 [Runtime、Workload 与 Environment 边界](developer-guide/runtime-provider.md)。
 
 ### 4.2 Network Sidecar
 
-Sidecar 以容器形式注入到每个训练 Pod 中，实现跨集群 Pod 间网络通信。
+Task 的 domain 非空时，Workload Adapter 会声明跨 Domain Environment requirement 和精确 PodTemplate target。可信 Kubernetes Environment Handler 始终将 Sidecar 注入为 restartable init container。最终 Runtime lowering 阶段会在 `KUBERNETES_SUPPORT_SIDECAR_FEATURE` 不为 `false` 时保留该形式；值为 `false` 时，会把 Adapter 声明的 Pod 或 PodTemplate unit 中所有 restartable init container 转换为普通 container。可信 image 配置缺失或 container/volume 声明冲突时，会在 Runtime effect 前 fail-closed。
 
 **关键文件**：[sidecar/server.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/network/sidecar/server.go)
 
@@ -210,7 +214,7 @@ func (a *containerNetworkAdapter) GetContainerNetworkDial(...) (utils.Dial, erro
 
 ### 4.6 Embodied Runtime
 
-**embodied-runtime** 是部署在每个数据面节点上的 DaemonSet 组件，管理机械臂（ROS 1/2）和摄像头硬件。它与 Agent 集成，将物理设备作为 Kubernetes 设备资源（`rlinf.io/device`）暴露，使训练 Task 可以像申请 GPU 一样申请机械臂和摄像头。
+**embodied-runtime** 以节点级 Device Plugin 为核心，通常通过 DaemonSet 部署到各数据面节点，用于管理机械臂（ROS 1/2）和摄像头硬件。Camera、ROS 1 和 ROS 2 控制器均可独立选择作为本地子进程运行、作为专用 Pod 运行或保持禁用。它与 Agent 集成，将物理设备作为 Kubernetes 设备资源（`rlinf.io/device`）暴露，使训练 Task 可以像申请 GPU 一样申请机械臂和摄像头。
 
 **关键文件**：[apps/embodied-runtime/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/)
 

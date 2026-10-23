@@ -6,8 +6,16 @@ Use this guide to find a data-plane cluster and confirm that it has suitable Wor
 
 1. Open **Clusters** in the platform console.
 2. Search by cluster name or ID, or filter by the metadata shown in the list.
-3. Check the online status, online rate, and Worker count.
+3. Check the cluster status, online rate, and Worker count.
 4. Open the cluster that you plan to use.
+
+A Cluster is a cluster-scoped RLark resource. Its cluster Agent renews the control-plane `heartbeat` Lease every 15 seconds, and the Lease expires after 45 seconds. Every registered Worker also requires its own `node-heartbeat-<node-name>` Lease from `rlark-agent-node`; a missing or expired node Lease makes only that Worker offline. The current status has the following meanings:
+
+- **Online**: the cluster heartbeat is current and all registered Workers are online.
+- **Offline**: the heartbeat Lease is missing or expired.
+- **Downgraded**: the cluster heartbeat is current, but one or more registered Workers are offline.
+- **Cordoned**: scheduling is disabled by durable Cluster intent.
+- **Draining**: the Cluster is draining as a durable desired state.
 
 > **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
 

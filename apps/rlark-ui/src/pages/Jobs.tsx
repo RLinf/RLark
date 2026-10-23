@@ -40,7 +40,8 @@ import {
   type Worker as WorkerItem,
 } from "../data";
 import type { Copy as CopyType } from "../i18n";
-import type { CRDNode, CRDTask, NodeEventEntry } from "../types";
+import type { CRDNode, NodeEventEntry } from "../types";
+import type { CRDTask } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
 import { crdToJob } from "../utils/crd";
 import { effectiveJobPhase, type JobDisplayPhase } from "../utils/jobPhase";
@@ -276,11 +277,18 @@ export function JobsPage({
       setAllJobTags(tags);
 
       const nodeNames = new Set<string>();
-      for (const job of items) {
-        for (const task of job.status?.tasks ?? []) {
-          for (const nodeName of task.observedNodes ?? []) {
-            if (nodeName) nodeNames.add(nodeName);
-          }
+      const taskResponses = await Promise.all(
+        items.map(async (job) => {
+          const jobName = job.metadata?.name;
+          if (!jobName) return [];
+          return tasksApi
+            .list({ labelSelector: `rlinf.io/job=${jobName}` })
+            .catch(() => []);
+        }),
+      );
+      for (const task of taskResponses.flat()) {
+        for (const nodeName of task.status?.observedNodes ?? []) {
+          if (nodeName) nodeNames.add(nodeName);
         }
       }
 
@@ -416,7 +424,7 @@ export function JobsPage({
             "rlark.io/restarted-at": new Date().toISOString(),
           },
         },
-        spec: { stopped: false },
+        spec: { suspended: false },
       });
       setRealJobs((prev) =>
         prev.map((item) =>

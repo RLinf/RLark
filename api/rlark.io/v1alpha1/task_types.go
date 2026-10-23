@@ -2,9 +2,74 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// TaskRole 描述 Task 在业务编排中的角色，用于前端分组与展示。
+// 该字段当前不在 CRD 层做枚举校验：它可能承载上层编排框架的自定义角色名，
+// 收窄取值会阻止合法的既有数据写入。请勿据此推断取值的封闭集合。
+type TaskRole string
+
+// TaskPlacementSpec describes scheduling constraints for the workload.
+type TaskPlacementSpec struct {
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+}
+
+// RuntimeKind 表示负责执行 Task 工作负载的 Runtime 类型。
+// CRD 有意不限制该字符串的枚举值，使 Docker、Raw 等 Runtime 可以在不修改
+// Task Schema 的情况下扩展。Agent 必须在产生任何外部副作用前，通过已注册的
+// Provider 和能力校验拒绝未知或尚未支持的 Runtime 类型。
+type RuntimeKind string
+
+// TaskRuntimeSpec selects the runtime implementation and instance that lowers
+// the common Pod template. Name is a stable runtime instance identifier; it is
+// not a display name or proof of ownership.
+type TaskRuntimeSpec struct {
+	Kind RuntimeKind `json:"kind"`
+	Name string      `json:"name,omitempty"`
+}
+
+// WorkloadKind identifies the workload semantics independently of its Runtime
+// carrier. The CRD deliberately keeps this identifier open; registered
+// Adapters must reject unsupported kinds before producing external effects.
+type WorkloadKind string
+
+// TaskWorkloadCarrier selects the Runtime-specific carrier used to realize a
+// workload. Type and Version identify a carrier contract; Parameters remain
+// opaque until the selected Adapter or Runtime implementation strictly decodes
+// them. Carrier identifiers are open strings, not CRD enums.
+type TaskWorkloadCarrier struct {
+	Type       string               `json:"type"`
+	Version    string               `json:"version"`
+	Parameters apiextensionsv1.JSON `json:"parameters,omitempty"`
+}
+
+// TaskEnvironment 表示 Task 请求的一种可扩展环境能力。
+// Type 是带所有者作用域的稳定类型标识，Version 表示该类型的参数版本。
+// Parameters 必须由对应的已注册 Handler 严格解码和校验；未知类型、未知版本或
+// 非法参数必须在产生任何外部副作用前被拒绝。
+type TaskEnvironment struct {
+	Type       string               `json:"type"`
+	Version    string               `json:"version"`
+	Parameters apiextensionsv1.JSON `json:"parameters,omitempty"`
+}
+
+// TaskWorkloadSpec is the common workload declaration for every runtime.
+// Kubernetes applies the Pod template natively. Future Docker and Raw providers
+// lower the subset they support and reject unsupported fields before producing
+// external effects.
+type TaskWorkloadSpec struct {
+	Kind       WorkloadKind            `json:"kind,omitempty"`
+	Version    string                  `json:"version"`
+	Parameters apiextensionsv1.JSON    `json:"parameters,omitempty"`
+	Carrier    TaskWorkloadCarrier     `json:"carrier"`
+	Template   *corev1.PodTemplateSpec `json:"template,omitempty"`
+}
+
+// TaskPhase 是单个 Task 的生命周期阶段，由数据面 Agent 观测本地工作负载后上报。
+// 取值集合与 JobPhase 对齐，Task 没有独立的 Stopping 中间态。
+// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed;Stopped
 type TaskPhase string
 
 const (
@@ -15,85 +80,28 @@ const (
 	TaskPhaseStopped   TaskPhase = "Stopped"
 )
 
-type KubernetesTaskSpec struct {
-	Workload *KubernetesWorkloadSpec `json:"workload,omitempty"`
-}
-
-type KubernetesWorkloadKind string
-
-const (
-	KubernetesWorkloadDeployment  KubernetesWorkloadKind = "Deployment"
-	KubernetesWorkloadDaemonSet   KubernetesWorkloadKind = "DaemonSet"
-	KubernetesWorkloadStatefulSet KubernetesWorkloadKind = "StatefulSet"
-	KubernetesWorkloadCloneSet    KubernetesWorkloadKind = "CloneSet"
-)
-
-type TaskRole string
-
-const (
-	TaskRoleActor   TaskRole = "Actor"
-	TaskRoleRollout TaskRole = "Rollout"
-	TaskRoleEnv     TaskRole = "Env"
-)
-
-type KubernetesWorkloadSpec struct {
-	Kind     KubernetesWorkloadKind `json:"kind,omitempty"`
-	Replicas *int32                 `json:"replicas,omitempty"`
-	Template corev1.PodTemplateSpec `json:"template,omitempty"`
-	// Deprecated: use Template.Spec.Volumes[].Ephemeral.VolumeClaimTemplate.Spec.StorageClassName instead.
-	PvcStorageMap map[string]string `json:"pvcStorageMap,omitempty"`
-	// Deprecated: use Template.Spec.Volumes[].Ephemeral.VolumeClaimTemplate.Spec.Resources.Requests instead.
-	PvcSizeGbMap map[string]int32 `json:"pvcSizeGbMap,omitempty"`
-}
-
-type DockerTaskSpec struct {
-	Containers []DockerContainerSpec `json:"containers,omitempty"`
-}
-
-type RawTaskSpec struct {
-	Artifact    string   `json:"artifact,omitempty"`
-	Entrypoint  []string `json:"entrypoint,omitempty"`
-	Environment []EnvVar `json:"environment,omitempty"`
-}
-
-type DockerContainerSpec struct {
-	Name        string            `json:"name,omitempty"`
-	Image       string            `json:"image,omitempty"`
-	Command     []string          `json:"command,omitempty"`
-	Args        []string          `json:"args,omitempty"`
-	Environment []EnvVar          `json:"environment,omitempty"`
-	Volumes     []DockerVolumeRef `json:"volumes,omitempty"`
-}
-
-type DockerVolumeRef struct {
-	Source string `json:"source,omitempty"`
-	Target string `json:"target,omitempty"`
-}
-
-type EnvVar struct {
-	Name  string `json:"name,omitempty"`
-	Value string `json:"value,omitempty"`
-}
-
 type TaskSpec struct {
-	AgentType      AgentType           `json:"agentType,omitempty"`
-	Role           TaskRole            `json:"role"`
-	Domain         string              `json:"domain,omitempty"` // 所属 Domain 名称，从 Job 继承
-	DownstreamName string              `json:"downstreamName,omitempty"`
-	NodeSelector   map[string]string   `json:"nodeSelector,omitempty"` // value 可以是 ',' 分隔的多个值
-	Kubernetes     *KubernetesTaskSpec `json:"kubernetes,omitempty"`
-	Docker         *DockerTaskSpec     `json:"docker,omitempty"`
-	Raw            *RawTaskSpec        `json:"raw,omitempty"`
-	TensorBoardDir *string             `json:"tensorBoardDir,omitempty"`
-	PrepareScript  string              `json:"prepareScript,omitempty"` // Ray 集群启动前执行的脚本
-	RunScript      string              `json:"runScript,omitempty"`     // Ray 集群就绪后执行的脚本（仅 head 节点）
-	SSHPublicKey   string              `json:"sshPublicKey,omitempty"`  // 注入到 Pod authorized_keys 的 SSH 公钥
-	Tags           []JobTag            `json:"tags,omitempty"`
+	Role           TaskRole          `json:"role"`
+	DownstreamName string            `json:"downstreamName,omitempty"`
+	Suspended      bool              `json:"suspended,omitempty"`
+	Placement      TaskPlacementSpec `json:"placement"`
+	Runtime        TaskRuntimeSpec   `json:"runtime"`
+	Workload       TaskWorkloadSpec  `json:"workload"`
+	Environments   []TaskEnvironment `json:"environments,omitempty"`
+	Tags           []JobTag          `json:"tags,omitempty"`
 }
 
 type TaskStatus struct {
-	Phase            TaskPhase          `json:"phase,omitempty"`
-	ObservedNodes    []string           `json:"observedNodes,omitempty"`
+	Phase TaskPhase `json:"phase,omitempty"`
+	// ObservedGeneration 是数据面 Agent 最近一次完成本地工作负载调谐时所观测到的
+	// metadata.generation。它是控制器契约而非 API Server 保证：消费者在读取
+	// phase / message / observedNodes 之前，应比较本字段与 metadata.generation
+	// 以识别过期状态。
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// ObservedNodes 是当前承载该 Task 工作负载的节点名，由数据面 Agent 排序去重后上报。
+	ObservedNodes []string `json:"observedNodes,omitempty"`
+	// +listType=map
+	// +listMapKey=type
 	Conditions       []metav1.Condition `json:"conditions,omitempty"`
 	StartTime        *metav1.Time       `json:"startTime,omitempty"`
 	CompletionTime   *metav1.Time       `json:"completionTime,omitempty"`
@@ -114,7 +122,8 @@ type TaskStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=tasks,scope=Namespaced,shortName=task
-// +kubebuilder:printcolumn:name="Agent",type=string,JSONPath=`.spec.agentType`
+// +kubebuilder:printcolumn:name="Runtime",type=string,JSONPath=`.spec.runtime.kind`
+// +kubebuilder:printcolumn:name="Workload",type=string,JSONPath=`.spec.workload.kind`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type Task struct {

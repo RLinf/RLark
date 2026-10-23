@@ -217,6 +217,9 @@ func TestNodeAgentUsesDedicatedRBAC(t *testing.T) {
 		}
 
 		ds := DaemonSet(cfg, &c)
+		if got := ds.Spec.Template.Spec.NodeSelector; !mapsEqual(got, map[string]string{"rlark.io/enabled": "true"}) {
+			t.Fatalf("node-agent node selector = %#v, want %#v", got, map[string]string{"rlark.io/enabled": "true"})
+		}
 		if got := ds.Spec.Template.Spec.ServiceAccountName; got != constants.ComponentAgentNode {
 			t.Fatalf("node-agent service account = %q, want %q", got, constants.ComponentAgentNode)
 		}

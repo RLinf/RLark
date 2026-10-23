@@ -6,8 +6,16 @@
 
 1. 在业务平台打开**集群**。
 2. 按集群名称或 ID 搜索，或使用列表提供的元数据筛选。
-3. 检查在线状态、在线率和 Worker 数量。
+3. 检查集群状态、在线率和 Worker 数量。
 4. 打开计划使用的集群。
+
+Cluster 是集群作用域的 RLark 资源。其 cluster Agent 每 15 秒续约一次控制面的 `heartbeat` Lease，Lease 在 45 秒后过期。每个已注册 Worker 还需要由 `rlark-agent-node` 维护自身的 `node-heartbeat-<node-name>` Lease；节点 Lease 缺失或过期时，仅该 Worker 会离线。各状态含义如下：
+
+- **Online（在线）**：集群心跳有效，且所有已注册 Worker 在线。
+- **Offline（离线）**：心跳 Lease 缺失或已过期。
+- **Downgraded（降级）**：集群心跳有效，但至少一个已注册 Worker 离线。
+- **Cordoned（已封锁）**：持续的 Cluster 意图禁止调度。
+- **Draining（排空中）**：Cluster 处于持续的排空期望状态。
 
 > **截图说明：** 截图来自示例环境，资源名称和数据仅供说明，实际环境会有所不同。
 

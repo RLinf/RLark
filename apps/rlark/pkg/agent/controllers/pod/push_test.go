@@ -80,7 +80,7 @@ func (c *countingClient) Patch(ctx context.Context, obj client.Object, patch cli
 
 func TestBuildManagementPodIdentityOwnerAndUnknown(t *testing.T) {
 	scheme := testScheme(t)
-	task := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "agent-a", UID: "task-uid"}, Spec: rlarkv1alpha1.TaskSpec{Domain: "domain-a"}}
+	task := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "agent-a", UID: "task-uid"}, Spec: rlarkv1alpha1.TaskSpec{Placement: rlarkv1alpha1.TaskPlacementSpec{}}}
 	management := fake.NewClientBuilder().WithScheme(scheme).WithObjects(task).Build()
 	r := &pushPodReconciler{c: NewPodController(base.Controller{ManagementClient: management, ManagementNamespace: "agent-a"})}
 	local := &corev1.Pod{
@@ -475,7 +475,7 @@ func TestOrphanSweepRecoversLegacyStatefulSetPodWithoutTaskUID(t *testing.T) {
 
 func TestOrphanSweepConservativelyBackfillsLegacyIdentity(t *testing.T) {
 	scheme := testScheme(t)
-	task := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "agent-a", UID: "task-uid"}, Spec: rlarkv1alpha1.TaskSpec{Domain: "domain-a"}}
+	task := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "agent-a", UID: "task-uid"}, Spec: rlarkv1alpha1.TaskSpec{Placement: rlarkv1alpha1.TaskPlacementSpec{}}}
 	local := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "work", UID: "pod-uid", Annotations: map[string]string{
 		"rlark.io/management-task-name": "task", "rlark.io/management-task-namespace": "agent-a", "rlark.io/management-task-uid": "task-uid",
 	}}}

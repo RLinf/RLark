@@ -66,6 +66,7 @@ spec:
           status:
             properties:
               conditions:
+                description: Conditions 记录 Addon 的结构化状态结论，当前仅包含 ConditionTypeReady。
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -121,9 +122,28 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               message:
                 type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration 是 Addon 控制器最近一次完成调谐时所观测到的
+                  metadata.generation。它是控制器契约而非 API Server 保证：消费者在读取
+                  phase / conditions 之前，应比较本字段与 metadata.generation 以识别过期状态。
+                format: int64
+                type: integer
               phase:
+                description: |-
+                  AddonPhase 是 Addon 安装与升级流程的聚合阶段，由数据面 Agent 观测后上报。
+                  取值集合在 CRD Schema 层封闭，新增取值必须同步更新枚举校验与文档。
+                enum:
+                - Pending
+                - Installing
+                - Ready
+                - Failed
+                - Upgrading
                 type: string
               version:
                 type: string

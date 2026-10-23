@@ -25,6 +25,10 @@ type AddonListerExpansion interface{}
 // AddonNamespaceLister.
 type AddonNamespaceListerExpansion interface{}
 
+// ClusterListerExpansion allows custom methods to be added to
+// ClusterLister.
+type ClusterListerExpansion interface{}
+
 // DomainListerExpansion allows custom methods to be added to
 // DomainLister.
 type DomainListerExpansion interface{}

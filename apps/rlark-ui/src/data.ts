@@ -1,4 +1,5 @@
-import type { CRDWorkflow, NodeEventEntry } from "./types";
+import type { NodeEventEntry } from "./types";
+import type { CRDWorkflow } from "./crdModels";
 
 export type Phase =
   | "Running"

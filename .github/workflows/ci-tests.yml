@@ -46,11 +46,14 @@ jobs:
               - '.github/workflows/unit-tests.yml'
             lint_filter:
               - '**/*.go'
+              - 'api/**'
               - 'apps/rlark-ui/**'
               - 'apps/rlark/docs/**'
               - 'apps/rlark/mkdocs.yml'
               - '**/go.mod'
               - '**/go.sum'
+              - 'Makefile'
+              - '**/Makefile'
               - '.github/workflows/lint.yml'
 
   # =============================================== lint ====================================================

@@ -16,7 +16,20 @@ spec:
     singular: node
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.agentType
+      name: Agent
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.unschedulable
+      name: Unschedulable
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         properties:
@@ -40,6 +53,10 @@ spec:
           spec:
             properties:
               agentType:
+                enum:
+                - Kubernetes
+                - Docker
+                - Raw
                 type: string
               unschedulable:
                 type: boolean
@@ -47,6 +64,7 @@ spec:
           status:
             properties:
               addresses:
+                description: Addresses 是节点地址列表（InternalIP / Hostname 等）。
                 items:
                   description: NodeAddress contains information for the node's address.
                   properties:
@@ -80,6 +98,68 @@ spec:
                   x-kubernetes-int-or-string: true
                 description: ResourceList is a set of (resource name, quantity) pairs.
                 type: object
+              conditions:
+                description: |-
+                  Conditions 记录节点的结构化状态结论，当前仅包含 ConditionTypeReady。
+                  它由观测（而非 Spec）驱动，因此不填写 ObservedGeneration。
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               diskPressure:
                 type: boolean
               events:
@@ -87,6 +167,7 @@ spec:
                   Events 由数据面 node-agent 上报节点相关 Kubernetes Event（如 DiskPressure
                   等 Warning 事件及镜像拉取/调度相关事件）。控制面 Task reconciler 在 Task
                   处于 Pending 期间聚合各节点事件到 Task.status.events，供前端展示。
+                  条目数量由 node-agent 侧裁剪（最多保留 50 条）。
                 items:
                   description: |-
                     NodeEvent represents a Kubernetes Event observed on a node that is relevant
@@ -117,7 +198,20 @@ spec:
                   - type
                   type: object
                 type: array
+              lastHeartbeatTime:
+                description: |-
+                  LastHeartbeatTime 是控制面 Node Reconciler 从 Agent Lease 读取到的最近一次
+                  心跳续约时间；数据面不写入本字段。
+                format: date-time
+                type: string
+              lastStatusChangeTime:
+                description: |-
+                  LastStatusChangeTime 是 Phase 最近一次发生变化的时间，与 LastHeartbeatTime
+                  同由控制面 Node Reconciler 写入，用于区分「长时间保持同一状态」与「刚刚翻转」。
+                format: date-time
+                type: string
               nodeInfo:
+                description: NodeInfo 是节点基础信息，由数据面 Agent 上报；控制面不写入本字段。
                 properties:
                   agentVersion:
                     type: string
@@ -129,8 +223,13 @@ spec:
                     type: string
                 type: object
               phase:
+                description: Phase 是节点连通性聚合阶段，由数据面 node-agent 上报。
+                enum:
+                - Online
+                - Offline
                 type: string
               pullProgress:
+                description: PullProgress 是节点上正在进行的镜像拉取进度，由 node-agent 上报。
                 items:
                   description: PullProgress captures the progress of an in-flight
                     image pull on a node.
@@ -158,6 +257,10 @@ spec:
                   type: object
                 type: array
               reason:
+                description: |-
+                  Reason 是 Phase 的机器可读原因（CamelCase），与 Conditions 中
+                  ConditionTypeReady 的 Reason 同源，供列表视图直接展示。
+                  该字段与 Conditions 均由数据面 node-agent 独占写入。
                 type: string
               storage:
                 description: NodeStorageStatus reports kubelet filesystem usage in

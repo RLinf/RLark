@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -13,25 +14,25 @@ import (
 
 // ClusterInfo defines the aggregate information returned by the cluster APIs.
 type ClusterInfo struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Type          string   `json:"type"`
-	Region        string   `json:"region"`
-	Location      string   `json:"location"`
-	Phase         string   `json:"phase"`
-	TotalNodes    int      `json:"totalNodes"`
-	OnlineNodes   int      `json:"onlineNodes"`
-	OfflineNodes  int      `json:"offlineNodes"`
-	CloudNodes    int      `json:"cloudNodes"`
-	EmbodiedNodes int      `json:"embodiedNodes"`
-	Robots        int      `json:"robots"`
-	GPUModels     []string `json:"gpuModels"`
-	RobotModels   []string `json:"robotModels"`
-	CPUUsage      int      `json:"cpuUsage"`
-	GPUUsage      int      `json:"gpuUsage"`
-	RobotUsage    int      `json:"robotUsage"`
-	RunningJobs   int      `json:"runningJobs"`
-	Description   string   `json:"description"`
+	ID            string                     `json:"id"`
+	Name          string                     `json:"name"`
+	Type          string                     `json:"type"`
+	Region        string                     `json:"region"`
+	Location      string                     `json:"location"`
+	Phase         rlarkv1alpha1.ClusterPhase `json:"phase"`
+	TotalNodes    int                        `json:"totalNodes"`
+	OnlineNodes   int                        `json:"onlineNodes"`
+	OfflineNodes  int                        `json:"offlineNodes"`
+	CloudNodes    int                        `json:"cloudNodes"`
+	EmbodiedNodes int                        `json:"embodiedNodes"`
+	Robots        int                        `json:"robots"`
+	GPUModels     []string                   `json:"gpuModels"`
+	RobotModels   []string                   `json:"robotModels"`
+	CPUUsage      int                        `json:"cpuUsage"`
+	GPUUsage      int                        `json:"gpuUsage"`
+	RobotUsage    int                        `json:"robotUsage"`
+	RunningJobs   int                        `json:"runningJobs"`
+	Description   string                     `json:"description"`
 }
 
 // ClusterDetail holds details.
@@ -77,10 +78,11 @@ func nodeCategories(node rlarkv1alpha1.Node) []rlarkv1alpha1.NodeCategory {
 	return result
 }
 
-func buildClusterInfo(clusterID string, nodes []rlarkv1alpha1.Node) ClusterInfo {
+func buildClusterInfo(cluster rlarkv1alpha1.Cluster, nodes []rlarkv1alpha1.Node) ClusterInfo {
 	info := ClusterInfo{
-		ID:          clusterID,
-		Name:        clusterID,
+		ID:          cluster.Name,
+		Name:        cluster.Name,
+		Phase:       cluster.Status.Phase,
 		GPUModels:   []string{},
 		RobotModels: []string{},
 	}
@@ -130,15 +132,6 @@ func buildClusterInfo(clusterID string, nodes []rlarkv1alpha1.Node) ClusterInfo 
 	}
 	info.RunningJobs = len(runningJobs)
 
-	switch {
-	case info.TotalNodes == 0 || info.OnlineNodes == 0:
-		info.Phase = "Offline"
-	case info.OnlineNodes == info.TotalNodes:
-		info.Phase = "Online"
-	default:
-		info.Phase = "Degraded"
-	}
-
 	hybrid := info.TotalNodes != info.CloudNodes+info.EmbodiedNodes+info.Robots // 有无标签的节点则显示为混合集群
 	if info.CloudNodes > 0 && info.EmbodiedNodes == 0 && info.Robots == 0 && !hybrid {
 		info.Type = "Cloud"
@@ -172,52 +165,68 @@ func (g *Gateway) clusterNodes(c *gin.Context) ([]rlarkv1alpha1.Node, error) {
 	return nodes.Items, nil
 }
 
-// listClusters handles the aggregated cluster list request.
+// listClusters handles the Cluster CR list request.
 func (g *Gateway) listClusters(c *gin.Context) {
-	nodes, err := g.clusterNodes(c)
+	if g.kubeClient == nil {
+		c.JSON(http.StatusOK, gin.H{"data": []ClusterInfo{}, "success": true})
+		return
+	}
+
+	clusterList, err := g.kubeClient.RlinfV1alpha1().Clusters().List(c.Request.Context(), metav1.ListOptions{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	nodes, err := g.clusterNodes(c)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
 
 	grouped := make(map[string][]rlarkv1alpha1.Node)
 	for _, node := range nodes {
-		clusterID := node.Labels[rlarkv1alpha1.LabelClusterID]
-		if clusterID != "" {
-			grouped[clusterID] = append(grouped[clusterID], node)
-		}
+		grouped[node.Namespace] = append(grouped[node.Namespace], node)
 	}
 
-	clusters := make([]ClusterInfo, 0, len(grouped))
-	for clusterID, clusterNodes := range grouped {
-		clusters = append(clusters, buildClusterInfo(clusterID, clusterNodes))
+	clusters := make([]ClusterInfo, 0, len(clusterList.Items))
+	for _, cluster := range clusterList.Items {
+		clusters = append(clusters, buildClusterInfo(cluster, grouped[cluster.Spec.AgentNamespace]))
 	}
 	sort.Slice(clusters, func(i, j int) bool { return clusters[i].Name < clusters[j].Name })
 	c.JSON(http.StatusOK, gin.H{"data": clusters, "success": true})
 }
 
-// getCluster handles a single aggregated cluster detail request.
+// getCluster handles a Cluster CR detail request.
 func (g *Gateway) getCluster(c *gin.Context) {
-	clusterID := c.Param("cluster_id")
+	if g.kubeClient == nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "cluster not found"})
+		return
+	}
+
+	cluster, err := g.kubeClient.RlinfV1alpha1().Clusters().Get(c.Request.Context(), c.Param("cluster_id"), metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "cluster not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+		return
+	}
 	nodes, err := g.clusterNodes(c)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
 
 	clusterNodes := make([]rlarkv1alpha1.Node, 0)
 	for _, node := range nodes {
-		if node.Labels[rlarkv1alpha1.LabelClusterID] == clusterID {
+		if node.Namespace == cluster.Spec.AgentNamespace {
 			clusterNodes = append(clusterNodes, node)
 		}
 	}
-	if len(clusterNodes) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "cluster not found"})
-		return
-	}
 
 	detail := ClusterDetail{
-		ClusterInfo: buildClusterInfo(clusterID, clusterNodes),
+		ClusterInfo: buildClusterInfo(*cluster, clusterNodes),
 		Nodes:       clusterNodes,
 	}
 	c.JSON(http.StatusOK, gin.H{"data": detail, "success": true})

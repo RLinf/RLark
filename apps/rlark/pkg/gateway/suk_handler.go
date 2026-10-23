@@ -172,7 +172,7 @@ func (g *Gateway) handleListSSHUserKeys(c *gin.Context) {
 	secret, err := g.getSSHKeySecret(c.Request.Context())
 	if err != nil {
 		logger.Error(err, "failed to get ssh key secret")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get ssh keys: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to get ssh keys: %v", err))
 		return
 	}
 
@@ -184,7 +184,10 @@ func (g *Gateway) handleListSSHUserKeys(c *gin.Context) {
 	userFilter := c.Query("user")
 	keysByUser := parseSSHKeysFromSecret(secret)
 
-	var items []sshUserKeyItem
+	// Starts as an empty slice, not a nil one: a nil slice serializes to null and
+	// would make the same endpoint answer null here but [] on the missing-secret
+	// branch above.
+	items := []sshUserKeyItem{}
 	for user, keys := range keysByUser {
 		if userFilter != "" && user != userFilter {
 			continue
@@ -221,24 +224,24 @@ func (g *Gateway) handleCreateSSHUserKey(c *gin.Context) {
 
 	var req createSSHUserKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "invalid request body")
 		return
 	}
 
 	if req.PublicKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "public_key is required"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "public_key is required")
 		return
 	}
 
 	req.User = strings.TrimSpace(req.User)
 	if req.User == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user is required"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "user is required")
 		return
 	}
 
 	pubKey, _, _, _, err := gossh.ParseAuthorizedKey([]byte(req.PublicKey))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid public key: %v", err)})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, fmt.Sprintf("invalid public key: %v", err))
 		return
 	}
 
@@ -249,7 +252,7 @@ func (g *Gateway) handleCreateSSHUserKey(c *gin.Context) {
 		secret, err := g.ensureSSHKeySecret(ctx)
 		if err != nil {
 			logger.Error(err, "failed to ensure ssh key secret")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to access ssh key store: %v", err)})
+			respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to access ssh key store: %v", err))
 			return
 		}
 
@@ -259,7 +262,7 @@ func (g *Gateway) handleCreateSSHUserKey(c *gin.Context) {
 
 		keysByUser := parseSSHKeysFromSecret(secret)
 		if duplicate := findSSHKeyDuplicate(keysByUser, req.User, normalizedKey); duplicate != "" {
-			c.JSON(http.StatusConflict, gin.H{"error": duplicate})
+			respondError(c, http.StatusConflict, CodeResourceAlreadyExists, duplicate)
 			return
 		}
 
@@ -279,7 +282,7 @@ func (g *Gateway) handleCreateSSHUserKey(c *gin.Context) {
 				continue
 			}
 			logger.Error(err, "failed to update ssh key secret")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to save ssh key: %v", err)})
+			respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to save ssh key: %v", err))
 			return
 		}
 
@@ -287,7 +290,7 @@ func (g *Gateway) handleCreateSSHUserKey(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusConflict, gin.H{"error": "failed to update ssh key secret after retries: too many conflicts"})
+	respondError(c, http.StatusConflict, CodeResourceConflict, "failed to update ssh key secret after retries: too many conflicts")
 }
 
 func (g *Gateway) handleDeleteSSHUserKey(c *gin.Context) {
@@ -296,13 +299,13 @@ func (g *Gateway) handleDeleteSSHUserKey(c *gin.Context) {
 	user := c.Query("user")
 	indexStr := c.Param("id")
 	if user == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user query parameter is required"})
+		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, "user query parameter is required")
 		return
 	}
 
 	index, err := strconv.Atoi(indexStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid key index"})
+		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, "invalid key index")
 		return
 	}
 
@@ -311,19 +314,19 @@ func (g *Gateway) handleDeleteSSHUserKey(c *gin.Context) {
 	for attempt := 0; attempt < sshKeyMaxRetries; attempt++ {
 		secret, err := g.getSSHKeySecret(ctx)
 		if err != nil || secret == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "no ssh keys found"})
+			respondError(c, http.StatusNotFound, CodeResourceNotFound, "no ssh keys found")
 			return
 		}
 
 		raw, ok := secret.Data[user]
 		if !ok {
-			c.JSON(http.StatusNotFound, gin.H{"error": "no keys found for user"})
+			respondError(c, http.StatusNotFound, CodeResourceNotFound, "no keys found for user")
 			return
 		}
 
 		lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 		if index < 0 || index >= len(lines) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "key index out of range"})
+			respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, "key index out of range")
 			return
 		}
 
@@ -348,7 +351,7 @@ func (g *Gateway) handleDeleteSSHUserKey(c *gin.Context) {
 				continue
 			}
 			logger.Error(err, "failed to update ssh key secret")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to delete ssh key: %v", err)})
+			respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to delete ssh key: %v", err))
 			return
 		}
 
@@ -356,5 +359,5 @@ func (g *Gateway) handleDeleteSSHUserKey(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusConflict, gin.H{"error": "failed to delete ssh key secret after retries: too many conflicts"})
+	respondError(c, http.StatusConflict, CodeResourceConflict, "failed to delete ssh key secret after retries: too many conflicts")
 }

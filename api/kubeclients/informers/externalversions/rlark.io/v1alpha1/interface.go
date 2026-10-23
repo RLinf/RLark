@@ -25,6 +25,8 @@ import (
 type Interface interface {
 	// Addons returns a AddonInformer.
 	Addons() AddonInformer
+	// Clusters returns a ClusterInformer.
+	Clusters() ClusterInformer
 	// Domains returns a DomainInformer.
 	Domains() DomainInformer
 	// DomainPeers returns a DomainPeerInformer.
@@ -55,6 +57,11 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // Addons returns a AddonInformer.
 func (v *version) Addons() AddonInformer {
 	return &addonInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// Clusters returns a ClusterInformer.
+func (v *version) Clusters() ClusterInformer {
+	return &clusterInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
 // Domains returns a DomainInformer.

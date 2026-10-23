@@ -21,6 +21,7 @@ import (
 )
 
 func TestReconcileListsOnlyPodsOnCurrentNode(t *testing.T) {
+	t.Parallel()
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -37,7 +38,7 @@ func TestReconcileListsOnlyPodsOnCurrentNode(t *testing.T) {
 			return []string{pod.Spec.NodeName}
 		}).
 		WithObjects(
-			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}},
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", Labels: map[string]string{"rlark.io/enabled": "true"}}},
 			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"}, Spec: corev1.PodSpec{NodeName: "node-a", Containers: []corev1.Container{{Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1")}}}}}},
 			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-b", Namespace: "default"}, Spec: corev1.PodSpec{NodeName: "node-b", Containers: []corev1.Container{{Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("8")}}}}}},
 		).Build()
@@ -58,6 +59,78 @@ func TestReconcileListsOnlyPodsOnCurrentNode(t *testing.T) {
 	}
 	if cpu := node.Status.Used.Cpu().String(); cpu != "1" {
 		t.Fatalf("reported CPU requests = %s, want 1", cpu)
+	}
+}
+
+func TestReconcileRestoresEnabledNodeAfterOffline(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	local := fake.NewClientBuilder().WithScheme(scheme).WithIndex(&corev1.Pod{}, podNodeNameField, func(obj client.Object) []string {
+		pod := obj.(*corev1.Pod)
+		if pod.Spec.NodeName == "" {
+			return nil
+		}
+		return []string{pod.Spec.NodeName}
+	}).WithObjects(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", Labels: map[string]string{"rlark.io/enabled": "true"}}},
+	).Build()
+	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&rlarkv1alpha1.Node{}).WithObjects(
+		managementNode("node-a", rlarkv1alpha1.NodeOffline),
+	).Build()
+	r := &pushNodeReconciler{c: &Controller{Controller: base.Controller{
+		LocalKubeClient:     local,
+		ManagementClient:    management,
+		ManagementNamespace: "cluster-a",
+		AgentType:           string(rlarkv1alpha1.AgentTypeKubernetes),
+	}}}
+
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "node-a"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var node rlarkv1alpha1.Node
+	if err := management.Get(context.Background(), types.NamespacedName{Name: "node-a", Namespace: "cluster-a"}, &node); err != nil {
+		t.Fatal(err)
+	}
+	if node.Labels["rlark.io/enabled"] != "true" {
+		t.Fatalf("management Node enabled label = %q, want true", node.Labels["rlark.io/enabled"])
+	}
+	if node.Status.Phase != rlarkv1alpha1.NodeOffline {
+		t.Fatalf("management Node phase = %q, want Offline", node.Status.Phase)
+	}
+}
+
+func TestReconcileSkipsUnmanagedNode(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	local := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}},
+	).Build()
+	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&rlarkv1alpha1.Node{}).Build()
+	r := &pushNodeReconciler{c: &Controller{Controller: base.Controller{
+		LocalKubeClient:     local,
+		ManagementClient:    management,
+		ManagementNamespace: "cluster-a",
+		AgentType:           string(rlarkv1alpha1.AgentTypeKubernetes),
+	}}}
+
+	if _, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "node-a"}}); err != nil {
+		t.Fatal(err)
+	}
+	var node rlarkv1alpha1.Node
+	err := management.Get(context.Background(), types.NamespacedName{Name: "node-a", Namespace: "cluster-a"}, &node)
+	if client.IgnoreNotFound(err) != nil {
+		t.Fatalf("management node get error = %v, want not found", err)
 	}
 }
 

@@ -1,0 +1,17 @@
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  except:
+    # The .proto files live in <area>/v1 while their packages are
+    # rlark.execution.<area>.v1. The directory layout is part of the published
+    # import paths of the checked-in SDK, so it is not renamed to match.
+    - PACKAGE_DIRECTORY_MATCH
+    # WorkloadAdapter and RuntimeProvider are the published service names of the
+    # execution plugin contract; adding a Service suffix would break them.
+    - SERVICE_SUFFIX
+breaking:
+  use:
+    - FILE

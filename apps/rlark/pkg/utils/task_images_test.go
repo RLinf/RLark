@@ -22,20 +22,19 @@ func TestExtractTaskImages_EmptySpec(t *testing.T) {
 	}
 }
 
-func TestExtractTaskImages_Kubernetes(t *testing.T) {
+func TestExtractTaskImages_PodTemplate(t *testing.T) {
 	task := &rlarkv1alpha1.Task{
 		Spec: rlarkv1alpha1.TaskSpec{
-			Kubernetes: &rlarkv1alpha1.KubernetesTaskSpec{
-				Workload: &rlarkv1alpha1.KubernetesWorkloadSpec{
-					Template: corev1.PodTemplateSpec{
-						Spec: corev1.PodSpec{
-							InitContainers: []corev1.Container{
-								{Name: "init", Image: "busybox:1.36"},
-							},
-							Containers: []corev1.Container{
-								{Name: "main", Image: "nginx:alpine"},
-								{Name: "side", Image: "redis:7"},
-							},
+			Workload: rlarkv1alpha1.TaskWorkloadSpec{
+				Template: &corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						InitContainers: []corev1.Container{{Name: "init", Image: "busybox:1.36"}},
+						Containers: []corev1.Container{
+							{Name: "main", Image: "nginx:alpine"},
+							{Name: "side", Image: "redis:7"},
+						},
+						EphemeralContainers: []corev1.EphemeralContainer{
+							{EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug", Image: "debug:latest"}},
 						},
 					},
 				},
@@ -43,20 +42,21 @@ func TestExtractTaskImages_Kubernetes(t *testing.T) {
 		},
 	}
 	got := ExtractTaskImages(task)
-	want := []string{"busybox:1.36", "nginx:alpine", "redis:7"} // sorted
+	want := []string{"busybox:1.36", "debug:latest", "nginx:alpine", "redis:7"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ExtractTaskImages(k8s) = %v, want %v", got, want)
+		t.Errorf("ExtractTaskImages(pod template) = %v, want %v", got, want)
 	}
 }
 
-func TestExtractTaskImages_Docker(t *testing.T) {
+func TestExtractTaskImages_IsRuntimeIndependent(t *testing.T) {
 	task := &rlarkv1alpha1.Task{
 		Spec: rlarkv1alpha1.TaskSpec{
-			Docker: &rlarkv1alpha1.DockerTaskSpec{
-				Containers: []rlarkv1alpha1.DockerContainerSpec{
+			Runtime: rlarkv1alpha1.TaskRuntimeSpec{Kind: "Docker"},
+			Workload: rlarkv1alpha1.TaskWorkloadSpec{
+				Template: &corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{
 					{Name: "a", Image: "nginx:alpine"},
 					{Name: "b", Image: "redis:7"},
-				},
+				}}},
 			},
 		},
 	}
@@ -67,21 +67,16 @@ func TestExtractTaskImages_Docker(t *testing.T) {
 	}
 }
 
-func TestExtractTaskImages_Dedup(t *testing.T) {
+func TestExtractTaskImages_DeduplicatesAndSkipsEmpty(t *testing.T) {
 	task := &rlarkv1alpha1.Task{
 		Spec: rlarkv1alpha1.TaskSpec{
-			Kubernetes: &rlarkv1alpha1.KubernetesTaskSpec{
-				Workload: &rlarkv1alpha1.KubernetesWorkloadSpec{
-					Template: corev1.PodTemplateSpec{
-						Spec: corev1.PodSpec{
-							InitContainers: []corev1.Container{{Image: "nginx:alpine"}},
-							Containers:     []corev1.Container{{Image: "nginx:alpine"}, {Image: "redis:7"}},
-						},
+			Workload: rlarkv1alpha1.TaskWorkloadSpec{
+				Template: &corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						InitContainers: []corev1.Container{{Image: "nginx:alpine"}},
+						Containers:     []corev1.Container{{Image: "nginx:alpine"}, {Image: "redis:7"}, {Image: ""}},
 					},
 				},
-			},
-			Docker: &rlarkv1alpha1.DockerTaskSpec{
-				Containers: []rlarkv1alpha1.DockerContainerSpec{{Image: "nginx:alpine"}},
 			},
 		},
 	}
@@ -89,34 +84,5 @@ func TestExtractTaskImages_Dedup(t *testing.T) {
 	want := []string{"nginx:alpine", "redis:7"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ExtractTaskImages(dedup) = %v, want %v", got, want)
-	}
-}
-
-func TestExtractTaskImages_RawHasNoImages(t *testing.T) {
-	task := &rlarkv1alpha1.Task{
-		Spec: rlarkv1alpha1.TaskSpec{
-			Raw: &rlarkv1alpha1.RawTaskSpec{Artifact: "file:///tmp/artifact.tar"},
-		},
-	}
-	if got := ExtractTaskImages(task); len(got) != 0 {
-		t.Errorf("ExtractTaskImages(raw) = %v, want empty", got)
-	}
-}
-
-func TestExtractTaskImages_SkipsEmptyImageStrings(t *testing.T) {
-	task := &rlarkv1alpha1.Task{
-		Spec: rlarkv1alpha1.TaskSpec{
-			Docker: &rlarkv1alpha1.DockerTaskSpec{
-				Containers: []rlarkv1alpha1.DockerContainerSpec{
-					{Name: "a", Image: ""},
-					{Name: "b", Image: "nginx:alpine"},
-				},
-			},
-		},
-	}
-	got := ExtractTaskImages(task)
-	want := []string{"nginx:alpine"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ExtractTaskImages(empty image) = %v, want %v", got, want)
 	}
 }

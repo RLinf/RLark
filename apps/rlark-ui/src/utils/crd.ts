@@ -1,5 +1,5 @@
 import type { Job, JobTag, JobType, Phase } from "../data";
-import type { CRDJob, CRDJobTask, CRDWorkflow } from "../types";
+import type { CRDJob, CRDJobTask, CRDWorkflow } from "../crdModels";
 
 // 生成稳定的 tag id：用 key:value 组合哈希，保证同一 CRD 多次转换得到相同 id。
 function tagId(key: string, value: string): string {
@@ -14,19 +14,25 @@ function tagId(key: string, value: string): string {
     .padStart(8, "0")}`;
 }
 
-function storageGi(quantity?: string): number {
-  const match = quantity?.match(/^(\d+)(?:Gi)?$/);
+function storageGi(quantity?: string | number): number {
+  const match = String(quantity ?? "").match(/^(\d+)(?:Gi)?$/);
   return match ? Number(match[1]) : 10;
 }
 
 export function crdToJob(crd: CRDJob): Job {
-  const tasks = crd.spec.tasks ?? [];
-  const container =
-    tasks[0]?.kubernetes?.workload?.template.spec.containers?.[0];
+  const tasks = crd.spec?.tasks ?? [];
+  const mainContainer = (task?: CRDJobTask) =>
+    task?.workload.template?.spec?.containers?.find(
+      (container) => container.name === "main",
+    );
+  const container = mainContainer(tasks[0]);
+  // Stopped 优先于 deletionTimestamp：
+  // archive 删除 KCP CR 时 deletionTimestamp 非空，但任务实际已停止。
+  const rawPhase = crd.status?.phase ?? "Pending";
   const phase = (
-    crd.metadata.deletionTimestamp
+    crd.metadata?.deletionTimestamp && rawPhase !== "Stopped"
       ? "Deleting"
-      : (crd.status?.phase ?? "Pending")
+      : rawPhase
   ) as Phase;
   const allTaskStatuses = crd.status?.tasks ?? [];
   const runningTasks = allTaskStatuses.filter(
@@ -34,24 +40,26 @@ export function crdToJob(crd: CRDJob): Job {
   ).length;
   const headerTask = tasks.find((t) => t.head) ?? tasks[0];
   const taskRoleName = (task: CRDJobTask) =>
-    task.kubernetes?.workload?.template.spec.containers?.[0]?.env?.find(
-      (env) => env.name === "RLARK_TASK_ROLE",
-    )?.value ?? task.name;
+    mainContainer(task)?.env?.find((env) => env.name === "RLARK_TASK_ROLE")
+      ?.value ??
+    task.name ??
+    "";
   const roles = tasks.map(taskRoleName);
   const roleCount = new Set(tasks.map((task) => task.role).filter(Boolean))
     .size;
   const displayName =
-    crd.metadata.annotations?.["rlark.io/display-name"] ??
-    crd.metadata.labels?.["rlark.io/display-name"] ??
-    crd.metadata.name;
+    crd.metadata?.annotations?.["rlark.io/display-name"] ??
+    crd.metadata?.labels?.["rlark.io/display-name"] ??
+    crd.metadata?.name ??
+    "";
   const resources = tasks.map((t) => {
-    const c = t.kubernetes?.workload?.template.spec.containers?.[0];
+    const c = mainContainer(t);
     const res = c?.resources?.requests ?? {};
     const gpu = res["nvidia.com/gpu"] ?? "0";
     const devices = Object.entries(res)
       .filter(([k]) => k.startsWith("rlinf.io/"))
       .map(([name, quantity]) => ({ name, quantity: String(quantity) }));
-    const ns = t.nodeSelector ?? {};
+    const ns = t.placement.nodeSelector ?? {};
     const nsStr = Object.entries(ns)
       .map(([k, v]) => `${k}=${v}`)
       .join(",");
@@ -60,32 +68,29 @@ export function crdToJob(crd: CRDJob): Job {
         ?.filter((e) => e.name !== "RLARK_TASK_ROLE")
         .map((e) => ({
           key: e.name,
-          value: e.value,
+          value: e.value ?? "",
         })) ?? [];
     const taskMounts = (c?.volumeMounts ?? []).map((vm) => {
-      const vol = t.kubernetes?.workload?.template.spec.volumes?.find(
+      const vol = t.workload.template?.spec?.volumes?.find(
         (v) => v.name === vm.name,
       );
       if (vol?.ephemeral) {
-        const spec = vol.ephemeral.volumeClaimTemplate.spec;
+        const spec = vol.ephemeral.volumeClaimTemplate?.spec;
         return {
           type: "storage" as const,
-          objectStorage: spec.storageClassName ?? "",
+          objectStorage: spec?.storageClassName ?? "",
           mountPath: vm.mountPath,
           hostPath: "",
-          pvcSizeGb: storageGi(spec.resources?.requests?.storage),
+          pvcSizeGb: storageGi(spec?.resources?.requests?.storage),
         };
       }
       if (vol?.persistentVolumeClaim) {
-        const claimName = vol.persistentVolumeClaim.claimName;
-        const storageClass =
-          t.kubernetes?.workload?.pvcStorageMap?.[claimName] ?? "";
         return {
           type: "storage" as const,
-          objectStorage: storageClass,
+          objectStorage: vol.persistentVolumeClaim.claimName,
           mountPath: vm.mountPath,
           hostPath: "",
-          pvcSizeGb: t.kubernetes?.workload?.pvcSizeGbMap?.[claimName] ?? 10,
+          pvcSizeGb: 10,
         };
       }
       const hostPath = vol?.hostPath?.path ?? "";
@@ -101,13 +106,13 @@ export function crdToJob(crd: CRDJob): Job {
       role: taskRoleName(t),
       cluster: "",
       nodeSelector: nsStr,
-      replicas: t.kubernetes?.workload?.replicas ?? 1,
-      cpu: res.cpu ?? "",
-      memory: res.memory ?? "",
-      gpu,
+      replicas: carrierReplicas(t),
+      cpu: String(res.cpu ?? ""),
+      memory: String(res.memory ?? ""),
+      gpu: String(gpu),
       devices,
       image: c?.image ?? "",
-      prepareScript: t.prepareScript ?? "",
+      prepareScript: rayScript(t, "prepare"),
       env: taskEnv,
       mounts: taskMounts,
     };
@@ -117,33 +122,29 @@ export function crdToJob(crd: CRDJob): Job {
       ?.filter((e) => e.name !== "RLARK_TASK_ROLE")
       .map((e) => ({
         key: e.name,
-        value: e.value,
+        value: e.value ?? "",
       })) ?? [];
   const mounts = (container?.volumeMounts ?? []).map((vm) => {
-    const vol = tasks[0]?.kubernetes?.workload?.template.spec.volumes?.find(
+    const vol = tasks[0]?.workload.template?.spec?.volumes?.find(
       (v) => v.name === vm.name,
     );
     if (vol?.ephemeral) {
-      const spec = vol.ephemeral.volumeClaimTemplate.spec;
+      const spec = vol.ephemeral.volumeClaimTemplate?.spec;
       return {
         type: "storage" as const,
-        objectStorage: spec.storageClassName ?? "",
+        objectStorage: spec?.storageClassName ?? "",
         mountPath: vm.mountPath,
         hostPath: "",
-        pvcSizeGb: storageGi(spec.resources?.requests?.storage),
+        pvcSizeGb: storageGi(spec?.resources?.requests?.storage),
       };
     }
     if (vol?.persistentVolumeClaim) {
-      const claimName = vol.persistentVolumeClaim.claimName;
-      const storageClass =
-        tasks[0]?.kubernetes?.workload?.pvcStorageMap?.[claimName] ?? "";
       return {
         type: "storage" as const,
-        objectStorage: storageClass,
+        objectStorage: vol.persistentVolumeClaim.claimName,
         mountPath: vm.mountPath,
         hostPath: "",
-        pvcSizeGb:
-          tasks[0]?.kubernetes?.workload?.pvcSizeGbMap?.[claimName] ?? 10,
+        pvcSizeGb: 10,
       };
     }
     const hostPath = vol?.hostPath?.path ?? "";
@@ -156,21 +157,25 @@ export function crdToJob(crd: CRDJob): Job {
     };
   });
   return {
-    id: crd.metadata.name,
-    name: crd.metadata.name,
+    id: crd.metadata?.name ?? "",
+    name: crd.metadata?.name ?? "",
     displayName,
     type: mapRoleToJobType(tasks),
     phase,
     owner: "",
     cluster: tasks
-      .map((t) => (t.nodeSelector ? Object.values(t.nodeSelector)[0] : ""))
+      .map((t) =>
+        t.placement.nodeSelector
+          ? Object.values(t.placement.nodeSelector)[0]
+          : "",
+      )
       .filter(Boolean)
       .join(", "),
     target: roles.join(" / "),
     workers: tasks.length,
     runningWorkers: runningTasks,
-    startedAt: crd.metadata.creationTimestamp ?? "—",
-    submittedAt: crd.metadata.creationTimestamp ?? "—",
+    startedAt: crd.metadata?.creationTimestamp ?? "—",
+    submittedAt: crd.metadata?.creationTimestamp ?? "—",
     stoppedAt: crd.status?.endTime ?? "—",
     roleCount,
     duration: "—",
@@ -180,31 +185,32 @@ export function crdToJob(crd: CRDJob): Job {
         : Math.round((runningTasks / Math.max(tasks.length, 1)) * 100),
     defaultRoles: roles,
     image: container?.image ?? "",
-    command: headerTask?.runScript ?? "",
-    tensorBoardDir: headerTask?.tensorBoardDir ?? "",
+    command: rayScript(headerTask, "run"),
+    tensorBoardDir: tensorBoardLogDir(headerTask),
     env,
     mounts,
     headerRole: headerTask ? taskRoleName(headerTask) : "",
     headerWorker: headerTask ? taskRoleName(headerTask) : "",
     sshAddress: "",
-    stopped: crd.spec.stopped ?? false,
-    domain: crd.spec.domain ?? "",
-    sshPublicKey: crd.spec.sshPublicKey ?? "",
+    stopped: crd.spec?.suspended ?? false,
+    domain: crd.spec?.domain ?? "",
+    sshPublicKey: crd.spec?.sshPublicKey ?? "",
     tags:
-      crd.spec.tags && crd.spec.tags.length > 0
-        ? crd.spec.tags.flatMap((tag) => {
-            // 兼容旧格式 {key, value} 与新格式 {key, values[]}
-            const values =
-              tag.values ?? (tag.value !== undefined ? [tag.value] : []);
-            return values.map((value): JobTag => ({
+      crd.spec?.tags && crd.spec.tags.length > 0
+        ? crd.spec.tags.flatMap((tag) =>
+            tag.values.map((value): JobTag => ({
               id: tagId(tag.key, value),
               key: tag.key,
               value,
-            }));
-          })
+            })),
+          )
         : [],
     resources,
-    taskStatuses: allTaskStatuses,
+    taskStatuses: allTaskStatuses.map((status) => ({
+      name: status.name ?? "",
+      phase: status.phase ?? "Pending",
+      message: status.message ?? "",
+    })),
   };
 }
 
@@ -223,20 +229,49 @@ export function mapRoleToJobType(tasks: CRDJobTask[]): JobType {
 export function crdToWorkflow(crd: CRDWorkflow) {
   const jobs = crd.status?.jobs ?? [];
   const running = jobs.filter((j) => j.phase === "Running").length;
-  const phase = crd.metadata.deletionTimestamp
+  const phase = crd.metadata?.deletionTimestamp
     ? "Deleting"
-    : crd.spec.stopped &&
+    : crd.spec?.suspended &&
         (crd.status?.phase === "Pending" || crd.status?.phase === "Running")
       ? "Stopping"
       : (crd.status?.phase ?? "Pending");
   return {
-    name: crd.metadata.name,
+    name: crd.metadata?.name ?? "",
     phase: phase as Phase,
-    jobCount: crd.spec.jobTemplates.length,
+    jobCount: crd.spec?.jobTemplates?.length ?? 0,
     runningJobs: running,
-    created: crd.metadata.creationTimestamp ?? "—",
-    templates: crd.spec.jobTemplates,
+    created: crd.metadata?.creationTimestamp ?? "—",
+    templates: crd.spec?.jobTemplates ?? [],
     jobStatuses: jobs,
-    stopped: crd.spec.stopped ?? false,
+    stopped: crd.spec?.suspended ?? false,
   };
+}
+
+function carrierReplicas(task: CRDJobTask): number {
+  const parameters = task.workload.carrier.parameters;
+  if (!parameters || typeof parameters !== "object") return 1;
+  const replicas = Number((parameters as { replicas?: unknown }).replicas);
+  return Number.isFinite(replicas) ? replicas : 1;
+}
+
+function rayScript(
+  task: CRDJobTask | undefined,
+  field: "prepare" | "run",
+): string {
+  const parameters = task?.workload.parameters;
+  if (!parameters || typeof parameters !== "object") return "";
+  const script = (parameters as Record<string, unknown>)[field];
+  if (!script || typeof script !== "object") return "";
+  const inline = (script as { inline?: unknown }).inline;
+  return typeof inline === "string" ? inline : "";
+}
+
+function tensorBoardLogDir(task: CRDJobTask | undefined): string {
+  const environment = task?.environments?.find(
+    (item) => item.type === "rlinf.io/tensorboard" && item.version === "v1",
+  );
+  if (!environment?.parameters || typeof environment.parameters !== "object")
+    return "";
+  const logDir = (environment.parameters as { logDir?: unknown }).logDir;
+  return typeof logDir === "string" ? logDir : "";
 }

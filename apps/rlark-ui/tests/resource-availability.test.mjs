@@ -8,21 +8,27 @@ import {
 const task = (namespace, nodes, gpu) => ({
   metadata: { name: "job-actor", namespace },
   spec: {
-    kubernetes: {
-      workload: {
-        kind: "StatefulSet",
-        replicas: nodes.length,
-        template: {
-          spec: {
-            containers: [
-              {
-                name: "main",
-                image: "example/image",
-                env: [],
-                resources: { requests: { "nvidia.com/gpu": gpu } },
-              },
-            ],
-          },
+    role: "Actor",
+    placement: {},
+    runtime: { kind: "Kubernetes" },
+    workload: {
+      kind: "rlinf.io/ray",
+      version: "v1",
+      carrier: {
+        type: "rlinf.io/kubernetes-statefulset",
+        version: "v1",
+        parameters: { replicas: nodes.length },
+      },
+      template: {
+        spec: {
+          containers: [
+            {
+              name: "main",
+              image: "example/image",
+              env: [],
+              resources: { requests: { "nvidia.com/gpu": gpu } },
+            },
+          ],
         },
       },
     },

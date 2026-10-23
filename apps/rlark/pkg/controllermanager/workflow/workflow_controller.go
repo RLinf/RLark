@@ -96,8 +96,21 @@ func (r *Reconciler) deleteOwnedJobs(ctx context.Context, wf *rlarkv1alpha1.Work
 func (r *Reconciler) IsTerminal(client.Object) bool { return false }
 
 // ReconcileStateMachine reconciles the resource.
+//
+// 调谐成功返回后，将 Status.ObservedGeneration 推进到本次所观测的
+// metadata.generation。若调谐以错误（含 ErrRequeueAfterChildCleanup）结束，
+// 则不推进，使消费者能够识别出 Status 尚未对应当前 Spec。
 func (r *Reconciler) ReconcileStateMachine(ctx context.Context, obj client.Object) (bool, error) {
-	return r.reconcileWithStateMachine(ctx, obj.(*rlarkv1alpha1.Workflow))
+	wf := obj.(*rlarkv1alpha1.Workflow)
+	changed, err := r.reconcileWithStateMachine(ctx, wf)
+	if err != nil {
+		return changed, err
+	}
+	if wf.Status.ObservedGeneration != wf.Generation {
+		wf.Status.ObservedGeneration = wf.Generation
+		changed = true
+	}
+	return changed, nil
 }
 
 // SetupWithManager registers the controller with the manager.

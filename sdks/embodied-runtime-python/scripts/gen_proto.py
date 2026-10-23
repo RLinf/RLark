@@ -9,6 +9,10 @@ Usage:
     python scripts/gen_proto.py            # uses bundled grpcio-tools
     python scripts/gen_proto.py --protoc   # uses system protoc + grpc plugin
 
+The grpcio-tools release is pinned (see GRPCIO_TOOLS_VERSION) because its
+version is stamped into the generated files. Install it with
+``pip install -r requirements-dev.txt``.
+
 Regenerate whenever the .proto files change. The output is checked in.
 """
 
@@ -24,11 +28,43 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PROTO_DIR = REPO_ROOT / "proto" / "embodied-runtime"
 GEN_ROOT = REPO_ROOT / "sdks" / "embodied-runtime-python" / "embodied_runtime" / "gen"
 
+# The generated stubs record the generating grpcio-tools release in their
+# headers (``GRPC_GENERATED_VERSION``, ``Protobuf Python Version``). A different
+# release therefore rewrites every file under GEN_ROOT even when no .proto
+# changed, which would make the checked-in stubs churn on every contributor's
+# machine. Keep in sync with requirements-dev.txt and, if the Go toolchain is
+# bumped too, proto/toolchain.mk.
+GRPCIO_TOOLS_VERSION = "1.84.0"
+
 # (proto_path_relative, module, alias_prefix)
 PROTO_SPECS = [
     ("roscontroller/v1/robot.proto", "roscontroller", "v1", "robot"),
     ("cameracontroller/v1/camera.proto", "cameracontroller", "v1", "camera"),
 ]
+
+
+def check_toolchain_version() -> None:
+    """Fail unless grpcio-tools matches the version that produced the stubs."""
+    from importlib.metadata import PackageNotFoundError, version  # noqa: PLC0415
+
+    try:
+        found = version("grpcio-tools")
+    except PackageNotFoundError:
+        raise SystemExit(
+            "ERROR: grpcio-tools is not installed.\n"
+            f"Install the pinned toolchain: pip install -r "
+            f"{(REPO_ROOT / 'sdks' / 'embodied-runtime-python' / 'requirements-dev.txt')}"
+        ) from None
+
+    if found != GRPCIO_TOOLS_VERSION:
+        raise SystemExit(
+            f"ERROR: grpcio-tools {GRPCIO_TOOLS_VERSION} is required, found {found}.\n"
+            "The checked-in stubs embed the generator version, so regenerating with\n"
+            "a different release rewrites every file under\n"
+            f"    {GEN_ROOT.relative_to(REPO_ROOT)}/\n"
+            "Install the pinned version:\n"
+            "    pip install -r sdks/embodied-runtime-python/requirements-dev.txt"
+        )
 
 
 def run_grpcio_tools() -> None:
@@ -101,6 +137,7 @@ def main() -> None:
     if args.protoc:
         raise SystemExit("--protoc mode is not implemented yet; use grpcio-tools")
     else:
+        check_toolchain_version()
         run_grpcio_tools()
 
     fix_grpc_imports()

@@ -31,6 +31,10 @@ func (c *FakeRlinfV1alpha1) Addons(namespace string) v1alpha1.AddonInterface {
 	return newFakeAddons(c, namespace)
 }
 
+func (c *FakeRlinfV1alpha1) Clusters() v1alpha1.ClusterInterface {
+	return newFakeClusters(c)
+}
+
 func (c *FakeRlinfV1alpha1) Domains() v1alpha1.DomainInterface {
 	return newFakeDomains(c)
 }

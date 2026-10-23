@@ -14,12 +14,16 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
+    "generate:crd-models": "node scripts/generate-crd-models.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "test": "npm run test:compile && node --test tests/*.test.mjs",
     "test:coverage": "npm run test:compile && NODE_V8_COVERAGE=coverage/v8 node --test tests/*.test.mjs",
     "test:compile": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
+    "@kubernetes-models/apimachinery": "3.0.2",
+    "@kubernetes-models/base": "6.0.1",
+    "@kubernetes-models/validate": "5.0.2",
     "@vitejs/plugin-react": "^4.7.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
@@ -31,6 +35,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
+    "@kubernetes-models/crd-generate": "6.1.1",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "eslint": "^9.0.0",

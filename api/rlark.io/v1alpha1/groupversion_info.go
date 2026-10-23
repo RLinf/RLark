@@ -30,6 +30,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 
 		&Domain{},
 		&DomainList{},
+		&Cluster{},
+		&ClusterList{},
 		&DomainPeer{},
 		&DomainPeerList{},
 

@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/go-logr/logr"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -24,6 +25,13 @@ import (
 )
 
 const podDomainField = "spec.domain"
+
+// Reason values for the Domain Validated condition. They are stable, CamelCase
+// identifiers consumed by clients.
+const (
+	domainReasonCIDRValid   = "CIDRValid"
+	domainReasonCIDRInvalid = "InvalidCIDR"
+)
 
 // Reconciler watches Domain and Pod CRs, and generates DomainPeer
 // (one per cluster/namespace per domain) containing the pod list.
@@ -62,8 +70,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	ippool, err := NewIPPool(domain.Spec.CIDR)
 	if err != nil {
+		// An invalid Spec cannot be fixed by retrying, so record the conclusion in
+		// the Validated condition and stop reconciling until the Spec changes.
 		logger.Error(err, "invalid CIDR in Domain spec, skip")
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, r.markDomainInvalid(ctx, &domain, err.Error())
 	}
 	originalAllocations := append([]rlarkv1alpha1.DomainIPAllocation(nil), domain.Status.IPAllocations...)
 
@@ -196,8 +206,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return domain.Status.IPAllocations[i].Pod < domain.Status.IPAllocations[j].Pod
 	})
 
-	// 7. Update Domain.Status.IPAllocations with the new allocations
-	if !reflect.DeepEqual(originalAllocations, domain.Status.IPAllocations) {
+	// 7. Update Domain.Status with the new allocations and the observed generation
+	statusChanged := !reflect.DeepEqual(originalAllocations, domain.Status.IPAllocations)
+	if domain.Status.ObservedGeneration != domain.Generation {
+		domain.Status.ObservedGeneration = domain.Generation
+		statusChanged = true
+	}
+	if apimeta.SetStatusCondition(&domain.Status.Conditions, metav1.Condition{
+		Type:               rlarkv1alpha1.ConditionTypeValidated,
+		Status:             metav1.ConditionTrue,
+		Reason:             domainReasonCIDRValid,
+		ObservedGeneration: domain.Generation,
+	}) {
+		statusChanged = true
+	}
+	if statusChanged {
 		if err := r.Status().Update(ctx, &domain); err != nil {
 			logger.Error(err, "failed to update Domain status")
 			return ctrl.Result{}, err
@@ -231,6 +254,27 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// markDomainInvalid records an invalid Spec in the Validated condition. An
+// invalid Spec cannot be fixed by retrying, so the caller stops reconciling and
+// waits for a Spec change instead of requeueing forever.
+func (r *Reconciler) markDomainInvalid(ctx context.Context, domain *rlarkv1alpha1.Domain, message string) error {
+	changed := apimeta.SetStatusCondition(&domain.Status.Conditions, metav1.Condition{
+		Type:               rlarkv1alpha1.ConditionTypeValidated,
+		Status:             metav1.ConditionFalse,
+		Reason:             domainReasonCIDRInvalid,
+		Message:            message,
+		ObservedGeneration: domain.Generation,
+	})
+	if domain.Status.ObservedGeneration != domain.Generation {
+		domain.Status.ObservedGeneration = domain.Generation
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return r.Status().Update(ctx, domain)
 }
 
 // SetupWithManager registers the controller with the manager.
