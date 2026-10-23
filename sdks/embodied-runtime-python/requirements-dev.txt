@@ -1,5 +1,9 @@
 -r requirements.txt
-grpcio-tools>=1.60
+# Pinned: grpcio-tools embeds its own protoc and stamps the version into the
+# generated stubs, so a different release rewrites every file under
+# embodied_runtime/gen. Keep in sync with scripts/gen_proto.py and the
+# toolchain pins in proto/toolchain.mk.
+grpcio-tools==1.84.0
 ruff>=0.6
 pytest>=7.0
 pytest-cov>=4.0

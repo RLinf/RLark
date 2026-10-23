@@ -4,7 +4,9 @@
 
 除 `POST /api/v1/auth/login` 和 `/metrics` 外，Gateway 路由均要求在 `Authorization: Bearer <token>` 请求头中携带登录返回的 JWT。token 默认 8 小时过期，可通过 `--jwt-token-ttl` 配置。缺失或无效 token 返回 `401`；已认证 `user` 调用仅管理员接口返回 `403`。
 
-仅管理员操作包括 Node 和 Domain 变更，以及全部证书、镜像仓库、Addon 接口、系统配置更新和 StorageClass provider/变更接口。系统配置读取及全部 SSH 密钥操作允许任一已认证角色访问。授权按角色执行，尚未按具体用户隔离资源，包括 SSH 密钥。
+仅管理员操作包括 Node 和 Domain 变更，以及全部证书、镜像仓库、Addon 接口、系统配置更新和 StorageClass provider/变更接口。系统配置读取及全部 SSH 密钥操作允许任一已认证角色访问。
+
+授权同时按角色与租户作用域执行。Workflow、Job、Task、Pod 路由被限定在调用方所属的租户内：作用域之外的 `?tenant=` 过滤或创建请求体返回 `403`，归属其他租户的具名对象返回 `404`，以免确认该名称存在。`admin` 调用方不受限制。其余资源（包括 SSH 密钥）仍只按角色授权，尚未按具体用户隔离。完整模型见[租户作用域强制](../developer-guide/api-conventions.md#51)。
 
 下表用 `{name}` 表示路径参数；Router 源码中的 Gin 等价写法为 `:name`。Namespaced CRD 路由需要 `namespace` query 参数。
 
@@ -13,7 +15,8 @@
 | 资源 | 作用域 | 路由 |
 |------|--------|------|
 | `nodes` | Namespaced | `GET, POST /api/v1/rlinf.io/v1alpha1/nodes`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/nodes/{name}` |
-| `jobs` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/jobs`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/jobs/{name}`；`GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs`；`GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs/label-values`；`GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/metrics` |
+| `workflows` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/workflows`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/workflows/{name}` |
+| `jobs` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/jobs`；`GET /api/v1/rlinf.io/v1alpha1/jobs/tags`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/jobs/{name}`；`GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs`；`GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs/label-values`；`GET /api/v1/rlinf.io/v1alpha1/jobs/{name}/metrics` |
 | `tasks` | Namespaced | `GET, POST /api/v1/rlinf.io/v1alpha1/tasks`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/tasks/{name}`；`/api/v1/rlinf.io/v1alpha1/tasks/{name}/tensorboard/{path}` 接受所有方法 |
 | `pods` | Namespaced | `GET /api/v1/rlinf.io/v1alpha1/pods`；`GET, PATCH /api/v1/rlinf.io/v1alpha1/pods/{name}`；`GET /api/v1/rlinf.io/v1alpha1/pods/{name}/events`；`GET /api/v1/rlinf.io/v1alpha1/pods/{name}/terminal` |
 | `domains` | Cluster | `GET, POST /api/v1/rlinf.io/v1alpha1/domains`；`GET, PUT, PATCH, DELETE /api/v1/rlinf.io/v1alpha1/domains/{name}` |
@@ -94,6 +97,8 @@ Gateway 虽注册了 `POST /api/v1/certificates/revoke`，但该接口尚未实�
 | `GET` | `/api/v1/storage/storageclass/{name}/{cluster}/list` |
 | `POST` | `/api/v1/storage/storageclass/{name}/{cluster}/upload` |
 | `GET, DELETE` | `/api/v1/storage/storageclass/{name}/{cluster}/object/{key}` |
+
+StorageClass 接口管理控制面声明。Replication 和 Delivery 控制器会将生成的 rclone CSI 资源异步分发到已配置的目标集群；列表返回的是已管理声明，而非实时查询 Agent 的结果。
 
 ## Addon
 

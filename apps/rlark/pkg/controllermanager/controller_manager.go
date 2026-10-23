@@ -16,6 +16,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/archive"
+	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/cluster"
 	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/domain"
 	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/job"
 	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/node"
@@ -25,6 +27,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/workflow"
 	"github.com/rlinf/rlark/apps/rlark/pkg/db"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	archivestore "github.com/rlinf/rlark/apps/rlark/pkg/persistence"
 )
 
 // Reconciler reconciles resources.
@@ -88,6 +91,11 @@ func New(config Config) (manager.Manager, error) {
 			Scheme:                  scheme,
 			MaxConcurrentReconciles: config.ControllerConcurrency.Node,
 		},
+		&cluster.Reconciler{
+			Client:                  mgr.GetClient(),
+			Scheme:                  scheme,
+			MaxConcurrentReconciles: config.ControllerConcurrency.Cluster,
+		},
 		&domain.Reconciler{
 			Client:                  mgr.GetClient(),
 			Scheme:                  scheme,
@@ -97,6 +105,9 @@ func New(config Config) (manager.Manager, error) {
 			ServerAddress:    config.ServerAddress,
 		},
 	}
+
+	// 初始化持久化后端：优先 PG，否则用 Secret（测试模式）
+	var backend archivestore.Backend
 
 	if config.DBConfigPath != "" {
 		dbConfig := db.DefaultConfig()
@@ -116,14 +127,29 @@ func New(config Config) (manager.Manager, error) {
 			return nil, fmt.Errorf("run database migrations: %w", err)
 		}
 		logger.Info("database connected and migrated")
-		reconcilers = append(reconcilers,
-			sync.NewJobReconciler(config.ControllerConcurrency.JobSync, mgr.GetClient(), database.DB),
-			sync.NewTaskReconciler(config.ControllerConcurrency.TaskSync, mgr.GetClient(), database.DB),
-			sync.NewWorkflowReconciler(config.ControllerConcurrency.WorkflowSync, mgr.GetClient(), database.DB),
-			sync.NewNodeReconciler(config.ControllerConcurrency.NodeSync, mgr.GetClient(), database.DB),
-		)
+		backend = archivestore.NewPostgresBackend(database.DB)
+	} else if config.EnableSecretBackend {
+		// Secret Backend：测试/CI 模式，用 K8s Secret 存归档快照。
+		backend = archivestore.NewSecretBackend(mgr.GetClient(), config.KubeClientConfig.DefaultNamespace())
+		logger.Info("using Secret backend for persistence (test mode)")
 	} else {
 		logger.Error(nil, "RLark controller manager is running without persistent storage.")
+	}
+
+	// 启动 Syncer（如果配置了持久化后端）
+	if backend != nil {
+		reconcilers = append(reconcilers,
+			sync.NewJobReconciler(config.ControllerConcurrency.JobSync, mgr.GetClient(), backend),
+			sync.NewTaskReconciler(config.ControllerConcurrency.TaskSync, mgr.GetClient(), backend),
+			sync.NewWorkflowReconciler(config.ControllerConcurrency.WorkflowSync, mgr.GetClient(), backend),
+			sync.NewNodeReconciler(config.ControllerConcurrency.NodeSync, mgr.GetClient(), backend),
+		)
+
+		for _, res := range archive.DefaultRegistry.Resources() {
+			reconcilers = append(reconcilers, archive.NewReconciler(mgr.GetClient(), scheme, res,
+				config.ControllerConcurrency.Archive, config.ArchiveTTL),
+			)
+		}
 	}
 
 	for _, r := range reconcilers {

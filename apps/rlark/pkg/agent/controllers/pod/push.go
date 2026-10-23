@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
 // pushPodReconciler watches local K8s Pods and reports their info to management Pod CRs.
@@ -213,9 +214,7 @@ func (r *pushPodReconciler) buildRLarkPodFromK8sPod(ctx context.Context, k8sPod 
 	if string(task.UID) != taskUID {
 		return nil, fmt.Errorf("verify management Task identity: Task %s/%s UID is %q, not %q", taskNamespace, taskName, task.UID, taskUID)
 	}
-	if podSpec.Domain != "" && task.Spec.Domain != podSpec.Domain {
-		return nil, fmt.Errorf("verify management Task identity: Task %s/%s domain is %q, not %q", taskNamespace, taskName, task.Spec.Domain, podSpec.Domain)
-	}
+	tenant.Inherit(&task, mgmtPod)
 
 	// Cross-namespace owner references are illegal. Identity is still verified
 	// above for cross-namespace Tasks, but ownership is only set when legal.

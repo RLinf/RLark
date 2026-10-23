@@ -268,8 +268,7 @@ func (s *OrphanSweeper) taskIdentityGone(ctx context.Context, pod *rlarkv1alpha1
 	if string(task.UID) != taskUID {
 		return true, nil
 	}
-	domain := pod.Labels[rlarkv1alpha1.PodLabelDomain]
-	return domain != "" && task.Spec.Domain != domain, nil
+	return false, nil
 }
 
 // backfillLegacyIdentity adopts only the old UID-named form when the local Pod
@@ -301,7 +300,7 @@ func (s *OrphanSweeper) observeLegacyIdentity(ctx context.Context, pod *rlarkv1a
 		}
 		return nil, err
 	}
-	if string(task.UID) != annotations["rlark.io/management-task-uid"] || (pod.Spec.Domain != "" && task.Spec.Domain != pod.Spec.Domain) {
+	if string(task.UID) != annotations["rlark.io/management-task-uid"] {
 		return nil, nil
 	}
 	pod = pod.DeepCopy()

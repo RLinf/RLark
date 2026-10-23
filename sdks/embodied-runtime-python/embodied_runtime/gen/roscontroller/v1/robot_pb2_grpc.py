@@ -5,7 +5,7 @@ import warnings
 
 from embodied_runtime.gen.roscontroller.v1 import robot_pb2 as roscontroller_dot_v1_dot_robot__pb2
 
-GRPC_GENERATED_VERSION = '1.83.0'
+GRPC_GENERATED_VERSION = '1.84.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 

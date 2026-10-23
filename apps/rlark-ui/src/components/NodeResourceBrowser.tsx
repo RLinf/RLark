@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Ban, ChevronRight, LayoutGrid, LockOpen } from "lucide-react";
+import { Ban, ChevronRight, Info, LayoutGrid, LockOpen } from "lucide-react";
 import type { Phase } from "../data";
 import type { Copy } from "../i18n";
 import type { CRDNode, NodeCategory } from "../types";
@@ -65,6 +65,7 @@ export function NodeResourceBrowser({
   const [locationFilter, setLocationFilter] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [offlineInfoKey, setOfflineInfoKey] = useState<string | null>(null);
   const { openKey, anchorRect, openFor, close } = useColumnFilter();
 
   const categoryCounts = useMemo(() => {
@@ -343,6 +344,14 @@ export function NodeResourceBrowser({
           <div className="node-resource-table-body">
             {pagedNodes.map((node) => {
               const phase = (node.status?.phase ?? "Offline") as Phase;
+              const lastHeartbeat = node.status?.lastHeartbeatTime;
+              const offlineTitle = lastHeartbeat
+                ? zh
+                  ? `上次在线：${new Date(lastHeartbeat).toLocaleString("zh-CN")}`
+                  : `Last online: ${new Date(lastHeartbeat).toLocaleString("en-US")}`
+                : zh
+                  ? "上次在线时间未知"
+                  : "Last online time unavailable";
               const nodeCategories = getNodeCategories(node);
               const labels = node.metadata.labels ?? {};
               const cluster =
@@ -417,8 +426,34 @@ export function NodeResourceBrowser({
                       );
                     })}
                   </span>
-                  <span>
+                  <span className="node-row-status">
                     <StatusBadge phase={phase} copy={c} />
+                    {phase === "Offline" && (
+                      <span className="node-offline-info-wrap">
+                        <button
+                          type="button"
+                          className="node-offline-info"
+                          aria-label={offlineTitle}
+                          aria-expanded={offlineInfoKey === key}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setOfflineInfoKey((current) =>
+                              current === key ? null : key,
+                            );
+                          }}
+                        >
+                          <Info size={13} />
+                        </button>
+                        {offlineInfoKey === key && (
+                          <span
+                            className="node-offline-info-tooltip"
+                            role="status"
+                          >
+                            {offlineTitle}
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </span>
                   <span className="node-row-meta" title={cluster}>
                     {cluster}

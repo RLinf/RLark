@@ -20,7 +20,7 @@ func (g *Gateway) getAddonCatalog(c *gin.Context) {
 	name := c.Param("name")
 	addon, ok := addons.Registry.Get(name)
 	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "addon not found"})
+		respondError(c, http.StatusNotFound, CodeResourceNotFound, "addon not found")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": addon.Meta(), "success": true})

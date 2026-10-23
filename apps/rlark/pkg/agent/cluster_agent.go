@@ -124,8 +124,21 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		"task-statefulset": c.a.config.ControllerConcurrency.TaskStatefulSet,
 	}
 	tc := task.NewTaskController(taskController)
+	execution, err := task.NewKubernetesExecutionCoordinator(taskController.LocalKubeClient, taskController.Image)
+	if err != nil {
+		return fmt.Errorf("initialize task execution coordinator: %w", err)
+	}
+	tc.WithExecutionCoordinator(execution)
+	taskHost, err := task.NewKubernetesHost(tc, execution)
+	if err != nil {
+		return fmt.Errorf("initialize Task Host: %w", err)
+	}
+	tc.WithHost(taskHost)
 	if err := tc.SetupPullController(mm); err != nil {
 		return fmt.Errorf("setup task pull controller: %w", err)
+	}
+	if err := mm.Add(task.NewTaskResync(mclient, clusterID, c.a.config.TaskRuntimeResyncPeriod, tc)); err != nil {
+		return fmt.Errorf("setup Task Runtime resync: %w", err)
 	}
 	if err := tc.SetupPushController(lm); err != nil {
 		return fmt.Errorf("setup task push controller: %w", err)
@@ -137,6 +150,9 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		"node-k8snode": c.a.config.ControllerConcurrency.NodePush,
 	}
 	nc := node.NewNodeController(nodeController)
+	if err := lm.Add(node.NewOfflineSweeper(nc, 0)); err != nil {
+		return fmt.Errorf("setup node offline sweeper: %w", err)
+	}
 	if err := node.IndexLocalFields(ctx, localManager); err != nil {
 		return fmt.Errorf("index local fields for node controller: %w", err)
 	}

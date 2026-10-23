@@ -23,7 +23,7 @@ func (g *Gateway) listClusterAddons(c *gin.Context) {
 
 	addons, err := g.kubeClient.RlinfV1alpha1().Addons(clusterID).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": addons.Items, "success": true})
@@ -40,7 +40,7 @@ func (g *Gateway) listInstalledAddons(c *gin.Context) {
 
 	addons, err := g.kubeClient.RlinfV1alpha1().Addons(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
 
@@ -67,7 +67,7 @@ func (g *Gateway) getClusterAddon(c *gin.Context) {
 
 	addon, err := g.kubeClient.RlinfV1alpha1().Addons(clusterID).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		respondError(c, http.StatusNotFound, CodeResourceNotFound, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": addon, "success": true})
@@ -79,18 +79,18 @@ func (g *Gateway) installClusterAddon(c *gin.Context) {
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 		return
 	}
 
 	var req installAddonRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 		return
 	}
 
 	if req.AddonName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "addonName is required"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "addonName is required")
 		return
 	}
 
@@ -108,7 +108,7 @@ func (g *Gateway) installClusterAddon(c *gin.Context) {
 
 	result, err := g.kubeClient.RlinfV1alpha1().Addons(clusterID).Create(ctx, addonCR, metav1.CreateOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"data": result, "success": true})
@@ -121,19 +121,19 @@ func (g *Gateway) updateClusterAddon(c *gin.Context) {
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 		return
 	}
 
 	var req installAddonRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 		return
 	}
 
 	existing, err := g.kubeClient.RlinfV1alpha1().Addons(clusterID).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		respondError(c, http.StatusNotFound, CodeResourceNotFound, err.Error())
 		return
 	}
 
@@ -146,7 +146,7 @@ func (g *Gateway) updateClusterAddon(c *gin.Context) {
 
 	result, err := g.kubeClient.RlinfV1alpha1().Addons(clusterID).Update(ctx, existing, metav1.UpdateOptions{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": result, "success": true})
@@ -158,7 +158,7 @@ func (g *Gateway) deleteClusterAddon(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	if err := g.kubeClient.RlinfV1alpha1().Addons(clusterID).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})

@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-func TestWorkflowStoppedJSON(t *testing.T) {
-	wf := Workflow{Spec: WorkflowSpec{Stopped: true}}
+func TestWorkflowSuspendedJSON(t *testing.T) {
+	wf := Workflow{Spec: WorkflowSpec{Suspended: true}}
 	data, err := json.Marshal(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != `{"metadata":{},"spec":{"stopped":true},"status":{}}` {
+	if string(data) != `{"metadata":{},"spec":{"suspended":true},"status":{}}` {
 		t.Fatalf("unexpected JSON: %s", data)
 	}
 
@@ -19,8 +19,8 @@ func TestWorkflowStoppedJSON(t *testing.T) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if !decoded.Spec.Stopped {
-		t.Fatal("spec.stopped was not preserved")
+	if !decoded.Spec.Suspended {
+		t.Fatal("spec.suspended was not preserved")
 	}
 }
 

@@ -21,8 +21,8 @@ package v1alpha1
 // with apply.
 //
 // JobTag 表示一个任务标签，由 key 和多个 value 组成。
-// key 和每个 value 长度均不超过 10 个字符；一个任务最多 10 个标签；
-// 每个标签最多包含 10 个不同的 value。
+// 标签的个数与 key/value 长度上限不在 CRD Schema 层封闭，由 Gateway 在写入
+// 路径上校验，详见开发者文档的 API 约定。
 type JobTagApplyConfiguration struct {
 	Key    *string  `json:"key,omitempty"`
 	Values []string `json:"values,omitempty"`
@@ -42,9 +42,12 @@ func (b *JobTagApplyConfiguration) WithKey(value string) *JobTagApplyConfigurati
 	return b
 }
 
-// WithValues adds the given values to the Values field in the declarative configuration
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// WithValues adds the given value to the Values field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Values field.
 func (b *JobTagApplyConfiguration) WithValues(values ...string) *JobTagApplyConfiguration {
-	b.Values = append(b.Values, values...)
+	for i := range values {
+		b.Values = append(b.Values, values[i])
+	}
 	return b
 }

@@ -15,6 +15,7 @@ import (
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
 // handlePodEvents reads kubelet events through the existing agent proxy. This
@@ -27,18 +28,27 @@ func (g *Gateway) handlePodEvents(c *gin.Context) {
 		FieldSelector: fmt.Sprintf("metadata.name=%s", podCRName),
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("list pods: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("list pods: %v", err))
 		return
 	}
 	if len(pods.Items) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("pod %s not found", podCRName)})
+		respondError(c, http.StatusNotFound, CodeResourceNotFound, fmt.Sprintf("pod %s not found", podCRName))
 		return
 	}
 
 	pod := pods.Items[0]
+	// Pod events describe a workload, so they follow the tenant boundary of the
+	// Pod object itself.
+	scope, scopeOK := g.tenantScopeFor(c, "pods")
+	if !scopeOK {
+		return
+	}
+	if !authorizeTenantObject(c, scope, tenant.IDOf(&pod)) {
+		return
+	}
 	agentID, ok := strings.CutPrefix(pod.Namespace, apis.RLarkAgentNamespacePrefix)
 	if !ok || pod.Spec.PodNamespace == "" || pod.Spec.PodName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "pod does not reference a data-plane pod"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "pod does not reference a data-plane pod")
 		return
 	}
 
@@ -46,22 +56,22 @@ func (g *Gateway) handlePodEvents(c *gin.Context) {
 		url.PathEscape(pod.Spec.PodNamespace), url.PathEscape(pod.Spec.PodName))
 	podResp, err := g.proxyKubeRequest(ctx, http.MethodGet, agentID, podPath, nil)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("fetch pod: %v", err)})
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("fetch pod: %v", err))
 		return
 	}
 	podBody, readErr := io.ReadAll(podResp.Body)
 	_ = podResp.Body.Close()
 	if readErr != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("read pod: %v", readErr)})
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("read pod: %v", readErr))
 		return
 	}
 	if podResp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("agent returned HTTP %d", podResp.StatusCode)})
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("agent returned HTTP %d", podResp.StatusCode))
 		return
 	}
 	var dataPlanePod corev1.Pod
 	if err := json.Unmarshal(podBody, &dataPlanePod); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("decode pod: %v", err)})
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("decode pod: %v", err))
 		return
 	}
 
@@ -71,23 +81,23 @@ func (g *Gateway) handlePodEvents(c *gin.Context) {
 		url.PathEscape(pod.Spec.PodNamespace), selector)
 	resp, err := g.proxyKubeRequest(ctx, http.MethodGet, agentID, kubePath, nil)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("fetch pod events: %v", err)})
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("fetch pod events: %v", err))
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("read pod events: %v", err)})
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("read pod events: %v", err))
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("agent returned HTTP %d", resp.StatusCode)})
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("agent returned HTTP %d", resp.StatusCode))
 		return
 	}
 
 	var list corev1.EventList
 	if err := json.Unmarshal(body, &list); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("decode pod events: %v", err)})
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("decode pod events: %v", err))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"events": relevantPodEvents(list.Items, dataPlanePod.UID)})

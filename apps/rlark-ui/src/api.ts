@@ -60,6 +60,17 @@ async function authenticatedFetch(
   return response;
 }
 
+// Reads the human-readable detail out of an error body. The Gateway returns
+// `message` in its canonical error response; `error` is the legacy form that
+// some handlers still emit.
+export function errorMessage(body: unknown): string {
+  if (!body || typeof body !== "object") return "";
+  const record = body as Record<string, unknown>;
+  if (typeof record.message === "string") return record.message;
+  if (typeof record.error === "string") return record.error;
+  return "";
+}
+
 async function responseError(response: Response) {
   const text = await response.text();
   let body: unknown = text;
@@ -68,10 +79,7 @@ async function responseError(response: Response) {
   } catch {
     // Keep non-JSON error bodies as text.
   }
-  const detail =
-    body && typeof body === "object" && "error" in body
-      ? String((body as { error: unknown }).error)
-      : text;
+  const detail = errorMessage(body) || text;
   return new ApiError(
     response.status,
     detail ? `HTTP ${response.status}: ${detail}` : `HTTP ${response.status}`,

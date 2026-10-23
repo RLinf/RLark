@@ -3,7 +3,8 @@ import {
   storageClasses as mockStorageClasses,
   type StorageClass,
 } from "./data";
-import type { CRDDomain, CRDJob, CRDWorkflow, NodeEventEntry } from "./types";
+import type { CRDDomain, NodeEventEntry } from "./types";
+import type { CRDJob, CRDWorkflow } from "./crdModels";
 import { buildMockCRDNodes } from "./utils/nodes";
 
 const nodes = buildMockCRDNodes();
@@ -30,47 +31,52 @@ const makeTask = (
 ) => ({
   name,
   head: role === "actor",
-  agentType: "Kubernetes",
   role,
-  nodeSelector: { "rlark.io/cluster-id": cluster },
-  runScript: `python -m rlark.${role}`,
-  tensorBoardDir: role === "actor" ? "/logs/tensorboard" : undefined,
-  kubernetes: {
-    workload: {
-      kind: "Deployment",
-      replicas: 1,
-      template: {
-        spec: {
-          containers: [
-            {
-              name,
-              image,
-              env: [{ name: "RLARK_TASK_ROLE", value: role }],
-              volumeMounts: [
-                { name: "data", mountPath: "/data" },
-                { name: "local-cache", mountPath: "/cache" },
-              ],
-              resources: {
-                requests: { cpu: "4", memory: "8Gi", "nvidia.com/gpu": "1" },
-              },
+  placement: { nodeSelector: { "rlark.io/cluster-id": cluster } },
+  runtime: { kind: "Kubernetes" },
+  workload: {
+    kind: "rlinf.io/ray",
+    version: "v1",
+    parameters: {
+      role: role === "actor" ? "head" : "worker",
+      run: role === "actor" ? { inline: `python -m rlark.${role}` } : undefined,
+    },
+    carrier: {
+      type: "rlinf.io/kubernetes-deployment",
+      version: "v1",
+      parameters: { replicas: 1 },
+    },
+    template: {
+      spec: {
+        containers: [
+          {
+            name: "main",
+            image,
+            env: [{ name: "RLARK_TASK_ROLE", value: role }],
+            volumeMounts: [
+              { name: "data", mountPath: "/data" },
+              { name: "local-cache", mountPath: "/cache" },
+            ],
+            resources: {
+              requests: { cpu: "4", memory: "8Gi", "nvidia.com/gpu": "1" },
             },
-          ],
-          volumes: [
-            {
-              name: "data",
-              ephemeral: {
-                volumeClaimTemplate: {
-                  spec: {
-                    accessModes: ["ReadWriteOnce"],
-                    storageClassName: "training-datasets",
-                    resources: { requests: { storage: "50Gi" } },
-                  },
+          },
+        ],
+        volumes: [
+          {
+            name: "data",
+            ephemeral: {
+              volumeClaimTemplate: {
+                spec: {
+                  accessModes: ["ReadWriteOnce"],
+                  storageClassName: "training-datasets",
+                  resources: { requests: { storage: "50Gi" } },
                 },
               },
             },
-            { name: "local-cache", hostPath: { path: "/var/lib/rlark/cache" } },
-          ],
-        },
+          },
+          { name: "local-cache", hostPath: { path: "/var/lib/rlark/cache" } },
+        ],
       },
     },
   },
@@ -148,20 +154,16 @@ const jobs: CRDJob[] = [
       ],
     },
     status: {
-      phase: String(phase),
+      phase: phase as "Pending" | "Running" | "Succeeded",
       tasks: taskNames.map((taskName, taskIndex) => ({
         name: taskName,
         phase:
           phase === "Succeeded"
             ? "Succeeded"
             : taskIndex === 0
-              ? String(phase)
+              ? (phase as "Pending" | "Running" | "Succeeded")
               : "Pending",
         message: "Mock data generated from the shared topology",
-        observedNodes: [
-          nodes.filter((node) => node.metadata.namespace === cluster)[taskIndex]
-            ?.metadata.name,
-        ].filter(Boolean) as string[],
       })),
     },
   };
@@ -169,9 +171,14 @@ const jobs: CRDJob[] = [
 
 const pods = jobs.flatMap((job, jobIndex) =>
   (job.status?.tasks ?? []).map((task, taskIndex) => {
-    const podName = `${job.metadata.name}-${task.name}-${taskIndex}`;
-    const domain = job.spec.domain ?? "";
-    const node = task.observedNodes?.[0] ?? "";
+    const podName = `${job.metadata?.name ?? ""}-${task.name ?? ""}-${taskIndex}`;
+    const domain = job.spec?.domain ?? "";
+    const node =
+      nodes.filter(
+        (item) =>
+          item.metadata.namespace ===
+          clusterNames[jobIndex % clusterNames.length],
+      )[taskIndex]?.metadata.name ?? "";
     return {
       apiVersion: "rlinf.io/v1alpha1",
       kind: "Pod",
@@ -258,7 +265,7 @@ domains.forEach((domain) => {
       .map((pod) => ({
         ip: pod.status.ip,
         job: pod.metadata.name.split("-").slice(0, -3).join("-"),
-        task: pod.spec.taskName,
+        task: pod.spec.taskName ?? "",
         pod: pod.spec.podName,
       })),
   };
@@ -274,8 +281,8 @@ const workflows: CRDWorkflow[] = [
     },
     spec: {
       jobTemplates: jobs.map((job, index) => ({
-        name: job.metadata.name,
-        dependencies: index === 0 ? [] : [jobs[index - 1].metadata.name],
+        name: job.metadata?.name,
+        dependencies: index === 0 ? [] : [jobs[index - 1].metadata?.name ?? ""],
         spec: job.spec,
       })),
     },
@@ -283,7 +290,7 @@ const workflows: CRDWorkflow[] = [
       phase: "Running",
       startTime: "2026-08-05T08:30:00Z",
       jobs: jobs.map((job) => ({
-        name: job.metadata.name,
+        name: job.metadata?.name,
         phase: job.status?.phase ?? "Pending",
         message: "",
       })),
@@ -350,7 +357,7 @@ export function installMockBackend() {
               nodes: nodes.filter((node) => node.metadata.namespace === id),
             },
           })
-        : json({ error: "not found" }, 404);
+        : json({ code: "RESOURCE_NOT_FOUND", message: "not found" }, 404);
     }
     if (method === "GET" && path === "/api/v1/rlinf.io/v1alpha1/nodes")
       return json({ items: nodes });
@@ -391,12 +398,12 @@ export function installMockBackend() {
       !path.endsWith("/logs")
     ) {
       const name = decodeURIComponent(path.split("/").pop()!);
-      const job = jobs.find((item) => item.metadata.name === name);
+      const job = jobs.find((item) => item.metadata?.name === name);
       if (!job) return json({ error: "not found" }, 404);
       const patch = await request.json();
-      if (typeof patch.spec?.stopped === "boolean") {
-        job.spec.stopped = patch.spec.stopped;
-        if (patch.spec.stopped) {
+      if (typeof patch.spec?.suspended === "boolean") {
+        if (job.spec) job.spec.suspended = patch.spec.suspended;
+        if (patch.spec.suspended) {
           job.status = { ...job.status, phase: "Stopped" };
         } else {
           job.status = {
@@ -410,6 +417,7 @@ export function installMockBackend() {
         }
       }
       if (patch.metadata?.annotations) {
+        job.metadata ??= {};
         job.metadata.annotations = {
           ...job.metadata.annotations,
           ...patch.metadata.annotations,
@@ -422,7 +430,7 @@ export function installMockBackend() {
       path.startsWith("/api/v1/rlinf.io/v1alpha1/jobs/")
     ) {
       const name = decodeURIComponent(path.split("/").pop()!);
-      const index = jobs.findIndex((item) => item.metadata.name === name);
+      const index = jobs.findIndex((item) => item.metadata?.name === name);
       if (index >= 0) jobs.splice(index, 1);
       return json({ success: true });
     }
@@ -449,7 +457,7 @@ export function installMockBackend() {
         .get("labelSelector")
         ?.match(/rlinf\.io\/job=([^,]+)/)?.[1];
       const selectedJobs = selectedJob
-        ? jobs.filter((job) => job.metadata.name === selectedJob)
+        ? jobs.filter((job) => job.metadata?.name === selectedJob)
         : jobs;
       return json({
         items: selectedJobs.flatMap((job) =>
@@ -457,8 +465,8 @@ export function installMockBackend() {
             apiVersion: "rlinf.io/v1alpha1",
             kind: "Task",
             metadata: {
-              name: `${job.metadata.name}-${task.name}`,
-              labels: { "rlinf.io/job": job.metadata.name },
+              name: `${job.metadata?.name ?? ""}-${task.name ?? ""}`,
+              labels: { "rlinf.io/job": job.metadata?.name ?? "" },
             },
             status: { ...task },
           })),
@@ -470,12 +478,14 @@ export function installMockBackend() {
         url.searchParams.get("labelSelector") ?? "",
       );
       const selectedJob = jobs.find((job) =>
-        selector.includes(`${job.metadata.name}-`),
+        selector.includes(`${job.metadata?.name ?? ""}-`),
       );
       return json({
         items: selectedJob
           ? pods.filter((pod) =>
-              pod.metadata.name.startsWith(`${selectedJob.metadata.name}-`),
+              pod.metadata.name.startsWith(
+                `${selectedJob.metadata?.name ?? ""}-`,
+              ),
             )
           : pods,
       });
@@ -497,14 +507,14 @@ export function installMockBackend() {
       path.startsWith("/api/v1/rlinf.io/v1alpha1/workflows/")
     ) {
       const name = decodeURIComponent(path.split("/").pop()!);
-      const workflow = workflows.find((item) => item.metadata.name === name);
+      const workflow = workflows.find((item) => item.metadata?.name === name);
       if (!workflow) return json({ error: "not found" }, 404);
       const patch = await request.json();
-      if (typeof patch.spec?.stopped === "boolean") {
-        workflow.spec.stopped = patch.spec.stopped;
+      if (typeof patch.spec?.suspended === "boolean") {
+        if (workflow.spec) workflow.spec.suspended = patch.spec.suspended;
         workflow.status = {
           ...workflow.status,
-          phase: patch.spec.stopped ? "Stopping" : "Running",
+          phase: patch.spec.suspended ? "Stopping" : "Running",
         };
       }
       return json(workflow);
@@ -521,7 +531,11 @@ export function installMockBackend() {
       const pathName =
         method === "PUT" ? decodeURIComponent(path.split("/").pop() || "") : "";
       const name = payload.name || pathName;
-      if (!name) return json({ error: "name is required" }, 400);
+      if (!name)
+        return json(
+          { code: "INVALID_REQUEST_BODY", message: "name is required" },
+          400,
+        );
       const next: StorageClass = {
         id: name,
         name,
@@ -573,7 +587,8 @@ export function installMockBackend() {
     if (path.startsWith("/api/v1/image-registries/")) {
       const id = decodeURIComponent(path.split("/").pop() || "");
       const index = imageRegistries.findIndex((item) => item.id === id);
-      if (index < 0) return json({ error: "not found" }, 404);
+      if (index < 0)
+        return json({ code: "RESOURCE_NOT_FOUND", message: "not found" }, 404);
       if (method === "GET") return json(imageRegistries[index]);
       if (method === "PUT") {
         const payload = await request.json();
@@ -598,9 +613,21 @@ export function installMockBackend() {
     if (method === "POST" && path === "/api/v1/ssh-user-keys") {
       const payload = await request.json();
       if (sshUserKeys.some((item) => item.user === payload.user))
-        return json({ error: "public key name already exists" }, 409);
+        return json(
+          {
+            code: "RESOURCE_ALREADY_EXISTS",
+            message: "public key name already exists",
+          },
+          409,
+        );
       if (sshUserKeys.some((item) => item.public_key === payload.public_key))
-        return json({ error: "public key already exists" }, 409);
+        return json(
+          {
+            code: "RESOURCE_ALREADY_EXISTS",
+            message: "public key already exists",
+          },
+          409,
+        );
       sshUserKeys.push({
         index: sshUserKeys.length,
         user: payload.user,

@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	"github.com/rlinf/rlark/apps/rlark/pkg/terminalrelay"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -27,7 +28,7 @@ func (g *Gateway) handlePodTerminal(c *gin.Context) {
 
 	podCRName := c.Param("name")
 	if podCRName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "pod name is required"})
+		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, "pod name is required")
 		return
 	}
 
@@ -35,25 +36,35 @@ func (g *Gateway) handlePodTerminal(c *gin.Context) {
 		FieldSelector: fmt.Sprintf("metadata.name=%s", podCRName),
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("list pods: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("list pods: %v", err))
 		return
 	}
 	if len(podList.Items) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("pod %s not found", podCRName)})
+		respondError(c, http.StatusNotFound, CodeResourceNotFound, fmt.Sprintf("pod %s not found", podCRName))
 		return
 	}
 	pod := podList.Items[0]
 
+	// The tenant boundary is checked before the connection is upgraded, so that
+	// a refusal is still an ordinary HTTP response.
+	scope, scopeOK := g.tenantScopeFor(c, "pods")
+	if !scopeOK {
+		return
+	}
+	if !authorizeTenantObject(c, scope, tenant.IDOf(&pod)) {
+		return
+	}
+
 	agentID, ok := strings.CutPrefix(pod.Namespace, apis.RLarkAgentNamespacePrefix)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "pod is not in an agent namespace"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "pod is not in an agent namespace")
 		return
 	}
 
 	podNamespace := pod.Spec.PodNamespace
 	podName := pod.Spec.PodName
 	if podNamespace == "" || podName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "pod namespace or name is empty"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "pod namespace or name is empty")
 		return
 	}
 

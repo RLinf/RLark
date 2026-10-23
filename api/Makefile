@@ -1,4 +1,16 @@
-CONTROLLER_GEN ?= $(shell go env GOPATH)/bin/controller-gen
+# Pinned code generator. The CRD manifests and deepcopy funcs are checked in and
+# record this version in their headers, so every environment must use the same
+# pin or the next regeneration rewrites every generated file.
+CONTROLLER_TOOLS_VERSION ?= v0.18.0
+
+# The generator is installed into the gitignored, repository-local api/bin under
+# a version-stamped file name. A shared GOPATH/bin is not usable here: CI shares
+# it across jobs and projects, so a file named `controller-gen` may be stale or
+# not even executable while make still treats the install target as satisfied
+# and skips the install, which then fails mid-generation with exit code 127.
+LOCALBIN ?= $(CURDIR)/bin
+CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen-$(CONTROLLER_TOOLS_VERSION)
+
 CRD_DIR ?= config/crd/bases
 SAMPLES_DIR ?= config/samples
 
@@ -27,14 +39,20 @@ test: ## Run tests
 ##@ Code generation
 
 .PHONY: generate-manifests generate-clients generate-crd samples clean-samples
+.PHONY: controller-gen print-controller-gen
+
+controller-gen: $(CONTROLLER_GEN) ## Install the pinned controller-gen into api/bin
+
+print-controller-gen: ## Print the path of the pinned controller-gen
+	@echo $(CONTROLLER_GEN)
 
 generate-manifests: $(CONTROLLER_GEN) ## Generate CRD YAML manifests
 	mkdir -p $(CRD_DIR)
 	$(CONTROLLER_GEN) object paths=./rlark.io/...
-	$(CONTROLLER_GEN) crd:allowDangerousTypes=true paths=./rlark.io/... output:crd:artifacts:config=$(CRD_DIR)
+	$(CONTROLLER_GEN) crd:allowDangerousTypes=true,generateEmbeddedObjectMeta=true paths=./rlark.io/... output:crd:artifacts:config=$(CRD_DIR)
 
-generate-clients: ## Generate typed clients, informers, listers
-	./hack/generate-clients.sh --with-watch
+generate-clients: | $(LOCALBIN) ## Generate typed clients, informers, listers
+	GOBIN=$(LOCALBIN) ./hack/generate-clients.sh --with-watch
 
 generate-crd: generate-manifests generate-clients ## Generate CRD manifests and clients
 
@@ -44,8 +62,17 @@ samples: ## Verify sample CRs exist
 clean-samples: ## Remove sample CRs
 	rm -rf $(SAMPLES_DIR)
 
-$(CONTROLLER_GEN):
-	GOBIN=$(shell go env GOPATH)/bin go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.18.0
+$(LOCALBIN):
+	mkdir -p $(LOCALBIN)
+
+# `go install` writes an unversioned name, so rename it to the version-stamped
+# path make depends on. The final `--version` call is the executability check:
+# if the installed file cannot be executed the install fails here instead of
+# much later, in the middle of generation.
+$(CONTROLLER_GEN): | $(LOCALBIN)
+	GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_TOOLS_VERSION)
+	mv $(LOCALBIN)/controller-gen $@
+	$@ --version
 
 ##@ Help
 

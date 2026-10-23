@@ -1,7 +1,7 @@
 package sync
 
 import (
-	"github.com/uptrace/bun"
+	"github.com/rlinf/rlark/apps/rlark/pkg/persistence"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	controllerconfig "sigs.k8s.io/controller-runtime/pkg/controller"
@@ -36,12 +36,12 @@ type NodeReconciler struct {
 // +kubebuilder:rbac:groups=rlinf.io,resources=nodes/finalizers,verbs=update
 
 // NewNodeReconciler creates a new NodeReconciler.
-func NewNodeReconciler(maxConcurrentReconciles int, client client.Client, db *bun.DB) *NodeReconciler {
+func NewNodeReconciler(maxConcurrentReconciles int, client client.Client, backend persistence.Backend) *NodeReconciler {
 	return &NodeReconciler{
 		maxConcurrentReconciles: maxConcurrentReconciles,
 		genericReconciler: &genericReconciler[*rlarkv1alpha1.Node]{
 			client:  client,
-			db:      db,
+			backend: backend,
 			handler: newNodeSyncHandler(),
 			newObj:  func() *rlarkv1alpha1.Node { return &rlarkv1alpha1.Node{} },
 		},

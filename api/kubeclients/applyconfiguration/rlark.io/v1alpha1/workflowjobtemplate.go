@@ -20,7 +20,9 @@ package v1alpha1
 // WorkflowJobTemplateApplyConfiguration represents a declarative configuration of the WorkflowJobTemplate type for use
 // with apply.
 type WorkflowJobTemplateApplyConfiguration struct {
-	Name         *string                    `json:"name,omitempty"`
+	Name *string `json:"name,omitempty"`
+	// Dependencies 是同一 Workflow 内其它 Job 模板的名字，依赖关系只存在于
+	// Job 之间，不存在于 Job 内部的 Task 模板之间。
 	Dependencies []string                   `json:"dependencies,omitempty"`
 	Spec         *JobSpecApplyConfiguration `json:"spec,omitempty"`
 }

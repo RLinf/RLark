@@ -58,7 +58,7 @@ For each worker role, configure the following:
 
 - **Storage Mounts** — Attach storage to worker containers. Two types are supported:
   - **hostPath**: Mount a directory from the host node's filesystem. Its data is not deleted by Job lifecycle actions.
-  - **PVC** (PersistentVolumeClaim): Mount a Kubernetes persistent volume using the selected storage class. Stopping, restarting, or deleting the Job deletes its task PVCs; starting or restarting creates empty PVCs.
+  - **PVC** (PersistentVolumeClaim): Mount Kubernetes storage using the selected storage class. The current Web UI writes `ephemeral.volumeClaimTemplate`, so these PVCs are Pod-scoped and are deleted and recreated with their Pods. Imported or older Tasks using `persistentVolumeClaim` and the deprecated PVC maps follow the retained Task-managed compatibility lifecycle instead.
 
 > **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
 
@@ -72,7 +72,7 @@ Configure settings that apply to all workers in the job:
 
 - **Cross-Cluster Network Domain** — If network domains are configured, the console automatically enables the first domain by name for every Job, regardless of Worker placement. No domain is added when none is configured.
 
-- **SSH Public Keys** — Provide one or more SSH public keys that will be injected into the `~/.ssh/authorized_keys` of every worker container. This allows you to SSH into running containers for debugging.
+- **SSH Public Keys** — Select the public key written to the Job's workload SSH configuration. Built-in Ray-on-Kubernetes workloads deliver it through a Task-owned Secret mounted at `/var/run/rlark/ssh/authorized_key` in each worker main container and start an optional `rlark-tools sshd` service. SSH failure does not fail the Task. Other workload implementations do not gain SSH merely by setting this field.
 
 - **Run Command** — The main training script or entrypoint command. This is executed after any init scripts complete.
 
@@ -178,9 +178,9 @@ All file transfers are performed over the same WebSocket connection used by the 
 
 The detail-page action bar supports the full Job lifecycle:
 
-- **Stop** sets a running Job to `Stopping`, deletes its child Task CRs, and waits for their Workers and PVCs to be cleaned up. It preserves the Job configuration.
-- **Start** starts a `Stopped` Job with the same configuration and newly created empty task PVCs, including Jobs stopped after reaching a terminal result.
-- **Restart** opens a choice: restart immediately with the current configuration, or edit the Job and restart after the updated configuration is saved. `Succeeded` and `Failed` Jobs restart as clean runs: RLark stops and cleans up the previous Tasks, Workers, and task PVCs before creating new Tasks, Workers, and empty PVCs. During edit-and-restart, available capacity includes resources that the current Job will release.
+- **Stop** sets a running Job to `Stopping`, deletes its child Task CRs, and waits for their Workers to be cleaned up. It preserves the Job configuration and referenced external PVCs untouched; Pod-scoped ephemeral PVCs are deleted with their Pods.
+- **Start** starts a `Stopped` Job with the same configuration. An explicit `persistentVolumeClaim.claimName` continues to reference the same external PVC, while a Pod-scoped ephemeral volume receives a new PVC.
+- **Restart** opens a choice: restart immediately with the current configuration, or edit the Job and restart after the updated configuration is saved. The Job controller deletes each old Task, waits for its Agent cleanup finalizer to release after Runtime cleanup, and only after the old Task object is absent creates a same-name Task with a new UID from the current template. Repeated reconciliation or a controller restart resumes from the observed Task deletion state rather than creating overlapping runs. `Succeeded` and `Failed` Jobs therefore recreate their Tasks and Workers, leave referenced external PVCs untouched, and replace Pod-scoped ephemeral PVCs.
 - **Delete** opens a danger confirmation that identifies the target Job and warns that the operation cannot be undone before permanently removing it.
 
 Lifecycle actions require confirmation. While an action is in progress, the
@@ -197,23 +197,26 @@ Each Jobs table row directly exposes Clone, Restart, and Start/Stop text buttons
 
 ### Stop a Running Job
 
-Stopping a Job first changes its displayed state to `Stopping`. RLark deletes all child Task CRs and waits for their Worker Pods and task PVCs to be cleaned up. Job configuration, logs, metadata, and hostPath data are preserved.
+Stopping a Job first changes its displayed state to `Stopping`. RLark deletes all child Task CRs and waits for their Worker Pods to be cleaned up. Job configuration, logs, metadata, hostPath data are preserved, and referenced external PVCs remain outside RLark management. Pod-scoped ephemeral PVCs are removed with their Pods.
 
 The time at which a manually stopped Job enters `Stopped` is recorded and shown in the Jobs table.
 
 ### Resume a Stopped Job
 
-Starting a stopped Job recreates the Tasks, Worker Pods, and empty task PVCs from the same configuration. Previous PVC data is not restored; hostPath data remains available. Restarting a succeeded or failed Job performs the same clean stop-and-recreate sequence rather than reusing terminal Tasks or PVC data.
+Starting a stopped Job recreates the Tasks and Worker Pods from the same configuration. A Task that explicitly references the same existing PVC continues to see its data; RLark does not provision that claim. Pod-scoped ephemeral volumes receive new PVCs. HostPath data remains available.
 
 ### Delete a Job
 
-Deleting a job performs a full cleanup:
+Deleting a Job cleans up its active workload resources, with these storage exceptions:
 
 - Worker Pods are terminated
-- PVCs are deleted (but hostPath data is preserved on the node)
+- referenced external PVCs are not created or deleted by RLark
+- Pod-scoped ephemeral PVCs are deleted with their Worker Pods
 - Job metadata and logs may be retained for a configurable retention period
 
 > **Note:** Data stored on hostPath mounts is not deleted when the job is removed. You must manually clean up hostPath directories if needed.
+
+> **Existing PVCs:** RLark does not own PVCs referenced through `persistentVolumeClaim.claimName`. Before deleting one, verify that no workload references it and account for the bound PV's reclaim policy.
 
 ### Edit or Clone a Job
 

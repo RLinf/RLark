@@ -55,7 +55,7 @@ RLark 支持以下任务类型，每种类型预配置了适合该工作负载�
 
 - **存储挂载** — 向 Worker 容器挂载存储。支持两种类型：
   - **hostPath**：挂载宿主机节点上的目录，任务生命周期操作不会删除其中的数据。
-  - **PVC**（PersistentVolumeClaim）：使用所选存储类挂载 Kubernetes 持久卷。停止、重启或删除任务会删除任务 PVC；启动或重启会新建空 PVC。
+  - **PVC**（PersistentVolumeClaim）：使用所选存储类挂载 Kubernetes 存储。当前 Web UI 写入 `ephemeral.volumeClaimTemplate`，因此这些 PVC 属于 Pod 级资源，会随 Pod 删除并重新创建。导入或较早创建、使用 `persistentVolumeClaim` 和已废弃 PVC map 的 Task 则遵循保留型兼容生命周期。
 
 > **截图说明：** 截图来自示例环境，资源名称和数据仅供说明，实际环境会有所不同。
 
@@ -69,7 +69,7 @@ RLark 支持以下任务类型，每种类型预配置了适合该工作负载�
 
 - **跨集群网络域** — 如果后台配置了网络域，控制台会按名称选择第一个网络域，并为所有任务自动启用，不受 Worker 是否跨集群影响；未配置时不会写入网络域。
 
-- **SSH 公钥** — 提供一个或多个将被注入到每个 Worker 容器 `~/.ssh/authorized_keys` 的 SSH 公钥。这允许你通过 SSH 进入运行中的容器进行调试。
+- **SSH 公钥** — 选择写入 Job workload SSH 配置的公钥。内置 Ray-on-Kubernetes workload 会通过 Task-owned Secret 交付，挂载到每个 Worker main container 的 `/var/run/rlark/ssh/authorized_key`，并启动 optional `rlark-tools sshd` 服务。SSH 故障不会使 Task 失败；其他 workload implementation 不会仅因设置此字段而自动获得 SSH 能力。
 
 - **运行命令** — 主训练脚本或入口命令。在所有准备脚本完成后执行。
 
@@ -174,9 +174,9 @@ WebTerminal 支持文件上传和下载：
 
 详情页右上角同时提供完整的任务生命周期操作：
 
-- **停止任务**：运行中的 Job 先进入 `Stopping`，RLark 会删除其子 Task CR，并等待对应 Worker 和 PVC 清理完成。任务配置会保留。
-- **启动任务**：使用相同配置启动 `Stopped` Job，并新建空的任务 PVC；这也适用于到达终态后被停止的 Job。
-- **重启任务**：选择使用当前配置一键重启，或先编辑任务配置并在保存后自动重启。`Succeeded` 和 `Failed` Job 都会以全新运行方式重启：RLark 先停止并清理原 Task、Worker 和任务 PVC，再创建新的 Task、Worker 和空 PVC。编辑后重启时，资源可用量会包含当前任务即将释放的资源。
+- **停止任务**：运行中的 Job 先进入 `Stopping`，RLark 会删除其子 Task CR，并等待对应 Worker 清理完成。任务配置会保留；引用的外部 PVC 不由 RLark 管理；Pod 级临时 PVC 随 Pod 删除。
+- **启动任务**：使用相同配置启动 `Stopped` Job。显式引用同一个已有 PVC 时可继续访问其数据；Pod 级临时卷会获得新 PVC。
+- **重启任务**：选择使用当前配置一键重启，或先编辑任务配置并在保存后自动重启。Job controller 会删除每个旧 Task，等待 Agent 完成 Runtime cleanup 并释放 cleanup finalizer，并且只有在旧 Task 对象已经消失后，才按当前模板创建同名、具有新 UID 的 Task。重复调谐或 controller 重启会从观测到的 Task 删除状态继续，而不会创建相互重叠的运行。因此 `Succeeded` 和 `Failed` Job 都会重新创建 Task 和 Worker，不影响引用的外部 PVC，并替换 Pod 级临时 PVC。
 - **删除任务**：在危险操作弹窗中核对任务名称与不可恢复提示后，永久删除任务。
 
 执行生命周期操作前需要确认。请求处理中会禁用其他操作按钮，失败信息会显示在操作区；操作成功后页面会返回任务列表并显示完成提示。
@@ -187,23 +187,26 @@ WebTerminal 支持文件上传和下载：
 
 ### 停止运行中的任务
 
-停止任务后，页面会先显示 `Stopping`。RLark 删除全部子 Task CR，并等待对应 Worker Pod 和任务 PVC 清理完成；任务配置、日志、元数据和 hostPath 数据会保留。
+停止任务后，页面会先显示 `Stopping`。RLark 删除全部子 Task CR，并等待对应 Worker Pod 清理完成；任务配置、日志、元数据、hostPath 数据会保留，引用的外部 PVC 仍不由 RLark 管理。Pod 级临时 PVC 随 Pod 删除。
 
 手动停止的任务进入 `Stopped` 状态时会记录停止时间，并显示在任务列表中。
 
 ### 恢复已停止的任务
 
-启动已停止的任务会按相同配置重新创建 Task、Worker Pod 和空的任务 PVC。原 PVC 数据不会恢复，hostPath 数据仍然可用。重启成功或失败的 Job 都会执行相同的停止、清理和重建流程，不复用终态 Task 或 PVC 数据。
+启动已停止的任务会按相同配置重新创建 Task 和 Worker Pod。显式引用同一个已有 PVC 时，新 Task 可继续访问其数据；RLark 不负责创建该 claim；Pod 级临时卷会获得新 PVC。hostPath 数据仍然可用。
 
 ### 删除任务
 
-删除任务执行完整清理：
+删除 Job 会清理活动工作负载资源，但存储存在以下保留规则：
 
 - Worker Pod 被终止
-- PVC 被删除（但 hostPath 数据保留在节点上）
+- 引用的外部 PVC 不由 RLark 创建或删除
+- Pod 级临时 PVC 随 Worker Pod 删除
 - 任务元数据和日志可在配置的保留期内保留
 
 > **注意：** hostPath 挂载上的数据在任务删除时不会自动删除。如需清理，请手动删除 hostPath 目录。
+
+> **已有 PVC：** RLark 不拥有通过 `persistentVolumeClaim.claimName` 引用的 PVC。删除前应确认没有 workload 引用它，并考虑绑定 PV 的 reclaim policy。
 
 ### 编辑或克隆任务
 

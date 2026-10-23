@@ -76,17 +76,19 @@ host_macvlans:
     # gateway: 172.16.0.1
 
 camera:
-  enabled: true
+  manager_mode: local
   socket: /var/run/rlark/camera-ctrl.sock
 
 ros:
-  enabled: true
+  manager_mode: local
   socket: /var/run/rlark/ros-ctrl.sock
 
 ros2:
-  enabled: false
+  manager_mode: disabled
   socket: /var/run/rlark/ros2-ctrl.sock
 ```
+
+每个控制器都支持 `disabled`（不启动）、`local`（作为 Device Plugin 子进程运行）和 `pod`（作为由 Device Plugin 管理的独立 Pod 运行）三种模式。
 
 ### 宿主设备透传
 

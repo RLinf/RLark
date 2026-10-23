@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   AUTH_ROLE_KEY,
   AUTH_TOKEN_KEY,
+  ApiError,
   clearAuthSession,
+  errorMessage,
   hasAuthSession,
   storeAuthSession,
   UNAUTHORIZED_EVENT,
@@ -55,6 +57,48 @@ test("request clears the session after a 401", async () => {
   assert.equal(sessionStorage.getItem(AUTH_TOKEN_KEY), null);
   assert.equal(eventType, UNAUTHORIZED_EVENT);
   clearAuthSession();
+});
+
+test("request reports the detail of canonical and legacy error bodies", async () => {
+  globalThis.sessionStorage = storage();
+  globalThis.window = { dispatchEvent() {} };
+  const bodies = [
+    { code: "RESOURCE_ALREADY_EXISTS", message: "public key already exists" },
+    { error: "public key already exists" },
+  ];
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify(bodies.shift()), {
+      status: 409,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const error = await request("/api/v1/ssh-user-keys", {
+      method: "POST",
+      body: {},
+    }).then(
+      () => null,
+      (reason) => reason,
+    );
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.status, 409);
+    assert.equal(error.message, "HTTP 409: public key already exists");
+    assert.equal(errorMessage(error.body), "public key already exists");
+  }
+});
+
+test("request falls back to the raw body when it carries no detail", async () => {
+  globalThis.sessionStorage = storage();
+  globalThis.window = { dispatchEvent() {} };
+  globalThis.fetch = async () =>
+    new Response("upstream failure", { status: 502 });
+
+  const error = await request("/api/v1/clusters").then(
+    () => null,
+    (reason) => reason,
+  );
+  assert.equal(error.message, "HTTP 502: upstream failure");
+  assert.equal(errorMessage(error.body), "");
 });
 
 test("resource APIs encode paths, query values, and JSON bodies", async () => {

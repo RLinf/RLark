@@ -20,10 +20,21 @@ RLark 会校验公钥格式，并要求 SSH 用户名和公钥内容在全局范
 
 1. 打开**任务**并开始创建 Job。
 2. 在**公共配置**的 **SSH 公钥注入**中选择已上传的密钥。
-3. 检查 YAML 预览，确认 `spec.sshPublicKey` 包含所选公钥。
+3. 检查 YAML 预览，确认每个适用 Task 模板包含以下 Environment 声明：
+
+   ```yaml
+   environments:
+     - type: rlinf.io/ssh
+       version: v1
+       parameters:
+         authorizedKeys:
+           - ssh-ed25519 AAAA...
+   ```
 4. 提交 Job。
 
-每条选中的公钥只会写入 Job 配置一次，供工作负载注入。只在 SSH 公钥页面登记密钥不会修改已有 Job 或 Pod。Job 详情中的多条已注入公钥会通过可滚动列表展示。
+每条选中的公钥会写入适用 Task 模板的 `rlinf.io/ssh/v1` Environment，供 workload 交付。只在 SSH 公钥页面登记或修改记录不会改变已有 Job 或 Task。Job 详情中的多条已配置公钥会通过可滚动列表展示。
+
+对于内置 Ray-on-Kubernetes workload，Agent 会把 Task 选中的公钥存入归当前 Task incarnation 所有的 Secret，将其 `authorized_key` item 以只读方式挂载到每个 main container 的 `/var/run/rlark/ssh/authorized_key`，并将 `rlark-tools sshd` 作为 optional supervised service 启动。该 mount 不使用 `subPath`，`sshd` 每次认证都会重新打开该文件。空文件表示关闭 workload key 认证。SSH 服务故障可能导致 Pod 无法通过 SSH 访问，但不会停止 Task。Docker、Raw 或任意自定义 workload implementation 不具备这一自动服务生命周期。
 
 ## 任务三：通过堡垒机连接
 
@@ -40,18 +51,19 @@ ssh -J <bastion-host>:<port> root@<worker-name>
 
 ## 任务四：删除或轮换密钥
 
-1. 添加替换公钥，并在新建 Job 中使用它。
+1. 添加替换公钥，并在 Job 配置中选择它。
 2. 使用替换后的私钥验证访问。
 3. 从 **SSH 公钥**中删除旧密钥。
-4. 重建或单独更新已经包含旧密钥的工作负载。
+4. 确认已有 Job/Task 已更新或替换，其 workload SSH 配置不再包含旧密钥。
 
-删除登记密钥会阻止该用户名/密钥组合后续通过堡垒机认证，但不会移除已经复制到运行中工作负载内的公钥。
+删除登记密钥会阻止该用户名/密钥组合后续通过堡垒机认证，但不会修改 SSH Environment 中已经包含旧密钥的 Job 或 Task。轮换 workload 访问时，应替换或清空 `parameters.authorizedKeys`。投影文件的更新受 kubelet 传播的最终一致性影响，不保证瞬时撤销。
 
 ## 安全注意事项
 
 - 密钥记录按输入的 SSH 用户名存储，不按当前控制台会话隔离。
 - 任何持有对应私钥的人都能以该 SSH 用户名认证。
 - 切勿把私钥上传或写入 Job YAML、脚本及环境变量。
+- 不要把 `/var/run/rlark/ssh/authorized_key` 复制到持久文件，也不要让 SSH 服务缓存其解析后路径或长期持有打开的文件描述符，否则轮换和撤销无法生效。
 - 首次使用前核对堡垒机主机密钥指纹，并定期轮换密钥。
 
 !!! warning "当前安全边界"

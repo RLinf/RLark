@@ -6,7 +6,7 @@ RLark 中英文文档采用一致的、按受众划分的信息架构：
 2. **快速开始**：部署控制面、纳管 Kubernetes 数据面并运行第一个任务。
 3. **平台使用指南**：集群节点、任务与 Worker、存储和 SSH Key。
 4. **管理员指南**：生产部署、数据面接入、网络安全、具身设备和运维。
-5. **开发者指南**：源码开发、技术架构、调试、设备适配和贡献流程。
+5. **开发者指南**：规范性设计原则、源码开发、技术架构、调试、设备适配和贡献流程。
 6. **参考手册**：CLI、API、CRD、配置项和发布说明。
 
-请打开[中文首页](index.md)或 [English Home](../index.md)。发布站点导航定义在 `apps/rlark/mkdocs.yml`。
+贡献者和编码 Agent 在设计或实现变更前，应先阅读[项目设计原则](developer-guide/design-principles.md)。请打开[中文首页](index.md)或 [English Home](../index.md)。发布站点导航定义在 `apps/rlark/mkdocs.yml`。

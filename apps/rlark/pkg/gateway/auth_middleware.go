@@ -19,7 +19,7 @@ func (g *Gateway) requireJWT() gin.HandlerFunc {
 		if header := c.GetHeader("Authorization"); header != "" {
 			parts := strings.SplitN(header, " ", 2)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header"})
+				respondError(c, http.StatusUnauthorized, CodeUnauthorized, "invalid authorization header")
 				return
 			}
 			tokenString = parts[1]
@@ -27,7 +27,7 @@ func (g *Gateway) requireJWT() gin.HandlerFunc {
 			tokenString = cookie
 		}
 		if tokenString == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			respondError(c, http.StatusUnauthorized, CodeUnauthorized, "authentication required")
 			return
 		}
 
@@ -36,7 +36,7 @@ func (g *Gateway) requireJWT() gin.HandlerFunc {
 			return g.jwtSigningKey, nil
 		}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithIssuer("rlark-gateway"))
 		if err != nil || !token.Valid || claims.Subject == "" || (claims.Role != "admin" && claims.Role != "user") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired access token"})
+			respondError(c, http.StatusUnauthorized, CodeUnauthorized, "invalid or expired access token")
 			return
 		}
 
@@ -49,7 +49,7 @@ func (g *Gateway) requireJWT() gin.HandlerFunc {
 func requireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.GetString(authRoleKey) != "admin" {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "administrator access required"})
+			respondError(c, http.StatusForbidden, CodeForbidden, "administrator access required")
 			return
 		}
 		c.Next()

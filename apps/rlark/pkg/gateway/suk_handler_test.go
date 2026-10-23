@@ -1,12 +1,68 @@
 package gateway
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/rlinf/rlark/apps/rlark/pkg/common"
+	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
 )
+
+// An empty result must serialize as [] on both branches of the handler: the
+// secret-missing branch already answered [], so a nil slice here would make the
+// same endpoint report two different empty values.
+func TestListSSHUserKeysReturnsEmptyArrayWhenFilterMatchesNothing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	namespace := "rlark-system"
+	gateway := &Gateway{
+		config: Config{KubeClientConfig: configs.KubernetesClientConfig{Namespace: namespace}},
+		rawClient: fake.NewSimpleClientset(&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: common.SSHUserKeySecretName, Namespace: namespace},
+			Data:       map[string][]byte{"alice": []byte("ssh-ed25519 AAAA-alice")},
+		}),
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/ssh-user-keys?user=bob", nil)
+
+	gateway.handleListSSHUserKeys(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if got := recorder.Body.String(); got != "[]" {
+		t.Fatalf("body = %s, want []", got)
+	}
+}
+
+func TestListSSHUserKeysReturnsEmptyArrayWhenSecretIsMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gateway := &Gateway{
+		config:    Config{KubeClientConfig: configs.KubernetesClientConfig{Namespace: "rlark-system"}},
+		rawClient: fake.NewSimpleClientset(),
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/ssh-user-keys", nil)
+
+	gateway.handleListSSHUserKeys(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if got := recorder.Body.String(); got != "[]" {
+		t.Fatalf("body = %s, want []", got)
+	}
+}
 
 func TestFindSSHKeyDuplicate(t *testing.T) {
 	keysByUser := map[string][]string{

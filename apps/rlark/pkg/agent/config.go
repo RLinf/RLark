@@ -79,11 +79,12 @@ type Config struct {
 
 	LeaderElection configs.LeaderElectionConfig
 
-	MetricsBindAddress     string
-	ControllerConcurrency  ControllerConcurrencyConfig
-	PodOrphanSweepInterval time.Duration
-	PodOrphanSweepPageSize int64
-	PodStaleTTL            time.Duration
+	MetricsBindAddress      string
+	ControllerConcurrency   ControllerConcurrencyConfig
+	PodOrphanSweepInterval  time.Duration
+	PodOrphanSweepPageSize  int64
+	PodStaleTTL             time.Duration
+	TaskRuntimeResyncPeriod time.Duration
 
 	NodeServerConfig           nodeserver.Config
 	Image                      string
@@ -115,12 +116,13 @@ func DefaultConfig() Config {
 			config.Identity = common.Hostname("node")
 			return config
 		}(),
-		MetricsBindAddress:     ":8081",
-		ControllerConcurrency:  defaultControllerConcurrencyConfig(),
-		PodOrphanSweepInterval: 5 * time.Minute,
-		PodOrphanSweepPageSize: 200,
-		PodStaleTTL:            15 * time.Minute,
-		NodeServerConfig:       nodeserver.DefaultConfig(),
+		MetricsBindAddress:      ":8081",
+		ControllerConcurrency:   defaultControllerConcurrencyConfig(),
+		PodOrphanSweepInterval:  5 * time.Minute,
+		PodOrphanSweepPageSize:  200,
+		PodStaleTTL:             15 * time.Minute,
+		TaskRuntimeResyncPeriod: 15 * time.Minute,
+		NodeServerConfig:        nodeserver.DefaultConfig(),
 
 		EnableSameClusterDirect:    true,
 		EnableCrossClusterDirect:   true,
@@ -148,6 +150,7 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&c.PodOrphanSweepInterval, "pod-orphan-sweep-interval", c.PodOrphanSweepInterval, "Interval between management Pod orphan sweeps")
 	fs.Int64Var(&c.PodOrphanSweepPageSize, "pod-orphan-sweep-page-size", c.PodOrphanSweepPageSize, "Management Pods processed per orphan sweep page")
 	fs.DurationVar(&c.PodStaleTTL, "pod-stale-ttl", c.PodStaleTTL, "Time a missing management Pod remains stale before deletion")
+	fs.DurationVar(&c.TaskRuntimeResyncPeriod, "task-runtime-resync-period", c.TaskRuntimeResyncPeriod, "Period between cluster-mode shared management Task Runtime repair scans; 0 disables scanning (unused in node-only mode)")
 
 	fs.StringVar(&c.RLarkServerSSHAddress, "rlark-server-ssh-address", c.RLarkServerSSHAddress, "RLark server SSH address (user@host:port)")
 	fs.StringVar(&c.RLarkServerSSHHostKey, "rlark-server-ssh-host-key", c.RLarkServerSSHHostKey, "RLark server SSH host key")

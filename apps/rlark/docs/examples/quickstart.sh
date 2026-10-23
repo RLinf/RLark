@@ -197,8 +197,13 @@ EOF
 
 # Install CRDs: regenerate with maxDescLen=0 to fit kcp's 256KB annotation limit,
 # then install from /tmp to avoid modifying committed CRD files.
+# Use the pinned generator from api/bin instead of whatever sits in GOPATH/bin,
+# so these CRDs match the committed manifests.
+log "Installing pinned controller-gen..."
+make -C "$PROJECT_ROOT/api" controller-gen
+CONTROLLER_GEN="$(make -s -C "$PROJECT_ROOT/api" print-controller-gen)"
 log "Regenerating CRDs for kcp (maxDescLen=0)..."
-$(go env GOPATH)/bin/controller-gen crd:maxDescLen=0,allowDangerousTypes=true \
+"$CONTROLLER_GEN" crd:maxDescLen=0,allowDangerousTypes=true \
   paths="$PROJECT_ROOT/api/rlark.io/..." \
   output:crd:artifacts:config=/tmp/rlark/crds
 kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard \

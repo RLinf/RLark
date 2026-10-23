@@ -19,6 +19,8 @@ package v1alpha1
 
 type AddonExpansion interface{}
 
+type ClusterExpansion interface{}
+
 type DomainExpansion interface{}
 
 type DomainPeerExpansion interface{}

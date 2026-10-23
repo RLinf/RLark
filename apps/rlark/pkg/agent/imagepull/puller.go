@@ -338,7 +338,7 @@ func (p *Puller) onDelete(obj interface{}) {
 func (p *Puller) handle(task *rlarkv1alpha1.Task) {
 	log := p.log.WithValues("task", task.Name, "namespace", task.Namespace, "rv", task.ResourceVersion)
 
-	if task.Spec.AgentType != p.agentType {
+	if !runtimeKindMatchesAgent(task.Spec.Runtime.Kind, p.agentType) {
 		return
 	}
 
@@ -352,7 +352,7 @@ func (p *Puller) handle(task *rlarkv1alpha1.Task) {
 			log.Info("node name unknown, pulling without node-selector filtering")
 		} else {
 			ctx, cancel := context.WithTimeout(context.Background(), nodeLookupTimeout)
-			matches, err := p.nodeMatches(ctx, task.Spec.NodeSelector)
+			matches, err := p.nodeMatches(ctx, task.Spec.Placement.NodeSelector)
 			cancel()
 			if err != nil {
 				log.Error(err, "failed to evaluate node selector, pulling anyway")
@@ -382,6 +382,10 @@ func (p *Puller) handle(task *rlarkv1alpha1.Task) {
 	for _, img := range toPull {
 		p.dispatch(pullJob{taskUID: task.UID, image: img})
 	}
+}
+
+func runtimeKindMatchesAgent(kind rlarkv1alpha1.RuntimeKind, agentType rlarkv1alpha1.AgentType) bool {
+	return string(kind) == string(agentType)
 }
 
 // dispatch enqueues a pull job without blocking. If the jobs buffer is full

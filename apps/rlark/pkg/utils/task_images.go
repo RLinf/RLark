@@ -7,17 +7,17 @@ import (
 )
 
 // ExtractTaskImages returns the deduplicated, sorted list of container image
-// references referenced by a Task across its Kubernetes and Docker specs.
-//
-// Raw tasks carry no container images and are ignored. The returned slice is
-// sorted for deterministic ordering (stable logging and tests).
+// references declared by a Task's common Pod template. Every Runtime consumes
+// this model and decides which fields it supports; image discovery therefore
+// does not branch on Runtime kind. The returned slice is sorted for
+// deterministic ordering (stable logging and tests).
 //
 // This helper is shared between the data-plane image pre-puller (which decides
 // what to pull) and the control-plane Task reconciler (which aggregates Node
 // pull progress filtered by the Task's images). It is a pure function on the
 // Task spec and does not touch any runtime state.
 func ExtractTaskImages(task *rlarkv1alpha1.Task) []string {
-	if task == nil {
+	if task == nil || task.Spec.Workload.Template == nil {
 		return nil
 	}
 
@@ -29,22 +29,15 @@ func ExtractTaskImages(task *rlarkv1alpha1.Task) []string {
 		seen[image] = struct{}{}
 	}
 
-	// Kubernetes workload: both init and main containers.
-	if task.Spec.Kubernetes != nil && task.Spec.Kubernetes.Workload != nil {
-		podSpec := task.Spec.Kubernetes.Workload.Template.Spec
-		for i := range podSpec.InitContainers {
-			collect(podSpec.InitContainers[i].Image)
-		}
-		for i := range podSpec.Containers {
-			collect(podSpec.Containers[i].Image)
-		}
+	podSpec := task.Spec.Workload.Template.Spec
+	for i := range podSpec.InitContainers {
+		collect(podSpec.InitContainers[i].Image)
 	}
-
-	// Docker task containers.
-	if task.Spec.Docker != nil {
-		for i := range task.Spec.Docker.Containers {
-			collect(task.Spec.Docker.Containers[i].Image)
-		}
+	for i := range podSpec.Containers {
+		collect(podSpec.Containers[i].Image)
+	}
+	for i := range podSpec.EphemeralContainers {
+		collect(podSpec.EphemeralContainers[i].Image)
 	}
 
 	images := make([]string, 0, len(seen))

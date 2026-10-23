@@ -16,6 +16,10 @@ The one-click [Quick Start](../quickstart.md) script provides a complete develop
 bash apps/rlark/docs/examples/quickstart.sh
 ```
 
+For repeatable tests against the project's long-running multi-cluster Kind
+topology, see [End-to-end testing](e2e-testing.md). The E2E framework keeps
+cluster paths, images, timeouts, and data-plane allowlists configurable.
+
 ## Building Go Components
 
 Build all components:
@@ -193,10 +197,11 @@ localStorage.clear()
 
 ## Keeping Generated Code in Sync
 
-After changing CRD types, regenerate API clients:
+After changing CRD types, regenerate the CRD manifests, Go clients, schema
+reference, and frontend TypeScript models:
 
 ```bash
-# Regenerate CRD manifests
+# Regenerate all CRD-derived artifacts
 make generate
 
 # Regenerate typed clients, informers, and listers
@@ -204,6 +209,83 @@ make -C api generate-clients
 ```
 
 Always test user-facing changes in both the API and Web UI.
+
+`make verify-generated` runs the same generators and fails when the committed
+CRD manifests, deepcopy functions, typed Go clients, frontend TypeScript models,
+or `apps/rlark/docs/reference/crd.md` differ from the regenerated output, or when
+generation produces untracked files.
+CI runs it on every change, so run it locally before pushing API changes.
+
+Frontend models are generated from the checked-in manifests in
+`api/config/crd/bases` into `apps/rlark-ui/src/generated/rlark`. The generated
+files are committed and must not be edited manually. Frontend code should import
+CRD interfaces through `apps/rlark-ui/src/generated/rlark-types.ts`; keep page and
+domain view models separate from these wire types. The generator follows the CRD
+OpenAPI schema as emitted by `controller-gen`, including expanded Kubernetes
+types such as `PodTemplateSpec`, `IntOrString`, and resource quantities.
+
+The generator and its runtime packages are pinned in
+`apps/rlark-ui/package.json` and require Node.js 22. The repository wrapper calls
+the generator API directly and reads CRD files in sorted order:
+
+```bash
+npm ci --prefix apps/rlark-ui
+npm run generate:crd-models --prefix apps/rlark-ui
+```
+
+### CRD generators and the pinned toolchain
+
+`controller-gen` is pinned by `CONTROLLER_TOOLS_VERSION` in `api/Makefile` and
+installed into the gitignored, repository-local `api/bin` under a
+version-stamped file name. The client generators invoked by
+`api/hack/generate-clients.sh` are pinned by `KUBE_CODEGEN_TAG` in that script
+and installed into the same directory. Scripts that need the generator directly
+run `make -C api controller-gen` to install it and
+`make -s -C api print-controller-gen` to resolve its path.
+
+Do not point `CONTROLLER_GEN` at a generator in a shared `GOPATH/bin`. That
+directory is shared across jobs and projects in CI, so a file named
+`controller-gen` there may be stale or not even executable while make still
+treats the install as done and skips it, which fails mid-generation with exit
+code 127. The install rule runs `controller-gen --version` after installing, so
+an unusable binary fails at install time instead.
+
+Bumping `CONTROLLER_TOOLS_VERSION` is a deliberate change: the version is
+recorded in the header of every generated CRD manifest, so regenerate all
+artifacts and commit them together with the pin.
+
+### Protobuf stubs and the pinned toolchain
+
+The gRPC stubs under `sdks/embodied-runtime-go/gen`, `sdks/embodied-runtime-python/embodied_runtime/gen`, and `sdks/execution-go/gen` are checked in, and every generated file records the generator version in its header. Generating with a different `protoc`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `grpcio-tools` rewrites all of them, so the whole repository uses one pinned toolchain:
+
+- `proto/toolchain.mk` is the single source of truth for `protoc`, `protoc-gen-go`, `protoc-gen-go-grpc`, and `buf`. Both proto trees (`proto/embodied-runtime` and `proto/execution`) include it.
+- `sdks/embodied-runtime-python/requirements-dev.txt` pins `grpcio-tools` for the Python stubs.
+
+Do not generate with whatever `protoc` happens to be on `PATH`. Install the pinned release into the gitignored `proto/bin` directory first; the Go plugins and `buf` are installed there automatically, with version-stamped file names:
+
+```bash
+# Download the pinned protoc release into proto/bin
+make protoc-install
+
+# Regenerate every stub tree
+make proto
+
+# Fail if the checked-in stubs do not match the .proto sources
+make verify-proto-generated
+```
+
+`make proto` runs `protoc-check` first and fails when the resolved `protoc` does not report the pinned version, so a mismatched system install can never silently rewrite the stubs. `proto/bin/protoc` takes precedence over `PATH` once it exists.
+
+If `python3` is not the interpreter that has the pinned `grpcio-tools` installed, point the Python generator at the right one instead of installing the pin globally:
+
+```bash
+python3 -m venv /tmp/rlark-protogen
+/tmp/rlark-protogen/bin/pip install --requirement sdks/embodied-runtime-python/requirements-dev.txt
+make proto PYTHON=/tmp/rlark-protogen/bin/python
+```
+
+!!! warning "For coding agents"
+    Never regenerate protobuf stubs with an unpinned `protoc`, and never relax the pins in `proto/toolchain.mk` to match a locally installed version. Run `make protoc-install` to place the pinned release in the repository-local `proto/bin` directory, and use `PYTHON=<interpreter>` for the Python generator when needed. A diff that rewrites every generated file is a toolchain mismatch, not a real change. Bumping a pin is a deliberate change that must regenerate all stub trees in the same commit.
 
 ## IDE Setup
 

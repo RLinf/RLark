@@ -8,6 +8,7 @@ import (
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -179,6 +180,38 @@ func allocMap(t *testing.T, d rlarkv1alpha1.Domain) map[string]string {
 	return m
 }
 
+func TestReconcileRejectsInvalidCIDRWithoutRequeue(t *testing.T) {
+	const domainName = "bad-domain"
+	domain := &rlarkv1alpha1.Domain{
+		ObjectMeta: metav1.ObjectMeta{Name: domainName},
+		Spec:       rlarkv1alpha1.DomainSpec{CIDR: "not-a-cidr"},
+	}
+	scheme := newTestScheme(t)
+	cl := newTestClientBuilder(t).
+		WithObjects(domain).
+		WithStatusSubresource(&rlarkv1alpha1.Domain{}).
+		Build()
+	r := &Reconciler{Client: cl, Scheme: scheme}
+
+	// An invalid Spec is not repairable by retrying, so Reconcile must not return
+	// an error (which would trigger an unbounded requeue loop).
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: domainName}}); err != nil {
+		t.Fatalf("reconcile of invalid CIDR returned error: %v", err)
+	}
+
+	var updated rlarkv1alpha1.Domain
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: domainName}, &updated); err != nil {
+		t.Fatalf("failed to get domain after reconcile: %v", err)
+	}
+	cond := apimeta.FindStatusCondition(updated.Status.Conditions, rlarkv1alpha1.ConditionTypeValidated)
+	if cond == nil {
+		t.Fatalf("invalid CIDR left no Validated condition: %#v", updated.Status.Conditions)
+	}
+	if cond.Status != metav1.ConditionFalse || cond.Reason != domainReasonCIDRInvalid {
+		t.Fatalf("Validated condition = %s / %s, want False / %s", cond.Status, cond.Reason, domainReasonCIDRInvalid)
+	}
+}
+
 func TestReconcileSkipsUnchangedDomainAndPeerUpdates(t *testing.T) {
 	const (
 		domainName = "test-domain"
@@ -188,9 +221,18 @@ func TestReconcileSkipsUnchangedDomainAndPeerUpdates(t *testing.T) {
 	domain := &rlarkv1alpha1.Domain{
 		ObjectMeta: metav1.ObjectMeta{Name: domainName},
 		Spec:       rlarkv1alpha1.DomainSpec{CIDR: "10.244.0.0/29"},
-		Status: rlarkv1alpha1.DomainStatus{IPAllocations: []rlarkv1alpha1.DomainIPAllocation{{
-			IP: "10.244.0.1", Pod: namespace + "/rlark-system/pod-a",
-		}}},
+		Status: rlarkv1alpha1.DomainStatus{
+			IPAllocations: []rlarkv1alpha1.DomainIPAllocation{{
+				IP: "10.244.0.1", Pod: namespace + "/rlark-system/pod-a",
+			}},
+			// Already converged: the controller must not rewrite the status just to
+			// restate a Validated condition it has previously recorded.
+			Conditions: []metav1.Condition{{
+				Type:   rlarkv1alpha1.ConditionTypeValidated,
+				Status: metav1.ConditionTrue,
+				Reason: domainReasonCIDRValid,
+			}},
+		},
 	}
 	pod := makePod("uid-a", namespace, domainName, "rlark-system", "pod-a", "node-a", "10.0.0.1", rlarkv1alpha1.PodPhaseRunning)
 	peer := makeDomainPeer(domainName, namespace, certPEM, keyPEM)

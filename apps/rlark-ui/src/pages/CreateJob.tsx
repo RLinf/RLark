@@ -104,18 +104,21 @@ function ClusterSelect({
       : zh
         ? "云算力集群"
         : "Cloud compute";
-  const statusLabel = (cluster: Cluster) =>
-    cluster.phase === "Online"
-      ? zh
-        ? "运行正常"
-        : "Online"
-      : cluster.phase === "Offline"
-        ? zh
-          ? "离线"
-          : "Offline"
-        : zh
-          ? "部分异常"
-          : "Degraded";
+  const statusLabel = (cluster: Cluster) => {
+    const labels: Record<string, { zh: string; en: string }> = {
+      Online: { zh: "运行正常", en: "Online" },
+      Offline: { zh: "离线", en: "Offline" },
+      Downgraded: { zh: "服务降级", en: "Downgraded" },
+      Cordoned: { zh: "停用调度", en: "Cordoned" },
+      Draining: { zh: "排空中", en: "Draining" },
+      Deleted: { zh: "已删除", en: "Deleted" },
+    };
+    const label = labels[cluster.phase] ?? {
+      zh: cluster.phase,
+      en: cluster.phase,
+    };
+    return zh ? label.zh : label.en;
+  };
 
   const optionContent = (cluster: Cluster) => (
     <>
@@ -400,15 +403,29 @@ export function CreateJobModal({
     setStorageClassFetched(false);
     try {
       const data = await storageClassesApi.list<{
+        id: string;
         name: string;
         description?: string;
         bucket?: string;
-      }>(cluster);
-      const storageClassList = Object.values(data).map((sc) => ({
-        name: sc.name,
-        description: sc.description || "",
-        bucket: sc.bucket || "",
-      }));
+        clusters?: string[];
+      }>();
+      const selectedCluster = availableClusters.find(
+        (item) => item.id === cluster || item.name === cluster,
+      );
+      const clusterIDs = new Set(
+        [cluster, selectedCluster?.id, selectedCluster?.name].filter(
+          (item): item is string => Boolean(item),
+        ),
+      );
+      const storageClassList = Object.values(data)
+        .filter(
+          (sc) => !cluster || sc.clusters?.some((item) => clusterIDs.has(item)),
+        )
+        .map((sc) => ({
+          name: sc.name,
+          description: sc.description || "",
+          bucket: sc.bucket || "",
+        }));
       setStorageClasses(storageClassList);
     } catch (e) {
       console.warn("Failed to fetch storage classes:", e);
@@ -604,7 +621,7 @@ export function CreateJobModal({
     if (hasStorageMount && rr.cluster) {
       fetchStorageClasses(rr.cluster);
     }
-  }, [activeRoleTab, roleResources]);
+  }, [activeRoleTab, roleResources, availableClusters]);
 
   const onTypeChange = (next: JobType) => {
     setType(next);
@@ -961,11 +978,11 @@ export function CreateJobModal({
               metadata: {
                 ...crd.metadata,
                 annotations: {
-                  ...crd.metadata.annotations,
+                  ...crd.metadata?.annotations,
                   "rlark.io/restarted-at": new Date().toISOString(),
                 },
               },
-              spec: { ...crd.spec, stopped: false },
+              spec: { ...crd.spec, suspended: false },
             }
           : crd;
       if (isEdit) {
@@ -978,7 +995,7 @@ export function CreateJobModal({
             name: editJob!.name,
             annotations: {
               ...current.metadata?.annotations,
-              ...requestBody.metadata.annotations,
+              ...requestBody.metadata?.annotations,
             },
           },
         } as typeof requestBody;

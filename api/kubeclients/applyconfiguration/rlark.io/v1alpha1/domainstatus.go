@@ -17,9 +17,22 @@ limitations under the License.
 
 package v1alpha1
 
+import (
+	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
+)
+
 // DomainStatusApplyConfiguration represents a declarative configuration of the DomainStatus type for use
 // with apply.
 type DomainStatusApplyConfiguration struct {
+	// ObservedGeneration 是 Domain 控制器最近一次完成调谐时所观测到的
+	// metadata.generation。它是控制器契约而非 API Server 保证：消费者在依据
+	// ipAllocations 做判断前，应比较本字段与 metadata.generation 以识别过期状态。
+	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
+	// Conditions 记录 Domain 的结构化状态结论，当前仅包含 ConditionTypeValidated
+	// （Spec.CIDR 是否合法）。它由 Spec 驱动，写入方必须填写 ObservedGeneration。
+	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
+	// IPAllocations 由 Domain 控制器独占写入，其它组件不得修改。该列表规模随
+	// Domain CIDR 增长（/16 可达数万条）。
 	IPAllocations []DomainIPAllocationApplyConfiguration `json:"ipAllocations,omitempty"`
 }
 
@@ -27,6 +40,27 @@ type DomainStatusApplyConfiguration struct {
 // apply.
 func DomainStatus() *DomainStatusApplyConfiguration {
 	return &DomainStatusApplyConfiguration{}
+}
+
+// WithObservedGeneration sets the ObservedGeneration field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedGeneration field is set to the value of the last call.
+func (b *DomainStatusApplyConfiguration) WithObservedGeneration(value int64) *DomainStatusApplyConfiguration {
+	b.ObservedGeneration = &value
+	return b
+}
+
+// WithConditions adds the given value to the Conditions field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Conditions field.
+func (b *DomainStatusApplyConfiguration) WithConditions(values ...*v1.ConditionApplyConfiguration) *DomainStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithConditions")
+		}
+		b.Conditions = append(b.Conditions, *values[i])
+	}
+	return b
 }
 
 // WithIPAllocations adds the given value to the IPAllocations field in the declarative configuration

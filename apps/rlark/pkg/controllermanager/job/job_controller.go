@@ -8,7 +8,6 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -18,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
 )
 
@@ -117,29 +117,30 @@ func jobTaskStatusesStopped(job *rlarkv1alpha1.Job) bool {
 }
 
 func (r *Reconciler) stopOwnedTasks(ctx context.Context, job *rlarkv1alpha1.Job) (bool, error) {
-	var tasks rlarkv1alpha1.TaskList
-	if err := r.List(ctx, &tasks); err != nil {
-		return false, fmt.Errorf("list Tasks owned by Job %s: %w", job.Name, err)
+	tasks, err := r.listJobTasks(ctx, job)
+	if err != nil {
+		return false, err
 	}
 
 	allStopped := true
-	for i := range tasks.Items {
-		task := &tasks.Items[i]
+	for _, task := range tasks {
 		owner := metav1.GetControllerOf(task)
 		if owner == nil || owner.UID != job.UID || owner.Kind != "Job" || owner.APIVersion != rlarkv1alpha1.GroupVersion.String() {
+			continue
+		}
+		if !controllerutil.ContainsFinalizer(task, common.TaskAgentCleanupFinalizer) {
+			if task.DeletionTimestamp.IsZero() {
+				if err := client.IgnoreNotFound(r.Delete(ctx, task)); err != nil {
+					return false, fmt.Errorf("delete unclaimed Task %s/%s: %w", task.Namespace, task.Name, err)
+				}
+			}
 			continue
 		}
 		if task.Status.Phase != rlarkv1alpha1.TaskPhaseStopped {
 			allStopped = false
 		}
-		if task.DeletionTimestamp.IsZero() && task.Annotations[StoppedAnnotation] != "true" {
-			if task.Annotations == nil {
-				task.Annotations = map[string]string{}
-			}
-			task.Annotations[StoppedAnnotation] = "true"
-			if task.Spec.Kubernetes != nil && task.Spec.Kubernetes.Workload != nil {
-				task.Spec.Kubernetes.Workload.Replicas = ptr.To(int32(0))
-			}
+		if task.DeletionTimestamp.IsZero() && !task.Spec.Suspended {
+			task.Spec.Suspended = true
 			if err := r.Update(ctx, task); err != nil {
 				return false, fmt.Errorf("stop Task %s/%s: %w", task.Namespace, task.Name, err)
 			}
@@ -149,14 +150,13 @@ func (r *Reconciler) stopOwnedTasks(ctx context.Context, job *rlarkv1alpha1.Job)
 }
 
 func (r *Reconciler) deleteOwnedTasks(ctx context.Context, job *rlarkv1alpha1.Job) (bool, error) {
-	var tasks rlarkv1alpha1.TaskList
-	if err := r.List(ctx, &tasks); err != nil {
-		return false, fmt.Errorf("list Tasks owned by Job %s: %w", job.Name, err)
+	tasks, err := r.listJobTasks(ctx, job)
+	if err != nil {
+		return false, err
 	}
 
 	pending := false
-	for i := range tasks.Items {
-		task := &tasks.Items[i]
+	for _, task := range tasks {
 		owner := metav1.GetControllerOf(task)
 		if owner == nil || owner.UID != job.UID || owner.Kind != "Job" || owner.APIVersion != rlarkv1alpha1.GroupVersion.String() {
 			continue
@@ -177,12 +177,28 @@ func (r *Reconciler) IsTerminal(client.Object) bool {
 }
 
 // ReconcileStateMachine reconciles the resource.
+//
+// 调谐成功返回后，将 Status.ObservedGeneration 推进到本次所观测的
+// metadata.generation。若调谐以错误（含 ErrRequeueAfterChildCleanup）结束，
+// 则不推进，使消费者能够识别出 Status 尚未对应当前 Spec。
 func (r *Reconciler) ReconcileStateMachine(ctx context.Context, obj client.Object) (bool, error) {
-	return r.reconcileWithStateMachine(ctx, obj.(*rlarkv1alpha1.Job))
+	job := obj.(*rlarkv1alpha1.Job)
+	changed, err := r.reconcileWithStateMachine(ctx, job)
+	if err != nil {
+		return changed, err
+	}
+	if job.Status.ObservedGeneration != job.Generation {
+		job.Status.ObservedGeneration = job.Generation
+		changed = true
+	}
+	return changed, nil
 }
 
 // SetupWithManager registers the controller with the manager.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &rlarkv1alpha1.Task{}, taskJobField, indexTaskByJob); err != nil {
+		return fmt.Errorf("index Tasks by Job: %w", err)
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&rlarkv1alpha1.Job{}, builder.WithPredicates(jobSpecChangedPredicate())).
 		Owns(&rlarkv1alpha1.Task{}).

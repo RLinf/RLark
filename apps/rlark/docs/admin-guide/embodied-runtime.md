@@ -76,17 +76,19 @@ host_macvlans:
     # gateway: 172.16.0.1
 
 camera:
-  enabled: true
+  manager_mode: local
   socket: /var/run/rlark/camera-ctrl.sock
 
 ros:
-  enabled: true
+  manager_mode: local
   socket: /var/run/rlark/ros-ctrl.sock
 
 ros2:
-  enabled: false
+  manager_mode: disabled
   socket: /var/run/rlark/ros2-ctrl.sock
 ```
+
+Each controller supports `disabled` (do not start), `local` (run as a device plugin subprocess), and `pod` (run as a dedicated Pod managed by the device plugin).
 
 ### Host Device Passthrough
 

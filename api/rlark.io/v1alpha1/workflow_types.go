@@ -15,14 +15,16 @@ const (
 )
 
 type WorkflowJobTemplate struct {
-	Name         string   `json:"name,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Dependencies 是同一 Workflow 内其它 Job 模板的名字，依赖关系只存在于
+	// Job 之间，不存在于 Job 内部的 Task 模板之间。
 	Dependencies []string `json:"dependencies,omitempty"`
 	Spec         JobSpec  `json:"spec,omitempty"`
 }
 
 type WorkflowSpec struct {
 	JobTemplates []WorkflowJobTemplate `json:"jobTemplates,omitempty"`
-	Stopped      bool                  `json:"stopped,omitempty"`
+	Suspended    bool                  `json:"suspended,omitempty"`
 }
 
 type WorkflowJobStatus struct {
@@ -36,11 +38,17 @@ func (s *WorkflowJobStatus) SetPhase(p string)   { s.Phase = JobPhase(p) }
 func (s *WorkflowJobStatus) SetMessage(m string) { s.Message = m }
 
 type WorkflowStatus struct {
-	Phase      WorkflowPhase       `json:"phase,omitempty"`
-	Jobs       []WorkflowJobStatus `json:"jobs,omitempty"`
-	Conditions []metav1.Condition  `json:"conditions,omitempty"`
-	StartTime  *metav1.Time        `json:"startTime,omitempty"`
-	EndTime    *metav1.Time        `json:"endTime,omitempty"`
+	Phase WorkflowPhase `json:"phase,omitempty"`
+	// ObservedGeneration 是 Workflow 控制器最近一次完成调谐时所观测到的
+	// metadata.generation。它是控制器契约而非 API Server 保证：消费者在读取
+	// phase / conditions 之前，应比较本字段与 metadata.generation 以识别过期状态。
+	ObservedGeneration int64               `json:"observedGeneration,omitempty"`
+	Jobs               []WorkflowJobStatus `json:"jobs,omitempty"`
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	StartTime  *metav1.Time       `json:"startTime,omitempty"`
+	EndTime    *metav1.Time       `json:"endTime,omitempty"`
 }
 
 // +genclient

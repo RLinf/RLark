@@ -18,20 +18,20 @@ func TestRecordJobImagesAggregatesUniqueImages(t *testing.T) {
 	gateway.recordJobImages(&rlarkiov1alpha1.Job{
 		ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(older)},
 		Spec: rlarkiov1alpha1.JobSpec{Tasks: []rlarkiov1alpha1.JobTaskTemplate{{
-			TaskSpec: rlarkiov1alpha1.TaskSpec{Kubernetes: &rlarkiov1alpha1.KubernetesTaskSpec{
-				Workload: &rlarkiov1alpha1.KubernetesWorkloadSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			TaskSpec: rlarkiov1alpha1.TaskSpec{
+				Workload: rlarkiov1alpha1.TaskWorkloadSpec{Template: &corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{{Image: "init:1"}},
 					Containers:     []corev1.Container{{Image: "app:1"}, {Image: "app:1"}},
 				}}},
-			}},
+			},
 		}}},
 	})
 	gateway.recordJobImages(&rlarkiov1alpha1.Job{
 		ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(newer)},
 		Spec: rlarkiov1alpha1.JobSpec{Tasks: []rlarkiov1alpha1.JobTaskTemplate{{
-			TaskSpec: rlarkiov1alpha1.TaskSpec{Docker: &rlarkiov1alpha1.DockerTaskSpec{
-				Containers: []rlarkiov1alpha1.DockerContainerSpec{{Image: "app:1"}},
-			}},
+			TaskSpec: rlarkiov1alpha1.TaskSpec{Workload: rlarkiov1alpha1.TaskWorkloadSpec{Template: &corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Image: "app:1"}},
+			}}}},
 		}}},
 	})
 
@@ -49,7 +49,7 @@ func TestRecordJobImagesAggregatesUniqueImages(t *testing.T) {
 func TestJobImagesHandlesMissingWorkload(t *testing.T) {
 	job := &rlarkiov1alpha1.Job{
 		Spec: rlarkiov1alpha1.JobSpec{Tasks: []rlarkiov1alpha1.JobTaskTemplate{{
-			TaskSpec: rlarkiov1alpha1.TaskSpec{Kubernetes: &rlarkiov1alpha1.KubernetesTaskSpec{}},
+			TaskSpec: rlarkiov1alpha1.TaskSpec{},
 		}}},
 	}
 	if got := jobImages(job); len(got) != 0 {

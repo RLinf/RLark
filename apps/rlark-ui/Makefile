@@ -8,7 +8,7 @@ BASE_IMAGE ?= nginx:1.29.1
 
 ##@ Build
 
-.PHONY: install build lint fmt
+.PHONY: install build lint fmt generate-crd-models
 install: ## Install npm dependencies
 	npm install
 
@@ -19,7 +19,10 @@ lint: install ## Lint TypeScript/React (eslint)
 	npx eslint src/
 
 fmt: ## Format code (prettier)
-	./node_modules/.bin/prettier --write 'src/' 'index.html' 'package.json' 'vite.config.ts' 'tsconfig*.json'
+	./node_modules/.bin/prettier --write 'src/' 'scripts/' 'index.html' 'package.json' 'vite.config.ts' 'tsconfig*.json' --ignore-path .prettierignore
+
+generate-crd-models: ## Generate TypeScript models from the checked-in CRD manifests
+	npm run generate:crd-models
 
 ##@ Docker
 

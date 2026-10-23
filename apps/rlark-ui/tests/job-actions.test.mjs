@@ -52,21 +52,25 @@ test("cloning uses the user-facing task role instead of the resource name", () =
         {
           name: "65b0-89d2-8272",
           head: true,
-          agentType: "Kubernetes",
           role: "Actor",
-          nodeSelector: {},
-          kubernetes: {
-            workload: {
-              template: {
-                spec: {
-                  containers: [
-                    {
-                      name: "main",
-                      image: "busybox",
-                      env: [{ name: "RLARK_TASK_ROLE", value: "Learner" }],
-                    },
-                  ],
-                },
+          placement: { nodeSelector: {} },
+          runtime: { kind: "Kubernetes" },
+          workload: {
+            kind: "rlinf.io/ray",
+            version: "v1",
+            carrier: {
+              type: "rlinf.io/kubernetes-deployment",
+              version: "v1",
+            },
+            template: {
+              spec: {
+                containers: [
+                  {
+                    name: "main",
+                    image: "busybox",
+                    env: [{ name: "RLARK_TASK_ROLE", value: "Learner" }],
+                  },
+                ],
               },
             },
           },
@@ -90,19 +94,13 @@ test("failed jobs clean residual workers before starting", () => {
     /action === "clean-start"\s*\? await handleCleanStart\(job\)/,
   );
   assert.match(jobsSource, /job\.phase === "Failed"/);
-  assert.match(
-    jobsSource,
-    /jobsApi\.setStopped\(job\.name, true\)/,
-  );
+  assert.match(jobsSource, /jobsApi\.setStopped\(job\.name, true\)/);
   assert.match(jobsSource, /await waitForFailedJobCleanup\(job\)/);
   assert.match(
     jobsSource,
     /current\.phase === "Stopped" && current\.runningWorkers === 0/,
   );
-  assert.match(
-    jobsSource,
-    /jobsApi\.setStopped\(job\.name, false\)/,
-  );
+  assert.match(jobsSource, /jobsApi\.setStopped\(job\.name, false\)/);
   assert.match(
     jobsSource,
     /isStartable && !isFailed \? <Play size=\{14\} \/> : <Square size=\{13\} \/>/,
@@ -414,7 +412,7 @@ test("stopping a job returns after setting the stop marker", () => {
   assert.doesNotMatch(jobsSource, /waitForJobWorkersStopped/);
   assert.match(
     backendSource,
-    /setStopped\(name: string, stopped: boolean\)[\s\S]*?body: \{ spec: \{ stopped \} \}/,
+    /setStopped\(name: string, stopped: boolean\)[\s\S]*?body: \{ spec: \{ suspended: stopped \} \}/,
   );
   assert.match(jobsSource, /\.\.\.j,[\s\S]*?stopped,/);
   assert.match(

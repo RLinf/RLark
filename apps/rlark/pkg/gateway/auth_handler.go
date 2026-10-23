@@ -2,10 +2,8 @@ package gateway
 
 import (
 	"context"
-	"crypto/subtle"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,43 +25,25 @@ type authClaims struct {
 func (g *Gateway) handleLogin(c *gin.Context) {
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "invalid request body")
 		return
 	}
 
 	if req.Username == "" || req.Password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "username and password are required"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "username and password are required")
 		return
 	}
 
-	adminPW, userPW, err := g.readUIAuthSecret()
+	currentUser, err := g.userProvider().Authenticate(c.Request.Context(), req.Username, req.Password)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to read auth secret, err: %v", err)})
+		respondError(c, http.StatusUnauthorized, CodeUnauthorized, "invalid credentials")
 		return
 	}
-
-	role := ""
-	expectedPW := ""
-	switch req.Username {
-	case "admin":
-		role = "admin"
-		expectedPW = adminPW
-	case "user":
-		role = "user"
-		expectedPW = userPW
-	default:
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
-		return
-	}
-
-	if subtle.ConstantTimeCompare([]byte(req.Password), []byte(expectedPW)) != 1 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
-		return
-	}
+	role := currentUser.Role
 
 	token, expiresAt, err := g.issueJWT(req.Username, role)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue access token"})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, "failed to issue access token")
 		return
 	}
 
@@ -82,22 +62,6 @@ func (g *Gateway) handleLogin(c *gin.Context) {
 		"token":     token,
 		"expiresAt": expiresAt.UTC().Format(time.RFC3339),
 	})
-}
-
-func (g *Gateway) readUIAuthSecret() (adminPW, userPW string, err error) {
-	if g.rawClient == nil {
-		return "", "", fmt.Errorf("raw kubernetes client not initialized")
-	}
-
-	ctx := context.Background()
-	secret, err := g.rawClient.CoreV1().Secrets(g.managementNamespace()).Get(ctx, common.UIAuthSecretName, metav1.GetOptions{})
-	if err != nil {
-		return "", "", err
-	}
-
-	adminPW = strings.TrimSpace(string(secret.Data[common.UIAuthAdminPasswordKey]))
-	userPW = strings.TrimSpace(string(secret.Data[common.UIAuthUserPasswordKey]))
-	return adminPW, userPW, nil
 }
 
 func (g *Gateway) loadJWTSigningKey(ctx context.Context) error {

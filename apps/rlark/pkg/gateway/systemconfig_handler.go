@@ -254,7 +254,7 @@ func (g *Gateway) handleGetSystemConfig(c *gin.Context) {
 			return
 		}
 		logger.Error(err, "failed to get system config secret")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get system config: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to get system config: %v", err))
 		return
 	}
 
@@ -269,15 +269,15 @@ func (g *Gateway) handleUpdateSystemConfig(c *gin.Context) {
 
 	var req systemConfig
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "invalid request body")
 		return
 	}
 	if err := validateSSHConfig(req.SSH); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid ssh config: %v", err)})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, fmt.Sprintf("invalid ssh config: %v", err))
 		return
 	}
 	if err := validateDeploymentConfig(req.Deployment); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid deployment config: %v", err)})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, fmt.Sprintf("invalid deployment config: %v", err))
 		return
 	}
 
@@ -285,19 +285,19 @@ func (g *Gateway) handleUpdateSystemConfig(c *gin.Context) {
 		secret, err := g.ensureSystemConfigSecret(ctx)
 		if err != nil {
 			logger.Error(err, "failed to ensure system config secret")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to access system config: %v", err)})
+			respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to access system config: %v", err))
 			return
 		}
 		if req.Log != nil {
 			preserveMaskedLogFields(req.Log, readSystemConfig(secret).Log)
 			if err := logquery.ValidateConfig(req.Log); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid log config: %v", err)})
+				respondError(c, http.StatusBadRequest, CodeInvalidRequest, fmt.Sprintf("invalid log config: %v", err))
 				return
 			}
 		}
 
 		if err := writeSystemConfigToSecret(secret, &req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 			return
 		}
 
@@ -307,7 +307,7 @@ func (g *Gateway) handleUpdateSystemConfig(c *gin.Context) {
 				continue
 			}
 			logger.Error(err, "failed to update system config secret")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update system config: %v", err)})
+			respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("failed to update system config: %v", err))
 			return
 		}
 
@@ -316,5 +316,5 @@ func (g *Gateway) handleUpdateSystemConfig(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusConflict, gin.H{"error": "failed to update system config secret after retries: too many conflicts"})
+	respondError(c, http.StatusConflict, CodeResourceConflict, "failed to update system config secret after retries: too many conflicts")
 }

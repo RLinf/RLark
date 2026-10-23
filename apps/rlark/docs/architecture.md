@@ -122,20 +122,24 @@ graph LR
 **Pull Controller** (Task example):
 
 1. Watch control plane Task CR create/update/delete events (with finalizer protection)
-2. Build corresponding K8s resources (Deployment/DaemonSet/StatefulSet) from Task.Spec
-3. Detect ResourceVersion changes to decide whether to update existing workloads
-4. Auto-inject Network Sidecar container and Ray initialization scripts
-5. On deletion, clean up local resources via finalizer then remove finalizer
+2. Decode the Task into an execution snapshot and select the Kubernetes Runtime plus the Ray-oriented Kubernetes Workload Adapter; the legacy Deployment, DaemonSet, or StatefulSet discriminator selects its carrier kind
+3. Compile a declarative object plan whose Adapter selects ownership, lifecycle, owned fields, update mode, and a typed Runtime reconcile profile; ask the Adapter for bounded identity inventory, read that Runtime snapshot, and compute the required operations
+4. Execute ordered, idempotent Apply/Delete operations; a `Replace` object is UID-fenced and deleted before a later reconciliation recreates it, and running Tasks are reconciled again when their desired generation changes
+5. Apply Workload-owned Pod-template mutations such as Ray bootstrap during compilation, then resolve explicit Environment requirements and bind the cross-domain network sidecar only to the Adapter-authorized PodTemplate target
+6. For stop, restart, or deletion, use the Workload implementation frozen in the claim to derive identity inventory without recompiling the current Spec, and keep the finalizer until owned primary workloads are confirmed absent; for upgrade compatibility only, a deleting pre-freeze claim with both selector fields absent may decode and registration-check the selector from the still-finalized Task without compiling resources or persisting that selector; an undecodable claimed Task preserves its workload and waits for recovery
 
 **Push Controller**:
 
 1. Watch local K8s resource changes (Pod create/delete/status changes)
-2. Sync state to corresponding control plane Pod CR
-3. Periodically report Node info (addresses, capacity, GPU count)
+2. Observe the changed workload root, its owned Pods, and Pod events without running a full desired-plan diff
+3. Sync workload state to the corresponding control plane Task and Pod CRs
+4. Periodically report Node info (addresses, capacity, GPU count)
+
+The in-process Kubernetes implementation is the only production workload path. Versioned Runtime Provider and Workload Adapter gRPC contracts exist for future external implementations, but the default Task controller does not select remote implementations. A selected Workload Adapter receives the complete Workload configuration and owns all Workload-specific optional features; there is no separate Workload Extension service. See [Runtime, Workload, and Environment Boundary](developer-guide/runtime-provider.md).
 
 ### 4.2 Network Sidecar
 
-Sidecar is injected as a container into each training Pod, enabling cross-cluster Pod-to-Pod network communication.
+For a Task with a domain, the Workload Adapter declares a cross-domain Environment requirement and an exact PodTemplate target. A trusted Kubernetes Environment Handler always injects the sidecar as a restartable init container. During final Runtime lowering, Kubernetes preserves that representation when `KUBERNETES_SUPPORT_SIDECAR_FEATURE` is not `false`; when it is `false`, every restartable init container in an Adapter-declared Pod or PodTemplate unit is converted into a regular container. Missing trusted image configuration or conflicting container/volume declarations fail closed before Runtime effects.
 
 **Key File**: [sidecar/server.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/network/sidecar/server.go)
 
@@ -210,7 +214,7 @@ func (a *containerNetworkAdapter) GetContainerNetworkDial(...) (utils.Dial, erro
 
 ### 4.6 Embodied Runtime
 
-The **embodied-runtime** is a node-level component deployed as a DaemonSet on each data plane node, managing robot (ROS 1/2) and camera hardware. It integrates with the Agent to expose physical devices as Kubernetes device resources (`rlinf.io/device`), allowing training Tasks to request robot arms and cameras just like GPU resources.
+The **embodied-runtime** is centered on a node-level Device Plugin, typically deployed as a DaemonSet on each data plane node, for managing robot (ROS 1/2) and camera hardware. Camera, ROS 1, and ROS 2 controllers can independently run as local subprocesses, dedicated Pods, or remain disabled. It integrates with the Agent to expose physical devices as Kubernetes device resources (`rlinf.io/device`), allowing training Tasks to request robot arms and cameras just like GPU resources.
 
 **Key Files**: [apps/embodied-runtime/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/)
 

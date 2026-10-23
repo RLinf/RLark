@@ -51,27 +51,11 @@ func (b *JobTaskTemplateApplyConfiguration) WithHead(value bool) *JobTaskTemplat
 	return b
 }
 
-// WithAgentType sets the AgentType field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the AgentType field is set to the value of the last call.
-func (b *JobTaskTemplateApplyConfiguration) WithAgentType(value rlarkiov1alpha1.AgentType) *JobTaskTemplateApplyConfiguration {
-	b.TaskSpecApplyConfiguration.AgentType = &value
-	return b
-}
-
 // WithRole sets the Role field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Role field is set to the value of the last call.
 func (b *JobTaskTemplateApplyConfiguration) WithRole(value rlarkiov1alpha1.TaskRole) *JobTaskTemplateApplyConfiguration {
 	b.TaskSpecApplyConfiguration.Role = &value
-	return b
-}
-
-// WithDomain sets the Domain field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Domain field is set to the value of the last call.
-func (b *JobTaskTemplateApplyConfiguration) WithDomain(value string) *JobTaskTemplateApplyConfiguration {
-	b.TaskSpecApplyConfiguration.Domain = &value
 	return b
 }
 
@@ -83,73 +67,48 @@ func (b *JobTaskTemplateApplyConfiguration) WithDownstreamName(value string) *Jo
 	return b
 }
 
-// WithNodeSelector puts the entries into the NodeSelector field in the declarative configuration
+// WithSuspended sets the Suspended field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Suspended field is set to the value of the last call.
+func (b *JobTaskTemplateApplyConfiguration) WithSuspended(value bool) *JobTaskTemplateApplyConfiguration {
+	b.TaskSpecApplyConfiguration.Suspended = &value
+	return b
+}
+
+// WithPlacement sets the Placement field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Placement field is set to the value of the last call.
+func (b *JobTaskTemplateApplyConfiguration) WithPlacement(value *TaskPlacementSpecApplyConfiguration) *JobTaskTemplateApplyConfiguration {
+	b.TaskSpecApplyConfiguration.Placement = value
+	return b
+}
+
+// WithRuntime sets the Runtime field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Runtime field is set to the value of the last call.
+func (b *JobTaskTemplateApplyConfiguration) WithRuntime(value *TaskRuntimeSpecApplyConfiguration) *JobTaskTemplateApplyConfiguration {
+	b.TaskSpecApplyConfiguration.Runtime = value
+	return b
+}
+
+// WithWorkload sets the Workload field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Workload field is set to the value of the last call.
+func (b *JobTaskTemplateApplyConfiguration) WithWorkload(value *TaskWorkloadSpecApplyConfiguration) *JobTaskTemplateApplyConfiguration {
+	b.TaskSpecApplyConfiguration.Workload = value
+	return b
+}
+
+// WithEnvironments adds the given value to the Environments field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, the entries provided by each call will be put on the NodeSelector field,
-// overwriting an existing map entries in NodeSelector field with the same key.
-func (b *JobTaskTemplateApplyConfiguration) WithNodeSelector(entries map[string]string) *JobTaskTemplateApplyConfiguration {
-	if b.TaskSpecApplyConfiguration.NodeSelector == nil && len(entries) > 0 {
-		b.TaskSpecApplyConfiguration.NodeSelector = make(map[string]string, len(entries))
+// If called multiple times, values provided by each call will be appended to the Environments field.
+func (b *JobTaskTemplateApplyConfiguration) WithEnvironments(values ...*TaskEnvironmentApplyConfiguration) *JobTaskTemplateApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithEnvironments")
+		}
+		b.TaskSpecApplyConfiguration.Environments = append(b.TaskSpecApplyConfiguration.Environments, *values[i])
 	}
-	for k, v := range entries {
-		b.TaskSpecApplyConfiguration.NodeSelector[k] = v
-	}
-	return b
-}
-
-// WithKubernetes sets the Kubernetes field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Kubernetes field is set to the value of the last call.
-func (b *JobTaskTemplateApplyConfiguration) WithKubernetes(value *KubernetesTaskSpecApplyConfiguration) *JobTaskTemplateApplyConfiguration {
-	b.TaskSpecApplyConfiguration.Kubernetes = value
-	return b
-}
-
-// WithDocker sets the Docker field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Docker field is set to the value of the last call.
-func (b *JobTaskTemplateApplyConfiguration) WithDocker(value *DockerTaskSpecApplyConfiguration) *JobTaskTemplateApplyConfiguration {
-	b.TaskSpecApplyConfiguration.Docker = value
-	return b
-}
-
-// WithRaw sets the Raw field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Raw field is set to the value of the last call.
-func (b *JobTaskTemplateApplyConfiguration) WithRaw(value *RawTaskSpecApplyConfiguration) *JobTaskTemplateApplyConfiguration {
-	b.TaskSpecApplyConfiguration.Raw = value
-	return b
-}
-
-// WithTensorBoardDir sets the TensorBoardDir field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the TensorBoardDir field is set to the value of the last call.
-func (b *JobTaskTemplateApplyConfiguration) WithTensorBoardDir(value string) *JobTaskTemplateApplyConfiguration {
-	b.TaskSpecApplyConfiguration.TensorBoardDir = &value
-	return b
-}
-
-// WithPrepareScript sets the PrepareScript field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the PrepareScript field is set to the value of the last call.
-func (b *JobTaskTemplateApplyConfiguration) WithPrepareScript(value string) *JobTaskTemplateApplyConfiguration {
-	b.TaskSpecApplyConfiguration.PrepareScript = &value
-	return b
-}
-
-// WithRunScript sets the RunScript field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the RunScript field is set to the value of the last call.
-func (b *JobTaskTemplateApplyConfiguration) WithRunScript(value string) *JobTaskTemplateApplyConfiguration {
-	b.TaskSpecApplyConfiguration.RunScript = &value
-	return b
-}
-
-// WithSSHPublicKey sets the SSHPublicKey field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the SSHPublicKey field is set to the value of the last call.
-func (b *JobTaskTemplateApplyConfiguration) WithSSHPublicKey(value string) *JobTaskTemplateApplyConfiguration {
-	b.TaskSpecApplyConfiguration.SSHPublicKey = &value
 	return b
 }
 

@@ -11,16 +11,18 @@
 | 资源 | 作用域 |
 |------|--------|
 | `addons` | Namespaced |
+| `clusters` | Cluster |
 | `domains` | Cluster |
 | `domainpeers` | Namespaced |
 | `jobs` | Cluster |
 | `nodes` | Namespaced |
 | `pods` | Namespaced |
 | `tasks` | Namespaced |
+| `workflows` | Cluster |
 
 底层 CRD API 遵循 Kubernetes 资源语义，可包含列表、创建、读取、替换、Patch、删除、集合删除及 status 子资源等操作。是否支持某个字段或操作，以当前 CRD manifest 和生成结果为准。
 
-状态阶段枚举中，`Pod.status.phase` 支持 `Pending`、`Running`、`Succeeded`、`Failed`、`Unknown`。
+状态阶段枚举中，`Pod.status.phase` 支持 `Pending`、`Running`、`Succeeded`、`Failed`、`Unknown`；`Node.status.phase` 支持 `Online`、`Offline`；`Cluster.status.phase` 支持 `Online`、`Offline`、`Downgraded`、`Cordoned`、`Draining`；`Node.spec.agentType` 支持 `Kubernetes`、`Docker`、`Raw`。
 
 Gateway 不会原样透传这套完整 API：它实际只开放部分资源和方法，且没有 collection delete（集合删除）或 `/status` 路由；因此不能根据本页推断 Gateway 存在同名接口。Gateway 的准确路由边界请查阅 [Gateway API 参考](../api/reference.md)，完整字段和底层操作请查阅 [英文生成参考](../../reference/crd.md)。
 

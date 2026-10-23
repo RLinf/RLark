@@ -21,6 +21,8 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/db"
 	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/persistence"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
 // Gateway provides HTTP handlers for resource CRUD APIs.
@@ -29,6 +31,7 @@ type Gateway struct {
 
 	kubeClient versioned.Interface
 	rawClient  kubernetes.Interface
+	nodeLister nodeLister
 
 	// podLister is a cached view of rlark Pod CRs, backed by a shared
 	// informer. It is used by the TensorBoard proxy handler to look up
@@ -43,6 +46,9 @@ type Gateway struct {
 	stores    map[string]*db.ResourceStore
 	accessors map[string]*resourceAccessor
 
+	// persistenceBackend 归档存储后端（PG 或 Secret），用于恢复资源。
+	persistenceBackend persistence.Backend
+
 	storageClients   map[string]*storage.Client
 	storageClientsMu sync.RWMutex
 
@@ -51,6 +57,8 @@ type Gateway struct {
 
 	serverTransport *http.Transport
 	jwtSigningKey   []byte
+	users           userProvider
+	tenants         tenant.Provider
 }
 
 func (g *Gateway) managementNamespace() string {
@@ -61,10 +69,12 @@ func (g *Gateway) managementNamespace() string {
 // and a Kubernetes typed client for write operations. If database is nil, read operations
 // fall back to the Kubernetes API server.
 func NewGateway(config Config) *Gateway {
-	return &Gateway{
+	g := &Gateway{
 		config:         config,
 		storageClients: make(map[string]*storage.Client),
+		tenants:        tenant.StaticProvider{},
 	}
+	return g
 }
 
 // Run runs the component.
@@ -100,6 +110,7 @@ func (g *Gateway) init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create raw Kubernetes client: %w", err)
 	}
+	g.users = secretUserProvider{client: g.rawClient, namespace: g.managementNamespace()}
 	if err := g.loadJWTSigningKey(ctx); err != nil {
 		return fmt.Errorf("load JWT signing key: %w", err)
 	}
@@ -133,6 +144,13 @@ func (g *Gateway) init(ctx context.Context) error {
 		g.stores["workflows"] = db.NewWorkflowStore(g.dbClient.DB)
 		g.stores["jobs"] = db.NewJobStore(g.dbClient.DB)
 		g.stores["tasks"] = db.NewTaskStore(g.dbClient.DB)
+
+		// init archive backend（PG 模式）
+		g.persistenceBackend = persistence.NewPostgresBackend(g.dbClient.DB)
+	} else if g.config.EnableSecretBackend {
+		// Secret Backend（测试/CI 模式）
+		g.persistenceBackend = persistence.NewSecretBackendFromClientGo(g.rawClient, g.managementNamespace())
+		logger.Info("using Secret backend for restore (test mode)")
 	} else {
 		logger.Error(nil, "RLark gateway is running without persistent storage.")
 	}

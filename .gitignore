@@ -21,6 +21,7 @@ tmp/
 *.profraw
 /coverage/
 /apps/rlark-ui/coverage/
+/_artifacts/
 
 # Python cache
 __pycache__/

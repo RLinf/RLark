@@ -29,6 +29,7 @@ import {
 import type { Phase } from "../data";
 import type { Copy } from "../i18n";
 import type { CRDNode } from "../types";
+import type { CRDTask } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
 import {
   categoryLabels,
@@ -67,15 +68,15 @@ type NodeWorker = {
   domain: string;
   ip: string;
   phase: string;
-  requests: Record<string, string>;
+  requests: Record<string, string | number>;
 };
 
 function addRequestedResource(
   totals: Record<string, number>,
   key: string,
-  raw?: string,
+  raw?: string | number,
 ) {
-  const value = parseResourceQuantity(key, raw);
+  const value = parseResourceQuantity(key, String(raw ?? ""));
   if (value !== null) totals[key] = (totals[key] ?? 0) + value;
 }
 
@@ -475,7 +476,9 @@ export function ClusterDetailReal({
             <tr>
               <th>{zh ? "节点名称" : "Name"}</th>
               <th>{zh ? "类型" : "Type"}</th>
-              <th>{zh ? "状态" : "Phase"}</th>
+              <th>{zh ? "接入状态" : "Connection"}</th>
+              <th>{zh ? "上次心跳" : "Last heartbeat"}</th>
+              <th>{zh ? "状态变化时间" : "Status changed"}</th>
               <th>{zh ? "物理位置" : "Location"}</th>
               <th>{zh ? "节点 IP" : "Node IP"}</th>
               <th>{zh ? "资源与空闲" : "Resources"}</th>
@@ -506,6 +509,20 @@ export function ClusterDetailReal({
                       phase={(node.status?.phase ?? "Offline") as Phase}
                       copy={c}
                     />
+                  </td>
+                  <td>
+                    <small>
+                      {node.status?.lastHeartbeatTime
+                        ? formatChinaDateTime(node.status.lastHeartbeatTime)
+                        : "—"}
+                    </small>
+                  </td>
+                  <td>
+                    <small>
+                      {node.status?.lastStatusChangeTime
+                        ? formatChinaDateTime(node.status.lastStatusChangeTime)
+                        : "—"}
+                    </small>
                   </td>
                   <td>
                     <small>{getNodeLocation(node) || "—"}</small>
@@ -574,11 +591,8 @@ export function NodeDetailReal({
         tasksApi.list(),
         podsApi.list(),
       ]);
-      const tasks = new Map<string, Record<string, unknown>>(
-        (taskItems as unknown as Record<string, unknown>[]).map((task) => [
-          (task as { metadata?: { name?: string } }).metadata?.name ?? "",
-          task,
-        ]),
+      const tasks = new Map<string, CRDTask>(
+        taskItems.map((task) => [task.metadata?.name ?? "", task]),
       );
       const workers: NodeWorker[] = (podItems as Record<string, unknown>[])
         .filter(
@@ -591,27 +605,7 @@ export function NodeDetailReal({
             spec?: { taskName?: string; podName?: string; domain?: string };
             status?: { phase?: string; ip?: string };
           }) => {
-            const task = tasks.get(pod.spec?.taskName ?? "") as
-              | {
-                  metadata?: { labels?: Record<string, string> };
-                  spec?: {
-                    role?: string;
-                    kubernetes?: {
-                      workload?: {
-                        template?: {
-                          spec?: {
-                            containers?: Array<{
-                              resources?: {
-                                requests?: Record<string, string>;
-                              };
-                            }>;
-                          };
-                        };
-                      };
-                    };
-                  };
-                }
-              | undefined;
+            const task = tasks.get(pod.spec?.taskName ?? "");
             const job = task?.metadata?.labels?.["rlinf.io/job"];
             if (!job) return null;
             return {
@@ -626,8 +620,9 @@ export function NodeDetailReal({
               ip: pod.status?.ip ?? "—",
               phase: pod.status?.phase ?? "Pending",
               requests:
-                task?.spec?.kubernetes?.workload?.template?.spec
-                  ?.containers?.[0]?.resources?.requests ?? {},
+                task?.spec?.workload.template?.spec?.containers?.find(
+                  (container) => container.name === "main",
+                )?.resources?.requests ?? {},
             };
           },
         )
@@ -1196,7 +1191,7 @@ function NodeWorkerTable({
       Object.entries(worker.requests)
         .filter(
           ([key, value]) =>
-            Number.parseFloat(value) > 0 &&
+            Number.parseFloat(String(value)) > 0 &&
             (/(^|[./-])gpu($|[./-])/i.test(key) ||
               key === "rlinf.io/device" ||
               key.startsWith("rlinf.io/device-")),

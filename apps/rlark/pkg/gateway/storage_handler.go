@@ -1,27 +1,34 @@
 package gateway
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
 
-	v1 "k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
-
 	"github.com/gin-gonic/gin"
-	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
-	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
+	"github.com/google/uuid"
+	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
 	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
+	v1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/yaml"
 )
 
 // StorageClassData 定义StorageClass的响应数据结构.
@@ -35,6 +42,8 @@ type StorageClassData struct {
 	Region      string   `json:"region"`
 	PathStyle   bool     `json:"pathStyle"`
 	AccessKeyId string   `json:"accessKeyId"`
+	TenantID    string   `json:"tenantID"`
+	CreatedBy   string   `json:"createdBy,omitempty"`
 }
 
 // Provider 定义存储提供商信息.
@@ -43,157 +52,59 @@ type Provider struct {
 	Value string `json:"value"`
 }
 
-// listStorageClass 处理StorageClass列表请求
-// 通过Server代理向指定集群的Agent请求StorageClass列表.
+// listStorageClass reads StorageClass declarations from the management plane.
+// The distribution controllers own delivery to the data plane, so listing does
+// not need to contact cluster agents.
 func (g *Gateway) listStorageClass(c *gin.Context) {
-	clustersParam := c.Query("clusters")
-
-	var clusterIDs []string
-	logger := log.FromContext(c.Request.Context()).WithValues("method", "listStorageClass")
-	if clustersParam != "" {
-		for _, cid := range strings.Split(clustersParam, ",") {
-			cid = strings.TrimSpace(cid)
-			if cid != "" {
-				clusterIDs = append(clusterIDs, cid)
-			}
-		}
-	} else if g.kubeClient != nil {
-		// clustersParam 为空时，列出所有集群中的 StorageClass
-		nodes, err := g.kubeClient.RlinfV1alpha1().Nodes(metav1.NamespaceAll).List(c.Request.Context(), metav1.ListOptions{})
-		if err != nil {
-			logger.Error(err, "failed to list rlark nodes for cluster ids")
-		} else {
-			seen := make(map[string]struct{})
-			for _, node := range nodes.Items {
-				cid := node.Labels[rlarkv1alpha1.LabelClusterID]
-				if cid == "" {
-					continue
-				}
-				if _, ok := seen[cid]; ok {
-					continue
-				}
-				seen[cid] = struct{}{}
-				clusterIDs = append(clusterIDs, cid)
-			}
-		}
-	}
-
-	if len(clusterIDs) == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"data":    map[string]*StorageClassData{},
-			"success": true,
-		})
+	secrets, err := listStorageClassSecrets(c.Request.Context(), g.rawClient, g.managementNamespace())
+	if err != nil {
+		respondKubeError(c, fmt.Sprintf("list storage class replications: %v", err), err)
 		return
 	}
-
-	if g.config.ServerAddress == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "server-address is not configured, cannot proxy to cluster agents",
-		})
-		return
-	}
-
-	ssData := make(map[string]*StorageClassData)
-	for _, clusterID := range clusterIDs {
-		agentID, ok := strings.CutPrefix(clusterID, apis.RLarkAgentNamespacePrefix)
-		if !ok {
-			logger.Info("seems not a valid clusterID without prefix", "clusterID", clusterID)
-			continue
-		}
-		agentSSList, err := g.fetchStorageClassesFromAgent(c.Request.Context(), agentID)
+	requestedClusters := parseStorageClassClusters(c.Query("clusters"))
+	data := make(map[string]*StorageClassData, len(secrets))
+	for i := range secrets {
+		_, stored, err := storageClassFromSecret(&secrets[i])
 		if err != nil {
-			logger.Error(err, "failed to fetch storage classes from agent", "agentID", agentID)
-			continue
+			log.FromContext(c.Request.Context()).Error(err, "invalid storage class replication", "secret", secrets[i].Name)
+			respondError(c, http.StatusInternalServerError, CodeInternalError, "invalid storage class data")
+			return
 		}
-
-		for _, ss := range agentSSList {
-			if ss.Name == "default" || ss.Name == "local-path" || ss.Name == "hostpath" {
+		clusters := stored.Clusters
+		if len(requestedClusters) != 0 {
+			clusters = intersectStorageClassClusters(clusters, requestedClusters)
+			if len(clusters) == 0 {
 				continue
 			}
-
-			if ss.Provisioner != "rclone.csi.veloxpack.io" {
-				continue
-			}
-
-			description := ""
-			if ss.Annotations != nil {
-				description = ss.Annotations["rlark.io/description"]
-				if description == "" {
-					if ss.Annotations["storageclass.kubernetes.io/is-default-class"] == "true" {
-						description = "Default StorageClass"
-					}
-				}
-			}
-
-			bucket := ""
-			if ss.Parameters != nil {
-				bucket = ss.Parameters["remotePath"]
-				if bucket == "" {
-					bucket = ss.Parameters["bucket"]
-				}
-			}
-
-			if existing, ok := ssData[ss.Name]; ok {
-				existing.Clusters = append(existing.Clusters, agentID)
-			} else {
-				data := &StorageClassData{
-					Name:        ss.Name,
-					Clusters:    []string{agentID},
-					Description: description,
-					Bucket:      bucket,
-				}
-				if sc, err := g.fetchStorageClassSecretConfig(c.Request.Context(), agentID, &ss); err == nil && sc != nil {
-					data.Provider = sc.Provider
-					data.Endpoint = sc.Endpoint
-					data.Region = sc.Region
-					data.PathStyle = sc.UsePathStyle
-					data.AccessKeyId = sc.AccessKeyId
-				}
-				ssData[ss.Name] = data
-			}
+		}
+		data[stored.Name] = &StorageClassData{
+			Name: stored.Name, Clusters: clusters, Description: stored.Description, Bucket: stored.Bucket,
+			Provider: stored.Provider, Endpoint: stored.Endpoint, Region: stored.Region, PathStyle: stored.PathStyle,
+			AccessKeyId: stored.AccessKeyID, TenantID: tenant.IDOf(&secrets[i]), CreatedBy: secrets[i].Annotations[tenant.CreatedByAnnotation],
 		}
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data":    ssData,
-		"success": true,
-	})
+	c.JSON(http.StatusOK, gin.H{"data": data, "success": true})
 }
 
-// fetchStorageClassesFromAgent 通过Server代理从指定Agent获取StorageClass列表.
-func (g *Gateway) fetchStorageClassesFromAgent(ctx context.Context, agentID string) ([]storagev1.StorageClass, error) {
-	httpClient := &http.Client{Transport: g.serverTransport}
-	url := fmt.Sprintf("%s/api/proxy/%s/api/kubernetes/apis/storage.k8s.io/v1/storageclasses",
-		strings.TrimSuffix(g.config.ServerAddress, "/"),
-		agentID,
-	)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+func parseStorageClassClusters(value string) map[string]struct{} {
+	clusters := map[string]struct{}{}
+	for _, cluster := range strings.Split(value, ",") {
+		cluster = strings.TrimSpace(cluster)
+		if cluster != "" {
+			clusters[cluster] = struct{}{}
+		}
 	}
+	return clusters
+}
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("call server proxy: %w", err)
+func intersectStorageClassClusters(clusters []string, requested map[string]struct{}) []string {
+	filtered := make([]string, 0, len(clusters))
+	for _, cluster := range clusters {
+		if _, ok := requested[cluster]; ok {
+			filtered = append(filtered, cluster)
+		}
 	}
-	defer utils.CloseIO(resp.Body)
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server proxy returned HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
-	var listResp storagev1.StorageClassList
-	if err := json.Unmarshal(body, &listResp); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
-	}
-
-	return listResp.Items, nil
+	return filtered
 }
 
 // listProvider 列出支持的存储提供商.
@@ -239,9 +150,50 @@ func (g *Gateway) listProvider(c *gin.Context) {
 }
 
 // annoStorageClassDescription is the annotation key under which a human-readable
-// description of a rlark-managed StorageClass is stored. It matches the key
-// read by listStorageClass.
+// description of a rlark-managed StorageClass is stored.
 const annoStorageClassDescription = "rlark.io/description"
+
+const annoStorageClassName = "rlark.io/name"
+
+const (
+	storageClassVersion          = "v1"
+	storageClassCreateAttempts   = 3
+	storageClassNamespacePrefix  = "rlark-"
+	storageClassReplicationLabel = "rlark.io/storageclass-replication"
+	storageClassDeliveryLabel    = "rlark.io/storageclass-delivery"
+)
+
+var storageClassIDPattern = regexp.MustCompile(`^sc-[0-9a-f]{16}$`)
+
+type storedStorageClass struct {
+	Version     string   `json:"version"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Clusters    []string `json:"clusters"`
+	Provider    string   `json:"provider"`
+	Endpoint    string   `json:"endpoint"`
+	AccessKeyID string   `json:"access_key_id"`
+	AccessKey   string   `json:"access_key_secret"`
+	Bucket      string   `json:"bucket"`
+	Region      string   `json:"region"`
+	PathStyle   bool     `json:"path_style"`
+}
+
+func newStorageClassID() string {
+	return "sc-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
+}
+
+func storageClassReplicationName(id string) string { return id + "-replication" }
+func storageClassDeliveryName(id string) string    { return id + "-delivery" }
+
+func parseStorageClassID(name string) (string, bool) {
+	const suffix = "-replication"
+	if !strings.HasSuffix(name, suffix) {
+		return "", false
+	}
+	id := strings.TrimSuffix(name, suffix)
+	return id, storageClassIDPattern.MatchString(id)
+}
 
 // CreateStorageClassRequest defines the payload for creating a rclone-backed
 // StorageClass across one or more clusters. The S3-compatible remote config is
@@ -280,473 +232,286 @@ no_check_bucket = true
 
 var ssSecretTmpl = template.Must(template.New("ss-secret").Parse(ssSecretTemplate))
 
-// createStorageClass creates a rclone-backed StorageClass (and its accompanying
-// Secret) on each requested cluster by proxying through the rlark-server to the
-// target agent Kubernetes API. Existing resources are reconciled to the desired
-// state.
+// createStorageClass stores a Replication declaration. The Replication and
+// Delivery controllers apply the StorageClass bundle to selected clusters.
 func (g *Gateway) createStorageClass(c *gin.Context) {
 	var req CreateStorageClassRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 		return
 	}
-	if req.Name == "" || req.Bucket == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name and bucket are required"})
+	stored, err := normalizeStorageClass(req)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 		return
 	}
-	if req.AccessKeySecret == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "access_key_secret is required"})
-		return
-	}
-	if len(req.Clusters) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "clusters is required"})
-		return
-	}
-	if g.config.ServerAddress == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "server-address is not configured, cannot proxy to cluster agents"})
-		return
-	}
-	req.Namespace = metav1.NamespaceSystem
-
-	if strings.EqualFold(req.Provider, "Alibaba") {
-		req.Endpoint = fmt.Sprintf("%s.oss-%s.aliyuncs.com", req.Bucket, req.Region)
-	}
-
-	logger := log.FromContext(c.Request.Context())
-
-	for _, clusterID := range req.Clusters {
-		agentID := normalizeStorageClusterID(clusterID)
-		if err := g.applyStorageClassForAgent(c.Request.Context(), agentID, req); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("cluster %s: %v", agentID, err)})
+	for range storageClassCreateAttempts {
+		id := newStorageClassID()
+		secret, err := buildStorageClassReplicationSecret(g.managementNamespace(), id, stored)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 			return
 		}
-		logger.Info("applied storage class on cluster", "storageClass", req.Name, "cluster", agentID)
+		tenant.SetIdentity(secret, tenant.DefaultID, c.GetString(authSubjectKey))
+		if _, err := g.rawClient.CoreV1().Secrets(secret.Namespace).Create(c.Request.Context(), secret, metav1.CreateOptions{}); err != nil {
+			if errors.IsAlreadyExists(err) {
+				continue
+			}
+			respondKubeError(c, fmt.Sprintf("create storage class replication: %v", err), err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	respondError(c, http.StatusInternalServerError, CodeInternalError, "failed to allocate storage class id")
 }
 
-// updateStorageClass reconciles a rlark-managed StorageClass by name. It applies
-// the desired configuration to the selected clusters and removes it from
-// previously associated clusters that are no longer selected.
+// updateStorageClass updates the Replication declaration selected by the legacy
+// name route while retaining its stable internal identity.
 func (g *Gateway) updateStorageClass(c *gin.Context) {
 	name := c.Param("name")
 	var req CreateStorageClassRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 		return
 	}
 	if req.Name == "" {
 		req.Name = name
 	}
 	if req.Name != name {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "storage class name cannot be changed"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "storage class name cannot be changed")
 		return
 	}
-	if req.Name == "" || req.Bucket == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name and bucket are required"})
+	stored, err := normalizeStorageClass(req)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 		return
 	}
-	if len(req.Clusters) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "clusters is required"})
+	if err := g.updateStorageClassByName(c.Request.Context(), name, stored); err != nil {
+		if errors.IsNotFound(err) {
+			respondError(c, http.StatusNotFound, CodeResourceNotFound, "storage class not found")
+			return
+		}
+		respondKubeError(c, fmt.Sprintf("update storage class replication: %v", err), err)
 		return
 	}
-	if g.config.ServerAddress == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "server-address is not configured, cannot proxy to cluster agents"})
+	g.invalidateStorageClients(name)
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// deleteStorageClass deletes the Replication declaration selected by the legacy
+// name route. Distribution finalizers clean up Delivery declarations and local objects.
+func (g *Gateway) deleteStorageClass(c *gin.Context) {
+	name := c.Param("name")
+	secret, err := getStorageClassSecretByName(c.Request.Context(), g.rawClient, g.managementNamespace(), name)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			respondError(c, http.StatusNotFound, CodeResourceNotFound, "storage class not found")
+			return
+		}
+		respondKubeError(c, fmt.Sprintf("get storage class replication: %v", err), err)
 		return
 	}
-	req.Namespace = metav1.NamespaceSystem
+	if err := g.rawClient.CoreV1().Secrets(secret.Namespace).Delete(c.Request.Context(), secret.Name, metav1.DeleteOptions{}); err != nil {
+		if errors.IsNotFound(err) {
+			respondError(c, http.StatusNotFound, CodeResourceNotFound, "storage class not found")
+			return
+		}
+		respondKubeError(c, fmt.Sprintf("delete storage class replication: %v", err), err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, error) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" || req.Bucket == "" || req.AccessKeySecret == "" {
+		return storedStorageClass{}, fmt.Errorf("name, bucket, and access_key_secret are required")
+	}
+	clusters := make([]string, 0, len(req.Clusters))
+	for _, cluster := range req.Clusters {
+		cluster = strings.TrimSpace(cluster)
+		if cluster == "" {
+			return storedStorageClass{}, fmt.Errorf("cluster IDs must not be empty")
+		}
+		if problems := validation.IsDNS1123Label(cluster); len(problems) != 0 {
+			return storedStorageClass{}, fmt.Errorf("invalid cluster ID %q: %s", cluster, strings.Join(problems, "; "))
+		}
+		clusters = append(clusters, cluster)
+	}
+	if len(clusters) == 0 {
+		return storedStorageClass{}, fmt.Errorf("clusters is required")
+	}
+	sort.Strings(clusters)
+	clusters = slices.Compact(clusters)
 	if strings.EqualFold(req.Provider, "Alibaba") {
 		req.Endpoint = fmt.Sprintf("%s.oss-%s.aliyuncs.com", req.Bucket, req.Region)
 	}
-
-	ctx := c.Request.Context()
-	desired := map[string]struct{}{}
-	for _, clusterID := range req.Clusters {
-		agentID := normalizeStorageClusterID(clusterID)
-		if agentID == "" {
-			continue
-		}
-		desired[agentID] = struct{}{}
-	}
-	if len(desired) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "clusters is required"})
-		return
-	}
-
-	existing, err := g.findStorageClassClusters(ctx, name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if req.AccessKeySecret == "" {
-		for _, agentID := range existing {
-			if err := g.fillStorageClassSecretFromExisting(ctx, agentID, &req); err == nil && req.AccessKeySecret != "" {
-				break
-			}
-		}
-		if req.AccessKeySecret == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "access_key_secret is required when the existing secret cannot be found"})
-			return
-		}
-	}
-	for _, agentID := range existing {
-		if _, ok := desired[agentID]; ok {
-			continue
-		}
-		if err := g.deleteStorageClassForAgent(ctx, agentID, name, req.Namespace); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("cluster %s: %v", agentID, err)})
-			return
-		}
-	}
-	for agentID := range desired {
-		if err := g.applyStorageClassForAgent(ctx, agentID, req); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("cluster %s: %v", agentID, err)})
-			return
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{"success": true})
+	return storedStorageClass{
+		Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters,
+		Provider: req.Provider, Endpoint: req.Endpoint, AccessKeyID: req.AccessKeyId, AccessKey: req.AccessKeySecret,
+		Bucket: req.Bucket, Region: req.Region, PathStyle: req.PathStyle,
+	}, nil
 }
 
-// deleteStorageClass removes a rlark-managed StorageClass from all clusters
-// where it exists, or from the comma-separated clusters query parameter.
-func (g *Gateway) deleteStorageClass(c *gin.Context) {
-	name := c.Param("name")
-	namespace := metav1.NamespaceSystem
-	if name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
-		return
+func buildStorageClassReplicationSecret(namespace, id string, stored storedStorageClass) (*v1.Secret, error) {
+	req := CreateStorageClassRequest{
+		Name: stored.Name, Namespace: metav1.NamespaceSystem, Description: stored.Description, Clusters: stored.Clusters,
+		Provider: stored.Provider, Endpoint: stored.Endpoint, AccessKeyId: stored.AccessKeyID, AccessKeySecret: stored.AccessKey,
+		Bucket: stored.Bucket, Region: stored.Region, PathStyle: stored.PathStyle,
 	}
-	if g.config.ServerAddress == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "server-address is not configured, cannot proxy to cluster agents"})
-		return
+	var config strings.Builder
+	if err := ssSecretTmpl.Execute(&config, req); err != nil {
+		return nil, fmt.Errorf("render secret config: %w", err)
 	}
-	var clusterIDs []string
-	if clustersParam := c.Query("clusters"); clustersParam != "" {
-		for _, clusterID := range strings.Split(clustersParam, ",") {
-			if agentID := normalizeStorageClusterID(strings.TrimSpace(clusterID)); agentID != "" {
-				clusterIDs = append(clusterIDs, agentID)
-			}
-		}
-	} else {
-		existing, err := g.findStorageClassClusters(c.Request.Context(), name)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		clusterIDs = existing
+	secretName := id + "-secret"
+	storageSecret := v1.Secret{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: req.Namespace, Labels: map[string]string{"controller": "rlark"}},
+		StringData: map[string]string{"remote": "s3", "remotePath": req.Bucket, "configData": config.String()},
 	}
-	for _, agentID := range clusterIDs {
-		if err := g.deleteStorageClassForAgent(c.Request.Context(), agentID, name, namespace); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("cluster %s: %v", agentID, err)})
-			return
-		}
+	annotations := map[string]string{annoStorageClassDescription: req.Description}
+	if problems := validation.IsValidLabelValue(req.Name); len(problems) == 0 {
+		annotations[annoStorageClassName] = req.Name
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true})
-}
-
-// applyStorageClassForAgent creates or updates the Secret and StorageClass for a
-// single agent cluster via the server Kubernetes proxy.
-func (g *Gateway) applyStorageClassForAgent(ctx context.Context, agentID string, req CreateStorageClassRequest) error {
-	if req.AccessKeySecret == "" {
-		if err := g.fillStorageClassSecretFromExisting(ctx, agentID, &req); err != nil {
-			return err
-		}
-	}
-	var configBuf bytes.Buffer
-	if err := ssSecretTmpl.Execute(&configBuf, req); err != nil {
-		return fmt.Errorf("render secret config: %w", err)
-	}
-	rcloneConfig := configBuf.String()
-
-	secret := &v1.Secret{
+	storageClass := storagev1.StorageClass{
+		TypeMeta: metav1.TypeMeta{APIVersion: "storage.k8s.io/v1", Kind: "StorageClass"},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      req.Name + "-secret",
-			Namespace: req.Namespace,
-			Labels: map[string]string{
-				"controller": "rlark",
-			},
+			Name: id, Labels: map[string]string{"controller": "rlark"}, Annotations: annotations,
 		},
-		StringData: map[string]string{
-			"remote":     "s3",
-			"remotePath": req.Bucket,
-			"configData": rcloneConfig,
-		},
-	}
-	secretJSON, err := json.Marshal(secret)
-	if err != nil {
-		return fmt.Errorf("marshal secret: %w", err)
-	}
-	secretPath := fmt.Sprintf("/api/v1/namespaces/%s/secrets", req.Namespace)
-	if err := g.applyViaProxy(ctx, agentID, secretPath, secret.Name, secretJSON, func(existing []byte) ([]byte, error) {
-		var ex v1.Secret
-		if err := json.Unmarshal(existing, &ex); err != nil {
-			return nil, err
-		}
-		ex.StringData = secret.StringData
-		ex.Labels = secret.Labels
-		return json.Marshal(&ex)
-	}); err != nil {
-		return err
-	}
-
-	ss := &storagev1.StorageClass{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: req.Name,
-			Labels: map[string]string{
-				"controller": "rlark",
-			},
-			Annotations: map[string]string{
-				annoStorageClassDescription: req.Description,
-			},
-		},
-		Provisioner:       "rclone.csi.veloxpack.io",
-		ReclaimPolicy:     ptr.To(v1.PersistentVolumeReclaimRetain),
-		VolumeBindingMode: ptr.To(storagev1.VolumeBindingImmediate),
+		Provisioner: "rclone.csi.veloxpack.io", ReclaimPolicy: ptr.To(v1.PersistentVolumeReclaimRetain),
+		VolumeBindingMode: ptr.To(storagev1.VolumeBindingImmediate), AllowVolumeExpansion: ptr.To(true),
 		Parameters: map[string]string{
-			"remote":     "s3",
-			"remotePath": req.Bucket,
-			"csi.storage.k8s.io/node-publish-secret-name":      secret.Name,
-			"csi.storage.k8s.io/node-publish-secret-namespace": secret.Namespace,
+			"remote": "s3", "remotePath": req.Bucket,
+			"csi.storage.k8s.io/node-publish-secret-name":      secretName,
+			"csi.storage.k8s.io/node-publish-secret-namespace": req.Namespace,
 		},
-		MountOptions: []string{
-			"vfs-cache-mode=writes",
-			"dir-cache-time=5m",
-			"attr-timeout=1m",
-			"poll-interval=5s",
-			"vfs-write-back=1s",
-			"vfs-cache-max-age=10m",
-			"buffer-size=64M",
-			"transfers=8",
-			"checkers=16",
-			"fast-list",
+		MountOptions: []string{"vfs-cache-mode=writes", "dir-cache-time=5m", "attr-timeout=1m", "poll-interval=5s", "vfs-write-back=1s", "vfs-cache-max-age=10m", "buffer-size=64M", "transfers=8", "checkers=16", "fast-list"},
+	}
+	storageManifests, err := yaml.Marshal([]any{storageSecret, storageClass})
+	if err != nil {
+		return nil, fmt.Errorf("marshal storage class manifests: %w", err)
+	}
+	deliveryConfig := distribution.Config{Apply: distribution.ApplyPolicy{Mode: "ServerSideApply", ConflictPolicy: "Fail", DeletionPolicy: "Delete"}}
+	deliveryConfig.Security.AllowClusterScoped = true
+	deliveryConfigYAML, err := yaml.Marshal(deliveryConfig)
+	if err != nil {
+		return nil, fmt.Errorf("marshal delivery config: %w", err)
+	}
+	delivery := v1.Secret{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   storageClassDeliveryName(id),
+			Labels: map[string]string{storageClassDeliveryLabel: "true"},
 		},
+		Type: distribution.DeliverySecretType,
+		Data: map[string][]byte{"config": deliveryConfigYAML, "manifests": storageManifests},
 	}
-	ssJSON, err := json.Marshal(ss)
+	deliveryManifest, err := yaml.Marshal([]v1.Secret{delivery})
 	if err != nil {
-		return fmt.Errorf("marshal storage class: %w", err)
+		return nil, fmt.Errorf("marshal delivery secret manifest: %w", err)
 	}
-	ssPath := "/apis/storage.k8s.io/v1/storageclasses"
-	if err := g.applyViaProxy(ctx, agentID, ssPath, ss.Name, ssJSON, func(existing []byte) ([]byte, error) {
-		var ex storagev1.StorageClass
-		if err := json.Unmarshal(existing, &ex); err != nil {
-			return nil, err
-		}
-		ex.Parameters = ss.Parameters
-		ex.MountOptions = ss.MountOptions
-		ex.Labels = ss.Labels
-		ex.Annotations = ss.Annotations
-		return json.Marshal(&ex)
-	}); err != nil {
-		return err
+	replicationConfig := distribution.Config{Apply: distribution.ApplyPolicy{Mode: "ServerSideApply", ConflictPolicy: "Fail", DeletionPolicy: "Delete"}}
+	replicationConfig.Targets.Namespaces = &distribution.GlobSelector{Exclude: []string{"rlark-system"}}
+	replicationConfig.Targets.Namespaces.Include = append(replicationConfig.Targets.Namespaces.Include, req.Clusters...)
+	replicationConfigYAML, err := yaml.Marshal(replicationConfig)
+	if err != nil {
+		return nil, fmt.Errorf("marshal replication config: %w", err)
 	}
-	return nil
+	storedJSON, err := json.Marshal(stored)
+	if err != nil {
+		return nil, fmt.Errorf("marshal storage class: %w", err)
+	}
+	return &v1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      storageClassReplicationName(id),
+			Namespace: namespace,
+			Labels:    map[string]string{storageClassReplicationLabel: "true"},
+		},
+		Type: distribution.ReplicationSecretType,
+		Data: map[string][]byte{"storageclass": storedJSON, "config": replicationConfigYAML, "manifests": deliveryManifest},
+	}, nil
 }
 
-// applyViaProxy creates a Kubernetes resource via the server Kubernetes proxy.
-// If the resource already exists (HTTP 409 Conflict), it fetches the existing
-// object, invokes merge to copy the desired mutable fields onto it (preserving
-// ResourceVersion and other fields), and PUTs the result. collectionPath is the
-// Kubernetes API collection path (e.g. "/api/v1/namespaces/{ns}/secrets" or
-// "/apis/storage.k8s.io/v1/storageclasses"); name is the resource name.
-func (g *Gateway) applyViaProxy(ctx context.Context, agentID, collectionPath, name string, desiredJSON []byte, merge func(existing []byte) ([]byte, error)) error {
-	postResp, err := g.proxyKubeRequest(ctx, http.MethodPost, agentID, collectionPath, desiredJSON)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", name, err)
+func storageClassFromSecret(secret *v1.Secret) (string, storedStorageClass, error) {
+	id, ok := parseStorageClassID(secret.Name)
+	if !ok || secret.Labels[storageClassReplicationLabel] != "true" || secret.Type != distribution.ReplicationSecretType {
+		return "", storedStorageClass{}, fmt.Errorf("secret %q is not a storage class replication", secret.Name)
 	}
-	postBody, _ := io.ReadAll(postResp.Body)
-	_ = postResp.Body.Close()
-	if postResp.StatusCode == http.StatusCreated || postResp.StatusCode == http.StatusOK {
-		return nil
+	var stored storedStorageClass
+	if err := json.Unmarshal(secret.Data["storageclass"], &stored); err != nil {
+		return "", storedStorageClass{}, fmt.Errorf("decode stored storage class: %w", err)
 	}
-	if postResp.StatusCode != http.StatusConflict {
-		return fmt.Errorf("create %s returned HTTP %d: %s", name, postResp.StatusCode, string(postBody))
+	if stored.Version != storageClassVersion {
+		return "", storedStorageClass{}, fmt.Errorf("unsupported storage class version %q", stored.Version)
 	}
-
-	// Resource already exists: fetch it, merge desired fields, and update.
-	getResp, err := g.proxyKubeRequest(ctx, http.MethodGet, agentID, collectionPath+"/"+name, nil)
-	if err != nil {
-		return fmt.Errorf("get existing %s: %w", name, err)
-	}
-	existing, _ := io.ReadAll(getResp.Body)
-	_ = getResp.Body.Close()
-	if getResp.StatusCode != http.StatusOK {
-		return fmt.Errorf("get existing %s returned HTTP %d: %s", name, getResp.StatusCode, string(existing))
-	}
-
-	merged, err := merge(existing)
-	if err != nil {
-		return fmt.Errorf("merge %s: %w", name, err)
-	}
-
-	putResp, err := g.proxyKubeRequest(ctx, http.MethodPut, agentID, collectionPath+"/"+name, merged)
-	if err != nil {
-		return fmt.Errorf("update %s: %w", name, err)
-	}
-	putBody, _ := io.ReadAll(putResp.Body)
-	_ = putResp.Body.Close()
-	if putResp.StatusCode != http.StatusOK && putResp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("update %s returned HTTP %d: %s", name, putResp.StatusCode, string(putBody))
-	}
-	return nil
+	return id, stored, nil
 }
 
-func normalizeStorageClusterID(clusterID string) string {
-	clusterID = strings.TrimSpace(clusterID)
-	if id, ok := strings.CutPrefix(clusterID, apis.RLarkAgentNamespacePrefix); ok {
-		return id
+func listStorageClassSecrets(ctx context.Context, rawClient kubernetes.Interface, namespace string) ([]v1.Secret, error) {
+	secrets, err := rawClient.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labels.Set{storageClassReplicationLabel: "true"}.AsSelector().String(),
+	})
+	if err != nil {
+		return nil, err
 	}
-	return clusterID
+	return secrets.Items, nil
 }
 
-func (g *Gateway) findStorageClassClusters(ctx context.Context, name string) ([]string, error) {
-	if g.kubeClient == nil {
-		return nil, nil
-	}
-	nodes, err := g.kubeClient.RlinfV1alpha1().Nodes(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+func getStorageClassSecretByName(ctx context.Context, rawClient kubernetes.Interface, namespace, name string) (*v1.Secret, error) {
+	secrets, err := listStorageClassSecrets(ctx, rawClient, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("list rlark nodes for cluster ids: %w", err)
+		return nil, err
 	}
-	seen := make(map[string]struct{})
-	for _, node := range nodes.Items {
-		clusterID := normalizeStorageClusterID(node.Labels[rlarkv1alpha1.LabelClusterID])
-		if clusterID != "" {
-			seen[clusterID] = struct{}{}
-		}
-	}
-	var found []string
-	for clusterID := range seen {
-		items, err := g.fetchStorageClassesFromAgent(ctx, clusterID)
+	for i := range secrets {
+		_, stored, err := storageClassFromSecret(&secrets[i])
 		if err != nil {
 			continue
 		}
-		for _, item := range items {
-			if item.Name == name {
-				found = append(found, clusterID)
-				break
-			}
+		if stored.Name == name {
+			return &secrets[i], nil
 		}
 	}
-	return found, nil
+	return nil, errors.NewNotFound(v1.Resource("secrets"), name)
 }
 
-func (g *Gateway) fillStorageClassSecretFromExisting(ctx context.Context, agentID string, req *CreateStorageClassRequest) error {
-	ss, err := g.fetchStorageClassFromAgent(ctx, agentID, req.Name)
-	if err != nil {
-		return err
-	}
-	cfg, err := g.fetchStorageClassSecretConfig(ctx, agentID, ss)
-	if err != nil {
-		return err
-	}
-	if req.AccessKeySecret == "" {
-		req.AccessKeySecret = cfg.SecretAccessKey
-	}
-	if req.AccessKeyId == "" {
-		req.AccessKeyId = cfg.AccessKeyId
-	}
-	return nil
-}
-
-func (g *Gateway) fetchStorageClassFromAgent(ctx context.Context, agentID, name string) (*storagev1.StorageClass, error) {
-	ssPath := "/apis/storage.k8s.io/v1/storageclasses/" + name
-	resp, err := g.proxyKubeRequest(ctx, http.MethodGet, agentID, ssPath, nil)
-	if err != nil {
-		return nil, fmt.Errorf("get storage class %s: %w", name, err)
-	}
-	defer utils.CloseIO(resp.Body)
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read storage class response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get storage class %s returned HTTP %d: %s", name, resp.StatusCode, string(body))
-	}
-	var ss storagev1.StorageClass
-	if err := json.Unmarshal(body, &ss); err != nil {
-		return nil, fmt.Errorf("parse storage class: %w", err)
-	}
-	return &ss, nil
-}
-
-func (g *Gateway) deleteStorageClassForAgent(ctx context.Context, agentID, name, namespace string) error {
-	ss, err := g.fetchStorageClassFromAgent(ctx, agentID, name)
-	if err != nil {
-		return nil
-	}
-	secretName := name + "-secret"
-	secretNamespace := namespace
-	if ss.Parameters != nil {
-		if value := ss.Parameters["csi.storage.k8s.io/node-publish-secret-name"]; value != "" {
-			secretName = value
-		}
-		if value := ss.Parameters["csi.storage.k8s.io/node-publish-secret-namespace"]; value != "" {
-			secretNamespace = value
-		}
-	}
-	if secretNamespace == "" {
-		secretNamespace = "default"
-	}
-	if err := g.deleteViaProxy(ctx, agentID, "/apis/storage.k8s.io/v1/storageclasses/"+name); err != nil {
-		return err
-	}
-	if secretName != "" {
-		if err := g.deleteViaProxy(ctx, agentID, "/api/v1/namespaces/"+secretNamespace+"/secrets/"+secretName); err != nil {
+func (g *Gateway) updateStorageClassByName(ctx context.Context, name string, stored storedStorageClass) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		secret, err := getStorageClassSecretByName(ctx, g.rawClient, g.managementNamespace(), name)
+		if err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-func (g *Gateway) deleteViaProxy(ctx context.Context, agentID, kubePath string) error {
-	resp, err := g.proxyKubeRequest(ctx, http.MethodDelete, agentID, kubePath, nil)
-	if err != nil {
-		return fmt.Errorf("delete %s: %w", kubePath, err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode == http.StatusOK ||
-		resp.StatusCode == http.StatusAccepted ||
-		resp.StatusCode == http.StatusNoContent ||
-		resp.StatusCode == http.StatusNotFound {
-		return nil
-	}
-	return fmt.Errorf("delete %s returned HTTP %d: %s", kubePath, resp.StatusCode, string(body))
-}
-
-// proxyKubeRequest sends a request to an agent Kubernetes API through the
-// rlark-server proxy. kubePath is the Kubernetes API path (e.g.
-// "/apis/storage.k8s.io/v1/storageclasses").
-func (g *Gateway) proxyKubeRequest(ctx context.Context, method, agentID, kubePath string, body []byte) (*http.Response, error) {
-	httpClient := &http.Client{Transport: g.serverTransport}
-	url := fmt.Sprintf("%s/api/proxy/%s/api/kubernetes/%s",
-		strings.TrimSuffix(g.config.ServerAddress, "/"),
-		agentID,
-		strings.TrimPrefix(kubePath, "/"),
-	)
-	var reader io.Reader
-	if body != nil {
-		reader = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, url, reader)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	return httpClient.Do(req)
+		id, _, err := storageClassFromSecret(secret)
+		if err != nil {
+			return errors.NewNotFound(v1.Resource("secrets"), secret.Name)
+		}
+		rebuilt, err := buildStorageClassReplicationSecret(secret.Namespace, id, stored)
+		if err != nil {
+			return err
+		}
+		secret.Data = rebuilt.Data
+		_, err = g.rawClient.CoreV1().Secrets(secret.Namespace).Update(ctx, secret, metav1.UpdateOptions{})
+		return err
+	})
 }
 
 // --- Storage class file operation handlers ---
 
-// getStorageClient resolves the storage.Client for a given cluster and storage class.
-// It fetches the StorageClass and its associated Secret via the server proxy,
-// parses the S3 config from the secret, and returns a cached or newly created client.
-func (g *Gateway) getStorageClient(ctx context.Context, cluster, name string) (*storage.Client, error) {
-	cacheKey := cluster + "/" + name
+// getStorageClient resolves the storage.Client from the management-plane
+// StorageClass declaration rather than reading data-plane resources.
+func (g *Gateway) invalidateStorageClients(name string) {
+	g.storageClientsMu.Lock()
+	defer g.storageClientsMu.Unlock()
+	for cacheKey := range g.storageClients {
+		if strings.HasSuffix(cacheKey, "/"+name) {
+			delete(g.storageClients, cacheKey)
+		}
+	}
+}
 
+func (g *Gateway) getStorageClient(ctx context.Context, cluster, name string) (*storage.Client, error) {
+	cluster = strings.TrimPrefix(strings.TrimSpace(cluster), storageClassNamespacePrefix)
+	cacheKey := cluster + "/" + name
 	g.storageClientsMu.RLock()
 	if client, ok := g.storageClients[cacheKey]; ok {
 		g.storageClientsMu.RUnlock()
@@ -754,169 +519,34 @@ func (g *Gateway) getStorageClient(ctx context.Context, cluster, name string) (*
 	}
 	g.storageClientsMu.RUnlock()
 
-	agentID := cluster
-	if id, ok := strings.CutPrefix(cluster, apis.RLarkAgentNamespacePrefix); ok {
-		agentID = id
-	}
-
-	if g.config.ServerAddress == "" {
-		return nil, fmt.Errorf("server-address is not configured")
-	}
-
-	ssPath := "/apis/storage.k8s.io/v1/storageclasses/" + name
-	resp, err := g.proxyKubeRequest(ctx, http.MethodGet, agentID, ssPath, nil)
+	secret, err := getStorageClassSecretByName(ctx, g.rawClient, g.managementNamespace(), name)
 	if err != nil {
-		return nil, fmt.Errorf("get storage class %s: %w", name, err)
+		return nil, fmt.Errorf("get storage class declaration: %w", err)
 	}
-	defer utils.CloseIO(resp.Body)
-
-	body, err := io.ReadAll(resp.Body)
+	_, stored, err := storageClassFromSecret(secret)
 	if err != nil {
-		return nil, fmt.Errorf("read storage class response: %w", err)
+		return nil, fmt.Errorf("decode storage class declaration: %w", err)
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get storage class %s returned HTTP %d: %s", name, resp.StatusCode, string(body))
-	}
-
-	var ss storagev1.StorageClass
-	if err := json.Unmarshal(body, &ss); err != nil {
-		return nil, fmt.Errorf("parse storage class: %w", err)
+	if !slices.Contains(stored.Clusters, cluster) {
+		return nil, fmt.Errorf("storage class %s is not configured for cluster %s", name, cluster)
 	}
 
-	secretName := ss.Parameters["csi.storage.k8s.io/node-publish-secret-name"]
-	secretNamespace := ss.Parameters["csi.storage.k8s.io/node-publish-secret-namespace"]
-	bucketName := ss.Parameters["remotePath"]
-
-	if secretName == "" || secretNamespace == "" {
-		return nil, fmt.Errorf("storage class %s missing secret reference parameters", name)
-	}
-
-	secretPath := "/api/v1/namespaces/" + secretNamespace + "/secrets/" + secretName
-	secretResp, err := g.proxyKubeRequest(ctx, http.MethodGet, agentID, secretPath, nil)
-	if err != nil {
-		return nil, fmt.Errorf("get secret %s/%s: %w", secretNamespace, secretName, err)
-	}
-	defer utils.CloseIO(secretResp.Body)
-
-	secretBody, err := io.ReadAll(secretResp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read secret response: %w", err)
-	}
-	if secretResp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get secret %s returned HTTP %d: %s", secretName, secretResp.StatusCode, string(secretBody))
-	}
-
-	var secret v1.Secret
-	if err := json.Unmarshal(secretBody, &secret); err != nil {
-		return nil, fmt.Errorf("parse secret: %w", err)
-	}
-
-	configData, ok := secret.Data["configData"]
-	if !ok {
-		return nil, fmt.Errorf("secret %s missing configData", secretName)
-	}
-
-	s3Config, err := parseStorageConfigData(string(configData))
-	if err != nil {
-		return nil, fmt.Errorf("parse configData: %w", err)
-	}
-	s3Config.Bucket = bucketName
-
-	client, err := storage.NewClient(s3Config)
+	config := storage.DefaultConfig()
+	config.Provider = stored.Provider
+	config.Endpoint = stored.Endpoint
+	config.AccessKeyId = stored.AccessKeyID
+	config.SecretAccessKey = stored.AccessKey
+	config.Region = stored.Region
+	config.UsePathStyle = stored.PathStyle
+	config.Bucket = stored.Bucket
+	client, err := storage.NewClient(config)
 	if err != nil {
 		return nil, fmt.Errorf("create storage client: %w", err)
 	}
-
 	g.storageClientsMu.Lock()
 	g.storageClients[cacheKey] = client
 	g.storageClientsMu.Unlock()
-
 	return client, nil
-}
-
-// fetchStorageClassSecretConfig fetches the Secret referenced by a StorageClass
-// and parses the rclone configData into a storage.Config. It returns nil if any
-// step fails (non-fatal, caller should proceed with empty fields).
-func (g *Gateway) fetchStorageClassSecretConfig(ctx context.Context, agentID string, ss *storagev1.StorageClass) (*storage.Config, error) {
-	if ss.Parameters == nil {
-		return nil, fmt.Errorf("storage class %s has no parameters", ss.Name)
-	}
-	secretName := ss.Parameters["csi.storage.k8s.io/node-publish-secret-name"]
-	secretNamespace := ss.Parameters["csi.storage.k8s.io/node-publish-secret-namespace"]
-	if secretName == "" || secretNamespace == "" {
-		return nil, fmt.Errorf("storage class %s missing secret reference parameters", ss.Name)
-	}
-
-	secretPath := "/api/v1/namespaces/" + secretNamespace + "/secrets/" + secretName
-	secretResp, err := g.proxyKubeRequest(ctx, http.MethodGet, agentID, secretPath, nil)
-	if err != nil {
-		return nil, fmt.Errorf("get secret %s/%s: %w", secretNamespace, secretName, err)
-	}
-	defer utils.CloseIO(secretResp.Body)
-
-	secretBody, err := io.ReadAll(secretResp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read secret response: %w", err)
-	}
-	if secretResp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get secret %s returned HTTP %d: %s", secretName, secretResp.StatusCode, string(secretBody))
-	}
-
-	var secret v1.Secret
-	if err := json.Unmarshal(secretBody, &secret); err != nil {
-		return nil, fmt.Errorf("parse secret: %w", err)
-	}
-
-	configData, ok := secret.Data["configData"]
-	if !ok {
-		return nil, fmt.Errorf("secret %s missing configData", secretName)
-	}
-
-	return parseStorageConfigData(string(configData))
-}
-
-// parseStorageConfigData parses the INI-format configData from a rclone Secret
-// into a storage.Config.
-func parseStorageConfigData(data string) (*storage.Config, error) {
-	cfg := storage.DefaultConfig()
-	lines := strings.Split(data, "\n")
-	section := ""
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
-			continue
-		}
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			section = line[1 : len(line)-1]
-			continue
-		}
-		if section == "s3" {
-			parts := strings.SplitN(line, "=", 2)
-			if len(parts) != 2 {
-				continue
-			}
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-
-			switch key {
-			case "access_key_id":
-				cfg.AccessKeyId = value
-			case "secret_access_key":
-				cfg.SecretAccessKey = value
-			case "endpoint":
-				cfg.Endpoint = value
-			case "region":
-				cfg.Region = value
-			case "force_path_style":
-				cfg.UsePathStyle = value == "true"
-			case "provider":
-				cfg.Provider = value
-			}
-		}
-	}
-
-	return cfg, nil
 }
 
 // listStorageClassFiles handles GET /api/v1/storage/storageclass/:cluster/:name/list
@@ -927,7 +557,7 @@ func (g *Gateway) listStorageClassFiles(c *gin.Context) {
 
 	client, err := g.getStorageClient(c.Request.Context(), cluster, name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return
 	}
 
@@ -948,9 +578,6 @@ func (g *Gateway) listStorageClassFiles(c *gin.Context) {
 			maxKeys = mk
 		}
 	}
-	if maxKeys <= 0 {
-		maxKeys = 100
-	}
 
 	options := &storage.ListOptions{
 		Prefix:    prefix,
@@ -961,7 +588,7 @@ func (g *Gateway) listStorageClassFiles(c *gin.Context) {
 
 	result, err := client.ListObjectsWithDelimiter(options)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return
 	}
 
@@ -981,20 +608,20 @@ func (g *Gateway) uploadStorageClassFile(c *gin.Context) {
 
 	client, err := g.getStorageClient(c.Request.Context(), cluster, name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return
 	}
 
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "No file uploaded")
 		return
 	}
 	defer utils.CloseIO(file)
 
 	objectKey, err := client.UploadFileFromMultipart(header)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return
 	}
 
@@ -1012,13 +639,13 @@ func (g *Gateway) getStorageClassObject(c *gin.Context) {
 	// signature and causing SignatureDoesNotMatch from OSS.
 	key := strings.TrimPrefix(c.Param("key"), "/")
 	if key == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "object key is required"})
+		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, "object key is required")
 		return
 	}
 
 	client, err := g.getStorageClient(c.Request.Context(), cluster, name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return
 	}
 
@@ -1032,7 +659,7 @@ func (g *Gateway) getStorageClassObject(c *gin.Context) {
 
 	url, err := client.GetObjectURL(key, expireSeconds)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return
 	}
 
@@ -1045,19 +672,19 @@ func (g *Gateway) deleteStorageClassObject(c *gin.Context) {
 	name := c.Param("name")
 	key := strings.TrimPrefix(c.Param("key"), "/")
 	if key == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "object key is required"})
+		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, "object key is required")
 		return
 	}
 
 	client, err := g.getStorageClient(c.Request.Context(), cluster, name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return
 	}
 
 	err = client.DeleteObject(key)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return
 	}
 

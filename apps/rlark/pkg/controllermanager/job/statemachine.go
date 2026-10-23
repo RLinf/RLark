@@ -12,7 +12,6 @@ import (
 // Constants used by the package.
 const (
 	RestartedAtAnnotation = "rlark.io/restarted-at"
-	StoppedAnnotation     = "rlark.io/stopped"
 
 	EventInit          = "init"
 	EventTasksPending  = "tasks-pending"

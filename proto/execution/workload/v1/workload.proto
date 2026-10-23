@@ -1,0 +1,152 @@
+syntax = "proto3";
+
+package rlark.execution.workload.v1;
+
+import "common/v1/types.proto";
+
+option go_package = "github.com/rlinf/rlark/sdks/execution-go/gen/workload/v1;workloadv1";
+
+// WorkloadAdapter compiles one versioned Workload type and interprets its
+// observed runtime state. It returns declarations only and cannot directly
+// call a Runtime Provider or mutate management/runtime resources.
+service WorkloadAdapter {
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+  rpc Compile(CompileRequest) returns (CompileResponse);
+  rpc Observe(ObserveRequest) returns (ObserveResponse);
+  rpc Inventory(InventoryRequest) returns (InventoryResponse);
+}
+
+message GetInfoRequest {
+  repeated rlark.execution.common.v1.ProtocolVersion supported_protocol_versions = 1;
+}
+
+message ConfigurationContract {
+  string version = 1;
+  bytes schema = 2;
+  string schema_content_type = 3;
+}
+
+message WorkloadTypeInfo {
+  string id = 1;
+  string version = 2;
+  repeated string supported_runtime_kinds = 3;
+  ConfigurationContract configuration = 4;
+  rlark.execution.common.v1.ProtocolVersion protocol_version = 5;
+  repeated rlark.execution.common.v1.ProtocolCapability capabilities = 6;
+}
+
+message GetInfoResponse {
+  WorkloadTypeInfo info = 1;
+}
+
+message RuntimeInfo {
+  string id = 1;
+  string kind = 2;
+}
+
+message TaskSnapshot {
+  rlark.execution.common.v1.TaskIdentity identity = 1;
+  string runtime_id = 2;
+  string runtime_kind = 3;
+  string workload_type = 4;
+  string workload_version = 5;
+  rlark.execution.common.v1.TypedValue configuration = 6;
+  // Compile input requirements remain supported because they describe the
+  // caller's requested Environment contract and require no mutation targets.
+  rlark.execution.common.v1.TypedValue environment_requirements = 7;
+  bool deleting = 8;
+}
+
+message InstanceDiscoveryPlan {
+  repeated string roots = 1;
+  rlark.execution.common.v1.TypedValue options = 2;
+}
+
+message WorkloadPlan {
+  string adapter_id = 1;
+  string adapter_version = 2;
+  string compiled_hash = 3;
+  repeated rlark.execution.common.v1.DesiredRuntimeObject objects = 4;
+  rlark.execution.common.v1.TypedValue environment_requirements = 5;
+  InstanceDiscoveryPlan discovery = 6;
+  rlark.execution.common.v1.TypedValue update_policy = 7;
+  repeated MutationTarget mutation_targets = 8;
+  repeated WorkloadUnit workload_units = 9;
+  repeated ProcessDeclaration processes = 10;
+}
+
+message MutationTarget {
+  string name = 1;
+  string object_name = 2;
+  string kind = 3;
+  string role = 4;
+  rlark.execution.common.v1.ObjectLocator locator = 5;
+}
+
+message WorkloadUnit {
+  string name = 1;
+  string object_name = 2;
+  string kind = 3;
+  string role = 4;
+  rlark.execution.common.v1.ObjectLocator locator = 5;
+}
+
+message ProcessDeclaration {
+  string name = 1;
+  string target = 2;
+  rlark.execution.common.v1.ObjectLocator locator = 3;
+  string container_name = 4;
+  string role = 5;
+  string executable = 6;
+  repeated string args = 7;
+  string restart_policy = 8;
+  bool required = 9;
+}
+
+message PlanDigests {
+  string compiled_hash = 1;
+  string executable_hash = 2;
+  string binding_revision = 3;
+}
+
+message ExecutablePlan {
+  PlanDigests digests = 1;
+  repeated rlark.execution.common.v1.DesiredRuntimeObject objects = 2;
+  InstanceDiscoveryPlan discovery = 3;
+  rlark.execution.common.v1.TypedValue update_policy = 4;
+}
+
+message CompileRequest {
+  TaskSnapshot task = 2;
+  RuntimeInfo runtime = 3;
+}
+
+message CompileResponse {
+  WorkloadPlan plan = 1;
+}
+
+message ObserveRequest {
+  TaskSnapshot task = 2;
+  ExecutablePlan plan = 3;
+  rlark.execution.common.v1.ObjectSnapshot objects = 4;
+  rlark.execution.common.v1.InstanceSnapshot instances = 5;
+}
+
+message Observation {
+  string phase = 1;
+  string reason = 2;
+  string message = 3;
+}
+
+message ObserveResponse {
+  Observation observation = 1;
+}
+
+message InventoryRequest {
+  rlark.execution.common.v1.TaskIdentity task = 1;
+  RuntimeInfo runtime = 2;
+}
+
+message InventoryResponse {
+  repeated rlark.execution.common.v1.RuntimeObjectCandidate candidates = 1;
+}

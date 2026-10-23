@@ -49,7 +49,7 @@ test("caps generated PVC storage size at 200 Gi", () => {
     domain: "",
   });
 
-  const workload = crd.spec.tasks[0].kubernetes.workload;
+  const workload = crd.spec.tasks[0].workload;
   const claimSpec =
     workload.template.spec.volumes[0].ephemeral.volumeClaimTemplate.spec;
   assert.equal(claimSpec.resources.requests.storage, "200Gi");
@@ -77,7 +77,7 @@ test("generates an ephemeral volume claim for selected storage", () => {
     domain: "",
   });
 
-  const workload = crd.spec.tasks[0].kubernetes.workload;
+  const workload = crd.spec.tasks[0].workload;
   const volume = workload.template.spec.volumes[0];
   const claimSpec = volume.ephemeral.volumeClaimTemplate.spec;
 
@@ -86,8 +86,6 @@ test("generates an ephemeral volume claim for selected storage", () => {
   assert.deepEqual(claimSpec.accessModes, ["ReadWriteOnce"]);
   assert.equal(claimSpec.storageClassName, "fast-storage");
   assert.equal(claimSpec.resources.requests.storage, "20Gi");
-  assert.equal(workload.pvcStorageMap, undefined);
-  assert.equal(workload.pvcSizeGbMap, undefined);
   assert.equal(
     workload.template.spec.containers[0].volumeMounts[0].name,
     volume.name,

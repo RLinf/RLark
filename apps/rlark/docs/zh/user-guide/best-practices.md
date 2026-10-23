@@ -66,7 +66,7 @@ SSH 密钥让你可以连接到 Worker 进行调试和检查。
 ssh-keygen -t ed25519 -C "rlark-training"
 ```
 
-公钥添加后即可在任务中使用。选择后，公钥会注入到每个 Worker 容器的 `~/.ssh/authorized_keys` 中。
+公钥添加后即可供 Job 选择。对于内置 Ray-on-Kubernetes workload，所选公钥通过 Task-owned Secret 交付，以只读方式挂载到每个 Worker main container 的 `/var/run/rlark/ssh/authorized_key`，并由 workload supervisor 管理的 optional `rlark-tools sshd` 进程提供服务。SSH 可用性不决定 Task 是否成功。
 
 ### 轮换密钥
 

@@ -1,9 +1,9 @@
-import type { CRDTask } from "../types";
+import type { CRDTask } from "../crdModels";
 
 export type ReclaimableResources = Record<string, Record<string, number>>;
 
-function quantity(value?: string): number {
-  const parsed = Number.parseFloat(value ?? "0");
+function quantity(value?: string | number): number {
+  const parsed = Number.parseFloat(String(value ?? "0"));
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
@@ -25,7 +25,7 @@ export function reclaimableResourcesForTasks(
   const reclaimable: ReclaimableResources = {};
   for (const task of tasks) {
     const requests =
-      task.spec?.kubernetes?.workload?.template.spec.containers?.reduce<
+      task.spec?.workload.template?.spec?.containers?.reduce<
         Record<string, number>
       >((totals, container) => {
         for (const [key, value] of Object.entries(
@@ -37,7 +37,7 @@ export function reclaimableResourcesForTasks(
       }, {}) ?? {};
 
     for (const nodeName of task.status?.observedNodes ?? []) {
-      const nodeKey = `${task.metadata.namespace ?? ""}/${nodeName}`;
+      const nodeKey = `${task.metadata?.namespace ?? ""}/${nodeName}`;
       const nodeResources = (reclaimable[nodeKey] ??= {});
       for (const [key, value] of Object.entries(requests)) {
         nodeResources[key] = (nodeResources[key] ?? 0) + value;

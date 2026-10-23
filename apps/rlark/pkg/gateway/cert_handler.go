@@ -36,26 +36,26 @@ func (g *Gateway) handleSignAgentCert(c *gin.Context) {
 
 	var req signAgentCertRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id is required"})
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "cluster_id is required")
 		return
 	}
 
 	if g.config.ServerAddress == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "server-address is not configured"})
+		respondError(c, http.StatusInternalServerError, CodeNotConfigured, "server-address is not configured")
 		return
 	}
 
 	_, _, caCertPEM, err := g.getKCPAdminCerts()
 	if err != nil {
 		logger.Error(err, "failed to get KCP admin certificates")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("get admin cert: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("get admin cert: %v", err))
 		return
 	}
 
 	agentCertPEM, agentKeyPEM, err := g.signCertViaServer(req.ClusterID)
 	if err != nil {
 		logger.Error(err, "failed to sign agent certificate")
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("sign agent cert: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, fmt.Sprintf("sign agent cert: %v", err))
 		return
 	}
 
@@ -116,7 +116,7 @@ type agentCertListItem struct {
 
 func (g *Gateway) handleListAgentCerts(c *gin.Context) {
 	if g.rawClient == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "raw kubernetes client not initialized"})
+		respondError(c, http.StatusInternalServerError, CodeNotConfigured, "raw kubernetes client not initialized")
 		return
 	}
 	ctx := c.Request.Context()
@@ -124,7 +124,7 @@ func (g *Gateway) handleListAgentCerts(c *gin.Context) {
 		LabelSelector: labels.FormatLabels(map[string]string{common.AgentCertLabelKey: common.AgentCertLabelValue}),
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("list secrets: %v", err)})
+		respondError(c, http.StatusInternalServerError, CodeInternalError, fmt.Sprintf("list secrets: %v", err))
 		return
 	}
 	items := make([]agentCertListItem, 0, len(secretList.Items))
@@ -144,19 +144,19 @@ func (g *Gateway) handleListAgentCerts(c *gin.Context) {
 
 func (g *Gateway) handleGetAgentCert(c *gin.Context) {
 	if g.rawClient == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "raw kubernetes client not initialized"})
+		respondError(c, http.StatusInternalServerError, CodeNotConfigured, "raw kubernetes client not initialized")
 		return
 	}
 	clusterID := c.Param("cluster_id")
 	if clusterID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id is required"})
+		respondError(c, http.StatusBadRequest, CodeInvalidQueryParameter, "cluster_id is required")
 		return
 	}
 	ctx := c.Request.Context()
 	secretName := "rlark-agent-cert-" + clusterID
 	secret, err := g.rawClient.CoreV1().Secrets(g.managementNamespace()).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("secret not found: %v", err)})
+		respondError(c, http.StatusNotFound, CodeResourceNotFound, fmt.Sprintf("secret not found: %v", err))
 		return
 	}
 	c.JSON(http.StatusOK, signAgentCertResponse{
@@ -234,7 +234,7 @@ func (g *Gateway) signCertViaServer(clusterID string) (certPEM, keyPEM string, e
 
 func (g *Gateway) handleRevokeCertificate(c *gin.Context) {
 	if g.dbClient == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "revocation not supported: database not configured"})
+		respondError(c, http.StatusInternalServerError, CodeNotConfigured, "revocation not supported: database not configured")
 		return
 	}
 	// TODO: Implement certificate revocation logic

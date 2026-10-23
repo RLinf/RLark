@@ -160,6 +160,7 @@ rlark-controller-manager \
 | `--leader-election-id` | string | `hostname-pid` | Leader Election 标识 |
 | `--metrics-bind-address` | string | `:8081` | Metrics 端点绑定地址 |
 | `--task-pull-controller-workers` | int | `8` | Task pull 控制器最大并发调和数 |
+| `--task-runtime-resync-period` | duration | `15m` | cluster 模式共享 Task Runtime 修复扫描的基础周期；实际间隔使用 80%–120% 抖动，`0` 表示禁用，负值无效；node-only 模式接受这个共享 flag，但不会运行扫描器 |
 | `--addon-pull-controller-workers` | int | `8` | Addon pull 控制器最大并发调和数 |
 | `--task-deployment-push-controller-workers` | int | `8` | Task Deployment push 控制器最大并发调和数 |
 | `--task-daemonset-push-controller-workers` | int | `8` | Task DaemonSet push 控制器最大并发调和数 |
@@ -245,14 +246,24 @@ rlark-network-sidecar \
 | ------ | ------ | -------- | ------ |
 | `--port` | string | `22` | SSH 监听端口 |
 | `--shell` | string | `""` | Shell 二进制路径（默认 /bin/bash） |
+| `--authorized-key-file` | string list | `/var/run/rlark/ssh/authorized_key` | 每次认证时重新打开的 authorized-key 文件；可重复传参或使用逗号分隔列表 |
 
-**环境变量：**
+Kubernetes workload Environment Handler 会在默认路径挂载归当前 Task incarnation 所有的 Secret。该 mount 使用目录 projection 且不使用 `subPath`，从而允许 kubelet 发布 Secret 更新。空文件不贡献任何 key；所有已配置来源均为空时关闭公钥认证。每个显式配置文件都必须保持可读；任一文件读取失败时，本次认证会 fail-closed，而不是静默使用其余文件。更新受 kubelet Secret projection 的最终一致性影响，不保证瞬时撤销访问。`RLARK_SSH_PUBLIC_KEY` 和用户目录下的 `~/.ssh/authorized_keys` 不再作为 fallback；在内置 workload 路径之外启动 `rlark-tools sshd` 时，可重复传入 `--authorized-key-file`。
 
-| 变量 | 说明 |
-| ------ | ------ |
-| `RLARK_SSH_PUBLIC_KEY` | 用于 authorized_keys 的 SSH 公钥 |
+```bash
+rlark-tools sshd \
+  --authorized-key-file=/var/run/rlark/ssh/authorized_key \
+  --authorized-key-file=/etc/rlark/admin_authorized_keys
+```
 
-Agent 环境变量 `RLARK_ENABLE_UNSAFE_TASK_PRIVILEGES=true` 用于开启旧版任务模式：授予所有 Task 容器 privileged 权限，并为 Ray Head 以外的任务启用宿主机网络。该功能默认关闭，仅应在可信集群中使用。
+## Agent Task 执行环境变量
+
+| 变量 | 默认值 | 说明 |
+| ------ | -------- | ------ |
+| `RLARK_TENSORBOARD_IMAGE` | `rlinf/tensorboard:2.15.1-rc1` | Kubernetes Environment Handler 使用的可信 TensorBoard 镜像。值为空时也使用默认值。该变量是过渡配置方式，未来应迁移到经过校验的 typed Agent 配置。 |
+| `RLARK_ENABLE_UNSAFE_TASK_PRIVILEGES` | `false` | 仅当值严格等于 `true` 时开启旧版 unsafe Task 模式。 |
+
+unsafe Task 模式会在 Workload 编译阶段为 Task Pod template 中已经声明的 container 和 init container 授予 privileged 权限，并为 Ray Head 以外的任务启用宿主机网络。之后由 Environment binding 注入的 container 不受该旧版特权覆盖逻辑影响；每个可信 Environment Handler 会自行声明所需的 security context。特别是，跨 Domain Network sidecar 仍通过可信 Network profile 获得 privileged 和 `NET_ADMIN`，RLark Tools 与 TensorBoard 则保持各自声明的权限。仅应在可信集群中启用该模式。
 
 ## 存储 Provider 配置
 

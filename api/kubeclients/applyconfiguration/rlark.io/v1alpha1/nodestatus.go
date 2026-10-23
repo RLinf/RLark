@@ -19,26 +19,45 @@ package v1alpha1
 
 import (
 	rlarkiov1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
-	v1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
 // NodeStatusApplyConfiguration represents a declarative configuration of the NodeStatus type for use
 // with apply.
 type NodeStatusApplyConfiguration struct {
-	Phase        *rlarkiov1alpha1.NodePhase           `json:"phase,omitempty"`
-	Reason       *string                              `json:"reason,omitempty"`
-	NodeInfo     *NodeInfoApplyConfiguration          `json:"nodeInfo,omitempty"`
-	Addresses    []v1.NodeAddress                     `json:"addresses,omitempty"`
+	// Phase 是节点连通性聚合阶段，由数据面 node-agent 上报。
+	Phase *rlarkiov1alpha1.NodePhase `json:"phase,omitempty"`
+	// Reason 是 Phase 的机器可读原因（CamelCase），与 Conditions 中
+	// ConditionTypeReady 的 Reason 同源，供列表视图直接展示。
+	// 该字段与 Conditions 均由数据面 node-agent 独占写入。
+	Reason *string `json:"reason,omitempty"`
+	// Conditions 记录节点的结构化状态结论，当前仅包含 ConditionTypeReady。
+	// 它由观测（而非 Spec）驱动，因此不填写 ObservedGeneration。
+	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
+	// LastHeartbeatTime 是控制面 Node Reconciler 从 Agent Lease 读取到的最近一次
+	// 心跳续约时间；数据面不写入本字段。
+	LastHeartbeatTime *metav1.Time `json:"lastHeartbeatTime,omitempty"`
+	// LastStatusChangeTime 是 Phase 最近一次发生变化的时间，与 LastHeartbeatTime
+	// 同由控制面 Node Reconciler 写入，用于区分「长时间保持同一状态」与「刚刚翻转」。
+	LastStatusChangeTime *metav1.Time `json:"lastStatusChangeTime,omitempty"`
+	// NodeInfo 是节点基础信息，由数据面 Agent 上报；控制面不写入本字段。
+	NodeInfo *NodeInfoApplyConfiguration `json:"nodeInfo,omitempty"`
+	// Addresses 是节点地址列表（InternalIP / Hostname 等）。
+	Addresses    []corev1.NodeAddress                 `json:"addresses,omitempty"`
 	DiskPressure *bool                                `json:"diskPressure,omitempty"`
 	Storage      *NodeStorageStatusApplyConfiguration `json:"storage,omitempty"`
-	Allocatable  *v1.ResourceList                     `json:"allocatable,omitempty"`
+	Allocatable  *corev1.ResourceList                 `json:"allocatable,omitempty"`
 	// 需要预留系统组件 agent
-	Capacity     *v1.ResourceList                 `json:"capacity,omitempty"`
-	Used         *v1.ResourceList                 `json:"used,omitempty"`
+	Capacity *corev1.ResourceList `json:"capacity,omitempty"`
+	Used     *corev1.ResourceList `json:"used,omitempty"`
+	// PullProgress 是节点上正在进行的镜像拉取进度，由 node-agent 上报。
 	PullProgress []PullProgressApplyConfiguration `json:"pullProgress,omitempty"`
 	// Events 由数据面 node-agent 上报节点相关 Kubernetes Event（如 DiskPressure
 	// 等 Warning 事件及镜像拉取/调度相关事件）。控制面 Task reconciler 在 Task
 	// 处于 Pending 期间聚合各节点事件到 Task.status.events，供前端展示。
+	// 条目数量由 node-agent 侧裁剪（最多保留 50 条）。
 	Events []NodeEventApplyConfiguration `json:"events,omitempty"`
 }
 
@@ -64,6 +83,35 @@ func (b *NodeStatusApplyConfiguration) WithReason(value string) *NodeStatusApply
 	return b
 }
 
+// WithConditions adds the given value to the Conditions field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Conditions field.
+func (b *NodeStatusApplyConfiguration) WithConditions(values ...*v1.ConditionApplyConfiguration) *NodeStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithConditions")
+		}
+		b.Conditions = append(b.Conditions, *values[i])
+	}
+	return b
+}
+
+// WithLastHeartbeatTime sets the LastHeartbeatTime field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the LastHeartbeatTime field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithLastHeartbeatTime(value metav1.Time) *NodeStatusApplyConfiguration {
+	b.LastHeartbeatTime = &value
+	return b
+}
+
+// WithLastStatusChangeTime sets the LastStatusChangeTime field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the LastStatusChangeTime field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithLastStatusChangeTime(value metav1.Time) *NodeStatusApplyConfiguration {
+	b.LastStatusChangeTime = &value
+	return b
+}
+
 // WithNodeInfo sets the NodeInfo field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the NodeInfo field is set to the value of the last call.
@@ -75,7 +123,7 @@ func (b *NodeStatusApplyConfiguration) WithNodeInfo(value *NodeInfoApplyConfigur
 // WithAddresses adds the given value to the Addresses field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Addresses field.
-func (b *NodeStatusApplyConfiguration) WithAddresses(values ...v1.NodeAddress) *NodeStatusApplyConfiguration {
+func (b *NodeStatusApplyConfiguration) WithAddresses(values ...corev1.NodeAddress) *NodeStatusApplyConfiguration {
 	for i := range values {
 		b.Addresses = append(b.Addresses, values[i])
 	}
@@ -101,7 +149,7 @@ func (b *NodeStatusApplyConfiguration) WithStorage(value *NodeStorageStatusApply
 // WithAllocatable sets the Allocatable field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Allocatable field is set to the value of the last call.
-func (b *NodeStatusApplyConfiguration) WithAllocatable(value v1.ResourceList) *NodeStatusApplyConfiguration {
+func (b *NodeStatusApplyConfiguration) WithAllocatable(value corev1.ResourceList) *NodeStatusApplyConfiguration {
 	b.Allocatable = &value
 	return b
 }
@@ -109,7 +157,7 @@ func (b *NodeStatusApplyConfiguration) WithAllocatable(value v1.ResourceList) *N
 // WithCapacity sets the Capacity field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Capacity field is set to the value of the last call.
-func (b *NodeStatusApplyConfiguration) WithCapacity(value v1.ResourceList) *NodeStatusApplyConfiguration {
+func (b *NodeStatusApplyConfiguration) WithCapacity(value corev1.ResourceList) *NodeStatusApplyConfiguration {
 	b.Capacity = &value
 	return b
 }
@@ -117,7 +165,7 @@ func (b *NodeStatusApplyConfiguration) WithCapacity(value v1.ResourceList) *Node
 // WithUsed sets the Used field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Used field is set to the value of the last call.
-func (b *NodeStatusApplyConfiguration) WithUsed(value v1.ResourceList) *NodeStatusApplyConfiguration {
+func (b *NodeStatusApplyConfiguration) WithUsed(value corev1.ResourceList) *NodeStatusApplyConfiguration {
 	b.Used = &value
 	return b
 }

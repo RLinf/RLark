@@ -21,6 +21,8 @@ externalDocs:
   url: ./reference/
 
 tags:
+  - name: Cluster
+    description: Registered data-plane cluster summaries and details
   - name: Job
     description: Cluster-scoped Job resources
   - name: Node
@@ -60,6 +62,46 @@ paths:
             text/plain:
               schema:
                 type: string
+
+  # ─── Cluster Collection ──────────────────────────────────────────
+  /api/v1/clusters:
+    get:
+      tags: [Cluster]
+      summary: List clusters
+      description: Lists registered Cluster resources with aggregated Node counts.
+      operationId: listClusters
+      responses:
+        '200':
+          description: Cluster summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterInfoListResponse'
+        '500':
+          description: Failed to list Clusters or aggregate their Nodes
+
+  /api/v1/clusters/{cluster_id}:
+    get:
+      tags: [Cluster]
+      summary: Get cluster details
+      description: Returns a Cluster summary and all Nodes in its authoritative agent namespace.
+      operationId: getCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Cluster details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterDetailResponse'
+        '404':
+          description: Cluster not found
+        '500':
+          description: Failed to read the Cluster or list Nodes in its agent namespace
 
   # ─── Job Collection ───────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/jobs:
@@ -218,6 +260,30 @@ paths:
         '404':
           description: Not Found
 
+  # ─── Job Start ───────────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/jobs/{name}/start:
+    post:
+      tags: [Job]
+      summary: Start a Job
+      description: >-
+        Unified start endpoint. If the Job is active (KCP has the CR), patches
+        spec.suspended=false directly. If archived (KCP CR was removed after stop),
+        restores the Job from the persistence backend and creates a new CR.
+      operationId: startJob
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        '200':
+          description: Started Job (patched or restored)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Job not found or not archived
+        '503':
+          description: Persistence backend not configured
+
   # ─── Job Logs ────────────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs:
     get:
@@ -242,6 +308,12 @@ paths:
           in: query
           description: Backend pagination cursor returned as nextCursor.
           schema: {type: string}
+        - name: limit
+          in: query
+          description: >-
+            Maximum number of backend log entries to return. Must be a positive
+            integer no greater than 1000.
+          schema: {type: integer, format: int32, default: 99, minimum: 1, maximum: 1000}
         - name: order
           in: query
           description: Use asc for ascending backend results; all other values are descending.
@@ -255,6 +327,12 @@ paths:
                 oneOf:
                   - $ref: '#/components/schemas/BackendLogResponse'
                   - $ref: '#/components/schemas/PodLogResponse'
+        '400':
+          description: A query parameter is malformed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: Failed to list Tasks for the Pod fallback
 
@@ -282,19 +360,6 @@ paths:
                 $ref: '#/components/schemas/LogLabelValuesResponse'
         '500':
           description: Log backend query failed
-
-  # ─── Job Metrics (not yet implemented) ───────────────────────────
-  /api/v1/rlinf.io/v1alpha1/jobs/{name}/metrics:
-    get:
-      tags: [Job]
-      summary: Get Job metrics
-      description: This registered route is not implemented and always returns HTTP 501.
-      operationId: readJobMetrics
-      parameters:
-        - $ref: '#/components/parameters/name'
-      responses:
-        '501':
-          description: Not Implemented
 
   # ─── Node Collection ─────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/nodes:
@@ -656,10 +721,15 @@ components:
     limit:
       name: limit
       in: query
-      description: Limit is a maximum number of responses to return for a list call.
+      description: >-
+        Maximum number of responses to return for a list call. Must be a
+        positive integer no greater than 500; a value outside that range is
+        rejected with 400 rather than silently ignored.
       schema:
         type: integer
         format: int32
+        minimum: 1
+        maximum: 500
 
     fieldSelector:
       name: fieldSelector
@@ -907,6 +977,97 @@ components:
           type: string
           description: Kind is a string value representing the REST resource this object represents.
 
+    ClusterInfo:
+      type: object
+      required: [id, name, type, region, location, phase, totalNodes, onlineNodes, offlineNodes, cloudNodes, embodiedNodes, robots, gpuModels, robotModels, cpuUsage, gpuUsage, robotUsage, runningJobs, description]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        type: {type: string}
+        region: {type: string}
+        location: {type: string}
+        phase: {type: string}
+        totalNodes: {type: integer}
+        onlineNodes: {type: integer}
+        offlineNodes: {type: integer}
+        cloudNodes: {type: integer}
+        embodiedNodes: {type: integer}
+        robots: {type: integer}
+        gpuModels:
+          type: array
+          items: {type: string}
+        robotModels:
+          type: array
+          items: {type: string}
+        cpuUsage: {type: integer}
+        gpuUsage: {type: integer}
+        robotUsage: {type: integer}
+        runningJobs: {type: integer}
+        description: {type: string}
+
+    ClusterInfoListResponse:
+      type: object
+      required: [data, success]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClusterInfo'
+        success: {type: boolean}
+
+    ClusterDetail:
+      allOf:
+        - $ref: '#/components/schemas/ClusterInfo'
+        - type: object
+          required: [nodes]
+          properties:
+            nodes:
+              type: array
+              items:
+                $ref: '#/components/schemas/Node'
+
+    ClusterDetailResponse:
+      type: object
+      required: [data, success]
+      properties:
+        data:
+          $ref: '#/components/schemas/ClusterDetail'
+        success: {type: boolean}
+
+    ListPagination:
+      type: object
+      description: >-
+        Pagination fields shared by every list endpoint, so that a client reads
+        the same contract no matter which backend served the request.
+
+        Two backends can answer a list request. The Kubernetes path returns the
+        apiVersion, kind and metadata fields and carries its own opaque continue
+        token inside metadata; that token is only valid for a direct Kubernetes
+        list and must not be treated as an archive cursor. The archive path
+        (database-backed, enabled when persistence is configured) omits
+        apiVersion, kind and metadata and paginates with limit and offset
+        instead.
+      properties:
+        limit:
+          type: integer
+          description: >-
+            The page size that was applied. A request that omits limit still
+            gets the bounded default of 500, so this field is never 0.
+        offset:
+          type: integer
+          description: >-
+            The applied offset. Only reported by the archive path; the
+            Kubernetes path has no offset semantics and omits this field.
+        total:
+          type: integer
+          description: >-
+            Total number of matching items. A value of -1 means the total is
+            unknown, including for aggregated Node lists that combine independently
+            paginated namespaces.
+        hasMore:
+          type: boolean
+          description: Whether more items exist beyond the returned page.
+
     ListMeta:
       type: object
       properties:
@@ -955,6 +1116,53 @@ components:
         type:
           type: string
           description: Type of condition in CamelCase or in foo.example.com/CamelCase.
+
+    ErrorResponse:
+      type: object
+      description: >-
+        The single error body shape returned by every Gateway endpoint. Clients
+        should branch on code, not on message text.
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: >-
+            Stable machine readable identifier. Existing values are never
+            renamed or repurposed.
+          enum:
+            - INVALID_QUERY_PARAMETER
+            - INVALID_REQUEST_BODY
+            - INVALID_REQUEST
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - RESOURCE_NOT_FOUND
+            - RESOURCE_ALREADY_EXISTS
+            - RESOURCE_CONFLICT
+            - RESOURCE_INVALID
+            - UPSTREAM_UNAVAILABLE
+            - INTERNAL_ERROR
+            - NOT_CONFIGURED
+        message:
+          type: string
+          description: Human readable description. Not a stable contract.
+        reason:
+          type: string
+          description: >-
+            Mirrors the Kubernetes StatusReason when the failure originated from
+            the management API; empty otherwise.
+        requestId:
+          type: string
+          description: >-
+            Correlation identifier, also returned in the X-Request-Id response
+            header, for matching the response against Gateway logs.
+        details:
+          type: object
+          additionalProperties: true
+          description: >-
+            Structured, non-sensitive context, such as the offending query
+            parameter and the reason it was rejected.
 
     Status:
       type: object
@@ -1157,25 +1365,24 @@ components:
           type: string
 
     JobList:
-      type: object
-      required:
-        - apiVersion
-        - kind
-      properties:
-        apiVersion:
-          type: string
-          enum:
-            - rlinf.io/v1alpha1
-        kind:
-          type: string
-          enum:
-            - JobList
-        metadata:
-          $ref: '#/components/schemas/ListMeta'
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Job'
+      allOf:
+        - $ref: '#/components/schemas/ListPagination'
+        - type: object
+          properties:
+            apiVersion:
+              type: string
+              enum:
+                - rlinf.io/v1alpha1
+            kind:
+              type: string
+              enum:
+                - JobList
+            metadata:
+              $ref: '#/components/schemas/ListMeta'
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Job'
 
     # ─── Node Schemas ──────────────────────────────────────────────
     Node:
@@ -1257,25 +1464,24 @@ components:
           type: string
 
     NodeList:
-      type: object
-      required:
-        - apiVersion
-        - kind
-      properties:
-        apiVersion:
-          type: string
-          enum:
-            - rlinf.io/v1alpha1
-        kind:
-          type: string
-          enum:
-            - NodeList
-        metadata:
-          $ref: '#/components/schemas/ListMeta'
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Node'
+      allOf:
+        - $ref: '#/components/schemas/ListPagination'
+        - type: object
+          properties:
+            apiVersion:
+              type: string
+              enum:
+                - rlinf.io/v1alpha1
+            kind:
+              type: string
+              enum:
+                - NodeList
+            metadata:
+              $ref: '#/components/schemas/ListMeta'
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Node'
 
     # ─── Task Schemas ──────────────────────────────────────────────
     Task:
@@ -1352,22 +1558,21 @@ components:
           format: date-time
 
     TaskList:
-      type: object
-      required:
-        - apiVersion
-        - kind
-      properties:
-        apiVersion:
-          type: string
-          enum:
-            - rlinf.io/v1alpha1
-        kind:
-          type: string
-          enum:
-            - TaskList
-        metadata:
-          $ref: '#/components/schemas/ListMeta'
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Task'
+      allOf:
+        - $ref: '#/components/schemas/ListPagination'
+        - type: object
+          properties:
+            apiVersion:
+              type: string
+              enum:
+                - rlinf.io/v1alpha1
+            kind:
+              type: string
+              enum:
+                - TaskList
+            metadata:
+              $ref: '#/components/schemas/ListMeta'
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Task'

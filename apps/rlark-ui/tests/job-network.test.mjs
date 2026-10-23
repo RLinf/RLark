@@ -46,14 +46,26 @@ test("enables the configured network domain for same-cluster jobs", () => {
     worker: resource("cluster-a"),
   };
 
+  const job = generateJobCRD({
+    ...base,
+    roleResources: sameCluster,
+    domain: "network-a",
+  });
+  assert.equal(job.spec.domain, "network-a");
+  assert.equal(job.spec.tasks[0].runtime.kind, "Kubernetes");
+  assert.equal(job.spec.tasks[0].workload.kind, "rlinf.io/ray");
+  assert.equal(job.spec.tasks[0].workload.version, "v1");
   assert.equal(
-    generateJobCRD({
-      ...base,
-      roleResources: sameCluster,
-      domain: "network-a",
-    }).spec.domain,
-    "network-a",
+    job.spec.tasks[0].workload.carrier.type,
+    "rlinf.io/kubernetes-statefulset",
   );
+  assert.equal(job.spec.tasks[0].workload.carrier.version, "v1");
+  assert.equal(
+    job.spec.tasks[0].workload.template.spec.containers[0].name,
+    "main",
+  );
+  assert.equal("agentType" in job.spec.tasks[0], false);
+  assert.equal("kubernetes" in job.spec.tasks[0], false);
 });
 
 test("omits the network domain when none is configured", () => {

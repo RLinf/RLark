@@ -184,6 +184,8 @@ volumes:
 | `--leader-election` | `true` | Enable leader election |
 | `--metrics-bind-address` | `:8080` | Metrics bind address |
 | `--health-probe-bind-address` | `:8081` | `/healthz` and `/readyz` bind address |
+| `--archive-ttl` | `5m` | Time to keep terminal resources in kcp before archiving |
+| `--enable-secret-backend` | `false` | Use Kubernetes Secret as persistence backend (test mode, only when PostgreSQL is not configured) |
 
 ### 5.3 Gateway
 
@@ -192,6 +194,7 @@ volumes:
 | `--kubeconfig` | `$KUBECONFIG` | Control plane kubeconfig |
 | `--addr` | `:8080` | Standalone default; `rlarkadm` overrides it to `:8090` |
 | `--db-config` | `""` | Database config file path |
+| `--enable-secret-backend` | `false` | Use Kubernetes Secret as persistence backend (test mode, only when PostgreSQL is not configured) |
 | `--server-address` | `https://rlark-server.rlark-system.svc:8443` | Server address for certificate signing |
 
 ### 5.4 Agent

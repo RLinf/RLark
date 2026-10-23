@@ -2,17 +2,17 @@
 
 ## 概述
 
-Storage API 提供多集群 StorageClass 管理能力。Gateway 通过 Server 代理向各数据面 Agent 查询 StorageClass 信息，聚合后返回。
+Storage API 用于管理跨多个集群的 RLark StorageClass 声明。Gateway 将每个声明保存在控制面，Replication 和 Delivery 控制器再将生成的 rclone CSI StorageClass 及其 Secret 异步分发到所选数据面集群。
 
 ## API 端点
 
 ### 1. 获取 StorageClass 列表
 **GET** `/api/v1/storage/storageclass`
 
-通过 Server 代理，从指定集群的 Agent 查询 StorageClass 列表。过滤掉默认 StorageClass（`default`、`local-path`、`hostpath`），按名称分组聚合。
+从控制面列出由 RLark 管理的 StorageClass 声明。该接口不会查询 Agent，也不会校验数据面资源的实时状态。
 
 #### 查询参数
-- `clusters` (可选): 逗号分隔的集群 ID 列表，如 `?clusters=agent-beijing,agent-shanghai`。不传则查询所有集群。
+- `clusters`（可选）：逗号分隔的集群 ID 列表，例如 `?clusters=agent-beijing,agent-shanghai`。提供该参数时，响应仅包含其已配置目标集群与指定 ID 有交集的声明；不传则返回全部已管理声明。
 
 #### 响应示例
 ```json
@@ -37,10 +37,10 @@ Storage API 提供多集群 StorageClass 管理能力。Gateway 通过 Server �
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `name` | `string` | StorageClass 名称 |
-| `clusters` | `[]string` | 该 StorageClass 可用的集群 ID 列表 |
+| `clusters` | `[]string` | 该 StorageClass 已配置的目标集群 ID 列表 |
 | `description` | `string` | 可读描述 |
 | `bucket` | `string` | 存储桶名称 |
-| `provider` | `string` | 存储提供商类型（s3, gcs, azureblob 等） |
+| `provider` | `string` | 存储提供商类型（s3、gcs、azureblob 等） |
 | `endpoint` | `string` | 存储服务端点地址 |
 | `region` | `string` | 存储区域 |
 | `pathStyle` | `bool` | 是否使用 path-style 寻址 |
@@ -66,17 +66,17 @@ Storage API 提供多集群 StorageClass 管理能力。Gateway 通过 Server �
 ### 3. 创建 StorageClass
 **POST** `/api/v1/storage/storageclass`
 
-在一个或多个集群中创建新的 rclone CSI StorageClass 资源和配套 Secret。
+在控制面创建 StorageClass 声明。Replication 和 Delivery 控制器会将生成的 rclone CSI StorageClass 及其 Secret 异步分发到请求指定的目标集群。
 
 ### 4. 更新 StorageClass
 **PUT** `/api/v1/storage/storageclass/{name}`
 
-更新指定 StorageClass 的对象存储配置和关联集群。请求中的 `clusters` 是期望的最终集群集合；已不在集合内的集群会移除该 StorageClass。更新时 `access_key_secret` 可留空，Gateway 会尽量复用已有 Secret 中的密钥。
+更新指定 StorageClass 声明的对象存储配置和目标集群。请求中的 `clusters` 是期望的最终目标集群集合；分发流程会从未包含的集群清理资源。更新时 `access_key_secret` 可留空，Gateway 会复用已有密钥。
 
 ### 5. 删除 StorageClass
 **DELETE** `/api/v1/storage/storageclass/{name}`
 
-从所有已关联集群删除指定 StorageClass 和配套 Secret。可通过查询参数 `clusters=agent-a,agent-b` 限制删除范围。
+删除 StorageClass 声明。分发 finalizer 会异步移除其 Delivery 声明，以及所有关联集群中的生成 StorageClass 和 Secret。
 
 ### 6. 列出存储桶文件
 **GET** `/api/v1/storage/storageclass/{name}/{cluster}/list`
@@ -152,21 +152,26 @@ multipart/form-data，字段 `file` 为上传的文件。
 
 ## 实现说明
 
-### 多集群代理架构
+### 控制面分发架构
 
 ```
-Gateway ──▶ Server ──▶ Agent (cluster A) ──▶ K8s API (list StorageClasses)
-                  ──▶ Agent (cluster B) ──▶ K8s API (list StorageClasses)
+Gateway ──▶ 控制面 StorageClass 声明
+                    │
+                    ▼
+          Replication Controller ──▶ Delivery Controller ──▶ K8s API
 ```
 
-1. Gateway 接收请求后，解析 `clusters` 参数获取目标集群列表
-2. 通过 Server 的代理接口 (`/api/proxy/{agentID}/api/kubernetes/apis/storage.k8s.io/v1/storageclasses`) 向各 Agent 发起查询
-3. Agent 查询本地 K8s 集群的 StorageClass 资源
-4. Gateway 聚合结果：过滤默认 StorageClass，按名称分组，汇总各集群信息
+1. Gateway 校验 StorageClass 请求，并在控制面保存复制声明。
+2. Replication Controller 为已配置目标集群创建 Delivery 声明。
+3. 各 Delivery Controller 将生成的 rclone CSI Secret 和集群级 StorageClass 应用到本地 Kubernetes 集群。
+4. 更新会替换期望目标集群集合；删除通过分发 finalizer 触发异步清理。
+
+列表中的声明表示已配置的分发意图。创建 PVC 前，请确认下发已完成，且目标集群中的 rclone CSI 驱动正常、对象存储凭据有效，并且可连通存储服务。
 
 ### 文件结构
-- **`../pkg/gateway/storage_handler.go`** - 存储 API 处理函数
-- **`../pkg/gateway/clusters_handler.go`** - 集群列表聚合
+- **`../pkg/gateway/storage_handler.go`** - 存储 API 处理函数和生成的清单
+- **`../pkg/controllermanager/replication/controller.go`** - 控制面复制控制器
+- **`../pkg/agent/controllers/delivery/controller.go`** - 数据面分发控制器
 - **`../pkg/gateway/router.go`** - 路由注册
 
 ### 数据结构
@@ -188,18 +193,14 @@ type Provider struct {
 }
 ```
 
-### Agent RBAC 要求
-
-Agent 需要 `storage.k8s.io` API 组的 `storageclasses` 资源读取权限，`rlarkadm` 部署时自动配置。
-
 ## 使用示例
 
-### 获取所有集群的 StorageClass
+### 获取全部已管理 StorageClass
 ```bash
 curl "http://localhost:8080/api/v1/storage/storageclass"
 ```
 
-### 获取指定集群的 StorageClass
+### 获取以指定集群为目标的 StorageClass
 ```bash
 curl "http://localhost:8080/api/v1/storage/storageclass?clusters=agent-beijing"
 ```
@@ -214,20 +215,19 @@ curl "http://localhost:8080/api/v1/storage/storageclass/provider"
 Task 通过 Kubernetes 通用临时卷声明远程存储：
 
 ```yaml
-kubernetes:
-  workload:
-    template:
-      spec:
-        volumes:
-          - name: data
-            ephemeral:
-              volumeClaimTemplate:
-                spec:
-                  accessModes: [ReadWriteOnce]
-                  storageClassName: ceph-rbd
-                  resources:
-                    requests:
-                      storage: 10Gi
+workload:
+  template:
+    spec:
+      volumes:
+        - name: data
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: [ReadWriteOnce]
+                storageClassName: ceph-rbd
+                resources:
+                  requests:
+                    storage: 10Gi
 ```
 
-Kubernetes 根据 `volumeClaimTemplate` 为每个 Pod 创建 PVC，并随 Pod 删除。前端通过 Storage API 获取可用 StorageClass 列表供用户选择。`pvcStorageMap` 和 `pvcSizeGbMap` 已废弃，仅为已有资源保留。
+Kubernetes 根据 `volumeClaimTemplate` 为每个 Pod 创建 PVC，并随 Pod 删除。当前 Web UI 写入这种通用临时卷形式，并通过 Storage API 获取已为所选集群配置的 RLark 管理 StorageClass 声明。`pvcStorageMap` 和 `pvcSizeGbMap` 不属于 canonical Task Schema；破坏性升级时必须替换依赖这些字段的旧资源。

@@ -92,7 +92,7 @@ function aggregateClusters(
           ? "Offline"
           : onlineNodes === totalNodes
             ? "Online"
-            : "Degraded";
+            : "Downgraded";
       const models = (category: NodeCategory) => [
         ...new Set(
           clusterNodes
@@ -160,7 +160,7 @@ function normalizeClusterSummary(
   return {
     ...cluster,
     type: nodeAggregate?.type ?? cluster.type,
-    phase: nodeAggregate?.phase ?? cluster.phase,
+    phase: cluster.phase,
     totalNodes,
     onlineNodes,
     offlineNodes,
@@ -177,21 +177,18 @@ function normalizeClusterSummary(
 }
 
 function ClusterStatus({ phase, zh }: { phase: string; zh: boolean }) {
-  const label =
-    phase === "Online"
-      ? zh
-        ? "在线"
-        : "Online"
-      : phase === "Degraded"
-        ? zh
-          ? "部分离线"
-          : "Degraded"
-        : zh
-          ? "离线"
-          : "Offline";
+  const labels: Record<string, { zh: string; en: string }> = {
+    Online: { zh: "在线", en: "Online" },
+    Offline: { zh: "离线", en: "Offline" },
+    Downgraded: { zh: "服务降级", en: "Downgraded" },
+    Cordoned: { zh: "停用调度", en: "Cordoned" },
+    Draining: { zh: "排空中", en: "Draining" },
+    Deleted: { zh: "已删除", en: "Deleted" },
+  };
+  const label = labels[phase] ?? { zh: phase, en: phase };
   return (
     <span className={`cluster-health-badge ${phase.toLowerCase()}`}>
-      <i /> {label}
+      <i /> {zh ? label.zh : label.en}
     </span>
   );
 }
@@ -226,9 +223,7 @@ export function ClusterManagementPage({
     let resolvedNodes: CRDNode[] = [];
     try {
       resolvedNodes = await nodesApi.list({
-        labelSelector: selectedClusterID
-          ? `rlark.io/cluster-id=${selectedClusterID}`
-          : undefined,
+        labelSelector: undefined,
       });
     } catch {
       resolvedNodes = [];
@@ -257,13 +252,13 @@ export function ClusterManagementPage({
     } catch {
       resolvedClusters = [];
     }
-    if (resolvedClusters.length === 0) {
-      resolvedClusters = aggregateClusters(
-        resolvedNodes,
-        new Map(),
-        workerOnly,
-      );
-    }
+    const existingClusterIDs = new Set(
+      resolvedClusters.map((cluster) => cluster.id || cluster.name),
+    );
+    resolvedNodes = resolvedNodes.filter((node) =>
+      existingClusterIDs.has(clusterIDForNode(node)),
+    );
+    const visibleClusterIDs = new Set(existingClusterIDs);
 
     if (selectedClusterID) {
       try {
@@ -299,6 +294,7 @@ export function ClusterManagementPage({
         if (!resolvedClusters.some((cluster) => cluster.id === detail.id)) {
           resolvedClusters = [detail, ...resolvedClusters];
         }
+        visibleClusterIDs.add(detail.id || detail.name);
       } catch {
         setDetailNodes(
           resolvedNodes.filter(
@@ -309,6 +305,9 @@ export function ClusterManagementPage({
     } else {
       setDetailNodes([]);
     }
+    resolvedClusters = resolvedClusters.filter((cluster) =>
+      visibleClusterIDs.has(cluster.id || cluster.name),
+    );
     setClusters(resolvedClusters);
     setLoading(false);
   };
@@ -350,9 +349,7 @@ export function ClusterManagementPage({
     : undefined;
 
   if (selectedClusterID && selectedCluster) {
-    const visibleDetailNodes = workerOnly
-      ? detailNodes.filter(isBusinessWorkerNode)
-      : detailNodes;
+    const visibleDetailNodes = detailNodes;
     const onlineRate = selectedCluster.totalNodes
       ? Math.round(
           (selectedCluster.onlineNodes / selectedCluster.totalNodes) * 100,
@@ -558,8 +555,11 @@ export function ClusterManagementPage({
           label={zh ? "状态" : "Status"}
           options={[
             { value: "Online", label: zh ? "在线" : "Online" },
-            { value: "Degraded", label: zh ? "部分离线" : "Degraded" },
+            { value: "Downgraded", label: zh ? "服务降级" : "Downgraded" },
+            { value: "Cordoned", label: zh ? "停用调度" : "Cordoned" },
+            { value: "Draining", label: zh ? "排空中" : "Draining" },
             { value: "Offline", label: zh ? "离线" : "Offline" },
+            { value: "Deleted", label: zh ? "已删除" : "Deleted" },
           ]}
           selected={phaseFilterValues}
           onChange={setPhaseFilterValues}

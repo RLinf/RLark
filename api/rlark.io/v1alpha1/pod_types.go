@@ -46,7 +46,7 @@ type PodStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:path=pods,scope=Namespaced,shortName=rlpod
 // +kubebuilder:printcolumn:name="Domain",type=string,JSONPath=`.spec.domain`
-// +kubebuilder:printcolumn:name="Node",type=string,JSONPath=`.spec.node`
+// +kubebuilder:printcolumn:name="Node",type=string,JSONPath=`.status.node`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type Pod struct {

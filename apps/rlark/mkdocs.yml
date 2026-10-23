@@ -76,6 +76,8 @@ plugins:
             "Developer Guide Overview": 开发者指南概览
             "Local Development and Debugging": 本地开发与调试
             "Project Layout": 项目结构
+            "Project Design Principles": 项目设计原则
+            "API Conventions": "API 约定"
             "Technical Architecture": 技术架构
             "New Device Integration": 新设备适配
             Contributing: 贡献指南
@@ -119,9 +121,12 @@ nav:
     - Complete Deployment Reference: deployment.md
   - Developer Guide:
     - Developer Guide Overview: developer-guide/index.md
+    - Project Design Principles: developer-guide/design-principles.md
+    - API Conventions: developer-guide/api-conventions.md
     - Local Development and Debugging: developer-guide/local-development.md
     - Debugging: developer-guide/debugging.md
     - Project Layout: developer-guide/project-layout.md
+    - Users and Tenants: developer-guide/tenancy.md
     - New Device Integration: developer-guide/device-integration.md
     - Embodied Runtime: developer-guide/embodied-runtime-reference.md
     - Contributing: developer-guide/contributing.md

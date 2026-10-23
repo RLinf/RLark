@@ -28,6 +28,7 @@ import (
 type RlinfV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	AddonsGetter
+	ClustersGetter
 	DomainsGetter
 	DomainPeersGetter
 	JobsGetter
@@ -44,6 +45,10 @@ type RlinfV1alpha1Client struct {
 
 func (c *RlinfV1alpha1Client) Addons(namespace string) AddonInterface {
 	return newAddons(c, namespace)
+}
+
+func (c *RlinfV1alpha1Client) Clusters() ClusterInterface {
+	return newClusters(c)
 }
 
 func (c *RlinfV1alpha1Client) Domains() DomainInterface {
