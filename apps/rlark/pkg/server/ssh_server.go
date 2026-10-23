@@ -136,14 +136,9 @@ func (s *Server) sshPublicKeyAuth() ssh.PublicKeyHandler {
 				return nil, fmt.Errorf("public key not found for user %s", conn.User())
 			}
 
-			realUser := conn.User()
-			if parts := strings.SplitN(keyID, "-", 2); len(parts) > 0 && parts[0] != "" {
-				realUser = parts[0]
-			}
-
 			_, meta, _ := s.parseSignRequest(&SignRequest{
 				Role:     "ssh-guest",
-				ClientID: realUser,
+				ClientID: conn.User(),
 				KeyID:    keyID,
 			})
 			sshCert := &gossh.Certificate{}
@@ -233,27 +228,10 @@ func (s *Server) handleSSHChannel(srv *ssh.Server, conn *gossh.ServerConn, newCh
 	utils.RelayStreams(ch, c)
 }
 
+// authenticateUserKey reads the same Secret as the Gateway, even when the
+// Server uses PostgreSQL for other features. Deleted keys must not remain
+// usable through a separate database record.
 func (s *Server) authenticateUserKey(username string, key gossh.PublicKey) (string, error) {
-	if s.userKeyStore != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		keys, err := s.userKeyStore.GetSSHUserKeysByUser(ctx, username)
-		if err != nil {
-			return "", err
-		}
-		for _, k := range keys {
-			pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(k.PublicKey))
-			if err == nil && ssh.KeysEqual(key, pubKey) {
-				return fmt.Sprint(k.ID), nil
-			}
-		}
-		return "", nil
-	}
-
-	return s.authenticateUserKeyFromSecret(username, key)
-}
-
-func (s *Server) authenticateUserKeyFromSecret(username string, key gossh.PublicKey) (string, error) {
 	if s.kubeClient == nil {
 		return "", fmt.Errorf("kubernetes client not available")
 	}
@@ -268,17 +246,15 @@ func (s *Server) authenticateUserKeyFromSecret(username string, key gossh.Public
 		return "", err
 	}
 
-	for name, raw := range secret.Data {
-		for i, line := range strings.Split(string(raw), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
+	for i, line := range strings.Split(string(secret.Data[username]), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
 
-			pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
-			if err == nil && ssh.KeysEqual(key, pubKey) {
-				return fmt.Sprintf("%s-%d", name, i), nil
-			}
+		pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line))
+		if err == nil && ssh.KeysEqual(key, pubKey) {
+			return fmt.Sprintf("%s-%d", username, i), nil
 		}
 	}
 

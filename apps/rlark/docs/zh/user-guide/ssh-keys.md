@@ -41,10 +41,12 @@ RLark 会校验公钥格式，并要求 SSH 用户名和公钥内容在全局范
 管理员配置 Server SSH 入口后，使用控制台显示的命令，或从 Job/节点详情复制指定 Worker 的命令。典型命令如下：
 
 ```bash
-ssh -J <bastion-host>:<port> root@<worker-name>
+ssh -J <registered-user>@<bastion-host>:<port> root@<worker-name>
 ```
 
 外层 SSH 用户名必须与公钥登记的用户名一致。目标容器必须提供 SSH 服务，并接受所选公钥。
+
+SSH 公钥列表中的“公钥名称”对应登记的 SSH 用户名，不一定是控制台登录账号。Gateway 与 Server 使用同一管理 namespace 下的 `rlark-ssh-keys` Secret 保存和验证公钥；启用 PostgreSQL 不会改变此行为，无需向数据库手动添加公钥。
 
 !!! warning "没有 Pod 级授权"
     当前 SSH Server 会认证用户名和已登记公钥，但尚未实现把该用户限制到特定 Pod 的授权检查。应将堡垒机访问视为受信任用户访问，不要把密钥登记描述为仅授予所选 Pod 的访问权限。

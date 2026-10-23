@@ -42,10 +42,9 @@ type Server struct {
 
 	// DB Client and Stores
 	// may be nil if DBConfigPath is not provided, should be checked before use
-	dbClient     *db.DB
-	rcStore      *db.RevokedCertificateStore
-	rcCache      *gocache.Cache
-	userKeyStore *db.SSHUserKeyStore
+	dbClient *db.DB
+	rcStore  *db.RevokedCertificateStore
+	rcCache  *gocache.Cache
 
 	// resource informers/listers/cache
 	podInformer cache.SharedIndexInformer
@@ -218,7 +217,6 @@ func (s *Server) initDatabase(ctx context.Context) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	s.rcStore = db.NewRevokedCertificateStore(s.dbClient.DB)
-	s.userKeyStore = db.NewSSHUserKeyStore(s.dbClient.DB)
 	return nil
 }
 

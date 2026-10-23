@@ -41,10 +41,12 @@ For built-in Ray-on-Kubernetes workloads, the Agent stores the Task's selected p
 After an administrator configures the Server SSH endpoint, use the command displayed by the console or copy the Worker-specific command from Job or Node details. A typical Worker command is:
 
 ```bash
-ssh -J <bastion-host>:<port> root@<worker-name>
+ssh -J <registered-user>@<bastion-host>:<port> root@<worker-name>
 ```
 
 The outer SSH username must match the username attached to the registered key. The target container must provide its SSH service and accept the selected key.
+
+The "Public Key Name" in the SSH key list is the registered SSH username, which may differ from your console login. Gateway and Server use the `rlark-ssh-keys` Secret in the same management namespace to store and verify public keys. Enabling PostgreSQL does not change this behavior; no manual database entry is required.
 
 !!! warning "No Pod-level authorization"
     The current SSH server authenticates a username and registered public key, but it does not implement authorization that limits that user to particular Pods. Treat bastion access as trusted-user access; do not describe key registration as granting access to selected Pods only.
