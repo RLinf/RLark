@@ -23,9 +23,11 @@ package v1alpha1
 // ClusterSpec declares the durable operational state of a data-plane cluster.
 type ClusterSpecApplyConfiguration struct {
 	// AgentNamespace is the management-plane namespace that contains the agent heartbeat Lease and Node CRs.
-	AgentNamespace *string `json:"agentNamespace,omitempty"`
-	Cordoned       *bool   `json:"cordoned,omitempty"`
-	Draining       *bool   `json:"draining,omitempty"`
+	AgentNamespace        *string `json:"agentNamespace,omitempty"`
+	Cordoned              *bool   `json:"cordoned,omitempty"`
+	Draining              *bool   `json:"draining,omitempty"`
+	Delisted              *bool   `json:"delisted,omitempty"`
+	DrainPreviousCordoned *bool   `json:"drainPreviousCordoned,omitempty"`
 }
 
 // ClusterSpecApplyConfiguration constructs a declarative configuration of the ClusterSpec type for use with
@@ -55,5 +57,21 @@ func (b *ClusterSpecApplyConfiguration) WithCordoned(value bool) *ClusterSpecApp
 // If called multiple times, the Draining field is set to the value of the last call.
 func (b *ClusterSpecApplyConfiguration) WithDraining(value bool) *ClusterSpecApplyConfiguration {
 	b.Draining = &value
+	return b
+}
+
+// WithDelisted sets the Delisted field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Delisted field is set to the value of the last call.
+func (b *ClusterSpecApplyConfiguration) WithDelisted(value bool) *ClusterSpecApplyConfiguration {
+	b.Delisted = &value
+	return b
+}
+
+// WithDrainPreviousCordoned sets the DrainPreviousCordoned field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DrainPreviousCordoned field is set to the value of the last call.
+func (b *ClusterSpecApplyConfiguration) WithDrainPreviousCordoned(value bool) *ClusterSpecApplyConfiguration {
+	b.DrainPreviousCordoned = &value
 	return b
 }

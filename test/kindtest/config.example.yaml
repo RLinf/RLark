@@ -1,0 +1,64 @@
+# ---------------------------------------------------------------------------
+# kindtest 运行配置【模板】。
+#
+# 复制为 config.yaml 后，改成你自己的运行环境；config.yaml 不入库（见 .gitignore）。
+# 本文件只放“环境事实”，“测什么”一律写进 tests/*.py。
+# tests.dir / report.dir / manifests.dir 相对本文件解析，也接受绝对路径。
+# ---------------------------------------------------------------------------
+
+run:
+  id: kt-0001                 # 对象名前缀 + rlark.io/test-run 标签值，每轮唯一
+  label: rlark.io/test-run
+  domain: default
+  theme: kindtest
+  title: kindtest 回归结果
+
+clusters:
+  control:
+    name: control             # 控制集群名（报告与节点查询用）
+    kubeconfig: /path/to/control/kubeconfig
+    kcp: /path/to/control/kcp.kubeconfig
+    namespace: rlark-system
+  data:
+    a:
+      name: worker-a          # 数据集群名
+      clusterId: rlark-data-a # 管理面命名空间
+      kubeconfig: /path/to/worker-a/kubeconfig
+    b:
+      name: worker-b
+      clusterId: rlark-data-b
+      kubeconfig: /path/to/worker-b/kubeconfig
+
+versions:                     # 多版本 / 在途升级：报告基线/目标也从这里派生
+  initial: target             # 运行开始时框架先部署这个版本（definitions 里的代号）
+  definitions:                # 代号 -> {git ref, 命名镜像}；测例用 t.upgrade(代号) 切换
+    base:                     # 名为 base/baseline 的版本用作报告的“基线”
+      ref: <base-sha>
+      images: {rlark: rlark:baseline, ui: rlark-ui:baseline}
+    target:                   # 名为 target（或 initial）的版本用作报告的“目标”
+      ref: <target-sha>
+      images: {rlark: rlark:target, ui: rlark-ui:target}
+  rollout:                    # 切换版本时滚动的负载；缺省则只声明版本、不实际切换
+    control:                  # 控制集群（rlark-control）内的负载
+      - {kind: deploy, name: rlark-controller-manager, container: rlark-controller-manager, slot: rlark}
+      - {kind: deploy, name: rlark-gateway, container: rlark-gateway, slot: rlark}
+      - {kind: deploy, name: rlark-server, container: rlark-server, slot: rlark}
+      - {kind: deploy, name: rlark-ui, container: rlark-ui, slot: ui}
+    data:                     # 每个数据集群都要滚动的负载
+      - {kind: deploy, name: rlark-agent, container: rlark-agent, slot: rlark, args: ["--image="]}
+      - {kind: ds, name: rlark-agent-node, container: rlark-agent-node, slot: rlark}
+
+images:
+  task: task:test             # 场景工作负载镜像
+  base: []                    # 可选：离线基础镜像预检列表（ENV-07 使用）
+
+placement:                    # 可选：样例清单的节点选择器（{{nodeA}}/{{nodeB}}/{{nodeB2}}）
+  a: <node-for-head>
+  b: <node-for-worker1>
+  b2: <node-for-worker2>
+
+report:
+  dir: reports                # 相对本文件；也可写绝对路径
+
+tests:
+  dir: tests                  # 相对本文件；也可写绝对路径

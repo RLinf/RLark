@@ -207,16 +207,14 @@ export function DomainsPage({
         />
       </div>
       {showCreate && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(e) =>
-            e.target === e.currentTarget && setShowCreate(false)
-          }
-        >
+        // 表单内容无法恢复，遮罩点击不关闭弹层；关闭入口为右上角按钮和取消按钮。
+        <div className="modal-backdrop">
           <div className="modal" style={{ maxWidth: 480 }}>
             <div className="modal-head">
               <div>
-                <span className="eyebrow">NEW DOMAIN</span>
+                <span className="eyebrow">
+                  {zh ? "新建网络域" : "NEW DOMAIN"}
+                </span>
                 <h2>{zh ? "创建网络域" : "Create Domain"}</h2>
               </div>
               <button

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   findSSHKeyDuplicate,
   groupSSHUserKeys,
+  partitionSelectableSSHPublicKeys,
   resolveSSHKeyOwners,
   splitSSHPublicKeys,
 } from "../dist/test/utils/sshKeys.js";
@@ -69,6 +70,36 @@ test("keeps injected keys visible after their registered owner is removed", () =
   assert.deepEqual(resolveSSHKeyOwners(aliceKey, []), [
     { publicKey: aliceKey, owners: [] },
   ]);
+});
+
+test("drops cloned public keys whose owner record was deleted", () => {
+  const knownKeys = [
+    { index: 0, user: "bob", public_key: bobKey, added_at: "" },
+  ];
+
+  assert.deepEqual(
+    partitionSelectableSSHPublicKeys([aliceKey, bobKey], knownKeys),
+    { known: [bobKey], orphaned: [aliceKey] },
+  );
+});
+
+test("keeps every cloned public key that is still registered", () => {
+  const knownKeys = [
+    { index: 0, user: "alice", public_key: aliceKey, added_at: "" },
+    { index: 0, user: "bob", public_key: bobKey, added_at: "" },
+  ];
+
+  assert.deepEqual(
+    partitionSelectableSSHPublicKeys([aliceKey, bobKey], knownKeys),
+    { known: [aliceKey, bobKey], orphaned: [] },
+  );
+});
+
+test("drops every cloned public key when the registry is empty", () => {
+  assert.deepEqual(partitionSelectableSSHPublicKeys([aliceKey], []), {
+    known: [],
+    orphaned: [aliceKey],
+  });
 });
 
 test("preserves every selected SSH public key in the submitted Job", () => {

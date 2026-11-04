@@ -124,7 +124,7 @@
   padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: var(--surface, #fff);
+  background: var(--panel);
   color: var(--blue);
   font-size: 12px;
   font-weight: 700;
@@ -171,8 +171,8 @@
   padding: 0 9px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
+  background: var(--panel);
+  color: var(--ink);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -230,8 +230,8 @@
   min-width: 140px;
   padding: 4px;
   border-radius: 10px;
-  background: var(--surface, #fff);
-  border: 1px solid var(--border, #e5e5ec);
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
   display: flex;
   flex-direction: column;
@@ -247,13 +247,13 @@
   background: transparent;
   border-radius: 6px;
   font-size: 13px;
-  color: var(--text, #1a1a2e);
+  color: var(--ink);
   cursor: pointer;
   transition: background 0.12s;
 }
 
 .action-dropdown-item:hover:not(:disabled) {
-  background: var(--hover, #f5f5fa);
+  background: var(--hover);
 }
 
 .action-dropdown-item:disabled {
@@ -262,7 +262,15 @@
 }
 
 .action-dropdown-item.danger {
-  color: var(--red, #cf3f61);
+  color: var(--red);
+}
+
+.action-dropdown-item.danger:hover:not(:disabled) {
+  background: rgba(239, 90, 122, 0.08);
+}
+
+.theme-dark .action-dropdown-item.danger:hover:not(:disabled) {
+  background: rgba(239, 90, 122, 0.16);
 }
 
 .clickable-row {
@@ -270,7 +278,7 @@
 }
 
 .clickable-row:hover {
-  background: var(--surface-hover, rgba(0, 0, 0, 0.03));
+  background: var(--hover);
 }
 
 .pagination-bar {

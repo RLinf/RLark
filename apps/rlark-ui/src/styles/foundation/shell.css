@@ -34,6 +34,7 @@
   --shadow-soft: 0 8px 24px rgba(28, 39, 58, 0.055);
   --app-bg: #f4f6f9;
   --hover: #f5f0fe;
+  --blue-bg: #efe9fd;
 }
 
 * {
@@ -556,6 +557,42 @@ button {
   width: 30px;
   height: 30px;
   border-radius: 10px;
+}
+
+/* 复制成功反馈：图标切换为对勾的同时给出一次短暂的高亮脉冲，
+   让用户在不移动视线的情况下确认复制已经完成。 */
+@keyframes icon-button-copy-pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(50, 201, 141, 0.45);
+  }
+  45% {
+    transform: scale(1.12);
+    box-shadow: 0 0 0 6px rgba(50, 201, 141, 0);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(50, 201, 141, 0);
+  }
+}
+
+.icon-button.copy-confirmed {
+  border-color: #32c98d;
+  color: #1f9d6d;
+  background: #e8f9f1;
+  animation: icon-button-copy-pulse 0.42s ease-out;
+}
+
+.theme-dark .icon-button.copy-confirmed {
+  border-color: #2fa877;
+  color: #5fe0ac;
+  background: #11291f;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-button.copy-confirmed {
+    animation: none;
+  }
 }
 
 .primary-button {
@@ -1285,7 +1322,10 @@ button {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s;
-  z-index: 999;
+  /* 该 tooltip 通过 portal 挂到 app shell 并用 fixed 定位，必须叠在 sticky 的
+     .topbar 之上，否则靠近页面顶部的徽章提示会被顶栏遮挡；同时保持在
+     弹窗遮罩之下。 */
+  z-index: 1260;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1416,6 +1456,14 @@ button {
 .status-info-tooltip .event-entry .event-chip.event-normal {
   background: #edf8f2;
   color: #2f8a60;
+}
+
+/* 已被后续进展取代的历史事件（如绑定节点前的 FailedScheduling）：保留可
+   排查性，但用中性灰 + 删除线弱化，避免被误读为当前阻塞原因。 */
+.status-info-tooltip .event-entry .event-chip.event-resolved {
+  background: #f1f3f6;
+  color: #8b95a5;
+  text-decoration: line-through;
 }
 
 .theme-dark .status-info {

@@ -1,5 +1,5 @@
-import type { Job, JobTag, JobType, Phase } from "../data";
-import type { CRDJob, CRDJobTask, CRDWorkflow } from "../crdModels";
+import type { Job, JobTag, JobType, MountType, Phase } from "../data";
+import type { CRDJob, CRDJobTask, CRDVolume, CRDWorkflow } from "../crdModels";
 
 // 生成稳定的 tag id：用 key:value 组合哈希，保证同一 CRD 多次转换得到相同 id。
 function tagId(key: string, value: string): string {
@@ -17,6 +17,100 @@ function tagId(key: string, value: string): string {
 function storageGi(quantity?: string | number): number {
   const match = String(quantity ?? "").match(/^(\d+)(?:Gi)?$/);
   return match ? Number(match[1]) : 10;
+}
+
+type JobMount = {
+  type: MountType;
+  objectStorage: string;
+  mountPath: string;
+  hostPath: string;
+  pvcSizeGb: number;
+  rawVolume?: CRDVolume;
+};
+
+// 把 Pod 模板里的一个 volume 映射成表单可消费的挂载项。
+// 表单只能编辑 hostPath 与 ephemeral/PVC 两类卷；其余卷源（emptyDir、configMap、
+// secret、projected 等）标记为 opaque 并原样保留 rawVolume，使"复制任务"不会把它们
+// 降级成空的主机目录——例如 /dev/shm 的 emptyDir{medium:Memory} 必须保持内存 tmpfs。
+export function toJobMount(
+  vol: CRDVolume | undefined,
+  mountPath: string,
+): JobMount {
+  if (vol?.ephemeral) {
+    const spec = vol.ephemeral.volumeClaimTemplate?.spec;
+    return {
+      type: "storage",
+      objectStorage: spec?.storageClassName ?? "",
+      mountPath,
+      hostPath: "",
+      pvcSizeGb: storageGi(spec?.resources?.requests?.storage),
+    };
+  }
+  if (vol?.persistentVolumeClaim) {
+    return {
+      type: "storage",
+      objectStorage: vol.persistentVolumeClaim.claimName,
+      mountPath,
+      hostPath: "",
+      pvcSizeGb: 10,
+    };
+  }
+  if (vol?.hostPath) {
+    return {
+      type: "host",
+      objectStorage: "",
+      mountPath,
+      hostPath: vol.hostPath.path,
+      pvcSizeGb: 10,
+    };
+  }
+  if (vol) {
+    return {
+      type: "opaque",
+      objectStorage: "",
+      mountPath,
+      hostPath: "",
+      pvcSizeGb: 10,
+      rawVolume: vol,
+    };
+  }
+  // volumeMount 找不到对应的 volume：按空主机目录展示，提示用户补全。
+  return {
+    type: "host",
+    objectStorage: "",
+    mountPath,
+    hostPath: "",
+    pvcSizeGb: 10,
+  };
+}
+
+// 把表单无法编辑的卷源摘要成一行只读文案，例如 "emptyDir (Memory, 32Gi)"。
+export function describeVolumeSource(vol?: CRDVolume): string {
+  if (!vol) return "";
+  const entry = Object.entries(vol).find(([key]) => key !== "name");
+  if (!entry) return "";
+  const [kind, source] = entry;
+  if (kind === "emptyDir") {
+    const empty = source as { medium?: string; sizeLimit?: string | number };
+    const detail = [empty?.medium, empty?.sizeLimit].filter(Boolean).join(", ");
+    return detail ? `emptyDir (${detail})` : "emptyDir";
+  }
+  const named = source as { name?: string; secretName?: string };
+  const name = named?.name ?? named?.secretName;
+  return name ? `${kind} (${name})` : kind;
+}
+
+function taskMounts(task: CRDJobTask | undefined): JobMount[] {
+  const container = task?.workload.template?.spec?.containers?.find(
+    (item) => item.name === "main",
+  );
+  const volumes = task?.workload.template?.spec?.volumes ?? [];
+  return (container?.volumeMounts ?? []).map((vm) =>
+    toJobMount(
+      volumes.find((v) => v.name === vm.name),
+      vm.mountPath,
+    ),
+  );
 }
 
 export function crdToJob(crd: CRDJob): Job {
@@ -45,8 +139,10 @@ export function crdToJob(crd: CRDJob): Job {
     task.name ??
     "";
   const roles = tasks.map(taskRoleName);
-  const roleCount = new Set(tasks.map((task) => task.role).filter(Boolean))
-    .size;
+  // 角色数量必须与详情页和任务编辑器使用的角色名一致。`task.role` 只是用于分组
+  // 展示的粗粒度分类（Actor/Rollout/Env），多个业务角色会被折叠成同一个取值，
+  // 据此计数会少报角色数。
+  const roleCount = new Set(roles.filter(Boolean)).size;
   const displayName =
     crd.metadata?.annotations?.["rlark.io/display-name"] ??
     crd.metadata?.labels?.["rlark.io/display-name"] ??
@@ -70,40 +166,11 @@ export function crdToJob(crd: CRDJob): Job {
           key: e.name,
           value: e.value ?? "",
         })) ?? [];
-    const taskMounts = (c?.volumeMounts ?? []).map((vm) => {
-      const vol = t.workload.template?.spec?.volumes?.find(
-        (v) => v.name === vm.name,
-      );
-      if (vol?.ephemeral) {
-        const spec = vol.ephemeral.volumeClaimTemplate?.spec;
-        return {
-          type: "storage" as const,
-          objectStorage: spec?.storageClassName ?? "",
-          mountPath: vm.mountPath,
-          hostPath: "",
-          pvcSizeGb: storageGi(spec?.resources?.requests?.storage),
-        };
-      }
-      if (vol?.persistentVolumeClaim) {
-        return {
-          type: "storage" as const,
-          objectStorage: vol.persistentVolumeClaim.claimName,
-          mountPath: vm.mountPath,
-          hostPath: "",
-          pvcSizeGb: 10,
-        };
-      }
-      const hostPath = vol?.hostPath?.path ?? "";
-      return {
-        type: "host" as const,
-        objectStorage: "",
-        mountPath: vm.mountPath,
-        hostPath,
-        pvcSizeGb: 10,
-      };
-    });
+    const taskMountList = taskMounts(t);
     return {
       role: taskRoleName(t),
+      // Job CRD 的 task 不携带集群标识，集群由 CreateJob 页面按 nodeSelector
+      // 反查节点所属 namespace 推断，这里只能留空。
       cluster: "",
       nodeSelector: nsStr,
       replicas: carrierReplicas(t),
@@ -114,7 +181,7 @@ export function crdToJob(crd: CRDJob): Job {
       image: c?.image ?? "",
       prepareScript: rayScript(t, "prepare"),
       env: taskEnv,
-      mounts: taskMounts,
+      mounts: taskMountList,
     };
   });
   const env =
@@ -124,38 +191,7 @@ export function crdToJob(crd: CRDJob): Job {
         key: e.name,
         value: e.value ?? "",
       })) ?? [];
-  const mounts = (container?.volumeMounts ?? []).map((vm) => {
-    const vol = tasks[0]?.workload.template?.spec?.volumes?.find(
-      (v) => v.name === vm.name,
-    );
-    if (vol?.ephemeral) {
-      const spec = vol.ephemeral.volumeClaimTemplate?.spec;
-      return {
-        type: "storage" as const,
-        objectStorage: spec?.storageClassName ?? "",
-        mountPath: vm.mountPath,
-        hostPath: "",
-        pvcSizeGb: storageGi(spec?.resources?.requests?.storage),
-      };
-    }
-    if (vol?.persistentVolumeClaim) {
-      return {
-        type: "storage" as const,
-        objectStorage: vol.persistentVolumeClaim.claimName,
-        mountPath: vm.mountPath,
-        hostPath: "",
-        pvcSizeGb: 10,
-      };
-    }
-    const hostPath = vol?.hostPath?.path ?? "";
-    return {
-      type: "host" as const,
-      objectStorage: "",
-      mountPath: vm.mountPath,
-      hostPath,
-      pvcSizeGb: 10,
-    };
-  });
+  const mounts = taskMounts(tasks[0]);
   return {
     id: crd.metadata?.name ?? "",
     name: crd.metadata?.name ?? "",

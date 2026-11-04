@@ -159,6 +159,10 @@ func TestRegisteredRoutePermissions(t *testing.T) {
 		{name: "shared system config read", method: http.MethodGet, path: "/api/v1/system-config", user: http.StatusOK, admin: http.StatusOK},
 		{name: "admin system config write", method: http.MethodPut, path: "/api/v1/system-config", user: http.StatusForbidden, admin: http.StatusBadRequest},
 		{name: "shared ssh keys", method: http.MethodGet, path: "/api/v1/ssh-user-keys", user: http.StatusOK, admin: http.StatusOK},
+		{name: "shared storage provider catalog", method: http.MethodGet, path: "/api/v1/storage/storageclass/provider", user: http.StatusOK, admin: http.StatusOK},
+		{name: "shared storage class create", method: http.MethodPost, path: "/api/v1/storage/storageclass", user: http.StatusBadRequest, admin: http.StatusBadRequest},
+		{name: "shared storage class update", method: http.MethodPut, path: "/api/v1/storage/storageclass/test", user: http.StatusBadRequest, admin: http.StatusBadRequest},
+		{name: "shared storage class delete", method: http.MethodDelete, path: "/api/v1/storage/storageclass/test", user: http.StatusNotFound, admin: http.StatusNotFound},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

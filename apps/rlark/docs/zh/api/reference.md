@@ -94,11 +94,11 @@ Gateway 虽注册了 `POST /api/v1/certificates/revoke`，但该接口尚未实�
 | `GET, POST` | `/api/v1/storage/storageclass` |
 | `PUT, DELETE` | `/api/v1/storage/storageclass/{name}` |
 | `GET` | `/api/v1/storage/storageclass/provider` |
-| `GET` | `/api/v1/storage/storageclass/{name}/{cluster}/list` |
-| `POST` | `/api/v1/storage/storageclass/{name}/{cluster}/upload` |
-| `GET, DELETE` | `/api/v1/storage/storageclass/{name}/{cluster}/object/{key}` |
+| `GET` | `/api/v1/storage/storageclass/{name}/list` |
+| `POST` | `/api/v1/storage/storageclass/{name}/upload` |
+| `GET, DELETE` | `/api/v1/storage/storageclass/{name}/object/{key}` |
 
-StorageClass 接口管理控制面声明。Replication 和 Delivery 控制器会将生成的 rclone CSI 资源异步分发到已配置的目标集群；列表返回的是已管理声明，而非实时查询 Agent 的结果。
+StorageClass 接口管理控制面声明。Replication 和 Delivery 控制器会将生成的 rclone CSI 资源异步分发到已配置的目标集群；列表返回的是已管理声明，而非实时查询 Agent 的结果。文件路由会直接访问声明的存储桶。
 
 ## Addon
 

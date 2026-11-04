@@ -13,28 +13,38 @@ import {
 } from "../utils/terminalKeyboard";
 import "@xterm/xterm/css/xterm.css";
 import { terminalApi } from "../backend";
+import type { Lang } from "../i18n";
 
-const workerStatusLabels: Record<string, string> = {
-  Running: "运行中",
-  Pending: "等待中",
-  Succeeded: "已完成",
-  Failed: "失败",
-  Stopped: "已停止",
-  Online: "在线",
-  Offline: "离线",
+const workerStatusLabels: Record<string, { zh: string; en: string }> = {
+  Running: { zh: "运行中", en: "Running" },
+  Pending: { zh: "等待中", en: "Pending" },
+  Succeeded: { zh: "已完成", en: "Succeeded" },
+  Failed: { zh: "失败", en: "Failed" },
+  Stopped: { zh: "已停止", en: "Stopped" },
+  Online: { zh: "在线", en: "Online" },
+  Offline: { zh: "离线", en: "Offline" },
 };
+
+function workerStatusLabel(status: string, zh: boolean): string {
+  const label = workerStatusLabels[status];
+  if (!label) return status;
+  return zh ? label.zh : label.en;
+}
 
 export function TerminalPage({
   workerCRName,
   workerName,
   jobName,
   workerStatus,
+  lang,
 }: {
   workerCRName: string;
   workerName: string;
   jobName: string;
   workerStatus: string;
+  lang: Lang;
 }) {
+  const zh = lang === "zh";
   const termRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const termRefInner = useRef<Terminal | null>(null);
@@ -61,7 +71,9 @@ export function TerminalPage({
     term.focus();
     termRefInner.current = term;
 
-    term.writeln(`Connecting to ${workerName} ...`);
+    term.writeln(
+      zh ? `正在连接 ${workerName} ...` : `Connecting to ${workerName} ...`,
+    );
 
     const ws = terminalApi.createSocket(workerCRName);
     wsRef.current = ws;
@@ -87,7 +99,11 @@ export function TerminalPage({
 
     ws.onopen = () => {
       setConnectionState("connected");
-      term.writeln("\r\nConnected. Starting shell ...\r\n");
+      term.writeln(
+        zh
+          ? "\r\n已连接，正在启动 Shell ...\r\n"
+          : "\r\nConnected. Starting shell ...\r\n",
+      );
       sendResize();
     };
     ws.onmessage = (e) => {
@@ -118,7 +134,9 @@ export function TerminalPage({
             downloadChunks = [];
             downloadName = msg.name || "download";
             setTransferStatus(
-              `Downloading ${downloadName} (${msg.size || 0} bytes)...`,
+              zh
+                ? `正在下载 ${downloadName}（${msg.size || 0} 字节）...`
+                : `Downloading ${downloadName} (${msg.size || 0} bytes)...`,
             );
             return;
           }
@@ -136,17 +154,28 @@ export function TerminalPage({
               downloading = false;
               downloadChunks = [];
               setTransferStatus("");
-              term.writeln(`\r\n\x1b[32mDownloaded ${downloadName}.\x1b[0m`);
+              term.writeln(
+                zh
+                  ? `\r\n\x1b[32m已下载 ${downloadName}。\x1b[0m`
+                  : `\r\n\x1b[32mDownloaded ${downloadName}.\x1b[0m`,
+              );
             }
             return;
           }
           if (msg.type === "file-transfer-done") {
             setTransferStatus("");
             if (msg.success) {
-              term.writeln("\r\n\x1b[32mFile transfer complete.\x1b[0m");
-            } else {
               term.writeln(
-                `\r\n\x1b[31mFile transfer failed: ${msg.error || "unknown"}\x1b[0m`,
+                zh
+                  ? "\r\n\x1b[32m文件传输完成。\x1b[0m"
+                  : "\r\n\x1b[32mFile transfer complete.\x1b[0m",
+              );
+            } else {
+              const detail = msg.error || (zh ? "未知错误" : "unknown");
+              term.writeln(
+                zh
+                  ? `\r\n\x1b[31m文件传输失败：${detail}\x1b[0m`
+                  : `\r\n\x1b[31mFile transfer failed: ${detail}\x1b[0m`,
               );
             }
             return;
@@ -180,14 +209,22 @@ export function TerminalPage({
         terminalProcessExitCode ?? getTerminalCloseExitCode(event.reason);
       if (exitCode !== null) {
         term.writeln(
-          `\r\n\x1b[33mSession ended (exit code ${exitCode}).\x1b[0m`,
+          zh
+            ? `\r\n\x1b[33m会话已结束（退出码 ${exitCode}）。\x1b[0m`
+            : `\r\n\x1b[33mSession ended (exit code ${exitCode}).\x1b[0m`,
         );
       } else if (event.code === 1000 || legacyProxyCloseReceived) {
-        term.writeln("\r\n\x1b[33mSession ended.\x1b[0m");
+        term.writeln(
+          zh
+            ? "\r\n\x1b[33m会话已结束。\x1b[0m"
+            : "\r\n\x1b[33mSession ended.\x1b[0m",
+        );
       } else {
         const reason = event.reason ? `: ${event.reason}` : "";
         term.writeln(
-          `\r\n\x1b[31mConnection closed unexpectedly (${event.code})${reason}.\x1b[0m`,
+          zh
+            ? `\r\n\x1b[31m连接意外中断（${event.code}）${reason}。\x1b[0m`
+            : `\r\n\x1b[31mConnection closed unexpectedly (${event.code})${reason}.\x1b[0m`,
         );
       }
     };
@@ -223,7 +260,7 @@ export function TerminalPage({
       term.dispose();
       termRefInner.current = null;
     };
-  }, [workerCRName, workerName]);
+  }, [workerCRName, workerName, zh]);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -236,7 +273,9 @@ export function TerminalPage({
     const ws = wsRef.current;
     const destPath = `./${file.name}`;
     setTransferStatus(
-      `Uploading ${file.name} (${file.size} bytes) to ${destPath}...`,
+      zh
+        ? `正在上传 ${file.name}（${file.size} 字节）到 ${destPath}...`
+        : `Uploading ${file.name} (${file.size} bytes) to ${destPath}...`,
     );
 
     ws.send(
@@ -282,7 +321,7 @@ export function TerminalPage({
     )
       return;
     wsRef.current.send(JSON.stringify({ type: "file-download", path: dlPath }));
-    setTransferStatus(`Requesting ${dlPath}...`);
+    setTransferStatus(zh ? `正在请求 ${dlPath}...` : `Requesting ${dlPath}...`);
     setShowDownloadInput(false);
     setDlPath("");
   };
@@ -303,34 +342,40 @@ export function TerminalPage({
                   <em
                     className={`terminal-worker-status ${workerStatus.toLowerCase()}`}
                   >
-                    {workerStatusLabels[workerStatus] ?? workerStatus}
+                    {workerStatusLabel(workerStatus, zh)}
                   </em>
                 )}
                 <i className={`terminal-status-dot ${connectionState}`} />
                 {connectionState === "connected"
-                  ? "已连接"
+                  ? zh
+                    ? "已连接"
+                    : "Connected"
                   : connectionState === "connecting"
-                    ? "连接中"
-                    : "连接已断开"}
+                    ? zh
+                      ? "连接中"
+                      : "Connecting"
+                    : zh
+                      ? "连接已断开"
+                      : "Disconnected"}
               </span>
             </div>
           </div>
           <div className="terminal-actions">
             <button
               className="terminal-action-button"
-              title="上传文件"
+              title={zh ? "上传文件" : "Upload file"}
               onClick={handleUploadClick}
             >
               <Upload size={16} />
-              <span>上传</span>
+              <span>{zh ? "上传" : "Upload"}</span>
             </button>
             <button
               className={`terminal-action-button ${showDownloadInput ? "active" : ""}`}
-              title="下载文件"
+              title={zh ? "下载文件" : "Download file"}
               onClick={() => setShowDownloadInput((v) => !v)}
             >
               <Download size={16} />
-              <span>下载</span>
+              <span>{zh ? "下载" : "Download"}</span>
             </button>
           </div>
         </header>
@@ -341,7 +386,11 @@ export function TerminalPage({
               value={dlPath}
               onChange={(e) => setDlPath(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleDownloadSubmit()}
-              placeholder="输入 Pod 内的文件路径，例如 /workspace/output.log"
+              placeholder={
+                zh
+                  ? "输入 Pod 内的文件路径，例如 /workspace/output.log"
+                  : "Enter a file path inside the Pod, e.g. /workspace/output.log"
+              }
               autoFocus
             />
             <button
@@ -349,7 +398,7 @@ export function TerminalPage({
               onClick={handleDownloadSubmit}
               disabled={!dlPath.trim()}
             >
-              下载
+              {zh ? "下载" : "Download"}
             </button>
           </div>
         )}

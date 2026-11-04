@@ -32,9 +32,10 @@
   color: var(--blue);
 }
 
+/* 只收窄左右内边距；垂直方向沿用表格默认的 middle，
+   否则标签会比同行的类型 / 状态列高出一截。 */
 .job-table-tag-cell {
   padding: 10px 12px;
-  vertical-align: top;
 }
 
 .job-tags-cell {
@@ -53,7 +54,7 @@
   font-weight: 500;
   background: transparent;
   color: var(--muted);
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--line-strong);
   border-radius: 3px;
   line-height: 1.5;
   white-space: nowrap;
@@ -72,8 +73,8 @@
   max-width: min(360px, calc(100vw - 24px));
   max-height: calc(100vh - 24px);
   padding: 10px;
-  background: var(--card-bg, #fff);
-  border: 1px solid #d1d5db;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
   box-shadow: 0 8px 20px rgb(0 0 0 / 12%);
 }
@@ -304,11 +305,17 @@
   padding: 3px 10px;
   font-size: 12px;
   font-weight: 500;
-  background: var(--blue-bg, #eef2ff);
-  color: var(--blue, #6366f1);
+  background: #eef2ff;
+  color: var(--blue);
   border: 1px solid rgba(99, 102, 241, 0.25);
   border-radius: 5px;
   line-height: 1.4;
+}
+
+/* 深色主题下浅紫底会在面板上形成高亮色块，改为同色系的半透明底。 */
+.theme-dark .job-tag-chip-inline {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.4);
 }
 
 .public-tags-editor-actions {

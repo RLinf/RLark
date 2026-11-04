@@ -520,7 +520,7 @@
 
 .node-worker-table-wrap .node-worker-table {
   width: 100%;
-  min-width: 1280px;
+  min-width: 860px;
   border-collapse: collapse;
 }
 
@@ -560,6 +560,15 @@
   overflow: hidden;
   color: var(--primary);
   text-overflow: ellipsis;
+}
+
+.node-worker-name {
+  display: block;
+  min-width: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .node-worker-empty {

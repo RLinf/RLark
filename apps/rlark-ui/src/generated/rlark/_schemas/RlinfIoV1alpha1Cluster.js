@@ -2,7 +2,7 @@
 
 import { formats } from "@kubernetes-models/validate";
 export const validate = validate2;
-const schema2 = {"type":"object","properties":{"apiVersion":{"$ref":"rgSv5V2hoWAdXQ_XErlwxUiy6phhz4ZEBCjtqeXtVec"},"kind":{"$ref":"KpP0Pr-LdgzYZe_Ch7AbCL6-S9umLrC7dsOL9rmrynU"},"metadata":{"$ref":"P3srTZpWadQH4s4N9KfJR0iCqydQo9YAz7xMB2qf0GQ"},"spec":{"$ref":"K6ju3c95K9dakJW2FdeROYd6DHeuFSxjmudg4NlnB24"},"status":{"$ref":"9AefQ5_3z-HVNG7_9qubG5OYd4JV9ucQKUu7a9cZYdI"}},"required":["apiVersion","kind"],"$id":"rlinf.io.v1alpha1.Cluster"};
+const schema2 = {"type":"object","properties":{"apiVersion":{"$ref":"rgSv5V2hoWAdXQ_XErlwxUiy6phhz4ZEBCjtqeXtVec"},"kind":{"$ref":"KpP0Pr-LdgzYZe_Ch7AbCL6-S9umLrC7dsOL9rmrynU"},"metadata":{"$ref":"P3srTZpWadQH4s4N9KfJR0iCqydQo9YAz7xMB2qf0GQ"},"spec":{"$ref":"YcnFzc_BZQ4f-07lAjG5Dtogv1bwg1MOG1ywYrQrnX0"},"status":{"$ref":"K1c4aJD38nzEc3PCSPTsrApfSSTO_42awjGvqNtX_wk"}},"required":["apiVersion","kind"],"$id":"rlinf.io.v1alpha1.Cluster"};
 const schema3 = {"type":"string","enum":["rlinf.io/v1alpha1"]};
 
 function validate3(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -86,14 +86,17 @@ validate7.errors = vErrors;
 return errors === 0;
 }
 
-const schema7 = {"properties":{"agentNamespace":{"$ref":"sLlNkWhANXZ15lvmcujppy1mXxqn6f-GaeQpWRYm_dw"},"cordoned":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"draining":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"}},"required":["agentNamespace"],"type":"object","nullable":true};
-const schema8 = {"type":"string"};
+const schema7 = {"properties":{"agentNamespace":{"$ref":"2tG51vkrD8fXpcnHZtqV2HvjVdK98owFTjt5N5f3XEo"},"cordoned":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"delisted":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"drainPreviousCordoned":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"},"draining":{"$ref":"CTX4WtafS9K1Gv7k2X1H0J3M9LziUVVRBMOR0rDDzTk"}},"required":["agentNamespace"],"type":"object","nullable":true};
+const schema8 = {"minLength":1,"type":"string"};
+import func0 from "@kubernetes-models/validate/runtime/ucs2length";
 
 function validate12(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
-if(typeof data !== "string"){
-const err0 = {instancePath,schemaPath:"#/type",keyword:"type",params:{type: "string"}};
+const _errs0 = errors;
+if(typeof data === "string"){
+if(func0(data) < 1){
+const err0 = {instancePath,schemaPath:"#/minLength",keyword:"minLength",params:{limit: 1}};
 if(vErrors === null){
 vErrors = [err0];
 }
@@ -102,7 +105,17 @@ vErrors.push(err0);
 }
 errors++;
 }
-const _errs0 = errors;
+}
+else {
+const err1 = {instancePath,schemaPath:"#/type",keyword:"type",params:{type: "string"}};
+if(vErrors === null){
+vErrors = [err1];
+}
+else {
+vErrors.push(err1);
+}
+errors++;
+}
 validate12.errors = vErrors;
 return errors === 0;
 }
@@ -177,10 +190,10 @@ else {
 }
 var valid0 = _errs3 === errors;
 }
-if(data.draining !== undefined){
-let data2 = data.draining;
+if(data.delisted !== undefined){
+let data2 = data.delisted;
 const _errs4 = errors;
-if(!(validate0(data2, {instancePath:instancePath+"/draining",parentData:data,parentDataProperty:"draining",rootData}))){
+if(!(validate0(data2, {instancePath:instancePath+"/delisted",parentData:data,parentDataProperty:"delisted",rootData}))){
 vErrors = vErrors === null ? validate0.errors : vErrors.concat(validate0.errors);
 errors = vErrors.length;
 }
@@ -188,18 +201,40 @@ else {
 }
 var valid0 = _errs4 === errors;
 }
+if(data.drainPreviousCordoned !== undefined){
+let data3 = data.drainPreviousCordoned;
+const _errs5 = errors;
+if(!(validate0(data3, {instancePath:instancePath+"/drainPreviousCordoned",parentData:data,parentDataProperty:"drainPreviousCordoned",rootData}))){
+vErrors = vErrors === null ? validate0.errors : vErrors.concat(validate0.errors);
+errors = vErrors.length;
+}
+else {
+}
+var valid0 = _errs5 === errors;
+}
+if(data.draining !== undefined){
+let data4 = data.draining;
+const _errs6 = errors;
+if(!(validate0(data4, {instancePath:instancePath+"/draining",parentData:data,parentDataProperty:"draining",rootData}))){
+vErrors = vErrors === null ? validate0.errors : vErrors.concat(validate0.errors);
+errors = vErrors.length;
+}
+else {
+}
+var valid0 = _errs6 === errors;
+}
 }
 validate11.errors = vErrors;
 return errors === 0;
 }
 
-const schema9 = {"properties":{"conditions":{"$ref":"hhAxL57cvApnLYfNWQbGuX0ymd4M4buVmG7H0q63I0w"},"lastHeartbeatTime":{"$ref":"YL2AaRx5mZZL3drs48WsIqN7ZQe66kWzKXDNrUwOgoc"},"onlineNodes":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"},"phase":{"$ref":"6ehijhkUptDG3qo5MwjI2AutUdnj63qHfu0si557JsY"},"totalNodes":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"}},"type":"object","nullable":true};
+const schema9 = {"properties":{"conditions":{"$ref":"hhAxL57cvApnLYfNWQbGuX0ymd4M4buVmG7H0q63I0w"},"lastHeartbeatTime":{"$ref":"YL2AaRx5mZZL3drs48WsIqN7ZQe66kWzKXDNrUwOgoc"},"onlineNodes":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"},"phase":{"$ref":"vMczpXMCCY20O_BYEB7ieLvm2vSjEYkG6jYjKiZfaEI"},"totalNodes":{"$ref":"j4SBnKFzNWrJQU4F8rp8qSB0IqehV1dh50NKzJhlTjs"}},"type":"object","nullable":true};
 const schema10 = {"items":{"$ref":"dZ13d79yfL0AfKGv8XJr0-7aalgpv7dwgkV5EU9HxwM"},"type":"array","nullable":true};
 const schema11 = {"properties":{"lastTransitionTime":{"$ref":"nWP098h5Flk6EOMa_OWYW4EnhyCrisyvgJPgk0WtC9c"},"message":{"$ref":"CG805GD3KzsipQt5EKLOQw9SjU_4PVFnnbOjDh0LzJQ"},"observedGeneration":{"$ref":"Tv0gqme9PlVaT-l831KRjUe4u9reG1m_llVaPqPtqUs"},"reason":{"$ref":"UPBfG4e9zcqG6mx3tN1LWinVzYKOFfIO2VnMgg6lAWI"},"status":{"$ref":"UcCRuQZyUlftnmEwuGDZcciwLAdzzRj4HOLofWAwyW8"},"type":{"$ref":"grctw_GwW6iDVZUzowft1rMz55_d64qiJ_wOfyk2Qoo"}},"required":["lastTransitionTime","message","reason","status","type"],"type":"object"};
 const schema12 = {"format":"date-time","type":"string"};
 const formats2 = formats["date-time"];
 
-function validate20(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate22(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -227,14 +262,13 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate20.errors = vErrors;
+validate22.errors = vErrors;
 return errors === 0;
 }
 
 const schema13 = {"maxLength":32768,"type":"string"};
-import func0 from "@kubernetes-models/validate/runtime/ucs2length";
 
-function validate22(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate24(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -260,14 +294,14 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate22.errors = vErrors;
+validate24.errors = vErrors;
 return errors === 0;
 }
 
 const schema14 = {"format":"int64","type":"integer","minimum":0,"nullable":true};
 const formats4 = formats.int64;
 
-function validate24(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate26(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(((typeof data == "number") && (!(data % 1) && !isNaN(data))) && (isFinite(data)))) && (data !== null)){
@@ -306,14 +340,14 @@ errors++;
 }
 if(typeof data === "string"){
 }
-validate24.errors = vErrors;
+validate26.errors = vErrors;
 return errors === 0;
 }
 
 const schema15 = {"maxLength":1024,"minLength":1,"pattern":"^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$","type":"string"};
 const pattern0 = new RegExp("^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$", "u");
 
-function validate26(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate28(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -359,13 +393,13 @@ vErrors.push(err3);
 }
 errors++;
 }
-validate26.errors = vErrors;
+validate28.errors = vErrors;
 return errors === 0;
 }
 
 const schema16 = {"enum":["True","False","Unknown"],"type":"string"};
 
-function validate28(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate30(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if(typeof data !== "string"){
@@ -390,14 +424,14 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate28.errors = vErrors;
+validate30.errors = vErrors;
 return errors === 0;
 }
 
 const schema17 = {"maxLength":316,"pattern":"^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$","type":"string"};
 const pattern1 = new RegExp("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$", "u");
 
-function validate30(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate32(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -433,12 +467,12 @@ vErrors.push(err2);
 }
 errors++;
 }
-validate30.errors = vErrors;
+validate32.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate19(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate21(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 const _errs0 = errors;
@@ -496,8 +530,8 @@ errors++;
 if(data.lastTransitionTime !== undefined){
 let data0 = data.lastTransitionTime;
 const _errs1 = errors;
-if(!(validate20(data0, {instancePath:instancePath+"/lastTransitionTime",parentData:data,parentDataProperty:"lastTransitionTime",rootData}))){
-vErrors = vErrors === null ? validate20.errors : vErrors.concat(validate20.errors);
+if(!(validate22(data0, {instancePath:instancePath+"/lastTransitionTime",parentData:data,parentDataProperty:"lastTransitionTime",rootData}))){
+vErrors = vErrors === null ? validate22.errors : vErrors.concat(validate22.errors);
 errors = vErrors.length;
 }
 else {
@@ -507,8 +541,8 @@ var valid0 = _errs1 === errors;
 if(data.message !== undefined){
 let data1 = data.message;
 const _errs2 = errors;
-if(!(validate22(data1, {instancePath:instancePath+"/message",parentData:data,parentDataProperty:"message",rootData}))){
-vErrors = vErrors === null ? validate22.errors : vErrors.concat(validate22.errors);
+if(!(validate24(data1, {instancePath:instancePath+"/message",parentData:data,parentDataProperty:"message",rootData}))){
+vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
 errors = vErrors.length;
 }
 else {
@@ -518,8 +552,8 @@ var valid0 = _errs2 === errors;
 if(data.observedGeneration !== undefined){
 let data2 = data.observedGeneration;
 const _errs3 = errors;
-if(!(validate24(data2, {instancePath:instancePath+"/observedGeneration",parentData:data,parentDataProperty:"observedGeneration",rootData}))){
-vErrors = vErrors === null ? validate24.errors : vErrors.concat(validate24.errors);
+if(!(validate26(data2, {instancePath:instancePath+"/observedGeneration",parentData:data,parentDataProperty:"observedGeneration",rootData}))){
+vErrors = vErrors === null ? validate26.errors : vErrors.concat(validate26.errors);
 errors = vErrors.length;
 }
 else {
@@ -529,8 +563,8 @@ var valid0 = _errs3 === errors;
 if(data.reason !== undefined){
 let data3 = data.reason;
 const _errs4 = errors;
-if(!(validate26(data3, {instancePath:instancePath+"/reason",parentData:data,parentDataProperty:"reason",rootData}))){
-vErrors = vErrors === null ? validate26.errors : vErrors.concat(validate26.errors);
+if(!(validate28(data3, {instancePath:instancePath+"/reason",parentData:data,parentDataProperty:"reason",rootData}))){
+vErrors = vErrors === null ? validate28.errors : vErrors.concat(validate28.errors);
 errors = vErrors.length;
 }
 else {
@@ -540,8 +574,8 @@ var valid0 = _errs4 === errors;
 if(data.status !== undefined){
 let data4 = data.status;
 const _errs5 = errors;
-if(!(validate28(data4, {instancePath:instancePath+"/status",parentData:data,parentDataProperty:"status",rootData}))){
-vErrors = vErrors === null ? validate28.errors : vErrors.concat(validate28.errors);
+if(!(validate30(data4, {instancePath:instancePath+"/status",parentData:data,parentDataProperty:"status",rootData}))){
+vErrors = vErrors === null ? validate30.errors : vErrors.concat(validate30.errors);
 errors = vErrors.length;
 }
 else {
@@ -551,8 +585,8 @@ var valid0 = _errs5 === errors;
 if(data.type !== undefined){
 let data5 = data.type;
 const _errs6 = errors;
-if(!(validate30(data5, {instancePath:instancePath+"/type",parentData:data,parentDataProperty:"type",rootData}))){
-vErrors = vErrors === null ? validate30.errors : vErrors.concat(validate30.errors);
+if(!(validate32(data5, {instancePath:instancePath+"/type",parentData:data,parentDataProperty:"type",rootData}))){
+vErrors = vErrors === null ? validate32.errors : vErrors.concat(validate32.errors);
 errors = vErrors.length;
 }
 else {
@@ -570,12 +604,12 @@ vErrors.push(err5);
 }
 errors++;
 }
-validate19.errors = vErrors;
+validate21.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate18(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate20(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(Array.isArray(data))) && (data !== null)){
@@ -596,8 +630,8 @@ const len0 = data.length;
 for(let i0=0; i0<len0; i0++){
 let data0 = data[i0];
 const _errs2 = errors;
-if(!(validate19(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
-vErrors = vErrors === null ? validate19.errors : vErrors.concat(validate19.errors);
+if(!(validate21(data0, {instancePath:instancePath+"/" + i0,parentData:data,parentDataProperty:i0,rootData}))){
+vErrors = vErrors === null ? validate21.errors : vErrors.concat(validate21.errors);
 errors = vErrors.length;
 }
 else {
@@ -608,13 +642,13 @@ valid1 = false;
 }
 }
 }
-validate18.errors = vErrors;
+validate20.errors = vErrors;
 return errors === 0;
 }
 
 const schema18 = {"format":"date-time","type":"string","nullable":true};
 
-function validate34(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate36(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((typeof data !== "string") && (data !== null)){
@@ -643,7 +677,7 @@ vErrors.push(err1);
 errors++;
 }
 }
-validate34.errors = vErrors;
+validate36.errors = vErrors;
 return errors === 0;
 }
 
@@ -683,9 +717,9 @@ validate1.errors = vErrors;
 return errors === 0;
 }
 
-const schema19 = {"enum":["Online","Offline","Downgraded","Cordoned","Draining"],"type":"string","nullable":true};
+const schema19 = {"enum":["Online","Offline","Downgraded","Cordoned","Draining","Delisted"],"type":"string","nullable":true};
 
-function validate37(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate39(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((typeof data !== "string") && (data !== null)){
@@ -701,7 +735,7 @@ errors++;
 const _errs0 = errors;
 const _errs1 = errors;
 const vSchema0 = schema19.enum;
-if(!(((((data === "Online") || (data === "Offline")) || (data === "Downgraded")) || (data === "Cordoned")) || (data === "Draining"))){
+if(!((((((data === "Online") || (data === "Offline")) || (data === "Downgraded")) || (data === "Cordoned")) || (data === "Draining")) || (data === "Delisted"))){
 const err1 = {instancePath,schemaPath:"#/enum",keyword:"enum",params:{allowedValues: schema19.enum}};
 if(vErrors === null){
 vErrors = [err1];
@@ -711,12 +745,12 @@ vErrors.push(err1);
 }
 errors++;
 }
-validate37.errors = vErrors;
+validate39.errors = vErrors;
 return errors === 0;
 }
 
 
-function validate17(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
+function validate19(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
 let errors = 0;
 if((!(data && typeof data == "object" && !Array.isArray(data))) && (data !== null)){
@@ -735,8 +769,8 @@ if(data && typeof data == "object" && !Array.isArray(data)){
 if(data.conditions !== undefined){
 let data0 = data.conditions;
 const _errs2 = errors;
-if(!(validate18(data0, {instancePath:instancePath+"/conditions",parentData:data,parentDataProperty:"conditions",rootData}))){
-vErrors = vErrors === null ? validate18.errors : vErrors.concat(validate18.errors);
+if(!(validate20(data0, {instancePath:instancePath+"/conditions",parentData:data,parentDataProperty:"conditions",rootData}))){
+vErrors = vErrors === null ? validate20.errors : vErrors.concat(validate20.errors);
 errors = vErrors.length;
 }
 else {
@@ -746,8 +780,8 @@ var valid0 = _errs2 === errors;
 if(data.lastHeartbeatTime !== undefined){
 let data1 = data.lastHeartbeatTime;
 const _errs3 = errors;
-if(!(validate34(data1, {instancePath:instancePath+"/lastHeartbeatTime",parentData:data,parentDataProperty:"lastHeartbeatTime",rootData}))){
-vErrors = vErrors === null ? validate34.errors : vErrors.concat(validate34.errors);
+if(!(validate36(data1, {instancePath:instancePath+"/lastHeartbeatTime",parentData:data,parentDataProperty:"lastHeartbeatTime",rootData}))){
+vErrors = vErrors === null ? validate36.errors : vErrors.concat(validate36.errors);
 errors = vErrors.length;
 }
 else {
@@ -768,8 +802,8 @@ var valid0 = _errs4 === errors;
 if(data.phase !== undefined){
 let data3 = data.phase;
 const _errs5 = errors;
-if(!(validate37(data3, {instancePath:instancePath+"/phase",parentData:data,parentDataProperty:"phase",rootData}))){
-vErrors = vErrors === null ? validate37.errors : vErrors.concat(validate37.errors);
+if(!(validate39(data3, {instancePath:instancePath+"/phase",parentData:data,parentDataProperty:"phase",rootData}))){
+vErrors = vErrors === null ? validate39.errors : vErrors.concat(validate39.errors);
 errors = vErrors.length;
 }
 else {
@@ -788,7 +822,7 @@ else {
 var valid0 = _errs6 === errors;
 }
 }
-validate17.errors = vErrors;
+validate19.errors = vErrors;
 return errors === 0;
 }
 
@@ -866,8 +900,8 @@ var valid0 = _errs4 === errors;
 if(data.status !== undefined){
 let data4 = data.status;
 const _errs5 = errors;
-if(!(validate17(data4, {instancePath:instancePath+"/status",parentData:data,parentDataProperty:"status",rootData}))){
-vErrors = vErrors === null ? validate17.errors : vErrors.concat(validate17.errors);
+if(!(validate19(data4, {instancePath:instancePath+"/status",parentData:data,parentDataProperty:"status",rootData}))){
+vErrors = vErrors === null ? validate19.errors : vErrors.concat(validate19.errors);
 errors = vErrors.length;
 }
 else {

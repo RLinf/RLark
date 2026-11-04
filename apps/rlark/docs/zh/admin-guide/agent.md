@@ -130,17 +130,19 @@ kubectl get cluster <cluster-id> -o jsonpath='{.spec.agentNamespace}{"\n"}'
 
 完整参数列表参见[配置项参考](../reference/configuration.md#rlark-agent)。
 
-Runtime/Workload Coordinator 现在是 Deployment、DaemonSet 和 StatefulSet Task 的生产写入者，负责执行有序 Runtime 操作。Runtime push controller 只入队调谐 hint；通过验证的定向观测和 Task Status 更新均由 pull controller 执行。
+Runtime/Workload Coordinator 现在是 Deployment 和 StatefulSet Task 的生产写入者，负责执行有序 Runtime 操作。Runtime push controller 只入队调谐 hint；通过验证的定向观测和 Task Status 更新均由 pull controller 执行。
+
+Ray-on-Kubernetes Workload Adapter 支持 Deployment 和 StatefulSet carrier。
 
 Cluster Agent 启动后会立即执行一次修复扫描，随后按配置的抖动周期重复。每轮分页扫描分配给同一 Host 或符合该 Host 条件的 management Task，预算上限为 10,000 个 Task，并产生完整调谐 hint；扫描本身不直接修改 Task 或 Runtime 对象。Management API 的临时 List 失败会记录日志并在后续轮次重试，不会停止 Agent；trigger bridge 背压会按轮汇总，但不会阻止扫描继续访问后续 Task 和分页。禁用扫描会移除 watch event 丢失后的这一恢复路径，只有在其他运维机制能够保证最终收敛时才应这样做。
 
-升级 Agent 时，Coordinator 可以识别旧 Task controller 创建、但尚未携带 Task UID Annotation 的主工作负载。它只会接管名称相同且现有元数据与 Task 不冲突的 Deployment、DaemonSet 或 StatefulSet；该兼容规则不会扩展到任意辅助资源。首次接管以及 workload 仍处于该 legacy adopted generation 时的后续调谐只更新 identity 和 revision metadata，保留运行中的 Pod 模板，避免升级本身触发 rollout。后续 Task generation 将 workload 建立为 canonical-owned 后，即使当前 Task generation 未变化，完整调谐也会修复 Agent 管理的 replicas 和 Pod-template 字段的带外漂移。
+升级 Agent 时，Coordinator 可以识别旧 Task controller 创建、但尚未携带 Task UID Annotation 的主工作负载。它只会接管名称相同且现有元数据与 Task 不冲突的 Deployment 或 StatefulSet；该兼容规则不会扩展到任意辅助资源。首次接管以及 workload 仍处于该 legacy adopted generation 时的后续调谐只更新 identity 和 revision metadata，保留运行中的 Pod 模板，避免升级本身触发 rollout。后续 Task generation 将 workload 建立为 canonical-owned 后，即使当前 Task generation 未变化，完整调谐也会修复 Agent 管理的 replicas 和 Pod-template 字段的带外漂移。
 
 不要通过修改 `spec.runtime.kind` 或 `spec.runtime.name` 迁移已经 claim 的 Task。Agent 会冻结已 claim Runtime：这些字段变化时保留旧 workload，不应用该 generation 中的其他 Spec 变化，并等待恢复原值，或者等待 Task 删除后重建。已 claim 且未删除的 Task 出现解码、校验或 implementation 注册失败时，也会保留 claim 和现有 workload，而不会执行 cleanup。删除仍按已 claim Runtime 和 Task identity 执行 cleanup。升级期间，对于带 cleanup finalizer 但没有 claimant annotation 的 legacy Task，只有 Task 正在删除或者当前 Agent 能够执行时才会接管；未删除且 selector 指向其他 Agent 的 Task 会保持不动。完整 ownership 契约参见 [Runtime、Workload 与 Environment 边界](../developer-guide/runtime-provider.md)。
 
-上层业务不应把修改已claim Kubernetes Task的`spec.workload.kind`作为常规工作流；更换carrier kind时应以新UID替换Task，或使用Job restart/replacement流程。如果直接修改仍然到达Agent，才会触发Deployment、DaemonSet和StatefulSet之间的窄化、可恢复兼容路径：Agent先清理并确认旧carrier及旧selector下所有`DeleteOnTaskCleanup`辅助对象均已消失，其中包括Ray head Service，同时保留共享Ray ConfigMap；引用的外部PVC不属于RLark ownership。随后切换claim中冻结的Workload selector，并在后续调谐创建新carrier。ownership冲突或证据不完整会阻止迁移。该fallback可能中断workload，既不是跨Runtime迁移，也不提供事务回滚；它用于避免资源泄漏和claim metadata失真，不能替代Task replacement。
+上层业务不应把修改已claim Kubernetes Task的`spec.workload.kind`作为常规工作流；更换carrier kind时应以新UID替换Task，或使用Job restart/replacement流程。如果直接修改仍然到达Agent，才会触发Deployment和StatefulSet之间的窄化、可恢复兼容路径：Agent先清理并确认旧carrier及旧selector下所有`DeleteOnTaskCleanup`辅助对象均已消失，其中包括Ray head Service，同时保留共享Ray ConfigMap；引用的外部PVC不属于RLark ownership。随后切换claim中冻结的Workload selector，并在后续调谐创建新carrier。ownership冲突或证据不完整会阻止迁移。该fallback可能中断workload，既不是跨Runtime迁移，也不提供事务回滚；它用于避免资源泄漏和claim metadata失真，不能替代Task replacement。
 
-Task 删除、停止和重启会保持等待，直到确认所有该 Task 独占且标记为 `DeleteOnTaskCleanup` 的对象均已消失。这包括主 Deployment、DaemonSet 或 StatefulSet，以及 Ray head Task 由UID标识的head Service。共享Ray启动ConfigMap会被保留；引用的外部PVC不进入cleanup inventory。快照或删除失败时会保留Task finalizer，以便后续安全恢复。
+Task 删除、停止和重启会保持等待，直到确认所有该 Task 独占且标记为 `DeleteOnTaskCleanup` 的对象均已消失。这包括主 Deployment 或 StatefulSet，以及 Ray head Task 由UID标识的head Service。共享Ray启动ConfigMap会被保留；引用的外部PVC不进入cleanup inventory。快照或删除失败时会保留Task finalizer，以便后续安全恢复。
 
 当RLark拥有的selector、port、Service type、`publishNotReadyAddresses`或标准metadata发生漂移时，Ray head Service使用Replace语义。Agent会按UID校验并删除当前Service，确认对象消失后在后续reconcile中重建；这可能短暂中断访问，也可能分配不同的Service地址或端口。Kubernetes物化的默认值和分配字段，包括ClusterIP、IP family字段、NodePort、默认protocol和target port，以及无关metadata，不属于漂移投影，不会单独触发Replace。
 

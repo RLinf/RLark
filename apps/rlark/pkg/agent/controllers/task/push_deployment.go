@@ -66,8 +66,6 @@ func (r *pushDeploymentReconciler) Reconcile(ctx context.Context, req reconcile.
 func pushOwnsTask(task *rlarkv1alpha1.Task, agentType string, workload client.Object, kind string) bool {
 	carrierType := taskapi.CarrierTypeKubernetesDeployment
 	switch kind {
-	case raykubernetes.CarrierDaemonSet:
-		carrierType = taskapi.CarrierTypeKubernetesDaemonSet
 	case raykubernetes.CarrierStatefulSet:
 		carrierType = taskapi.CarrierTypeKubernetesStatefulSet
 	}

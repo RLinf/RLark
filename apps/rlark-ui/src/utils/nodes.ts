@@ -55,6 +55,27 @@ export function getNodeDeviceModel(node: CRDNode): string {
   );
 }
 
+// node.status.reason values emitted by the node controller. Unknown values are
+// returned verbatim so server-provided reasons still surface in the UI.
+const nodeStatusReasonLabels: Record<string, { zh: string; en: string }> = {
+  AgentLeaseActive: { zh: "节点代理心跳正常", en: "Agent lease active" },
+  AgentLeaseExpired: { zh: "节点代理心跳已过期", en: "Agent lease expired" },
+  NodeAgentLeaseMissing: {
+    zh: "缺少节点代理心跳",
+    en: "Node agent lease missing",
+  },
+};
+
+export function nodeStatusReasonLabel(
+  reason: string | undefined,
+  zh: boolean,
+): string {
+  if (!reason) return "";
+  const label = nodeStatusReasonLabels[reason];
+  if (!label) return reason;
+  return zh ? label.zh : label.en;
+}
+
 export const categoryLabels: Record<
   NodeCategory,
   { zh: string; en: string; icon: typeof CloudCog }

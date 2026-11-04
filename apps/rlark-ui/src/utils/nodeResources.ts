@@ -101,14 +101,19 @@ export function parseResourceQuantity(
   return value;
 }
 
-export function formatResourceQuantity(key: string, raw?: string): string {
+export function formatResourceQuantity(
+  key: string,
+  raw: string | undefined,
+  zh: boolean,
+): string {
   const value = parseResourceQuantity(key, raw);
   if (value === null) return "—";
   if (key === "memory" || key === "ephemeral-storage") {
     const gib = value / 1024 ** 3;
     return `${gib >= 100 ? gib.toFixed(0) : gib.toFixed(1)} GiB`;
   }
-  if (key === "cpu") return `${formatResourceNumber(value)} 核`;
+  if (key === "cpu")
+    return `${formatResourceNumber(value)} ${zh ? "核" : "cores"}`;
   return formatResourceNumber(value);
 }
 

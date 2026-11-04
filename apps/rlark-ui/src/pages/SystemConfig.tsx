@@ -17,6 +17,7 @@ import {
   type SystemConfigResponse,
 } from "../backend";
 import { resolveDeploymentConfig } from "../utils/deployYaml";
+import { copyText } from "../utils/clipboard";
 
 interface LogBackendConfig {
   endpoint: string;
@@ -228,7 +229,7 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
     : "";
 
   const copySSHCommand = async () => {
-    await navigator.clipboard.writeText(sshCommand);
+    if (!(await copyText(sshCommand))) return;
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   };
@@ -703,12 +704,16 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
                     }}
                   >
                     <option value="none">{zh ? "不开启" : "Disabled"}</option>
-                    <option value="sls">阿里云 SLS</option>
+                    <option value="sls">
+                      {zh ? "阿里云 SLS" : "Alibaba Cloud SLS"}
+                    </option>
                     <option value="loki" disabled>
-                      Loki (待支持)
+                      {zh ? "Loki（待支持）" : "Loki (coming soon)"}
                     </option>
                     <option value="elasticsearch" disabled>
-                      Elasticsearch (待支持)
+                      {zh
+                        ? "Elasticsearch（待支持）"
+                        : "Elasticsearch (coming soon)"}
                     </option>
                   </select>
                 </label>

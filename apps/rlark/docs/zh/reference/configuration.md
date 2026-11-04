@@ -163,7 +163,6 @@ rlark-controller-manager \
 | `--task-runtime-resync-period` | duration | `15m` | cluster 模式共享 Task Runtime 修复扫描的基础周期；实际间隔使用 80%–120% 抖动，`0` 表示禁用，负值无效；node-only 模式接受这个共享 flag，但不会运行扫描器 |
 | `--addon-pull-controller-workers` | int | `8` | Addon pull 控制器最大并发调和数 |
 | `--task-deployment-push-controller-workers` | int | `8` | Task Deployment push 控制器最大并发调和数 |
-| `--task-daemonset-push-controller-workers` | int | `8` | Task DaemonSet push 控制器最大并发调和数 |
 | `--task-statefulset-push-controller-workers` | int | `8` | Task StatefulSet push 控制器最大并发调和数 |
 | `--node-push-controller-workers` | int | `8` | Node push 控制器最大并发调和数 |
 | `--pod-push-controller-workers` | int | `8` | Pod push 控制器最大并发调和数 |

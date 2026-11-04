@@ -37,9 +37,6 @@ func TestBuiltinAdaptersKeepTheirOwnWorkloadKind(t *testing.T) {
 		{name: "deployment", kind: raykubernetes.CarrierDeployment, new: func(o *operations) adapter {
 			return raykubernetes.NewLegacyAdapter(raykubernetes.CarrierDeployment, o)
 		}},
-		{name: "daemonset", kind: raykubernetes.CarrierDaemonSet, new: func(o *operations) adapter {
-			return raykubernetes.NewLegacyAdapter(raykubernetes.CarrierDaemonSet, o)
-		}},
 		{name: "statefulset", kind: raykubernetes.CarrierStatefulSet, new: func(o *operations) adapter {
 			return raykubernetes.NewLegacyAdapter(raykubernetes.CarrierStatefulSet, o)
 		}},

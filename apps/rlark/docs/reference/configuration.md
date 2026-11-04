@@ -163,7 +163,6 @@ Data plane agent. Deployed on each cluster or node. Manages node registration, T
 | `--task-runtime-resync-period` | duration | `15m` | Base period for cluster-mode shared Task Runtime repair scans; intervals use 80–120% jitter, `0` disables scans, and negative values are invalid; node-only mode accepts the shared flag but does not run the scanner |
 | `--addon-pull-controller-workers` | int | `8` | Maximum concurrent Addon pull reconciles |
 | `--task-deployment-push-controller-workers` | int | `8` | Maximum concurrent Task Deployment push reconciles |
-| `--task-daemonset-push-controller-workers` | int | `8` | Maximum concurrent Task DaemonSet push reconciles |
 | `--task-statefulset-push-controller-workers` | int | `8` | Maximum concurrent Task StatefulSet push reconciles |
 | `--node-push-controller-workers` | int | `8` | Maximum concurrent Node push reconciles |
 | `--pod-push-controller-workers` | int | `8` | Maximum concurrent Pod push reconciles |

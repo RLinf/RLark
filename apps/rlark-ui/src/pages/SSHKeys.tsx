@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import type { Copy } from "../i18n";
 import { formatChinaDateTime } from "../utils/time";
+import { copyText } from "../utils/clipboard";
 import { findSSHKeyDuplicate } from "../utils/sshKeys";
 import {
   ColumnFilterButton,
@@ -170,10 +171,16 @@ export function SSHKeysPage({
     ? `ssh -J ${sshConfig.sshJumpHost}${sshConfig.sshJumpPort ? ":" + sshConfig.sshJumpPort : ""} root@<pod-name>`
     : `ssh -J <server>:<port> root@<pod-name>`;
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(sshCommand);
+  const handleCopy = async () => {
+    if (!(await copyText(sshCommand))) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleCopyKey = async (id: string, publicKey: string) => {
+    if (!(await copyText(publicKey))) return;
+    setCopiedKey(id);
+    setTimeout(() => setCopiedKey(""), 2000);
   };
 
   return (
@@ -254,8 +261,21 @@ export function SSHKeysPage({
                 {sshCommand}
               </code>
               <button
-                className="icon-button"
-                title={zh ? "复制" : "Copy"}
+                className={
+                  copied ? "icon-button copy-confirmed" : "icon-button"
+                }
+                title={
+                  copied ? (zh ? "已复制" : "Copied") : zh ? "复制" : "Copy"
+                }
+                aria-label={
+                  copied
+                    ? zh
+                      ? "连接命令已复制"
+                      : "Connect command copied"
+                    : zh
+                      ? "复制连接命令"
+                      : "Copy connect command"
+                }
                 onClick={handleCopy}
                 style={{ flexShrink: 0 }}
               >
@@ -279,13 +299,8 @@ export function SSHKeysPage({
       />
 
       {showAdd && (
-        <div
-          className="modal-backdrop storage-create-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !adding)
-              setShowAdd(false);
-          }}
-        >
+        // 表单内容无法恢复，遮罩点击不关闭弹层；关闭入口为右上角按钮和取消按钮。
+        <div className="modal-backdrop storage-create-backdrop">
           <section
             className="modal storage-create-modal"
             role="dialog"
@@ -501,13 +516,30 @@ export function SSHKeysPage({
                           {k.public_key}
                         </code>
                         <button
-                          className="icon-button"
-                          title={zh ? "复制公钥" : "Copy key"}
-                          onClick={() => {
-                            navigator.clipboard.writeText(k.public_key);
-                            setCopiedKey(keyId);
-                            setTimeout(() => setCopiedKey(""), 2000);
-                          }}
+                          className={
+                            isCopied
+                              ? "icon-button copy-confirmed"
+                              : "icon-button"
+                          }
+                          title={
+                            isCopied
+                              ? zh
+                                ? "已复制"
+                                : "Copied"
+                              : zh
+                                ? "复制公钥"
+                                : "Copy key"
+                          }
+                          aria-label={
+                            isCopied
+                              ? zh
+                                ? "公钥已复制"
+                                : "Public key copied"
+                              : zh
+                                ? "复制公钥"
+                                : "Copy key"
+                          }
+                          onClick={() => handleCopyKey(keyId, k.public_key)}
                           style={{ flexShrink: 0 }}
                         >
                           {isCopied ? (

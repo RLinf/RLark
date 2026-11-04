@@ -54,6 +54,7 @@ import {
   parseNodeSelectorStr,
 } from "../utils/job";
 import { toYaml } from "../utils/yaml";
+import { describeVolumeSource } from "../utils/crd";
 import { useNodeLabels } from "../utils/nodes";
 import { imageReferenceHasWhitespace } from "../utils/imageReference";
 import { RoleNameInput } from "../components/create";
@@ -67,6 +68,7 @@ import {
 } from "../utils/resourceAvailability";
 import {
   groupSSHUserKeys,
+  partitionSelectableSSHPublicKeys,
   splitSSHPublicKeys,
   type SSHUserKey,
 } from "../utils/sshKeys";
@@ -111,7 +113,7 @@ function ClusterSelect({
       Downgraded: { zh: "服务降级", en: "Downgraded" },
       Cordoned: { zh: "停用调度", en: "Cordoned" },
       Draining: { zh: "排空中", en: "Draining" },
-      Deleted: { zh: "已删除", en: "Deleted" },
+      Delisted: { zh: "已下架", en: "Delisted" },
     };
     const label = labels[cluster.phase] ?? {
       zh: cluster.phase,
@@ -251,7 +253,7 @@ export function CreateJobModal({
   const [headerRole, setHeaderRole] = useState(
     sourceJob?.headerRole ?? roles[0]?.id ?? "",
   );
-  const effectiveHeader = roles.some((entry) => entry.id === headerRole)
+  const selectedHeader = roles.some((entry) => entry.id === headerRole)
     ? headerRole
     : (roles[0]?.id ?? "");
   const jobNameInvalid =
@@ -275,6 +277,7 @@ export function CreateJobModal({
   const [sshKeys, setSShKeys] = useState<SSHUserKey[]>([]);
   const selectableSSHKeys = groupSSHUserKeys(sshKeys);
   const [sshKeysLoaded, setSShKeysLoaded] = useState(false);
+  const [droppedSSHKeyCount, setDroppedSSHKeyCount] = useState(0);
   const [domains, setDomains] = useState<{ name: string; cidr: string }[]>([]);
   const [reclaimableResources, setReclaimableResources] =
     useState<ReclaimableResources>({});
@@ -287,7 +290,7 @@ export function CreateJobModal({
     clusters.slice(0, 4),
   );
   const [storageClasses, setStorageClasses] = useState<
-    { name: string; description: string; bucket: string }[]
+    { id: string; name: string; description: string; bucket: string }[]
   >([]);
   const [storageClassLoading, setStorageClassLoading] = useState(false);
   const [storageClassFetched, setStorageClassFetched] = useState(false);
@@ -345,6 +348,24 @@ export function CreateJobModal({
       .catch(() => setSShKeysLoaded(true));
   }, []);
 
+  // A cloned or edited Job may still carry public keys whose owner record was
+  // deleted from SSH key management. Those keys have no option in the selection
+  // list, so the user can neither see nor deselect them. Drop them from the
+  // draft once the registry is known and tell the user what was removed.
+  useEffect(() => {
+    if (!sshKeysLoaded) return;
+    const { known, orphaned } = partitionSelectableSSHPublicKeys(
+      sshPublicKeys,
+      sshKeys,
+    );
+    if (orphaned.length === 0) return;
+    setDroppedSSHKeyCount((current) => current + orphaned.length);
+    setSSHPublicKeys(known);
+    // sshPublicKeys is intentionally omitted: pruning reacts to the registry,
+    // not to the user's own selection changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sshKeysLoaded, sshKeys]);
+
   useEffect(() => {
     clustersApi
       .list<Partial<Cluster>>()
@@ -367,20 +388,24 @@ export function CreateJobModal({
           runningJobs: c.runningJobs ?? 0,
           description: c.description ?? "",
         }));
-        const realList = list.length > 0 ? list : clusters.slice(0, 4);
+        const schedulable = list.filter(
+          (cluster) =>
+            cluster.phase === "Online" || cluster.phase === "Downgraded",
+        );
+        const realList = schedulable.length > 0 ? schedulable : [];
         setAvailableClusters(realList);
         setClustersLoaded(list.length > 0);
-        if (list.length > 0) {
+        if (realList.length > 0) {
           setRoleResources((prev) =>
             Object.fromEntries(
               Object.entries(prev).map(([role, rr]) => {
                 const current = rr.cluster;
-                const match = list.find(
+                const match = realList.find(
                   (c) => c.id === current || c.name === current,
                 );
                 return [
                   role,
-                  { ...rr, cluster: match ? match.id : list[0].id },
+                  { ...rr, cluster: match ? match.id : realList[0].id },
                 ];
               }),
             ),
@@ -403,40 +428,27 @@ export function CreateJobModal({
     setStorageClassFetched(false);
     try {
       const data = await storageClassesApi.list<{
-        id: string;
+        storageClassName: string;
         name: string;
         description?: string;
         bucket?: string;
-        clusters?: string[];
-      }>();
-      const selectedCluster = availableClusters.find(
-        (item) => item.id === cluster || item.name === cluster,
-      );
-      const clusterIDs = new Set(
-        [cluster, selectedCluster?.id, selectedCluster?.name].filter(
-          (item): item is string => Boolean(item),
-        ),
-      );
-      const storageClassList = Object.values(data)
-        .filter(
-          (sc) => !cluster || sc.clusters?.some((item) => clusterIDs.has(item)),
-        )
-        .map((sc) => ({
-          name: sc.name,
-          description: sc.description || "",
-          bucket: sc.bucket || "",
-        }));
+      }>(cluster);
+      const storageClassList = Object.values(data).map((sc) => ({
+        id: sc.storageClassName,
+        name: sc.name,
+        description: sc.description || "",
+        bucket: sc.bucket || "",
+      }));
       setStorageClasses(storageClassList);
     } catch (e) {
       console.warn("Failed to fetch storage classes:", e);
       setStorageClasses(
-        mockStorageClasses
-          .filter((sc) => !cluster || sc.clusters.includes(cluster))
-          .map(({ name, description, bucket }) => ({
-            name,
-            description,
-            bucket,
-          })),
+        mockStorageClasses.map(({ id, name, description, bucket }) => ({
+          id,
+          name,
+          description,
+          bucket,
+        })),
       );
     } finally {
       setStorageClassLoading(false);
@@ -452,8 +464,8 @@ export function CreateJobModal({
         cluster: res.cluster,
         nodeSelector: res.nodeSelector,
         replicas: res.replicas,
-        cpu: "",
-        memory: "",
+        cpu: res.cpu,
+        memory: res.memory,
         gpu: res.gpu,
         devices: res.devices?.map((d) => ({ ...d })) ?? [],
         image: res.image,
@@ -465,6 +477,7 @@ export function CreateJobModal({
           mountPath: m.mountPath ?? "",
           hostPath: m.hostPath ?? m.objectStorage ?? "",
           pvcSizeGb: m.pvcSizeGb ?? 10,
+          ...(m.rawVolume ? { rawVolume: m.rawVolume } : {}),
         })),
       };
     });
@@ -534,6 +547,11 @@ export function CreateJobModal({
     if (!canBeHeader(role)) return;
     setHeaderRole(role);
   };
+  // 修改副本数可能让已选 Header 失效。此时回退到第一个单 Pod 角色，
+  // 避免校验失败后被弹回没有 Header 选择控件的步骤而无法修正。
+  const effectiveHeader = canBeHeader(selectedHeader)
+    ? selectedHeader
+    : (roles.find((entry) => canBeHeader(entry.id))?.id ?? selectedHeader);
 
   useEffect(() => {
     if (availableClusters.length === 0) return;
@@ -625,15 +643,19 @@ export function CreateJobModal({
 
   const onTypeChange = (next: JobType) => {
     setType(next);
-    const newEntries: RoleEntry[] = ROLE_TEMPLATES[next].map((name) => ({
+    // 复制、编辑或编辑后重启时，角色及其资源来自源任务，是用户已经确认过的配置。
+    // 此时任务类型只是一个标签，切换它不得改写角色列表：否则每切换一次都会把新
+    // 类型的默认角色追加进来，重复累积已有角色。
+    if (sourceJob) return;
+    const templateEntries: RoleEntry[] = ROLE_TEMPLATES[next].map((name) => ({
       id: name,
       name,
     }));
-    setRoles(newEntries);
-    setHeaderRole(newEntries[0]?.id ?? "");
-    setActiveRoleTab(newEntries[0]?.id ?? "");
+    setRoles(templateEntries);
+    setHeaderRole(templateEntries[0]?.id ?? "");
+    setActiveRoleTab(templateEntries[0]?.id ?? "");
     const newRR: Record<string, RoleResource> = {};
-    newEntries.forEach((entry, index) => {
+    templateEntries.forEach((entry, index) => {
       newRR[entry.id] = roleResources[entry.id] ?? {
         role: entry.name,
         cluster: clusterDisplayNames[0] ?? "",
@@ -906,6 +928,8 @@ export function CreateJobModal({
               : `No node can satisfy ${role}'s per-worker request of ${resourceRequest.amount}.`;
         }
         for (const mount of resource.mounts) {
+          // opaque 挂载按原始卷定义原样提交，表单不校验其来源字段。
+          if (mount.type === "opaque") continue;
           if (!mount.mountPath.trim())
             return zh
               ? `${role} 的挂载目录不能为空。`
@@ -1026,12 +1050,8 @@ export function CreateJobModal({
   };
 
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) =>
-        e.target === e.currentTarget && !submitting && onClose()
-      }
-    >
+    // 表单内容无法恢复，遮罩点击不关闭弹层；关闭入口为右上角按钮、取消按钮和 Esc。
+    <div className="modal-backdrop">
       <div className="modal create-job-modal" role="dialog" aria-modal="true">
         <div className="modal-head">
           <div>
@@ -1483,178 +1503,221 @@ export function CreateJobModal({
                               {zh ? "添加" : "Add"}
                             </button>
                           </div>
-                          {rr.mounts.map((mount, index) => (
-                            <div className="mount-row" key={index}>
-                              <div
-                                className="mount-type-toggle"
-                                onClick={() => {
-                                  const next =
-                                    mount.type === "storage"
-                                      ? "host"
-                                      : "storage";
-                                  updateRRMount(role, index, "type", next);
-                                  if (next === "storage") {
-                                    fetchStorageClasses(rr.cluster);
-                                  }
-                                }}
-                              >
+                          {rr.mounts.map((mount, index) =>
+                            mount.type === "opaque" ? (
+                              // 表单无法编辑的卷（emptyDir、configMap 等）只读展示，
+                              // 提交时按原始定义原样写回。
+                              <div className="mount-row" key={index}>
+                                <div className="mount-type-toggle">
+                                  <button
+                                    type="button"
+                                    className="active"
+                                    disabled
+                                  >
+                                    {zh ? "其他卷类型" : "Other volume"}
+                                  </button>
+                                </div>
+                                <label className="mount-field-box">
+                                  <span>{zh ? "卷定义" : "Volume source"}</span>
+                                  <input
+                                    value={describeVolumeSource(
+                                      mount.rawVolume,
+                                    )}
+                                    readOnly
+                                  />
+                                </label>
+                                <label className="mount-field-box">
+                                  <span>
+                                    {zh ? "挂载到 Worker" : "Mount in worker"}
+                                  </span>
+                                  <input value={mount.mountPath} readOnly />
+                                </label>
                                 <button
-                                  type="button"
-                                  className={
-                                    mount.type === "host" ? "active" : ""
-                                  }
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    updateRRMount(role, index, "type", "host");
-                                  }}
+                                  className="icon-button danger"
+                                  onClick={() => removeRRMount(role, index)}
+                                  title={zh ? "删除" : "Delete"}
                                 >
-                                  {zh ? "主机目录" : "Host directory"}
-                                </button>
-                                <button
-                                  type="button"
-                                  className={
-                                    mount.type === "storage" ? "active" : ""
-                                  }
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    updateRRMount(
-                                      role,
-                                      index,
-                                      "type",
-                                      "storage",
-                                    );
-                                    fetchStorageClasses(rr.cluster);
-                                  }}
-                                >
-                                  {zh ? "对象存储" : "Object storage"}
+                                  <Trash2 size={14} />
                                 </button>
                               </div>
-                              <label className="mount-field-box">
-                                <span>
-                                  {mount.type === "storage"
-                                    ? zh
-                                      ? "对象存储"
-                                      : "Object storage"
-                                    : zh
-                                      ? "主机目录"
-                                      : "Host directory"}
-                                </span>
-                                {mount.type === "storage" ? (
-                                  <select
-                                    value={mount.objectStorage}
-                                    onChange={(e) =>
+                            ) : (
+                              <div className="mount-row" key={index}>
+                                <div
+                                  className="mount-type-toggle"
+                                  onClick={() => {
+                                    const next =
+                                      mount.type === "storage"
+                                        ? "host"
+                                        : "storage";
+                                    updateRRMount(role, index, "type", next);
+                                    if (next === "storage") {
+                                      fetchStorageClasses(rr.cluster);
+                                    }
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    className={
+                                      mount.type === "host" ? "active" : ""
+                                    }
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       updateRRMount(
                                         role,
                                         index,
-                                        "objectStorage",
-                                        e.target.value,
-                                      )
-                                    }
+                                        "type",
+                                        "host",
+                                      );
+                                    }}
                                   >
-                                    <option value="">
-                                      {storageClassFetched &&
-                                      storageClasses.length === 0
-                                        ? zh
-                                          ? "无可用存储类"
-                                          : "No storage classes"
-                                        : zh
-                                          ? "选择存储类"
-                                          : "Select storage class"}
-                                    </option>
-                                    {storageClasses.map((sc) => (
-                                      <option key={sc.name} value={sc.name}>
-                                        {sc.name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <input
-                                    value={mount.hostPath}
-                                    onChange={(e) =>
+                                    {zh ? "主机目录" : "Host directory"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={
+                                      mount.type === "storage" ? "active" : ""
+                                    }
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       updateRRMount(
                                         role,
                                         index,
-                                        "hostPath",
-                                        e.target.value,
-                                      )
-                                    }
-                                    placeholder="/host/path"
-                                  />
-                                )}
-                              </label>
-                              <label className="mount-field-box">
-                                <span>
-                                  {zh ? "挂载到 Worker" : "Mount in worker"}
-                                </span>
-                                <input
-                                  value={mount.mountPath}
-                                  onChange={(e) =>
-                                    updateRRMount(
-                                      role,
-                                      index,
-                                      "mountPath",
-                                      e.target.value,
-                                    )
-                                  }
-                                  placeholder="/mnt/data"
-                                />
-                              </label>
-                              {mount.type === "storage" && (
-                                <label className="mount-field-box mount-size-field">
+                                        "type",
+                                        "storage",
+                                      );
+                                      fetchStorageClasses(rr.cluster);
+                                    }}
+                                  >
+                                    {zh ? "对象存储" : "Object storage"}
+                                  </button>
+                                </div>
+                                <label className="mount-field-box">
                                   <span>
-                                    {zh ? "存储大小 (Gi)" : "PVC size (Gi)"}
+                                    {mount.type === "storage"
+                                      ? zh
+                                        ? "对象存储"
+                                        : "Object storage"
+                                      : zh
+                                        ? "主机目录"
+                                        : "Host directory"}
+                                  </span>
+                                  {mount.type === "storage" ? (
+                                    <select
+                                      value={mount.objectStorage}
+                                      onChange={(e) =>
+                                        updateRRMount(
+                                          role,
+                                          index,
+                                          "objectStorage",
+                                          e.target.value,
+                                        )
+                                      }
+                                    >
+                                      <option value="">
+                                        {storageClassFetched &&
+                                        storageClasses.length === 0
+                                          ? zh
+                                            ? "无可用存储类"
+                                            : "No storage classes"
+                                          : zh
+                                            ? "选择存储类"
+                                            : "Select storage class"}
+                                      </option>
+                                      {storageClasses.map((sc) => (
+                                        <option key={sc.id} value={sc.id}>
+                                          {sc.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <input
+                                      value={mount.hostPath}
+                                      onChange={(e) =>
+                                        updateRRMount(
+                                          role,
+                                          index,
+                                          "hostPath",
+                                          e.target.value,
+                                        )
+                                      }
+                                      placeholder="/host/path"
+                                    />
+                                  )}
+                                </label>
+                                <label className="mount-field-box">
+                                  <span>
+                                    {zh ? "挂载到 Worker" : "Mount in worker"}
                                   </span>
                                   <input
-                                    type="number"
-                                    min="1"
-                                    max="200"
-                                    step="1"
-                                    value={mount.pvcSizeGb}
+                                    value={mount.mountPath}
                                     onChange={(e) =>
                                       updateRRMount(
                                         role,
                                         index,
-                                        "pvcSizeGb",
-                                        e.target.value === ""
-                                          ? ""
-                                          : Number(e.target.value),
+                                        "mountPath",
+                                        e.target.value,
                                       )
                                     }
-                                    onBlur={(e) => {
-                                      const value = Number(e.target.value);
-                                      if (
-                                        isNaN(value) ||
-                                        value < 1 ||
-                                        value > 200
-                                      ) {
-                                        // 恢复默认值
+                                    placeholder="/mnt/data"
+                                  />
+                                </label>
+                                {mount.type === "storage" && (
+                                  <label className="mount-field-box mount-size-field">
+                                    <span>
+                                      {zh ? "存储大小 (Gi)" : "PVC size (Gi)"}
+                                    </span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      max="200"
+                                      step="1"
+                                      value={mount.pvcSizeGb}
+                                      onChange={(e) =>
                                         updateRRMount(
                                           role,
                                           index,
                                           "pvcSizeGb",
-                                          10,
-                                        );
-                                        // 显示错误提示
-                                        setError(
-                                          zh
-                                            ? "存储大小必须在 1 到 200 Gi 之间"
-                                            : "PVC size must be between 1 and 200 Gi",
-                                        );
-                                        setErrorNonce((n) => n + 1);
+                                          e.target.value === ""
+                                            ? ""
+                                            : Number(e.target.value),
+                                        )
                                       }
-                                    }}
-                                  />
-                                </label>
-                              )}
-                              <button
-                                className="icon-button danger"
-                                onClick={() => removeRRMount(role, index)}
-                                title={zh ? "删除" : "Delete"}
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          ))}
+                                      onBlur={(e) => {
+                                        const value = Number(e.target.value);
+                                        if (
+                                          isNaN(value) ||
+                                          value < 1 ||
+                                          value > 200
+                                        ) {
+                                          // 恢复默认值
+                                          updateRRMount(
+                                            role,
+                                            index,
+                                            "pvcSizeGb",
+                                            10,
+                                          );
+                                          // 显示错误提示
+                                          setError(
+                                            zh
+                                              ? "存储大小必须在 1 到 200 Gi 之间"
+                                              : "PVC size must be between 1 and 200 Gi",
+                                          );
+                                          setErrorNonce((n) => n + 1);
+                                        }
+                                      }}
+                                    />
+                                  </label>
+                                )}
+                                <button
+                                  className="icon-button danger"
+                                  onClick={() => removeRRMount(role, index)}
+                                  title={zh ? "删除" : "Delete"}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            ),
+                          )}
                         </div>
                       </section>
                     </div>
@@ -1674,19 +1737,37 @@ export function CreateJobModal({
                   </small>
                 </div>
                 <div className="role-template selectable">
-                  {roles.map((entry) => (
-                    <button
-                      key={entry.id}
-                      className={effectiveHeader === entry.id ? "active" : ""}
-                      onClick={() => setHeaderRole(entry.id)}
-                    >
-                      <Check size={13} />
-                      {entry.name}
-                      <small>
-                        {effectiveHeader === entry.id ? "Header" : "Worker"}
-                      </small>
-                    </button>
-                  ))}
+                  {roles.map((entry) => {
+                    const headerAllowed = canBeHeader(entry.id);
+                    const isHeader = effectiveHeader === entry.id;
+                    return (
+                      <button
+                        key={entry.id}
+                        className={isHeader ? "active" : ""}
+                        disabled={!headerAllowed}
+                        title={
+                          !headerAllowed
+                            ? zh
+                              ? "Header 角色只能有一个 Pod，请将该角色副本数设为 1。"
+                              : "The header role must have exactly one pod. Set its replicas to 1."
+                            : undefined
+                        }
+                        onClick={() => selectHeaderRole(entry.id)}
+                      >
+                        <Check size={13} />
+                        {entry.name}
+                        <small>
+                          {isHeader
+                            ? "Header"
+                            : !headerAllowed
+                              ? zh
+                                ? "Worker（多 Pod）"
+                                : "Worker (multi-pod)"
+                              : "Worker"}
+                        </small>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
               <div className="form-section">
@@ -1749,6 +1830,13 @@ export function CreateJobModal({
                     {zh
                       ? "未找到 SSH 公钥，请先在 SSH 公钥管理页面添加。"
                       : "No SSH keys found. Add keys in the SSH Key Management page first."}
+                  </small>
+                )}
+                {droppedSSHKeyCount > 0 && (
+                  <small className="field-hint field-hint-warning">
+                    {zh
+                      ? `已移除 ${droppedSSHKeyCount} 个公钥：其用户记录已从 SSH 公钥管理中删除，不会注入到新任务。`
+                      : `Removed ${droppedSSHKeyCount} public key(s): their owner records were deleted from SSH key management and will not be injected into the new job.`}
                   </small>
                 )}
                 {sshPublicKey && (

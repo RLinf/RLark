@@ -27,7 +27,7 @@ import { SSHKeysPage } from "../pages/SSHKeys";
 import { ImageRegistriesPage } from "../pages/ImageRegistries";
 import { SystemConfigPage } from "../pages/SystemConfig";
 import { JobsPage } from "../pages/Jobs";
-import { filesPath, parseAdminRoute } from "../utils/route";
+import { parseAdminRoute } from "../utils/route";
 import {
   clearAuthSession,
   hasAuthSession,
@@ -285,7 +285,9 @@ export function AdminApp() {
             const Icon = item.icon;
             const itemLabel = zh ? item.zh : item.en;
             const isParent = item.children && item.children.length > 0;
-            const isActive = adminPage === item.id;
+            const isActive =
+              adminPage === item.id ||
+              (item.id === "storageClass" && adminPage === "files");
             const isChildActive = isParent
               ? item.children!.some((ch) => ch.id === adminPage)
               : false;
@@ -396,6 +398,7 @@ export function AdminApp() {
             selectedClusterID={adminSub}
             onSelectCluster={(id?: string) => navigate("clusters-list", id)}
             onSelectNode={(name: string) => navigate("clusters-nodes", name)}
+            adminMode
           />
         )}
         {adminPage === "jobs" && (
@@ -431,9 +434,7 @@ export function AdminApp() {
             selectedName={adminSub}
             onSelect={(name?: string) => navigate("storageClass", name)}
             onCreate={() => navigate("storageClass", "create")}
-            onBrowseFiles={(cluster, storageClass) =>
-              window.open(filesPath(cluster, storageClass, true), "_blank")
-            }
+            onBrowseFiles={(storageClass) => navigate("files", storageClass)}
             refreshKey={storageRefreshKey}
           />
         )}

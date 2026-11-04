@@ -220,7 +220,10 @@
   color: #27303d;
   outline: 0;
   font-size: 12px;
-  background: #fff;
+  /* 必须用 background-color 而非 background 简写：简写会把全局 select 规则提供的
+     background-image（下拉箭头）重置为 none，而 appearance: none 已移除原生箭头，
+     结果是控件完全没有下拉指示。 */
+  background-color: #fff;
   cursor: pointer;
 }
 
@@ -235,7 +238,13 @@
   background: #fff;
 }
 
-.theme-dark .device-row select,
+/* select 单独成规则并只覆盖 background-color，原因同 .device-row select。 */
+.theme-dark .device-row select {
+  background-color: #151d2b;
+  color: #c4cbd6;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
 .theme-dark .device-row input {
   background: #151d2b;
   color: #c4cbd6;
@@ -328,7 +337,8 @@
   color: #27303d;
   outline: 0;
   font-size: 12px;
-  background: #fff;
+  /* 同 .device-row select：用 background 简写会抹掉全局 select 的下拉箭头。 */
+  background-color: #fff;
   cursor: pointer;
 }
 
@@ -349,12 +359,26 @@
   height: 100%;
   border: 0;
   border-radius: 0;
+}
+
+.mount-row .mount-field-box input {
   background: transparent;
 }
 
+/* 同 .device-row select：用 background 简写会抹掉全局 select 的下拉箭头。 */
+.mount-row .mount-field-box select {
+  background-color: transparent;
+}
+
+/* select 单独成规则并只覆盖 background-color，原因同 .device-row select。 */
 .theme-dark .mount-row select,
-.theme-dark .mount-row input,
 .theme-dark .env-row select {
+  background-color: #151d2b;
+  border-color: var(--line);
+  color: #d8e0ee;
+}
+
+.theme-dark .mount-row input {
   background: #151d2b;
   border-color: var(--line);
   color: #d8e0ee;
@@ -371,9 +395,13 @@
   color: #9ca8ba;
 }
 
-.theme-dark .mount-row .mount-field-box select,
 .theme-dark .mount-row .mount-field-box input {
   background: transparent;
+}
+
+/* select 单独成规则并只覆盖 background-color，原因同 .device-row select。 */
+.theme-dark .mount-row .mount-field-box select {
+  background-color: transparent;
 }
 
 .env-row input {
@@ -784,11 +812,17 @@
   color: #f5f7fb;
 }
 
+/* select 单独成规则并只覆盖 background-color：用 background 简写会连带重置
+   全局 select 规则提供的下拉箭头（background-image/repeat/position/size）。 */
+.theme-dark .metrics-filter-bar select,
+.theme-dark .worker-filter-bar select {
+  background-color: #151d2b;
+  border-color: var(--line);
+}
+
 .theme-dark .sub-tabs,
 .theme-dark .metrics-scope-toggle,
 .theme-dark .worker-filter-bar,
-.theme-dark .metrics-filter-bar select,
-.theme-dark .worker-filter-bar select,
 .theme-dark .time-series-card,
 .theme-dark .public-config-card,
 .theme-dark .task-summary-metric,

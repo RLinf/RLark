@@ -2,13 +2,14 @@
 
 ## Storage Types
 
-The Job editor exposes two storage choices: a host directory or a PVC-backed storage mount. Kubernetes-native PodTemplate volumes define their lifecycle:
+The Job editor can create two storage choices: a host directory or a PVC-backed storage mount. A Job submitted through the API may also use other Kubernetes-native PodTemplate volumes, which the editor shows read-only. Kubernetes-native PodTemplate volumes define their lifecycle:
 
 | Type | Use Case | Lifecycle |
 |------|----------|-----------|
 | Host Directory | Data already on the node, high I/O | Job lifecycle actions do not delete data |
 | Object Storage (Pod-scoped ephemeral PVC) | The form written by the current Web UI for a PVC-backed mount | Kubernetes creates and removes the PVC with its Pod |
 | Existing persistent PVC reference | A Task volume uses `persistentVolumeClaim.claimName` | RLark neither creates nor deletes the referenced PVC; its administrator controls the lifecycle |
+| Other Kubernetes-native volume (`emptyDir`, `configMap`, `secret`, and so on) | Submitted through the API; the Job editor only displays it | The volume type defines it; RLark writes back the original definition when a Job is edited or cloned |
 
 ## Host Directory
 
@@ -56,6 +57,7 @@ Verify the storage chain:
 - Existing `persistentVolumeClaim`: RLark does not create, adopt, mutate, or delete the referenced PVC. Its lifecycle and data retention are external to the Task.
 - Pod-scoped `ephemeral.volumeClaimTemplate`: deleting a Worker Pod deletes its ephemeral PVC; a new Pod receives a new PVC.
 - HostPath: lifecycle actions do not delete node data.
+- Other Kubernetes-native volumes: the Job editor cannot create or modify them. Editing or cloning a Job writes the original volume definition back unchanged, so the volume type keeps its own lifecycle.
 
 An existing PVC reference must include `claimName`, and the claim must already exist in the workload namespace. Kubernetes reports mount or binding failures through the workload and Pod status. Deleting a referenced PVC is an external administrative action; confirm that no workload uses it and account for the bound PV's reclaim policy.
 

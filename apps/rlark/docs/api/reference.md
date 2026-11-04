@@ -94,11 +94,11 @@ Image registry credentials use an immutable `ir-<16 lowercase hexadecimal charac
 | `GET, POST` | `/api/v1/storage/storageclass` |
 | `PUT, DELETE` | `/api/v1/storage/storageclass/{name}` |
 | `GET` | `/api/v1/storage/storageclass/provider` |
-| `GET` | `/api/v1/storage/storageclass/{name}/{cluster}/list` |
-| `POST` | `/api/v1/storage/storageclass/{name}/{cluster}/upload` |
-| `GET, DELETE` | `/api/v1/storage/storageclass/{name}/{cluster}/object/{key}` |
+| `GET` | `/api/v1/storage/storageclass/{name}/list` |
+| `POST` | `/api/v1/storage/storageclass/{name}/upload` |
+| `GET, DELETE` | `/api/v1/storage/storageclass/{name}/object/{key}` |
 
-StorageClass routes manage control-plane declarations. Replication and Delivery controllers asynchronously distribute generated rclone CSI resources to the configured target clusters; listing returns managed declarations rather than live Agent queries.
+StorageClass routes manage control-plane declarations. Replication and Delivery controllers asynchronously distribute generated rclone CSI resources to the configured target clusters; listing returns managed declarations rather than live Agent queries. File routes access the declared bucket directly.
 
 ## Addons
 

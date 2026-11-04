@@ -43,13 +43,9 @@ export function parseAdminRoute(
   };
 }
 
-export function filesPath(
-  cluster: string,
-  storageClass: string,
-  admin = false,
-) {
+export function filesPath(storageClass: string, admin = false) {
   const prefix = admin ? "/admin/files" : "/files";
-  return `${prefix}/${encodeURIComponent(cluster)}/${encodeURIComponent(storageClass)}`;
+  return `${prefix}/${encodeURIComponent(storageClass)}`;
 }
 
 export function hasTerminalSession(storage: Pick<Storage, "getItem">) {

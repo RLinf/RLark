@@ -245,7 +245,7 @@ Kubernetes 错误是映射而非包裹：`NotFound` → 404，`AlreadyExists` �
 | `order` | `field [asc\|desc]`；field 须匹配 `^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$`，方向无法识别时直接拒绝，而不是静默按升序排序。 |
 | `fieldSelector` | 逗号分隔的 `key=value` 或 `key!=value`；每个 key 须匹配与 `order` 相同的点分标识符模式。 |
 | `labelSelector` | 数据库链路为逗号分隔的 `key=value` 或 `key!=value`，Kubernetes 链路为 Kubernetes label selector。key 须是合法的 qualified name。 |
-| `tagSelector` | 逗号分隔的 `key=value`。在服务端窗口之后应用。 |
+| `tagSelector` | 逗号分隔的 `key=value`。同一 key 下的多个值取「或」，不同 key 之间取「且」。在服务端窗口之后应用。 |
 | `continue` | 不透明的 Kubernetes continue token。仅 Kubernetes 链路。 |
 
 选择器路径与标签 key 来自查询串，因此在数据库链路上一律作为语句参数绑定，绝不拼入 SQL 文本。上表的模式校验在入口处执行，属于纵深防御：无意义的路径在抵达数据库之前就以 400 拒绝。

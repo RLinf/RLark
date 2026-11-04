@@ -2,14 +2,12 @@ package storage
 
 import (
 	"context"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/sirupsen/logrus"
 )
 
 // Client is a client.
@@ -34,37 +32,20 @@ func NewClient(config *Config) (*Client, error) {
 	}
 
 	cfg.BaseEndpoint = aws.String(config.Endpoint)
-	// 	cfg.BaseEndpoint = aws.String(fmt.Sprintf("https://%s.oss-%s.aliyuncs.com", config.Bucket, config.Region))
-	// } else if config.Endpoint != "" {
-	// 	cfg.BaseEndpoint = aws.String(config.Endpoint)
-	// }
 
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.UsePathStyle = config.UsePathStyle
-		if strings.EqualFold(config.Provider, "Alibaba") {
-			o.UsePathStyle = false
-		}
+		// 寻址方式与下发到数据面的 rclone 配置共用同一判定, 避免同一条存储记录
+		// 在网关直连与挂载链路上使用不同的 URL 形式.
+		o.UsePathStyle = EffectivePathStyle(config.Provider, config.UsePathStyle)
 		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
 
-	ossClient := &Client{
+	return &Client{
 		config:        config,
 		s3Client:      client,
 		presignClient: s3.NewPresignClient(client),
-	}
-
-	go func() {
-		logrus.Info("S3 client warming up...")
-		_, err := ossClient.IsBucketExist()
-		if err != nil {
-			logrus.Warnf("S3 connection warmup failed: %v", err)
-		} else {
-			logrus.Info("S3 connection warmed up successfully")
-		}
-	}()
-
-	return ossClient, nil
+	}, nil
 }
 
 // NewClientWithDefault creates a new ClientWithDefault.

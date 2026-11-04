@@ -176,7 +176,7 @@ Job 是用户**直接操作的核心资源**，代表一个完整的 RL 训练�
 
 分发任何 Task 前，Job Controller 会把所有模板作为一个整体逐一校验。模板名称必须非空且唯一，`runtime.kind`、workload kind/version 与 carrier type/version 必须是非空的开放标识符。对于当前 Job 到 Ray-on-Kubernetes 路径，controller 还要求提供 Pod 模板，并且其中必须且只能有一个名为 `main` 的普通容器。这是实现能力校验，不是通用 Task CRD 约束：CRD 允许省略 `workload.template`，其他 Workload Adapter/Runtime 组合自行定义要求。任一模板无效时，controller 不会创建其中任何 Task，而是在 Job 上报告 `Validated=False` 并通过消息指出失败字段路径；它不会静默跳过单个模板。Agent 会在 Runtime effect 前独立校验所选实现。Job Controller 不校验 Ray head 数量或 head 副本拓扑。
 
-Web UI 保持现有的 Job 和 Workflow 创建、编辑、克隆、生命周期、存储及 Worker 交互不变，但会直接按生成的 CRD 合同序列化数据。新请求使用 `runtime`、`workload`、`carrier`、`placement` 和 `environments`；生命周期操作写入 `spec.suspended`；存储选择写成 Kubernetes 原生 Pod 模板 volume。UI 不再发送已移除的 `agentType`、嵌套 `kubernetes.workload`、`stopped`、`pvcStorageMap` 或 `pvcSizeGbMap` 结构。
+Web UI 保持现有的 Job 和 Workflow 创建、编辑、克隆、生命周期、存储及 Worker 交互不变，但会直接按生成的 CRD 合同序列化数据。新请求使用 `runtime`、`workload`、`carrier`、`placement` 和 `environments`；生命周期操作写入 `spec.suspended`；存储选择写成 Kubernetes 原生 Pod 模板 volume。表单无法表达的卷类型（例如 `emptyDir`、`configMap`、`secret`）以只读方式展示，并在编辑或复制任务时按源定义原样保留。UI 不再发送已移除的 `agentType`、嵌套 `kubernetes.workload`、`stopped`、`pvcStorageMap` 或 `pvcSizeGbMap` 结构。
 
 ### 关键属性
 
@@ -364,7 +364,7 @@ status:
 
 | 形态 | 说明 | 适用场景 |
 |------|------|----------|
-| `Kubernetes` | 使用 Deployment、DaemonSet 或 StatefulSet 作为 Kubernetes carrier 运行 RLark/Ray Task | GPU 集群大规模训练 |
+| `Kubernetes` | 使用 Deployment 或 StatefulSet 作为 Kubernetes carrier 运行 RLark/Ray Task | GPU 集群大规模训练 |
 | `Docker` | 计划中的 Provider，把统一 Pod template lowering 为 Docker 容器；当前未实现、未广告 | 端侧设备（机械臂、传感器、摄像头） |
 | `Raw` | 计划中的 Provider，把统一 Pod template lowering 为宿主机进程；当前未实现、未广告 | 裸金属服务器、嵌入式设备 |
 
@@ -407,7 +407,7 @@ Pod CR 是数据面 Pod 的**控制面镜像**，由 Agent 的 Push 控制器上
 ```mermaid
 graph TD
     job -->|"1:N"| task["Task<br/>(Namespaced: agent-{id})<br/>任务执行单元"]
-    task -->|"1:1 (K8s workload)"| workload["Deployment /<br/>DaemonSet /<br/>StatefulSet<br/>(本地 k8s 集群)"]
+    task -->|"1:1 (K8s workload)"| workload["Deployment /<br/>StatefulSet<br/>(本地 k8s 集群)"]
     workload -->|"1:N"| pod["Pod + Sidecar<br/>Agent Push 上报 → Pod CR"]
     domain["Domain<br/>(Cluster scoped)<br/>网络隔离"] -->|"1:N (每个集群一个)"| dp["DomainPeer<br/>(Namespaced: agent-{id})<br/>Pod 路由表"]
     node["Node<br/>(Namespaced)<br/>计算节点信息"]

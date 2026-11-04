@@ -2,12 +2,16 @@ import { useEffect, useState, type FormEvent } from "react";
 import { AlertCircle, ArrowRight, Eye, EyeOff } from "lucide-react";
 import { storeAuthSession } from "../api";
 import { authApi } from "../backend";
+import type { Lang } from "../i18n";
 
 export function UserLogin({
   onLogin,
+  lang,
 }: {
   onLogin: (username: string) => void;
+  lang: Lang;
 }) {
+  const zh = lang === "zh";
   const [username, setUsername] = useState("user");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -23,7 +27,7 @@ export function UserLogin({
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!username.trim() || !password.trim()) {
-      setError("请输入账号和密码");
+      setError(zh ? "请输入账号和密码" : "Enter your username and password");
       return;
     }
     setLoading(true);
@@ -32,7 +36,7 @@ export function UserLogin({
       .login(username.trim(), password)
       .then((result) => {
         if (!result.token || result.role !== "user") {
-          throw new Error("登录响应无效");
+          throw new Error(zh ? "登录响应无效" : "Invalid login response");
         }
         storeAuthSession(result.token, result.role);
         sessionStorage.setItem("rlark-user-auth", "1");
@@ -40,7 +44,13 @@ export function UserLogin({
         onLogin(username.trim());
       })
       .catch((err) => {
-        setError(err.status === 401 ? "账号或密码错误" : err.message);
+        setError(
+          err.status === 401
+            ? zh
+              ? "账号或密码错误"
+              : "Incorrect username or password"
+            : err.message,
+        );
         setLoading(false);
       });
   };
@@ -55,16 +65,22 @@ export function UserLogin({
             <div className="user-login-brand">
               <img
                 className="user-login-brand-logo"
-                src="/rlark-logo-zh-light.png"
-                alt="RLark 具身智能云原生纳管平台"
+                src={`/rlark-logo-${zh ? "zh" : "en"}-light.png`}
+                alt={
+                  zh
+                    ? "RLark 具身智能云原生纳管平台"
+                    : "RLark cloud-native embodied intelligence platform"
+                }
               />
             </div>
             <div className="user-login-heading">
-              <h2>用户登录</h2>
-              <p className="muted">请输入账号和密码</p>
+              <h2>{zh ? "用户登录" : "User sign-in"}</h2>
+              <p className="muted">
+                {zh ? "请输入账号和密码" : "Enter your username and password"}
+              </p>
             </div>
             <div className="admin-login-field">
-              <label>账号</label>
+              <label>{zh ? "账号" : "Username"}</label>
               <input
                 type="text"
                 value={username}
@@ -77,7 +93,7 @@ export function UserLogin({
               />
             </div>
             <div className="admin-login-field">
-              <label>密码</label>
+              <label>{zh ? "密码" : "Password"}</label>
               <div className="admin-login-password">
                 <input
                   type={showPassword ? "text" : "password"}
@@ -86,13 +102,21 @@ export function UserLogin({
                     setPassword(e.target.value);
                     setError("");
                   }}
-                  placeholder="请输入密码"
+                  placeholder={zh ? "请输入密码" : "Enter your password"}
                   autoComplete="current-password"
                 />
                 <button
                   type="button"
                   className="admin-login-password-toggle"
-                  aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                  aria-label={
+                    showPassword
+                      ? zh
+                        ? "隐藏密码"
+                        : "Hide password"
+                      : zh
+                        ? "显示密码"
+                        : "Show password"
+                  }
                   aria-pressed={showPassword}
                   onClick={() => setShowPassword((visible) => !visible)}
                 >
@@ -115,12 +139,20 @@ export function UserLogin({
               className="primary-button admin-login-btn"
               disabled={loading}
             >
-              <span>{loading ? "登录中…" : "登录平台"}</span>
+              <span>
+                {loading
+                  ? zh
+                    ? "登录中…"
+                    : "Signing in…"
+                  : zh
+                    ? "登录平台"
+                    : "Sign in"}
+              </span>
               {!loading && <ArrowRight size={16} />}
             </button>
             <a className="admin-login-back" href="/admin">
               <ArrowRight size={13} />
-              管理后台
+              {zh ? "管理后台" : "Admin console"}
             </a>
           </form>
         </div>

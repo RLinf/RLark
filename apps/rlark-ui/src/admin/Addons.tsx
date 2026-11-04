@@ -59,6 +59,26 @@ export function AddonsPage({ lang }: { lang: Lang }) {
     }
   };
 
+  // Addon.status.phase values reported by the addon controller. Unknown values
+  // are rendered verbatim so new phases still surface in the UI.
+  const phaseLabel = (phase: string) => {
+    if (!zh) return phase;
+    switch (phase) {
+      case "Ready":
+        return "就绪";
+      case "Failed":
+        return "失败";
+      case "Installing":
+        return "安装中";
+      case "Upgrading":
+        return "升级中";
+      case "Pending":
+        return "等待中";
+      default:
+        return phase;
+    }
+  };
+
   const totalPages = Math.ceil(installed.length / pageSize);
   const pagedInstalled = installed.slice(
     (page - 1) * pageSize,
@@ -209,7 +229,7 @@ export function AddonsPage({ lang }: { lang: Lang }) {
                     <td>{a.status?.version || a.spec?.version || "-"}</td>
                     <td>
                       <span style={{ color: phaseColor(a.status?.phase) }}>
-                        {a.status?.phase || "Pending"}
+                        {phaseLabel(a.status?.phase || "Pending")}
                       </span>
                     </td>
                     <td className="muted">{a.status?.message || "-"}</td>

@@ -20,7 +20,6 @@ type ControllerConcurrencyConfig struct {
 	TaskPull        int
 	AddonPull       int
 	TaskDeployment  int
-	TaskDaemonSet   int
 	TaskStatefulSet int
 	NodePush        int
 	PodPush         int
@@ -31,7 +30,6 @@ func defaultControllerConcurrencyConfig() ControllerConcurrencyConfig {
 		TaskPull:        defaultControllerMaxConcurrentReconciles,
 		AddonPull:       defaultControllerMaxConcurrentReconciles,
 		TaskDeployment:  defaultControllerMaxConcurrentReconciles,
-		TaskDaemonSet:   defaultControllerMaxConcurrentReconciles,
 		TaskStatefulSet: defaultControllerMaxConcurrentReconciles,
 		NodePush:        defaultControllerMaxConcurrentReconciles,
 		PodPush:         defaultControllerMaxConcurrentReconciles,
@@ -42,7 +40,6 @@ func (c *ControllerConcurrencyConfig) SetupFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&c.TaskPull, "task-pull-controller-workers", c.TaskPull, "Maximum concurrent Task pull reconciles")
 	fs.IntVar(&c.AddonPull, "addon-pull-controller-workers", c.AddonPull, "Maximum concurrent Addon pull reconciles")
 	fs.IntVar(&c.TaskDeployment, "task-deployment-push-controller-workers", c.TaskDeployment, "Maximum concurrent Task Deployment push reconciles")
-	fs.IntVar(&c.TaskDaemonSet, "task-daemonset-push-controller-workers", c.TaskDaemonSet, "Maximum concurrent Task DaemonSet push reconciles")
 	fs.IntVar(&c.TaskStatefulSet, "task-statefulset-push-controller-workers", c.TaskStatefulSet, "Maximum concurrent Task StatefulSet push reconciles")
 	fs.IntVar(&c.NodePush, "node-push-controller-workers", c.NodePush, "Maximum concurrent Node push reconciles")
 	fs.IntVar(&c.PodPush, "pod-push-controller-workers", c.PodPush, "Maximum concurrent Pod push reconciles")
@@ -53,7 +50,6 @@ func (c ControllerConcurrencyConfig) Validate() error {
 		"task-pull":             c.TaskPull,
 		"addon-pull":            c.AddonPull,
 		"task-deployment-push":  c.TaskDeployment,
-		"task-daemonset-push":   c.TaskDaemonSet,
 		"task-statefulset-push": c.TaskStatefulSet,
 		"node-push":             c.NodePush,
 		"pod-push":              c.PodPush,

@@ -31,9 +31,6 @@ func TestRayKubernetesAdaptersCompileLegacyWorkloadWithoutResourceDrift(t *testi
 		{name: "deployment", kind: kubernetesworkload.CarrierDeployment, new: func() workload.Adapter {
 			return kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace)
 		}},
-		{name: "daemonset", kind: kubernetesworkload.CarrierDaemonSet, new: func() workload.Adapter {
-			return kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace)
-		}},
 		{name: "statefulset", kind: kubernetesworkload.CarrierStatefulSet, new: func() workload.Adapter {
 			return kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace)
 		}},
@@ -83,8 +80,6 @@ func TestRayKubernetesAdaptersCompileLegacyWorkloadWithoutResourceDrift(t *testi
 			switch test.kind {
 			case kubernetesworkload.CarrierDeployment:
 				expected = kubernetesworkload.BuildDeployment(task, "runtime", spec, carrierReplicas(task))
-			case kubernetesworkload.CarrierDaemonSet:
-				expected = kubernetesworkload.BuildDaemonSet(task, "runtime", spec)
 			case kubernetesworkload.CarrierStatefulSet:
 				expected = kubernetesworkload.BuildStatefulSet(task, "runtime", spec, carrierReplicas(task))
 			}
@@ -170,11 +165,6 @@ func TestRayKubernetesAdapterRejectsInvalidCarrierParameters(t *testing.T) {
 			parameters: `{"replicas":1,"unknown":true}`,
 		},
 		{
-			name:       "daemonset replicas",
-			kind:       kubernetesworkload.CarrierDaemonSet,
-			parameters: `{"replicas":1}`,
-		},
-		{
 			name:       "statefulset unknown field",
 			kind:       kubernetesworkload.CarrierStatefulSet,
 			parameters: `{"replicas":1,"unknown":true}`,
@@ -205,6 +195,26 @@ func TestRayKubernetesAdapterRejectsInvalidCarrierParameters(t *testing.T) {
 				t.Fatal("invalid carrier parameters were accepted")
 			}
 		})
+	}
+}
+
+func TestRayKubernetesAdapterRejectsDaemonSetCarrier(t *testing.T) {
+	task := compileTask(kubernetesworkload.CarrierDeployment)
+	task.Spec.Workload.Carrier.Type = "rlinf.io/kubernetes-daemonset"
+	task.Spec.Workload.Carrier.Parameters = apiextensionsv1.JSON{Raw: []byte(`{}`)}
+	snapshot, err := compatibility.DecodeTask(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = kubernetesworkload.NewAdapter(
+		workload.TypeID(taskapi.WorkloadTypeRay),
+		namespace,
+	).Compile(context.Background(), workload.CompileRequest{
+		Task:    snapshot,
+		Runtime: agentruntime.Info{Kind: compatibility.RuntimeKindKubernetes},
+	})
+	if err == nil {
+		t.Fatal("DaemonSet carrier was accepted")
 	}
 }
 
@@ -444,8 +454,6 @@ func TestObserveStatusMatrixMatchesLegacyReducers(t *testing.T) {
 		{name: "deployment unobserved", kind: kubernetesworkload.CarrierDeployment, object: &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &one}, Status: appsv1.DeploymentStatus{ObservedGeneration: 1}}, phase: rlarkv1alpha1.TaskPhasePending},
 		{name: "deployment deadline", kind: kubernetesworkload.CarrierDeployment, object: &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &one}, Status: appsv1.DeploymentStatus{ObservedGeneration: 2, Conditions: []appsv1.DeploymentCondition{{Type: appsv1.DeploymentProgressing, Status: corev1.ConditionFalse, Reason: "ProgressDeadlineExceeded", Message: "deadline"}}}}, phase: rlarkv1alpha1.TaskPhaseFailed, message: "deadline"},
 		{name: "deployment replica failure", kind: kubernetesworkload.CarrierDeployment, object: &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &one}, Status: appsv1.DeploymentStatus{ObservedGeneration: 2, Conditions: []appsv1.DeploymentCondition{{Type: appsv1.DeploymentReplicaFailure, Status: corev1.ConditionTrue, Message: "replica"}}}}, phase: rlarkv1alpha1.TaskPhaseFailed, message: "replica"},
-		{name: "daemonset partial", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 2, UpdatedNumberScheduled: 1}}, phase: rlarkv1alpha1.TaskPhasePending},
-		{name: "daemonset ready", kind: kubernetesworkload.CarrierDaemonSet, object: &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 2, UpdatedNumberScheduled: 2, NumberReady: 2, NumberAvailable: 2}}, phase: rlarkv1alpha1.TaskPhaseRunning},
 		{name: "statefulset stopped", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{Spec: appsv1.StatefulSetSpec{Replicas: &zero}}, phase: rlarkv1alpha1.TaskPhaseStopped},
 		{name: "statefulset revision pending", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1, CurrentReplicas: 1, CurrentRevision: "old", UpdateRevision: "new"}}, phase: rlarkv1alpha1.TaskPhasePending},
 		{name: "statefulset ready", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1, CurrentReplicas: 1, CurrentRevision: "new", UpdateRevision: "new"}}, phase: rlarkv1alpha1.TaskPhaseRunning},
@@ -472,10 +480,6 @@ func compileTask(kind string) *rlarkv1alpha1.Task {
 	replicas := int32(2)
 	carrierParameters, _ := json.Marshal(taskapi.KubernetesReplicatedCarrierParametersV1{Replicas: &replicas})
 	carrierType := taskapi.CarrierTypeKubernetesDeployment
-	if kind == kubernetesworkload.CarrierDaemonSet {
-		carrierType = taskapi.CarrierTypeKubernetesDaemonSet
-		carrierParameters = []byte(`{}`)
-	}
 	if kind == kubernetesworkload.CarrierStatefulSet {
 		carrierType = taskapi.CarrierTypeKubernetesStatefulSet
 	}

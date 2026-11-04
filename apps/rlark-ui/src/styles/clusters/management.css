@@ -12,7 +12,17 @@
 
 .cluster-management-table-panel {
   padding: 0;
-  overflow-x: auto;
+  overflow: visible;
+}
+
+.cluster-management-table-body {
+  position: relative;
+  overflow: visible;
+}
+
+.cluster-management-table-head,
+.cluster-management-table-body {
+  border-radius: inherit;
 }
 
 .cluster-management-table-head,
@@ -27,7 +37,7 @@
     minmax(80px, 0.55fr)
     minmax(150px, 1fr)
     minmax(120px, 0.8fr)
-    20px;
+    36px;
   align-items: center;
   column-gap: 14px;
 }
@@ -64,6 +74,61 @@
 
 .cluster-management-row > svg {
   color: var(--soft);
+}
+
+.cluster-actions {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  justify-content: flex-end;
+}
+
+.cluster-actions .icon-button {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 50%;
+}
+
+.cluster-actions:has(.cluster-action-menu) {
+  z-index: 11;
+}
+
+.cluster-action-menu {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 150px;
+  display: grid;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.15);
+}
+
+.cluster-action-menu button {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font-size: 12px;
+}
+
+.cluster-action-menu button:hover:not(:disabled) {
+  background: var(--skyblue-bg);
+}
+
+.cluster-action-menu button:disabled {
+  color: var(--soft);
+  cursor: not-allowed;
+}
+
+.cluster-action-menu button.danger {
+  color: var(--red);
 }
 
 .cluster-management-name {

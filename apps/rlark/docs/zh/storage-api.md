@@ -20,6 +20,7 @@ Storage API 用于管理跨多个集群的 RLark StorageClass 声明。Gateway �
   "data": {
     "ceph-rbd": {
       "name": "ceph-rbd",
+      "storageClassName": "sc-0123456789abcdef",
       "clusters": ["agent-beijing", "agent-shanghai"],
       "description": "Ceph RBD StorageClass",
       "bucket": "",
@@ -36,7 +37,8 @@ Storage API 用于管理跨多个集群的 RLark StorageClass 声明。Gateway �
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `name` | `string` | StorageClass 名称 |
+| `name` | `string` | 供人阅读的 StorageClass 声明名称 |
+| `storageClassName` | `string` | 已下发到目标数据面集群的生成式 `sc-<id>` Kubernetes StorageClass 名称；PVC 的 `spec.storageClassName` 必须使用该值 |
 | `clusters` | `[]string` | 该 StorageClass 已配置的目标集群 ID 列表 |
 | `description` | `string` | 可读描述 |
 | `bucket` | `string` | 存储桶名称 |
@@ -44,12 +46,12 @@ Storage API 用于管理跨多个集群的 RLark StorageClass 声明。Gateway �
 | `endpoint` | `string` | 存储服务端点地址 |
 | `region` | `string` | 存储区域 |
 | `pathStyle` | `bool` | 是否使用 path-style 寻址 |
-| `accessKeyId` | `string` | Access Key ID；不会返回 Access Key Secret |
+| `accessKeyId` | `string` | 已掩码的 Access Key ID（`<前两个字符>*****<后两个字符>`）；不会返回 Access Key Secret |
 
 ### 2. 获取存储提供商列表
 **GET** `/api/v1/storage/storageclass/provider`
 
-列出支持的存储提供商列表（AWS S3、阿里云 OSS、MinIO、Ceph 等共 31 个提供商）。
+列出支持的存储提供商。所有已认证用户均可读取该目录，以及创建、更新和删除 StorageClass。该目录是创建、更新 StorageClass 时 `provider` 合法取值的唯一来源：提交 `value`，`name` 仅用于展示。rclone 遇到无法识别的 provider 不会报错，只会打印告警并回退到通用配置，因此 Gateway 会直接拒绝不在该目录中的 `provider`。
 
 #### 响应示例
 ```json
@@ -57,7 +59,7 @@ Storage API 用于管理跨多个集群的 RLark StorageClass 声明。Gateway �
   "data": [
     { "name": "AWS S3", "value": "AWS" },
     { "name": "阿里云 OSS", "value": "Alibaba" },
-    { "name": "MinIO", "value": "MinIO" }
+    { "name": "MinIO", "value": "Minio" }
   ],
   "success": true
 }
@@ -68,10 +70,32 @@ Storage API 用于管理跨多个集群的 RLark StorageClass 声明。Gateway �
 
 在控制面创建 StorageClass 声明。Replication 和 Delivery 控制器会将生成的 rclone CSI StorageClass 及其 Secret 异步分发到请求指定的目标集群。
 
+Gateway 在存储前会对 S3 配置做规范化和校验：
+
+- `provider` 必须命中提供商目录。canonical 取值、展示名以及旧客户端写入的历史拼写都会被接受，但记录中始终保存 canonical 取值；无法识别的取值返回 `400`。
+- `endpoint` 必须是不含存储桶名的 `http`/`https` URL，缺少 scheme 时默认补 `https`。存储桶名绝不会拼进 endpoint，因为 Gateway 的 S3 客户端和 rclone 都会自行拼接 virtual-hosted URL。
+- 只有发布了区域 endpoint 格式的提供商（如阿里云 OSS）才允许 `endpoint` 留空，此时必须提供 `region`，endpoint 由 region 推导得出。
+- 对仅支持 virtual-hosted 寻址的提供商（如阿里云 OSS、腾讯云 COS、华为云 OBS），`path_style` 会被强制置为 `false`；其他提供商保留提交的取值。
+- 完成结构校验后，Gateway 会在有界超时时间内发起带认证的 `HeadBucket` 请求。若配置的凭据无法访问存储桶，创建和更新请求会返回 `400 INVALID_REQUEST`；响应不会包含提供商错误详情或任何凭据。
+
+该校验上线前写入的历史记录会在读取时做 canonical 化，确保 Gateway 的 S3 客户端与下发到数据面的 rclone 配置在 provider 和寻址方式上保持一致。
+
+校验失败会使用稳定的机器可读错误码和不含敏感信息的结构化详情。缺少必填字段时，接口返回 `400`、错误码 `STORAGE_CLASS_REQUIRED_FIELDS` 以及 `details.fields`，例如：
+
+```json
+{
+  "code": "STORAGE_CLASS_REQUIRED_FIELDS",
+  "message": "bucket are required",
+  "details": { "fields": ["bucket"] }
+}
+```
+
+客户端必须使用 `code` 和 `details.fields` 生成本地化字段提示，而不是翻译面向人类的 `message` 文本。
+
 ### 4. 更新 StorageClass
 **PUT** `/api/v1/storage/storageclass/{name}`
 
-更新指定 StorageClass 声明的对象存储配置和目标集群。请求中的 `clusters` 是期望的最终目标集群集合；分发流程会从未包含的集群清理资源。更新时 `access_key_secret` 可留空，Gateway 会复用已有密钥。
+更新指定 StorageClass 声明的对象存储配置和目标集群。请求中的 `clusters` 是期望的最终目标集群集合；分发流程会从未包含的集群清理资源。更新时 `access_key_id` 和 `access_key_secret` 均可留空；Gateway 会读取并复用相应的已存储值，不会将凭据替换为空值。列表返回的 `accessKeyId` 使用五个星号掩码；客户端提交的 `access_key_id` 只要包含 `*****`，Gateway 就会将其视为未变更，而不是替换值。保留凭据时，Gateway 会使用之前存储的 Access Key ID 和 Secret 校验更新后的连接。
 
 ### 5. 删除 StorageClass
 **DELETE** `/api/v1/storage/storageclass/{name}`
@@ -79,13 +103,21 @@ Storage API 用于管理跨多个集群的 RLark StorageClass 声明。Gateway �
 删除 StorageClass 声明。分发 finalizer 会异步移除其 Delivery 声明，以及所有关联集群中的生成 StorageClass 和 Secret。
 
 ### 6. 列出存储桶文件
-**GET** `/api/v1/storage/storageclass/{name}/{cluster}/list`
+**GET** `/api/v1/storage/storageclass/{name}/list`
 
-列出指定集群中 StorageClass 存储桶下的文件列表。
+列出 StorageClass 存储桶中的文件。Gateway 会直接从控制面 StorageClass 声明读取存储桶。
 
 #### 路径参数
 - `name`：StorageClass 名称
-- `cluster`：集群 ID（如 `agent-beijing`）
+
+#### 查询参数
+- `prefix`（可选）：要列出的对象键前缀。非根目录前缀使用 `/` 分隔且以 `/` 结尾，例如 `a/b/c/`。
+- `delimiter`（可选）：对象键分隔符。默认值为 `/`；使用该分隔符时，直属子目录会在 `common_prefixes` 中返回。
+- `maxKeys`（可选）：返回的对象和公共前缀的最大数量。
+
+#### 目录导航
+
+对象存储使用前缀而不是真实目录。文件浏览器将非空目录前缀视为以 `/` 结尾的 canonical 值。例如，目录路径 `a/b/c` 表示为 `a/b/c/`；其上级目录为 `a/b/`，面包屑目标依次为 `a/`、`a/b/` 和 `a/b/c/`。即使某个前缀不包含直属对象或子前缀，上述导航仍然可用。
 
 #### 响应示例
 ```json
@@ -99,13 +131,12 @@ Storage API 用于管理跨多个集群的 RLark StorageClass 声明。Gateway �
 ```
 
 ### 7. 上传文件
-**POST** `/api/v1/storage/storageclass/{name}/{cluster}/upload`
+**POST** `/api/v1/storage/storageclass/{name}/upload`
 
 向指定 StorageClass 存储桶上传文件，使用 multipart/form-data 格式。
 
 #### 路径参数
 - `name`：StorageClass 名称
-- `cluster`：集群 ID
 
 #### 请求体
 multipart/form-data，字段 `file` 为上传的文件。
@@ -119,13 +150,12 @@ multipart/form-data，字段 `file` 为上传的文件。
 ```
 
 ### 8. 下载文件
-**GET** `/api/v1/storage/storageclass/{name}/{cluster}/object/*key`
+**GET** `/api/v1/storage/storageclass/{name}/object/*key`
 
 下载指定存储桶中的对象，返回原始文件内容。
 
 #### 路径参数
 - `name`：StorageClass 名称
-- `cluster`：集群 ID
 - `key`：对象路径（如 `model-checkpoint.pt` 或 `logs/training.log`）
 
 #### 响应
@@ -133,13 +163,12 @@ multipart/form-data，字段 `file` 为上传的文件。
 - `404`：文件不存在
 
 ### 9. 删除文件
-**DELETE** `/api/v1/storage/storageclass/{name}/{cluster}/object/*key`
+**DELETE** `/api/v1/storage/storageclass/{name}/object/*key`
 
 删除指定存储桶中的对象。
 
 #### 路径参数
 - `name`：StorageClass 名称
-- `cluster`：集群 ID
 - `key`：对象路径
 
 #### 响应示例

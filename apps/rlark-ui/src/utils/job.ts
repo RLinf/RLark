@@ -196,6 +196,13 @@ export function generateJobCRD(opts: {
       const taskName = toResourceName(role);
       const hostMounts = roleMounts.filter((m) => m.type === "host");
       const storageMounts = roleMounts.filter((m) => m.type === "storage");
+      // 表单无法编辑的卷（emptyDir、configMap、secret 等）按原始定义写回，
+      // 只把 name 对齐到挂载路径派生的名字，保证 volumes 与 volumeMounts 匹配。
+      const opaqueVolumes = roleMounts.flatMap((m) =>
+        m.type === "opaque" && m.rawVolume
+          ? [{ ...m.rawVolume, name: toVolumeName(m.mountPath) }]
+          : [],
+      );
 
       const containerVolumes = hostMounts.map((m) => ({
         name: toVolumeName(m.mountPath),
@@ -224,10 +231,13 @@ export function generateJobCRD(opts: {
         };
       });
 
-      const allVolumeMounts = roleMounts.map((m) => ({
-        name: toVolumeName(m.mountPath),
-        mountPath: m.mountPath,
-      }));
+      // 丢失了原始定义的 opaque 挂载无法写出对应的 volume，跳过以免产生悬空引用。
+      const allVolumeMounts = roleMounts
+        .filter((m) => m.type !== "opaque" || m.rawVolume)
+        .map((m) => ({
+          name: toVolumeName(m.mountPath),
+          mountPath: m.mountPath,
+        }));
 
       return {
         name: taskName,
@@ -300,6 +310,7 @@ export function generateJobCRD(opts: {
               volumes: [
                 ...(containerVolumes.length > 0 ? containerVolumes : []),
                 ...(storageVolumes.length > 0 ? storageVolumes : []),
+                ...opaqueVolumes,
               ],
             },
           },

@@ -6,7 +6,6 @@ const (
 	WorkloadTypeRay                  = "rlinf.io/ray"
 	WorkloadVersionRayV1             = "v1"
 	CarrierTypeKubernetesDeployment  = "rlinf.io/kubernetes-deployment"
-	CarrierTypeKubernetesDaemonSet   = "rlinf.io/kubernetes-daemonset"
 	CarrierTypeKubernetesStatefulSet = "rlinf.io/kubernetes-statefulset"
 	CarrierVersionKubernetesV1       = "v1"
 	EnvironmentTypeSSH               = "rlinf.io/ssh"
@@ -46,15 +45,13 @@ type KubernetesReplicatedCarrierParametersV1 struct {
 	Replicas *int32 `json:"replicas,omitempty"`
 }
 
-// KubernetesDaemonSetCarrierParametersV1 is intentionally empty because a
-// DaemonSet derives its instance count from eligible nodes.
-type KubernetesDaemonSetCarrierParametersV1 struct{}
-
 // SSHEnvironmentParametersV1 是 rlinf.io/ssh/v1 的参数合同。
 // AuthorizedKeys contains public authentication material. It may be copied to
 // the local execution snapshot, but not to portable Plans or remote transport.
+// Port is non-sensitive and may pass through to the Plan-bound requirement.
 type SSHEnvironmentParametersV1 struct {
 	AuthorizedKeys []string `json:"authorizedKeys,omitempty"`
+	Port           int32    `json:"port,omitempty"`
 }
 
 // NetworkEnvironmentParametersV1 configures the virtual network joined by a

@@ -517,11 +517,17 @@ func TestResolvedNamespaceIsDeterministicAndMigratesTask(t *testing.T) {
 	controller := true
 	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
 	nodes := []client.Object{
-		&rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "z", Namespace: "workers-b", Labels: map[string]string{"zone": "new"}}},
-		&rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "workers-a", Labels: map[string]string{"zone": "new"}}},
+		&rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "z", Namespace: "workers-b", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}},
+		&rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "workers-a", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}},
+	}
+	clusters := []client.Object{
+		&rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "b"}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers-b"}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterOnline}},
+		&rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "a"}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers-a"}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterOnline}},
 	}
 	scheme := jobTestScheme(t)
-	c := jobTestClientBuilder(scheme).WithObjects(append(nodes, task)...).Build()
+	objects := append(nodes, task)
+	objects = append(objects, clusters...)
+	c := jobTestClientBuilder(scheme).WithObjects(objects...).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 	namespace, err := r.resolveTaskNamespace(context.Background(), &job.Spec.Tasks[0])
 	if err != nil || namespace != "workers-a" {
@@ -537,6 +543,84 @@ func TestResolvedNamespaceIsDeterministicAndMigratesTask(t *testing.T) {
 	}
 }
 
+func TestResolveTaskNamespaceRejectsIneligibleClusters(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		cluster rlarkv1alpha1.Cluster
+	}{
+		{name: "cordoned", cluster: rlarkv1alpha1.Cluster{Spec: rlarkv1alpha1.ClusterSpec{Cordoned: true}}},
+		{name: "draining", cluster: rlarkv1alpha1.Cluster{Spec: rlarkv1alpha1.ClusterSpec{Draining: true}}},
+		{name: "delisted", cluster: rlarkv1alpha1.Cluster{Spec: rlarkv1alpha1.ClusterSpec{Delisted: true}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			template := rlarkv1alpha1.JobTaskTemplate{Name: "worker", TaskSpec: rlarkv1alpha1.TaskSpec{Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}}}}
+			job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}}}
+			tt.cluster.Name = "cluster"
+			tt.cluster.Spec.AgentNamespace = "workers"
+			tt.cluster.Status.Phase = rlarkv1alpha1.ClusterOnline
+			node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", Namespace: "workers", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}}
+			scheme := jobTestScheme(t)
+			c := jobTestClientBuilder(scheme).WithObjects(node, &tt.cluster).Build()
+			r := &Reconciler{Client: c, Scheme: scheme}
+
+			if _, err := r.dispatchTasks(context.Background(), job, logr.Discard()); err == nil {
+				t.Fatal("expected dispatch rejection")
+			}
+			var tasks rlarkv1alpha1.TaskList
+			if err := c.List(context.Background(), &tasks); err != nil {
+				t.Fatal(err)
+			}
+			if len(tasks.Items) != 0 {
+				t.Fatalf("created Tasks: %#v", tasks.Items)
+			}
+		})
+	}
+}
+
+func TestResolveTaskNamespaceAllowsDowngradedCluster(t *testing.T) {
+	template := rlarkv1alpha1.JobTaskTemplate{Name: "worker", TaskSpec: rlarkv1alpha1.TaskSpec{Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}}}}
+	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}}, Status: rlarkv1alpha1.JobStatus{Tasks: []rlarkv1alpha1.JobTaskStatus{{Name: "worker"}}}}
+	cluster := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers"}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterDowngraded}}
+	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", Namespace: "workers", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}}
+	scheme := jobTestScheme(t)
+	c := jobTestClientBuilder(scheme).WithObjects(node, cluster).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+
+	if _, err := r.dispatchTasks(context.Background(), job, logr.Discard()); err != nil {
+		t.Fatal(err)
+	}
+	var task rlarkv1alpha1.Task
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "job-worker", Namespace: "workers"}, &task); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResolveTaskNamespaceRecoversWhenClusterBecomesOnline(t *testing.T) {
+	template := rlarkv1alpha1.JobTaskTemplate{Name: "worker", TaskSpec: rlarkv1alpha1.TaskSpec{Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}}}}
+	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}}, Status: rlarkv1alpha1.JobStatus{Tasks: []rlarkv1alpha1.JobTaskStatus{{Name: "worker"}}}}
+	cluster := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers", Cordoned: true}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterCordoned}}
+	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", Namespace: "workers", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}}
+	scheme := jobTestScheme(t)
+	c := jobTestClientBuilder(scheme).WithObjects(node, cluster).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+
+	if _, err := r.dispatchTasks(context.Background(), job, logr.Discard()); err == nil {
+		t.Fatal("expected cordoned cluster rejection")
+	}
+	cluster.Spec.Cordoned = false
+	cluster.Status.Phase = rlarkv1alpha1.ClusterOnline
+	if err := c.Update(context.Background(), cluster); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.dispatchTasks(context.Background(), job, logr.Discard()); err != nil {
+		t.Fatal(err)
+	}
+	var task rlarkv1alpha1.Task
+	if err := c.Get(context.Background(), client.ObjectKey{Name: "job-worker", Namespace: "workers"}, &task); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDispatchResolvesNamespaceBeforeMutating(t *testing.T) {
 	replicas := int32(2)
 	template := rlarkv1alpha1.JobTaskTemplate{Name: "worker", TaskSpec: rlarkv1alpha1.TaskSpec{
@@ -547,9 +631,10 @@ func TestDispatchResolvesNamespaceBeforeMutating(t *testing.T) {
 	task := buildTask(job, template, "job-worker", "workers")
 	controller := true
 	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
-	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", Namespace: "workers", Labels: map[string]string{"zone": "new"}}}
+	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", Namespace: "workers", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}}
+	cluster := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers"}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterOnline}}
 	scheme := jobTestScheme(t)
-	baseClient := jobTestClientBuilder(scheme).WithObjects(task, node).Build()
+	baseClient := jobTestClientBuilder(scheme).WithObjects(task, node, cluster).Build()
 	c := &failSecondNodeListClient{Client: baseClient}
 	r := &Reconciler{Client: c, Scheme: scheme}
 	if _, err := r.dispatchTasks(context.Background(), job, logr.Discard()); err != nil {

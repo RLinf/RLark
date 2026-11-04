@@ -13,3 +13,16 @@ export function effectiveJobPhase(job: Job): JobDisplayPhase {
   }
   return job.phase || "Pending";
 }
+
+// 终态集合：进入这些状态后任务不再运行，不应计入「运行中」。
+const TERMINAL_JOB_PHASES: readonly JobDisplayPhase[] = [
+  "Stopped",
+  "Succeeded",
+  "Failed",
+  "Deleting",
+];
+
+// 判定任务是否仍处于活跃（非终态）状态，过渡态 Stopping 仍视为活跃。
+export function isActiveJob(job: Job): boolean {
+  return !TERMINAL_JOB_PHASES.includes(effectiveJobPhase(job));
+}

@@ -122,7 +122,7 @@ graph LR
 **Pull Controller** (Task example):
 
 1. Watch control plane Task CR create/update/delete events (with finalizer protection)
-2. Decode the Task into an execution snapshot and select the Kubernetes Runtime plus the Ray-oriented Kubernetes Workload Adapter; the legacy Deployment, DaemonSet, or StatefulSet discriminator selects its carrier kind
+2. Decode the Task into an execution snapshot and select the Kubernetes Runtime plus the Ray-oriented Kubernetes Workload Adapter; the carrier declaration selects Deployment or StatefulSet
 3. Compile a declarative object plan whose Adapter selects ownership, lifecycle, owned fields, update mode, and a typed Runtime reconcile profile; ask the Adapter for bounded identity inventory, read that Runtime snapshot, and compute the required operations
 4. Execute ordered, idempotent Apply/Delete operations; a `Replace` object is UID-fenced and deleted before a later reconciliation recreates it, and running Tasks are reconciled again when their desired generation changes
 5. Apply Workload-owned Pod-template mutations such as Ray bootstrap during compilation, then resolve explicit Environment requirements and bind the cross-domain network sidecar only to the Adapter-authorized PodTemplate target

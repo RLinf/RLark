@@ -551,12 +551,8 @@ export function ImageRegistryCreatePage({
   };
 
   return (
-    <div
-      className="modal-backdrop storage-create-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !submitting) onBack();
-      }}
-    >
+    // 表单内容无法恢复，遮罩点击不关闭弹层；关闭入口为右上角按钮、取消按钮和 Esc。
+    <div className="modal-backdrop storage-create-backdrop">
       <div
         className="modal storage-create-modal"
         role="dialog"
@@ -737,12 +733,8 @@ function ImageRegistryEditModal({
   };
 
   return (
-    <div
-      className="modal-backdrop storage-create-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !submitting) onBack();
-      }}
-    >
+    // 表单内容无法恢复，遮罩点击不关闭弹层；关闭入口为右上角按钮、取消按钮和 Esc。
+    <div className="modal-backdrop storage-create-backdrop">
       <div
         className="modal storage-create-modal"
         role="dialog"

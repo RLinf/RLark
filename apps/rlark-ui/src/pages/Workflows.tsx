@@ -25,6 +25,7 @@ import type { Copy } from "../i18n";
 import type { DAGEdge, DAGNode, RoleResource, WorkflowJobDef } from "../types";
 import type { CRDWorkflow } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
+import { copyText } from "../utils/clipboard";
 import { crdToWorkflow } from "../utils/crd";
 import { hasCycle, makeDefaultRoleResources } from "../utils/dag";
 import {
@@ -748,6 +749,7 @@ export function CreateWorkflowModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [workflowName, setWorkflowName] = useState("rl-training-pipeline");
+  const [yamlCopied, setYamlCopied] = useState(false);
 
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
@@ -770,7 +772,7 @@ export function CreateWorkflowModal({
   );
 
   const [storageClasses, setStorageClasses] = useState<
-    Array<{ name: string; description: string; bucket: string }>
+    Array<{ id: string; name: string; description: string; bucket: string }>
   >([]);
   const [storageClassLoading, setStorageClassLoading] = useState(false);
   const [storageClassFetched, setStorageClassFetched] = useState(false);
@@ -893,29 +895,27 @@ export function CreateWorkflowModal({
     setStorageClassFetched(false);
     try {
       const data = await storageClassesApi.list<{
+        storageClassName: string;
         name: string;
         description?: string;
         bucket?: string;
-        clusters?: string[];
-      }>();
-      const list = Object.values(data)
-        .filter((item) => !cluster || item.clusters?.includes(cluster))
-        .map((item) => ({
-          name: item.name,
-          description: item.description ?? "",
-          bucket: item.bucket ?? "",
-        }));
+      }>(cluster);
+      const list = Object.values(data).map((item) => ({
+        id: item.storageClassName,
+        name: item.name,
+        description: item.description ?? "",
+        bucket: item.bucket ?? "",
+      }));
       setStorageClasses(list);
     } catch (e) {
       console.warn("Failed to fetch storage classes:", e);
       setStorageClasses(
-        mockStorageClasses
-          .filter((sc) => !cluster || sc.clusters.includes(cluster))
-          .map(({ name, description, bucket }) => ({
-            name,
-            description,
-            bucket,
-          })),
+        mockStorageClasses.map(({ id, name, description, bucket }) => ({
+          id,
+          name,
+          description,
+          bucket,
+        })),
       );
     } finally {
       setStorageClassLoading(false);
@@ -1439,12 +1439,8 @@ export function CreateWorkflowModal({
   };
 
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) =>
-        e.target === e.currentTarget && !submitting && onClose()
-      }
-    >
+    // 表单内容无法恢复，遮罩点击不关闭弹层；关闭入口为右上角按钮、取消按钮和 Esc。
+    <div className="modal-backdrop">
       <div className="modal create-job-modal" role="dialog" aria-modal="true">
         <div className="modal-head">
           <div>
@@ -2092,7 +2088,7 @@ export function CreateWorkflowModal({
                                           : "Select storage class"}
                                     </option>
                                     {storageClasses.map((sc) => (
-                                      <option key={sc.name} value={sc.name}>
+                                      <option key={sc.id} value={sc.id}>
                                         {sc.name}
                                       </option>
                                     ))}
@@ -2243,9 +2239,14 @@ export function CreateWorkflowModal({
                 <span>YAML</span>
                 <button
                   className="secondary-button"
-                  onClick={() => navigator.clipboard?.writeText(yaml)}
+                  onClick={async () => {
+                    if (!(await copyText(yaml))) return;
+                    setYamlCopied(true);
+                    window.setTimeout(() => setYamlCopied(false), 2000);
+                  }}
                 >
-                  {c.api.copy}
+                  {yamlCopied ? <Check size={13} /> : null}
+                  {yamlCopied ? (zh ? "已复制" : "Copied") : c.api.copy}
                 </button>
               </div>
               <pre>{yaml}</pre>

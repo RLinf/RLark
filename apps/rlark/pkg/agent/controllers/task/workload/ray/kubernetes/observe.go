@@ -33,14 +33,6 @@ func DeploymentStatusPhase(deployment *appsv1.Deployment) (rlarkv1alpha1.TaskPha
 	return rlarkv1alpha1.TaskPhasePending, ""
 }
 
-// DaemonSetStatusPhase projects a DaemonSet's current generation and replica counts.
-func DaemonSetStatusPhase(daemonSet *appsv1.DaemonSet) rlarkv1alpha1.TaskPhase {
-	if daemonSet.Status.ObservedGeneration >= daemonSet.Generation && daemonSet.Status.DesiredNumberScheduled > 0 && daemonSet.Status.UpdatedNumberScheduled == daemonSet.Status.DesiredNumberScheduled && daemonSet.Status.NumberReady == daemonSet.Status.DesiredNumberScheduled && daemonSet.Status.NumberAvailable == daemonSet.Status.DesiredNumberScheduled {
-		return rlarkv1alpha1.TaskPhaseRunning
-	}
-	return rlarkv1alpha1.TaskPhasePending
-}
-
 // StatefulSetStatusPhase projects a StatefulSet's current revision and replica counts.
 func StatefulSetStatusPhase(statefulSet *appsv1.StatefulSet) rlarkv1alpha1.TaskPhase {
 	desired := desiredReplicas(statefulSet.Spec.Replicas)

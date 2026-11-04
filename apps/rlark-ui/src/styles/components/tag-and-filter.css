@@ -237,8 +237,15 @@
   color: var(--danger, #dc2626);
   background-color: #fef2f2;
   opacity: 1;
-  border: 1px solid var(--danger-border, #fecaca);
+  border: 1px solid #fecaca;
   border-radius: 6px;
+}
+
+/* 深色主题下浅红底会在弹窗里形成刺眼色块，改为同色系的半透明底。 */
+.theme-dark .tag-editor-error {
+  color: #ff8a8a;
+  background-color: rgba(220, 38, 38, 0.16);
+  border-color: rgba(220, 38, 38, 0.42);
 }
 
 /* ============ TagFilterPopover ============ */
@@ -316,6 +323,13 @@
   border-right: none;
 }
 
+.tag-filter-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 .tag-filter-col-head {
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
@@ -327,10 +341,23 @@
   /* --bg 未定义会解析为透明，key 上翻时会与列头文字重叠，改用弹层背景色 --panel */
   background: var(--panel);
   z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 31px;
 }
 
 .tag-filter-col-title {
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-filter-col-head .tag-filter-link-btn {
+  flex: none;
 }
 
 .tag-filter-link-btn {
@@ -364,12 +391,39 @@
 }
 
 .tag-filter-key-item.selected {
-  background: var(--blue-bg, #eef2ff);
+  background: var(--blue-bg);
+}
+
+/* 当前在右栏展示值的 key：用右侧描边和强调色标出，与「已勾选」区分开。 */
+.tag-filter-key-item.active {
   border-right-color: var(--blue);
 }
 
-.tag-filter-key-item.hovered {
-  background: var(--hover, #f3f4f6);
+.tag-filter-key-item.active .tag-filter-key-name {
+  color: var(--blue);
+  font-weight: 600;
+}
+
+/* key 行左侧是勾选框，右侧整块是切换右栏的按钮，两者互不干扰。 */
+.tag-filter-key-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tag-filter-key-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .tag-filter-key-item input,
@@ -507,7 +561,7 @@
 }
 
 .col-filter-item.selected {
-  background: var(--blue-bg, #eef2ff);
+  background: var(--blue-bg);
 }
 
 .col-filter-item input {

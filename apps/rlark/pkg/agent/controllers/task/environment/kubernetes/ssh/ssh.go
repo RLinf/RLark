@@ -47,10 +47,6 @@ type profileValue struct {
 	Port       int32  `json:"port"`
 }
 
-type requirementOptions struct {
-	Port int32 `json:"port"`
-}
-
 // Resolver authorizes the built-in workload SSH Secret profile. It resolves no
 // raw material and performs no management or Runtime I/O.
 type Resolver struct{ RuntimeKind agentruntime.Kind }
@@ -84,9 +80,9 @@ func (r Resolver) Resolve(ctx context.Context, request environment.ResolveReques
 		if err != nil {
 			return environment.ResolvedEnvironment{}, err
 		}
-		options := requirementOptions{Port: 22}
+		options := taskapi.SSHEnvironmentParametersV1{Port: 22}
 		if len(requirement.Parameters) != 0 {
-			decoded, err := taskapi.DecodeParametersStrict[requirementOptions](apiextensionsv1.JSON{
+			decoded, err := taskapi.DecodeParametersStrict[taskapi.SSHEnvironmentParametersV1](apiextensionsv1.JSON{
 				Raw: append([]byte(nil), requirement.Parameters...),
 			})
 			if err != nil {

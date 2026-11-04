@@ -38,6 +38,16 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		clusters.GET("", g.listClusters)
 		clusters.GET("/:cluster_id", g.getCluster)
 	}
+	adminClusters := adminAPI.Group("/clusters")
+	{
+		adminClusters.POST("/:cluster_id/cordon", g.cordonCluster)
+		adminClusters.POST("/:cluster_id/uncordon", g.uncordonCluster)
+		adminClusters.POST("/:cluster_id/drain", g.drainCluster)
+		adminClusters.POST("/:cluster_id/undrain", g.undrainCluster)
+		adminClusters.POST("/:cluster_id/delist", g.delistCluster)
+		adminClusters.POST("/:cluster_id/delete", g.deleteCluster)
+		adminClusters.POST("/:cluster_id/restore", g.restoreCluster)
+	}
 
 	nodes := rlinfv1alpha1.Group("/nodes")
 	{
@@ -153,8 +163,12 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 	storage := api.Group("/storage")
 	{
 		storage.GET("/storageclass", g.listStorageClass)
+		storage.GET("/storageclass/provider", g.listProvider)
+		storage.POST("/storageclass", g.createStorageClass)
+		storage.PUT("/storageclass/:name", g.updateStorageClass)
+		storage.DELETE("/storageclass/:name", g.deleteStorageClass)
 
-		scFiles := storage.Group("/storageclass/:name/:cluster")
+		scFiles := storage.Group("/storageclass/:name")
 		{
 			scFiles.GET("/list", g.listStorageClassFiles)
 			scFiles.POST("/upload", g.uploadStorageClassFile)
@@ -162,14 +176,6 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 			scFiles.DELETE("/object/*key", g.deleteStorageClassObject)
 		}
 	}
-	adminStorage := adminAPI.Group("/storage")
-	{
-		adminStorage.POST("/storageclass", g.createStorageClass)
-		adminStorage.PUT("/storageclass/:name", g.updateStorageClass)
-		adminStorage.DELETE("/storageclass/:name", g.deleteStorageClass)
-		adminStorage.GET("/storageclass/provider", g.listProvider)
-	}
-
 	// Addon Catalog APIs
 	addons := adminAPI.Group("/addons")
 	{

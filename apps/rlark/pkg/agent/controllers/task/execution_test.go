@@ -95,7 +95,6 @@ func TestKubernetesExecutionCoordinatorEvaluatesAllBuiltinWorkloads(t *testing.T
 		typeID string
 	}{
 		{name: "Deployment", typeID: taskapi.CarrierTypeKubernetesDeployment},
-		{name: "DaemonSet", typeID: taskapi.CarrierTypeKubernetesDaemonSet},
 		{name: "StatefulSet", typeID: taskapi.CarrierTypeKubernetesStatefulSet},
 	}
 	for _, carrier := range carriers {
@@ -104,9 +103,6 @@ func TestKubernetesExecutionCoordinatorEvaluatesAllBuiltinWorkloads(t *testing.T
 			task.Generation = 3
 			task.Spec.Workload.Carrier.Type = carrier.typeID
 			task.Annotations[host.TaskClaimedCarrierTypeAnnotation] = carrier.typeID
-			if carrier.typeID == taskapi.CarrierTypeKubernetesDaemonSet {
-				task.Spec.Workload.Carrier.Parameters = apiextensionsv1.JSON{Raw: []byte(`{}`)}
-			}
 			task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "example:v1"}}
 			snapshot, err := compatibility.DecodeTask(task)
 			if err != nil {
@@ -825,19 +821,6 @@ func TestCoordinatorAdoptsOriginMainRunningWorkloadsWithoutTemplateDrift(t *test
 				},
 			}
 		}},
-		{name: "daemonset", kind: raykubernetes.CarrierDaemonSet, old: func(template corev1.PodTemplateSpec) client.Object {
-			return &appsv1.DaemonSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "task",
-					Namespace: tenant.DefaultNamespace,
-					UID:       "workload-uid",
-				},
-				Spec: appsv1.DaemonSetSpec{
-					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "task"}},
-					Template: template,
-				},
-			}
-		}},
 		{name: "statefulset", kind: raykubernetes.CarrierStatefulSet, old: func(template corev1.PodTemplateSpec) client.Object {
 			one := int32(1)
 			return &appsv1.StatefulSet{
@@ -859,19 +842,14 @@ func TestCoordinatorAdoptsOriginMainRunningWorkloadsWithoutTemplateDrift(t *test
 			scheme := executionScheme(t)
 			task := claimedExecutionTask(rlarkv1alpha1.TaskPhaseRunning)
 			carrierType := taskapi.CarrierTypeKubernetesDeployment
-			if test.kind == raykubernetes.CarrierDaemonSet {
-				carrierType = taskapi.CarrierTypeKubernetesDaemonSet
-			}
 			if test.kind == raykubernetes.CarrierStatefulSet {
 				carrierType = taskapi.CarrierTypeKubernetesStatefulSet
 			}
 			task.Spec.Workload.Carrier.Type = carrierType
 			task.Annotations[host.TaskClaimedCarrierTypeAnnotation] = carrierType
-			if test.kind != raykubernetes.CarrierDaemonSet {
-				one := int32(1)
-				parameters, _ := json.Marshal(taskapi.KubernetesReplicatedCarrierParametersV1{Replicas: &one})
-				task.Spec.Workload.Carrier.Parameters = apiextensionsv1.JSON{Raw: parameters}
-			}
+			one := int32(1)
+			parameters, _ := json.Marshal(taskapi.KubernetesReplicatedCarrierParametersV1{Replicas: &one})
+			task.Spec.Workload.Carrier.Parameters = apiextensionsv1.JSON{Raw: parameters}
 			task.Spec.Workload.Template = &corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "task"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "origin-main:v1"}}}}
 			// This fixture is the shape produced before Coordinator: name/selector
 			// ownership, no workload-level management annotations or UID selector.
@@ -1363,12 +1341,6 @@ func readWorkloadTemplate(t *testing.T, kube client.Client, kind string) corev1.
 	switch kind {
 	case raykubernetes.CarrierDeployment:
 		var object appsv1.Deployment
-		if err := kube.Get(context.Background(), key, &object); err != nil {
-			t.Fatal(err)
-		}
-		return object.Spec.Template
-	case raykubernetes.CarrierDaemonSet:
-		var object appsv1.DaemonSet
 		if err := kube.Get(context.Background(), key, &object); err != nil {
 			t.Fatal(err)
 		}

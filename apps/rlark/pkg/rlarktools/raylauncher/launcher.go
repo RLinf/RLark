@@ -178,9 +178,8 @@ func runHead(ctx context.Context, config Config) error {
 		if err := commandRunner(ctx, config.BashBinary, "-c", script); err != nil {
 			return preserveExit("run script", err)
 		}
-		return nil
 	}
-	<-ctx.Done()
+	<-ctx.Done() // 执行完 RLARK_RUN_SCRIPT 开始阻塞，保证 pod 不退出
 	return ctx.Err()
 }
 

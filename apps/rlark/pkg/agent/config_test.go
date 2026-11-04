@@ -11,7 +11,7 @@ import (
 func TestDefaultControllerConcurrency(t *testing.T) {
 	got := DefaultConfig().ControllerConcurrency
 	if got.TaskPull != 8 || got.AddonPull != 8 || got.TaskDeployment != 8 ||
-		got.TaskDaemonSet != 8 || got.TaskStatefulSet != 8 || got.NodePush != 8 || got.PodPush != 8 {
+		got.TaskStatefulSet != 8 || got.NodePush != 8 || got.PodPush != 8 {
 		t.Fatalf("default controller concurrency = %+v, want all 8", got)
 	}
 	if err := got.Validate(); err != nil {
@@ -71,16 +71,15 @@ func TestControllerConcurrencyFlags(t *testing.T) {
 		"--task-pull-controller-workers=1",
 		"--addon-pull-controller-workers=2",
 		"--task-deployment-push-controller-workers=3",
-		"--task-daemonset-push-controller-workers=4",
-		"--task-statefulset-push-controller-workers=5",
-		"--node-push-controller-workers=6",
-		"--pod-push-controller-workers=7",
+		"--task-statefulset-push-controller-workers=4",
+		"--node-push-controller-workers=5",
+		"--pod-push-controller-workers=6",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	want := ControllerConcurrencyConfig{
-		TaskPull: 1, AddonPull: 2, TaskDeployment: 3, TaskDaemonSet: 4,
-		TaskStatefulSet: 5, NodePush: 6, PodPush: 7,
+		TaskPull: 1, AddonPull: 2, TaskDeployment: 3,
+		TaskStatefulSet: 4, NodePush: 5, PodPush: 6,
 	}
 	if config.ControllerConcurrency != want {
 		t.Fatalf("controller concurrency = %+v, want %+v", config.ControllerConcurrency, want)

@@ -81,7 +81,8 @@
   flex: 1;
   border: 0;
   outline: 0;
-  background: transparent;
+  /* 用 background-color 而非 background 简写，避免重置全局 select 的下拉箭头。 */
+  background-color: transparent;
   color: var(--ink);
   font-size: 12px;
   font-weight: 700;
@@ -282,7 +283,7 @@
 .job-tab-panel {
   border: 1px solid var(--line);
   border-radius: 18px;
-  background: #fff;
+  background: var(--panel);
   box-shadow: var(--shadow-soft);
   overflow: hidden;
 }
@@ -327,10 +328,10 @@
   content: "";
   display: block;
   height: 6px;
-  background: #f7f8fb;
+  background: var(--canvas);
   margin: 0 -16px;
-  border-top: 1px solid #eef0f4;
-  border-bottom: 1px solid #eef0f4;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .dag-canvas {
@@ -1624,8 +1625,15 @@ tbody tr:hover {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  /* 必须高于 .action-dropdown(50),否则打开弹窗时下拉菜单会浮在遮罩之上 */
-  z-index: 60;
+  /*
+   * 全屏遮罩层级基线。顶栏 .topbar 是 sticky 元素,与遮罩同处根层叠上下文,
+   * 遮罩层级低于顶栏时顶栏不会被遮住,因此全屏遮罩必须排在顶栏之上。
+   * 升序约定:
+   * .sidebar(5) < .action-dropdown(50) < .status-info-tooltip(999)
+   *   < .topbar(1200) < .addon-drawer-overlay(1240)/.addon-drawer(1241)
+   *   < .log-terminal-fullscreen(1250) < .modal-backdrop(1300)
+   */
+  z-index: 1300;
   display: grid;
   place-items: center;
   background: rgba(16, 22, 32, 0.46);
@@ -1725,7 +1733,18 @@ tbody tr:hover {
   color: #27303d;
   outline: 0;
   font-size: 12px;
+}
+
+.modal-body input,
+.modal-body textarea {
   background: #fff;
+}
+
+/* select 只覆盖 background-color：用 background 简写会把全局 select 规则提供的
+   background-image（下拉箭头）重置为 none，而 appearance: none 已移除原生箭头，
+   结果是控件完全没有下拉指示，右侧只剩一块空白内边距。 */
+.modal-body select {
+  background-color: #fff;
 }
 
 .modal-body input:focus,
@@ -1897,6 +1916,7 @@ tbody tr:hover {
   --shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.22);
   --app-bg: #0c111b;
   --hover: rgba(167, 139, 250, 0.08);
+  --blue-bg: rgba(167, 139, 250, 0.18);
   color: #f5f7fb;
   background:
     radial-gradient(
@@ -2110,9 +2130,15 @@ tbody tr:hover {
 .theme-dark .live-chip,
 .theme-dark .map-live,
 .theme-dark .modal-body input,
-.theme-dark .modal-body textarea,
-.theme-dark .modal-body select {
+.theme-dark .modal-body textarea {
   background: #111a29;
+  border-color: var(--line);
+  color: #d8e0ee;
+}
+
+/* 原因同 .modal-body select：select 单独成规则并只覆盖 background-color。 */
+.theme-dark .modal-body select {
+  background-color: #111a29;
   border-color: var(--line);
   color: #d8e0ee;
 }
@@ -2128,9 +2154,15 @@ tbody tr:hover {
   background: #101827;
 }
 
-.theme-dark .toolbar-filter,
-.theme-dark .toolbar-filter select {
+.theme-dark .toolbar-filter {
   background: #151d2b;
+  color: #d8e0ee;
+  border-color: var(--line);
+}
+
+/* 原因同 .toolbar-filter select。 */
+.theme-dark .toolbar-filter select {
+  background-color: #151d2b;
   color: #d8e0ee;
   border-color: var(--line);
 }

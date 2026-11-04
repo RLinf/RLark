@@ -8,14 +8,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
-// IsBucketExist reports whether bucketExist.
-func (c *Client) IsBucketExist() (bool, error) {
-	ctx := context.Background()
+// ValidateBucketCredentials verifies that the configured credentials can access
+// the configured bucket.
+func (c *Client) ValidateBucketCredentials(ctx context.Context) error {
 	_, err := c.s3Client.HeadBucket(ctx, &s3.HeadBucketInput{
 		Bucket: aws.String(c.getBucket()),
 	})
-	if err != nil {
-		// Check if bucket not found
+	return err
+}
+
+// IsBucketExist reports whether bucketExist.
+func (c *Client) IsBucketExist() (bool, error) {
+	if err := c.ValidateBucketCredentials(context.Background()); err != nil {
 		return false, err
 	}
 	return true, nil

@@ -57,8 +57,13 @@ spec:
               agentNamespace:
                 description: AgentNamespace is the management-plane namespace that
                   contains the agent heartbeat Lease and Node CRs.
+                minLength: 1
                 type: string
               cordoned:
+                type: boolean
+              delisted:
+                type: boolean
+              drainPreviousCordoned:
                 type: boolean
               draining:
                 type: boolean
@@ -145,6 +150,7 @@ spec:
                 - Downgraded
                 - Cordoned
                 - Draining
+                - Delisted
                 type: string
               totalNodes:
                 format: int32

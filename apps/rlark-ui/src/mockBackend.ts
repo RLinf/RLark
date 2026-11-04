@@ -300,7 +300,6 @@ const workflows: CRDWorkflow[] = [
 
 const storageClasses: StorageClass[] = mockStorageClasses.map((item) => ({
   ...item,
-  clusters: item.clusters.length > 0 ? item.clusters : clusterNames,
 }));
 
 const imageRegistries = [
@@ -540,8 +539,11 @@ export function installMockBackend() {
         id: name,
         name,
         namespace: "kube-system",
+        clusters:
+          payload.clusters ||
+          storageClasses.find((item) => item.name === name)?.clusters ||
+          [],
         provider: payload.provider || "MinIO",
-        clusters: Array.isArray(payload.clusters) ? payload.clusters : [],
         endpoint: payload.endpoint || "",
         region: payload.region || "",
         bucket: payload.bucket || "",

@@ -132,7 +132,8 @@
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.35);
-  z-index: 1000;
+  /* 高于顶栏(1200)，否则抽屉遮罩盖不住顶栏 */
+  z-index: 1240;
 }
 
 .addon-drawer {
@@ -143,7 +144,7 @@
   max-width: 90vw;
   height: 100vh;
   background: #fff;
-  z-index: 1001;
+  z-index: 1241;
   display: flex;
   flex-direction: column;
   box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);

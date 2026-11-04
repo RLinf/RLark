@@ -268,7 +268,7 @@ func (g *Gateway) handleListNodes(c *gin.Context) {
 		respondKubeError(c, err.Error(), err)
 		return
 	}
-	clusterNamespaces := uniqueClusterNamespaces(c.Request.Context(), clusters.Items)
+	clusterNamespaces := uniqueClusterNamespaces(c.Request.Context(), visibleClusterNamespaces(clusters.Items, c.GetString(authRoleKey) == "admin"))
 
 	requestedNamespace := c.Query("namespace")
 	if requestedNamespace != "" {
@@ -337,6 +337,20 @@ func (g *Gateway) listAggregatedNodes(ctx context.Context, namespaces map[string
 		items = items[:limit]
 	}
 	return items, hasMore, nil
+}
+
+func visibleClusterNamespaces(clusters []rlarkiov1alpha1.Cluster, includeDelisted bool) []rlarkiov1alpha1.Cluster {
+	if includeDelisted {
+		return clusters
+	}
+
+	visible := make([]rlarkiov1alpha1.Cluster, 0, len(clusters))
+	for _, cluster := range clusters {
+		if !cluster.Spec.Delisted {
+			visible = append(visible, cluster)
+		}
+	}
+	return visible
 }
 
 func uniqueClusterNamespaces(ctx context.Context, clusters []rlarkiov1alpha1.Cluster) map[string]struct{} {
@@ -802,6 +816,22 @@ func isTenantResource(resource string) bool {
 	return resource == "workflows" || resource == "jobs" || resource == "tasks"
 }
 
+func (g *Gateway) validateTaskCreateNamespace(ctx context.Context, namespace string) error {
+	clusters, err := g.kubeClient.RlinfV1alpha1().Clusters().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("list Clusters for Task namespace %q: %w", namespace, err)
+	}
+	for _, cluster := range clusters.Items {
+		if cluster.Spec.AgentNamespace != namespace {
+			continue
+		}
+		if cluster.Spec.Cordoned || cluster.Spec.Draining || cluster.Spec.Delisted {
+			return fmt.Errorf("cluster %q does not accept new tasks", cluster.Name)
+		}
+	}
+	return nil
+}
+
 func (g *Gateway) handleKubeCreate(resource string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		a, ok := g.accessors[resource]
@@ -825,6 +855,12 @@ func (g *Gateway) handleKubeCreate(resource string) gin.HandlerFunc {
 			bodyBytes, err = prepareJobForCreate(bodyBytes)
 			if err != nil {
 				respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
+				return
+			}
+		}
+		if resource == "tasks" {
+			if err := g.validateTaskCreateNamespace(ctx, namespace); err != nil {
+				respondError(c, http.StatusConflict, CodeResourceConflict, err.Error())
 				return
 			}
 		}
@@ -931,7 +967,6 @@ func (g *Gateway) handleKubeUpdate(resource string) gin.HandlerFunc {
 		if !enforceSpecQuotas(c, resource, bodyBytes) {
 			return
 		}
-
 		result, err := a.update(ctx, namespace, name, bodyBytes)
 		if err != nil {
 			respondCreateError(c, err)
@@ -985,7 +1020,6 @@ func (g *Gateway) handleKubePatch(resource string) gin.HandlerFunc {
 		if !enforceSpecQuotas(c, resource, bodyBytes) {
 			return
 		}
-
 		result, err := a.patch(ctx, namespace, name, bodyBytes)
 		if err != nil {
 			respondCreateError(c, err)

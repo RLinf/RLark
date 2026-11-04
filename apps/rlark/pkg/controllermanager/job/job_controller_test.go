@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -101,6 +103,78 @@ func TestInvalidTaskTemplatePreventsAllTaskDispatch(t *testing.T) {
 	}
 	if len(tasks.Items) != 0 {
 		t.Fatalf("invalid Job dispatched Tasks: %#v", tasks.Items)
+	}
+}
+
+func TestClusterDrainAndJobReconcileDoNotFlipTaskSuspended(t *testing.T) {
+	job := &rlarkv1alpha1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")},
+		Spec:       rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{validJobTaskTemplate("worker")}},
+	}
+	task := buildTask(job, job.Spec.Tasks[0], "job-worker", "default")
+	task.Annotations = map[string]string{rlarkv1alpha1.ClusterStoppedAnnotation: "true"}
+	scheme := jobTestScheme(t)
+	c := jobTestClientBuilder(scheme).WithObjects(task).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+
+	if _, err := r.reconcileTaskInNamespace(context.Background(), job, job.Spec.Tasks[0], task.Namespace, logr.Discard()); err != nil {
+		t.Fatal(err)
+	}
+
+	var got rlarkv1alpha1.Task
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(task), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Spec.Suspended {
+		t.Fatalf("Job controller did not apply the cluster drain stop request: %#v", got.Spec)
+	}
+	generation := got.Generation
+
+	if _, err := r.reconcileTaskInNamespace(context.Background(), job, job.Spec.Tasks[0], got.Namespace, logr.Discard()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(&got), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Spec.Suspended || got.Generation != generation {
+		t.Fatalf("Job reconciliation flipped or rewrote drained Task: generation %d -> %d, spec %#v", generation, got.Generation, got.Spec)
+	}
+}
+
+func TestClusterUndrainAllowsJobResume(t *testing.T) {
+	job := &rlarkv1alpha1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")},
+		Spec:       rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{validJobTaskTemplate("worker")}},
+	}
+	task := buildTask(job, job.Spec.Tasks[0], "job-worker", "default")
+	task.Annotations = map[string]string{rlarkv1alpha1.ClusterStoppedAnnotation: "true"}
+	scheme := jobTestScheme(t)
+	c := jobTestClientBuilder(scheme).WithObjects(task).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+
+	if _, err := r.reconcileTaskInNamespace(context.Background(), job, job.Spec.Tasks[0], task.Namespace, logr.Discard()); err != nil {
+		t.Fatalf("apply drain stop request: %v", err)
+	}
+	var got rlarkv1alpha1.Task
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(task), &got); err != nil {
+		t.Fatalf("get suspended Task: %v", err)
+	}
+	if !got.Spec.Suspended {
+		t.Fatalf("drain did not suspend Task: %#v", got.Spec)
+	}
+
+	delete(got.Annotations, rlarkv1alpha1.ClusterStoppedAnnotation)
+	if err := c.Update(context.Background(), &got); err != nil {
+		t.Fatalf("clear drain marker: %v", err)
+	}
+	if _, err := r.reconcileTaskInNamespace(context.Background(), job, job.Spec.Tasks[0], got.Namespace, logr.Discard()); err != nil {
+		t.Fatalf("resume Job after undrain: %v", err)
+	}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(&got), &got); err != nil {
+		t.Fatalf("get resumed Task: %v", err)
+	}
+	if got.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "" || got.Spec.Suspended {
+		t.Fatalf("undrained Task did not resume with Job: %#v", got)
 	}
 }
 
