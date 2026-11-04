@@ -103,6 +103,114 @@ paths:
         '500':
           description: Failed to read the Cluster or list Nodes in its agent namespace
 
+  /api/v1/clusters/{cluster_id}/cordon:
+    post:
+      tags: [Cluster]
+      summary: Cordon a cluster
+      description: Administrator-only. Stops new task placement on the cluster.
+      operationId: cordonCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster cordoned}
+        '404': {description: Cluster not found}
+
+  /api/v1/clusters/{cluster_id}/uncordon:
+    post:
+      tags: [Cluster]
+      summary: Uncordon a cluster
+      description: Administrator-only. Resumes new task placement on the cluster. A delisted or draining cluster must be restored or finish draining first.
+      operationId: uncordonCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster uncordoned}
+        '404': {description: Cluster not found}
+        '409': {description: Cluster cannot be uncordoned in its current lifecycle state}
+
+  /api/v1/clusters/{cluster_id}/drain:
+    post:
+      tags: [Cluster]
+      summary: Drain a cluster
+      description: Administrator-only. Stops RLark Tasks in the cluster while the desired draining state remains enabled.
+      operationId: drainCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster drain requested}
+        '404': {description: Cluster not found}
+
+  /api/v1/clusters/{cluster_id}/undrain:
+    post:
+      tags: [Cluster]
+      summary: Cancel cluster drain
+      description: Administrator-only. Cancels draining and restores the cluster's pre-drain cordon state.
+      operationId: undrainCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster drain cancelled}
+        '404': {description: Cluster not found}
+        '409': {description: Delisted clusters must be restored before their drain can be cancelled}
+
+  /api/v1/clusters/{cluster_id}/delist:
+    post:
+      tags: [Cluster]
+      summary: Delist a cluster
+      description: Administrator-only. Stops showing the cluster and its Nodes to users. The cluster can be restored.
+      operationId: delistCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster delisted}
+        '404': {description: Cluster not found}
+        '409': {description: Cluster must finish draining before it can be delisted}
+
+  /api/v1/clusters/{cluster_id}/delete:
+    post:
+      tags: [Cluster]
+      summary: Delete a cluster
+      description: Administrator-only. Permanently deletes the Cluster resource. The Cluster controller cleans up owned data-plane resources before final deletion.
+      operationId: deleteCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster deletion requested}
+        '404': {description: Cluster not found}
+
+  /api/v1/clusters/{cluster_id}/restore:
+    post:
+      tags: [Cluster]
+      summary: Restore a cluster
+      description: Administrator-only. Makes a previously hidden cluster visible again.
+      operationId: restoreCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster restored}
+        '404': {description: Cluster not found}
+
   # ─── Job Collection ───────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/jobs:
     get:

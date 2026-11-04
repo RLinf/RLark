@@ -120,6 +120,21 @@ export const clustersApi = {
     );
     return response.data;
   },
+  lifecycle(
+    id: string,
+    action: "cordon" | "uncordon" | "drain" | "undrain" | "delist" | "restore",
+  ) {
+    return requestJson<DataResponse<unknown>>(
+      `/api/v1/clusters/${encodeURIComponent(id)}/${action}`,
+      { method: "POST" },
+    );
+  },
+  remove(id: string) {
+    return requestJson<DataResponse<unknown>>(
+      `/api/v1/clusters/${encodeURIComponent(id)}/delete`,
+      { method: "POST" },
+    );
+  },
 };
 
 function resourceApi<T>(resource: string) {
@@ -302,6 +317,14 @@ export const storageClassesApi = {
     );
     return response.data ?? {};
   },
+  // providers 返回后端维护的提供商目录；value 是提交给后端的合法取值，
+  // name 仅用于展示。前端不再硬编码该列表。
+  async providers() {
+    const response = await requestJson<
+      DataResponse<Array<{ name: string; value: string }>>
+    >("/api/v1/storage/storageclass/provider");
+    return response.data ?? [];
+  },
   create(body: object) {
     return request("/api/v1/storage/storageclass", { method: "POST", body });
   },
@@ -318,35 +341,35 @@ export const storageClassesApi = {
   },
 };
 
-const storageObjectPath = (storageClass: string, cluster: string) =>
-  `/api/v1/storage/storageclass/${encodeURIComponent(storageClass)}/${encodeURIComponent(cluster)}`;
+const storageObjectPath = (storageClass: string) =>
+  `/api/v1/storage/storageclass/${encodeURIComponent(storageClass)}`;
 
 export const storageObjectsApi = {
-  list<T>(storageClass: string, cluster: string, prefix: string) {
+  list<T>(storageClass: string, prefix: string) {
     return requestJson<T>(
-      withQuery(`${storageObjectPath(storageClass, cluster)}/list`, {
+      withQuery(`${storageObjectPath(storageClass)}/list`, {
         prefix,
         maxKeys: 100,
       }),
     );
   },
-  upload(storageClass: string, cluster: string, formData: FormData) {
-    return request(`${storageObjectPath(storageClass, cluster)}/upload`, {
+  upload(storageClass: string, formData: FormData) {
+    return request(`${storageObjectPath(storageClass)}/upload`, {
       method: "POST",
       body: formData,
     });
   },
-  download<T>(storageClass: string, cluster: string, key: string) {
+  download<T>(storageClass: string, key: string) {
     return requestJson<T>(
       withQuery(
-        `${storageObjectPath(storageClass, cluster)}/object/${encodeURIComponent(key)}`,
+        `${storageObjectPath(storageClass)}/object/${encodeURIComponent(key)}`,
         { expire: 3600 },
       ),
     );
   },
-  remove(storageClass: string, cluster: string, key: string) {
+  remove(storageClass: string, key: string) {
     return request(
-      `${storageObjectPath(storageClass, cluster)}/object/${encodeURIComponent(key)}`,
+      `${storageObjectPath(storageClass)}/object/${encodeURIComponent(key)}`,
       { method: "DELETE" },
     );
   },

@@ -191,9 +191,12 @@ func (r *Reconciler) reconcileTaskInNamespace(
 			}
 			return nil, controller.ErrRequeueAfterChildCleanup
 		}
-		resuming := task.Spec.Suspended && !job.Spec.Suspended
+		resuming := task.Spec.Suspended && !job.Spec.Suspended && task.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "true"
 		if (!taskTerminal(&task) || resuming) && !taskEqual(&task, job, t) {
 			desired := buildTask(job, t, taskName, taskNamespace)
+			if task.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] == "true" {
+				desired.Spec.Suspended = true
+			}
 			task.Spec = desired.Spec
 			task.Annotations = utils.MergeAnnotations(task.Annotations, desired.Annotations)
 			if err := r.Update(ctx, &task); err != nil {
@@ -325,6 +328,9 @@ func (r *Reconciler) pruneTasksInNamespaces(ctx context.Context, job *rlarkv1alp
 
 func taskEqual(existing *rlarkv1alpha1.Task, job *rlarkv1alpha1.Job, t rlarkv1alpha1.JobTaskTemplate) bool {
 	desired := buildTask(job, t, existing.Name, existing.Namespace)
+	if existing.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] == "true" {
+		desired.Spec.Suspended = true
+	}
 	return reflect.DeepEqual(existing.Spec, desired.Spec) &&
 		existing.Annotations[RestartedAtAnnotation] == desired.Annotations[RestartedAtAnnotation]
 }

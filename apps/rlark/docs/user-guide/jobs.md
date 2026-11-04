@@ -14,18 +14,25 @@ For each role:
 2. Choose one GPU or embodied-device specification from the list, which shows available/total devices and nodes, then set the shared per-Worker resource request. Set the request to `0` for debugging workloads that should keep the placement constraint without requesting the selected device.
 3. Choose one scheduling mode:
    - **Automatic selection**: enter the desired Worker count. The console validates the total request against schedulable capacity and selects eligible nodes.
-
-- **Select nodes**: click eligible nodes or drag across node cards. Each selected node creates one Worker; click or drag across selected nodes again to remove them.
+   - **Select nodes**: click eligible nodes or drag across node cards. Each selected node creates one Worker; click or drag across selected nodes again to remove them. Changing the per-Worker resource request afterwards keeps every selected node that still has enough free capacity and only drops the nodes that no longer fit.
+4. Review the shared placement summary, then configure the image, prepare script, environment variables, and storage mounts.
 
 When cloning a Job, the scheduling mode is preserved. A role that did not pin
 specific nodes remains in automatic-selection mode instead of being converted
-to manual node selection. 4. Review the shared placement summary, then configure the image, prepare script, environment variables, and storage mounts.
+to manual node selection.
 
 Submit the Job, then open Job details to verify the running state and inspect Workers.
 
 After selecting a role, its resource summary shows the GPU or embodied-device model configured on the assigned node and its requested quantity, such as `NVIDIA RTX 4090 · 1 GPU`. If the Worker has not reported its assigned node yet, the console resolves the model from the role's selected hostname candidates.
 
 When a Worker is Pending, hover or focus the information icon beside that Worker's status. RLark reads the related data-plane Pod, Task, or node events and converts recognized Kubernetes events into concise pending reasons in the current UI language. The mapping covers common scheduling, node pressure and availability, image-pull, volume, runtime environment, container-creation, and health-check issues. Unrecognized events use a generic pending label instead of exposing raw runtime messages. Image-pull progress remains separate and shows byte or percentage progress only when the runtime reports it.
+
+The tooltip reports the current blocking reason rather than a raw event log:
+
+- `Pulling` and `Pulled` are per-container point-in-time events, and a Worker Pod also pulls platform-injected sidecar images. Only the newest pull-progress event stays in the current reasons; older ones move to the **Earlier Events** section. If the image pull failed, or a warning event is at least as recent as the newest progress event, every pull-progress event moves there too, so a successful sidecar pull can no longer read as "Image pulled" next to a failing Worker.
+- kubelet reports both image-pull failures and container start failures as `Failed`. RLark narrows that reason using the event message, so an unusable image reads as "Invalid image name" or "Image pull failed" instead of "Worker startup failed".
+- Repeated events are collapsed by reason, keeping the most recent occurrence, and the list is ordered newest first. The **Earlier Events** section keeps superseded entries visible, dimmed and struck through, for troubleshooting.
+
 
 ## Job Types
 
@@ -56,9 +63,11 @@ For each worker role, configure the following:
 
 - **Init Scripts** — Commands that run before the main entrypoint. Useful for environment setup, dependency installation, or data preparation.
 
-- **Storage Mounts** — Attach storage to worker containers. Two types are supported:
+- **Storage Mounts** — Attach storage to worker containers. The Job editor can create two types:
   - **hostPath**: Mount a directory from the host node's filesystem. Its data is not deleted by Job lifecycle actions.
   - **PVC** (PersistentVolumeClaim): Mount Kubernetes storage using the selected storage class. The current Web UI writes `ephemeral.volumeClaimTemplate`, so these PVCs are Pod-scoped and are deleted and recreated with their Pods. Imported or older Tasks using `persistentVolumeClaim` and the deprecated PVC maps follow the retained Task-managed compatibility lifecycle instead.
+
+  Jobs submitted through the API may use other Kubernetes-native volume types, such as `emptyDir`, `configMap`, or `secret`. The Job editor cannot create or modify these volumes, but it lists them read-only in the role's mount list and on the Job detail page and preserves their original definitions when you edit or clone the Job. Removing the mount is the only change the editor supports for them.
 
 > **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
 
@@ -68,13 +77,13 @@ For each worker role, configure the following:
 
 Configure settings that apply to all workers in the job:
 
-- **Header Role** — Select one role as the Header role. For Ray workloads, configure this role with exactly one Worker; it coordinates distributed training and its IP address is communicated to all other Workers.
+- **Header Role** — Select one role as the Header role. For Ray workloads, configure this role with exactly one Worker; it coordinates distributed training and its IP address is communicated to all other Workers. Roles whose replica count is greater than 1 are disabled in this selector. If you later raise the replica count of the selected Header role, the console falls back to the first single-Worker role so the wizard stays correctable.
 
 - **Cross-Cluster Network Domain** — If network domains are configured, the console automatically enables the first domain by name for every Job, regardless of Worker placement. No domain is added when none is configured.
 
 - **SSH Public Keys** — Select the public key written to the Job's workload SSH configuration. Built-in Ray-on-Kubernetes workloads deliver it through a Task-owned Secret mounted at `/var/run/rlark/ssh/authorized_key` in each worker main container and start an optional `rlark-tools sshd` service. SSH failure does not fail the Task. Other workload implementations do not gain SSH merely by setting this field.
 
-- **Run Command** — The main training script or entrypoint command. This is executed after any init scripts complete.
+- **Run Command** — The main training script or entrypoint command. This is executed after any init scripts complete. After the run command finishes on the Header node, the Pod does not exit; it continues blocking to keep the Ray cluster running until the Job is manually stopped or deleted.
 
 - **TensorBoard** — Enable TensorBoard monitoring for the job. Configure the log directory path and the port on which TensorBoard will be served.
 
@@ -163,7 +172,7 @@ nvidia-smi              # Check GPU status (if GPU is allocated)
 
 ### File Transfer
 
-The key button in the Worker list copies the SSH connection command. It requires an administrator-configured SSH jump host; when that setting is missing, the button is disabled and explains why instead of copying empty content.
+The key button in the Worker list copies the SSH connection command. It requires an administrator-configured SSH jump host; when that setting is missing, the button is disabled and explains why instead of copying empty content. The copied command uniformly forwards through the node sshd on port 2222 to reach the target Pod. In non-HTTPS environments, the copy function automatically falls back to a compatible approach and is not affected by browser Clipboard API restrictions.
 
 The WebTerminal supports file upload and download:
 
@@ -222,6 +231,10 @@ Deleting a Job cleans up its active workload resources, with these storage excep
 
 - **Edit** — Modify a stopped job's configuration (roles, resources, commands) and resubmit.
 - **Clone** — Create a copy of an existing job configuration to use as a template for a new job.
+
+Both actions prefill the editor from the source Job and keep its roles, including custom roles that are not part of the selected job type's default roles. For each role the editor restores the container image, run command, prepare script, environment variables, replica count, CPU, memory and device requests, scheduling mode, and storage mounts; volume types the editor cannot edit keep their original definitions. Changing the job type after prefilling only updates the job type label and leaves the role list untouched: the prefilled roles are configuration you already confirmed, so add any default roles of the new type manually.
+
+The source cluster is not stored on the Job itself. The editor resolves it from each role's node selector, so verify the cluster selection before resubmitting.
 
 ## Preflight Checklist
 

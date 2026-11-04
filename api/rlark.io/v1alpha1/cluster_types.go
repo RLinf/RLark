@@ -5,7 +5,7 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // ClusterPhase summarizes the current lifecycle state of a data-plane cluster.
 // The set is closed in the CRD schema: adding a value requires updating the
 // enum marker, regenerating the CRD manifests, and updating the documentation.
-// +kubebuilder:validation:Enum=Online;Offline;Downgraded;Cordoned;Draining
+// +kubebuilder:validation:Enum=Online;Offline;Downgraded;Cordoned;Draining;Delisted
 type ClusterPhase string
 
 const (
@@ -14,14 +14,18 @@ const (
 	ClusterDowngraded ClusterPhase = "Downgraded"
 	ClusterCordoned   ClusterPhase = "Cordoned"
 	ClusterDraining   ClusterPhase = "Draining"
+	ClusterDelisted   ClusterPhase = "Delisted"
 )
 
 // ClusterSpec declares the durable operational state of a data-plane cluster.
 type ClusterSpec struct {
 	// AgentNamespace is the management-plane namespace that contains the agent heartbeat Lease and Node CRs.
-	AgentNamespace string `json:"agentNamespace"`
-	Cordoned       bool   `json:"cordoned,omitempty"`
-	Draining       bool   `json:"draining,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	AgentNamespace        string `json:"agentNamespace"`
+	Cordoned              bool   `json:"cordoned,omitempty"`
+	Draining              bool   `json:"draining,omitempty"`
+	Delisted              bool   `json:"delisted,omitempty"`
+	DrainPreviousCordoned bool   `json:"drainPreviousCordoned,omitempty"`
 }
 
 // ClusterStatus reports the controller's current observation of a data-plane cluster.

@@ -13,11 +13,14 @@ import type { Copy } from "../i18n";
 import type { CRDNode, Page, ResourceRow } from "../types";
 import { useAutoRefresh } from "../hooks";
 import { crdToJob } from "../utils/crd";
+import { effectiveJobPhase, isActiveJob } from "../utils/jobPhase";
 import {
   getNodeCategories,
   getNodeDeviceModel,
   getNodeGPUModel,
   hasNodeCategory,
+  isBusinessWorkerNode,
+  nodeStatusReasonLabel,
 } from "../utils/nodes";
 import {
   MetricCard,
@@ -67,7 +70,7 @@ export function Overview({
     }
   };
 
-  const displayNodes = realNodes;
+  const displayNodes = realNodes.filter(isBusinessWorkerNode);
   const embodiedClusters = realClusters.filter((x) => x.type === "Embodied");
   const runningJobs = realJobs.filter((x) => x.phase === "Running").length;
   const gpuModelList = Array.from(
@@ -151,6 +154,8 @@ export function Overview({
   ];
 
   const robotNodes = displayNodes.filter((n) => hasNodeCategory(n, "robot"));
+  // 「活跃任务」面板只展示非终态任务（等待中 / 运行中 / 停止中）。
+  const activeJobs = realJobs.filter(isActiveJob);
   return (
     <div
       className={`page-content resource-page overview-page refreshable-region page-refresh-region${refreshing ? " is-refreshing" : ""}`}
@@ -266,7 +271,8 @@ export function Overview({
                   getNodeDeviceModel(n) ||
                   n.metadata.labels?.["node.kubernetes.io/instance-type"] ||
                   "—";
-                const reason = n.status?.reason || "—";
+                const reason =
+                  nodeStatusReasonLabel(n.status?.reason, isZh) || "—";
                 return (
                   <div key={n.metadata.name}>
                     <span className={"node-status-ring " + phase.toLowerCase()}>
@@ -299,29 +305,40 @@ export function Overview({
             </button>
           </div>
           <div className="workflow-list">
-            {realJobs.slice(0, 4).map((job) => (
-              <button key={job.id} onClick={() => navigate("jobs")}>
-                <span className={"workflow-symbol " + job.phase.toLowerCase()}>
-                  <Workflow size={17} />
-                </span>
-                <span className="workflow-info">
-                  <strong>{job.name}</strong>
-                  <small>
-                    {c.jobType[job.type]} · {job.target}
-                  </small>
-                </span>
-                <StatusBadge phase={job.phase} copy={c} />
-                <span className="progress-cell">
-                  <i>
-                    <b style={{ width: job.progress + "%" }} />
-                  </i>
-                  <small>
-                    {job.runningWorkers}/{job.workers}
-                  </small>
-                </span>
-                <ChevronRight size={17} />
-              </button>
-            ))}
+            {activeJobs.length === 0 ? (
+              <p
+                className="muted"
+                style={{ padding: "16px 0", textAlign: "center" }}
+              >
+                {c.overview.noLiveJobs}
+              </p>
+            ) : (
+              activeJobs.slice(0, 4).map((job) => (
+                <button key={job.id} onClick={() => navigate("jobs", job.name)}>
+                  <span
+                    className={"workflow-symbol " + job.phase.toLowerCase()}
+                  >
+                    <Workflow size={17} />
+                  </span>
+                  <span className="workflow-info">
+                    <strong>{job.name}</strong>
+                    <small>
+                      {c.jobType[job.type]} · {job.target}
+                    </small>
+                  </span>
+                  <StatusBadge phase={effectiveJobPhase(job)} copy={c} />
+                  <span className="progress-cell">
+                    <i>
+                      <b style={{ width: job.progress + "%" }} />
+                    </i>
+                    <small>
+                      {job.runningWorkers}/{job.workers}
+                    </small>
+                  </span>
+                  <ChevronRight size={17} />
+                </button>
+              ))
+            )}
           </div>
         </div>
         <div className="panel activity-panel">

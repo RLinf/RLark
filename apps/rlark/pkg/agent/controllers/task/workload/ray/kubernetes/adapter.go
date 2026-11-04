@@ -205,8 +205,6 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 	switch kind {
 	case CarrierDeployment:
 		primary = BuildDeployment(task, namespace, spec, replicas)
-	case CarrierDaemonSet:
-		primary = BuildDaemonSet(task, namespace, spec)
 	case CarrierStatefulSet:
 		primary = BuildStatefulSet(task, namespace, spec, replicas)
 	default:
@@ -414,8 +412,6 @@ func kubernetesCarrierKind(carrier coordination.VersionedConfiguration) (string,
 	switch carrier.Type {
 	case taskapi.CarrierTypeKubernetesDeployment:
 		return CarrierDeployment, nil
-	case taskapi.CarrierTypeKubernetesDaemonSet:
-		return CarrierDaemonSet, nil
 	case taskapi.CarrierTypeKubernetesStatefulSet:
 		return CarrierStatefulSet, nil
 	default:
@@ -436,11 +432,6 @@ func decodeKubernetesCarrier(carrier coordination.VersionedConfiguration) (strin
 			return "", nil, fault.Wrap(fault.InvalidArgument, "decode replicated Kubernetes carrier parameters", err)
 		}
 		return kind, decoded.Replicas, nil
-	case CarrierDaemonSet:
-		if _, err := taskapi.DecodeParametersStrict[taskapi.KubernetesDaemonSetCarrierParametersV1](parameters); err != nil {
-			return "", nil, fault.Wrap(fault.InvalidArgument, "decode DaemonSet carrier parameters", err)
-		}
-		return kind, nil, nil
 	default:
 		return "", nil, fault.New(fault.InvalidArgument, "unsupported Kubernetes carrier type")
 	}
@@ -477,8 +468,6 @@ func gvkFor(object runtime.Object) schema.GroupVersionKind {
 	switch object.(type) {
 	case *appsv1.Deployment:
 		return appsv1.SchemeGroupVersion.WithKind("Deployment")
-	case *appsv1.DaemonSet:
-		return appsv1.SchemeGroupVersion.WithKind("DaemonSet")
 	case *appsv1.StatefulSet:
 		return appsv1.SchemeGroupVersion.WithKind("StatefulSet")
 	case *corev1.ConfigMap:
@@ -526,12 +515,6 @@ func ObserveObject(kind string, manifest []byte, instances agentruntime.Instance
 			return "", "", err
 		}
 		phase, message = DeploymentStatusPhase(&object)
-	case CarrierDaemonSet:
-		var object appsv1.DaemonSet
-		if err := json.Unmarshal(manifest, &object); err != nil {
-			return "", "", err
-		}
-		phase = DaemonSetStatusPhase(&object)
 	case CarrierStatefulSet:
 		var object appsv1.StatefulSet
 		if err := json.Unmarshal(manifest, &object); err != nil {

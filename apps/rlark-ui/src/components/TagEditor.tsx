@@ -8,6 +8,7 @@ import {
 import { createPortal } from "react-dom";
 import { ChevronDown, Plus, Trash2, X } from "lucide-react";
 import type { JobTag } from "../data";
+import { overlayContainer } from "../utils/overlayContainer";
 
 export interface TagSuggestion {
   key: string;
@@ -632,7 +633,7 @@ function Combobox({
               </li>
             ))}
           </ul>,
-          document.body,
+          overlayContainer(),
         )}
     </div>
   );

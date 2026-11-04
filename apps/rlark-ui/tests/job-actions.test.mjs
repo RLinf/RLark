@@ -123,6 +123,21 @@ test("job lifecycle actions use the shared in-app confirmation dialog", () => {
   assert.match(jobsSource, /清理后启动任务？/);
 });
 
+test("job list refresh does not fan out one tasks request per job", () => {
+  const start = jobsSource.indexOf("const fetchJobs = async (");
+  assert.ok(start > 0);
+  const end = jobsSource.indexOf("useAutoRefresh(fetchJobs", start);
+  assert.ok(end > start);
+  const fetchJobsBody = jobsSource.slice(start, end);
+  assert.doesNotMatch(fetchJobsBody, /tasksApi\.list/);
+  assert.doesNotMatch(fetchJobsBody, /nodesApi\.get/);
+  assert.doesNotMatch(fetchJobsBody, /rlinf\.io\/job=/);
+  // 节点级缓存由详情页在拉取本 job 的 Task/Node 时一并构建
+  assert.match(jobsSource, /setNodePullProgressMap\(nodeProgressMap\)/);
+  assert.match(jobsSource, /setNodeEventsMap\(nodeWarningEventsMap\)/);
+  assert.match(jobsSource, /setNodeDeviceModelMap\(deviceModelMap\)/);
+});
+
 test("worker node shows the shared info tooltip in the warning color", () => {
   assert.match(jobsSource, /isDiskUsageWarning\(n\)/);
   assert.match(
@@ -132,7 +147,7 @@ test("worker node shows the shared info tooltip in the warning color", () => {
   assert.match(jobsSource, /setDetailNodeDiskWarningMap\(diskWarningMap\)/);
   assert.match(
     jobsSource,
-    /detailNodeDiskWarningMap\[worker\.node\].*nodeDiskWarningMap\[worker\.node\]/s,
+    /diskWarning=\{\s*detailNodeDiskWarningMap\[worker\.node\] \?\? false\s*\}/s,
   );
   assert.match(jobsSource, /variant="danger"/);
   assert.match(jobsSource, /className=\{`status-info\$\{variant/);
@@ -220,18 +235,15 @@ test("worker pending tooltip shows readable reasons without raw Kubernetes messa
   assert.match(jobsSource, /en: "Volume binding failed"/);
   assert.match(jobsSource, /en: "Container repeatedly failed to start"/);
   assert.match(jobsSource, /en: "Node PID pressure"/);
-  assert.match(jobsSource, /workerEventReasonLabel\(ev\.reason, zh, failed\)/);
+  assert.match(jobsSource, /workerEventLabel\(ev, zh, failed\)/);
   assert.doesNotMatch(jobsSource, /className="event-message">\{ev\.message\}/);
   assert.match(jobsStyles, /width: min\(360px, calc\(100vw - 24px\)\)/);
 });
 
 test("worker pending tooltip groups duplicate reasons and shows the latest four", () => {
   assert.match(jobsSource, /\.sort\(\(left, right\) =>/);
-  assert.match(jobsSource, /new Map\(/);
-  assert.match(
-    jobsSource,
-    /workerEventReasonLabel\(event\.reason, zh, failed\)/,
-  );
+  assert.match(jobsSource, /new Map<string, NodeEventEntry>\(\)/);
+  assert.match(jobsSource, /workerEventLabel\(event, zh, failed\)/);
   assert.match(jobsSource, /\.slice\(0, 4\)/);
   assert.match(jobsSource, /recentEvents\.map/);
 });
@@ -252,7 +264,7 @@ test("worker failed tooltip reuses readable Kubernetes event reasons", () => {
   );
   assert.match(jobsSource, /failed=\{worker\.phase === "Failed"\}/);
   assert.match(jobsSource, /failed[\s\S]*?"失败原因"[\s\S]*?"Failure Reasons"/);
-  assert.match(jobsSource, /workerEventReasonLabel\(ev\.reason, zh, failed\)/);
+  assert.match(jobsSource, /workerEventLabel\(ev, zh, failed\)/);
   assert.match(jobsSource, /if \(failed\) return zh \? "Worker 运行失败"/);
   assert.match(
     jobsSource,

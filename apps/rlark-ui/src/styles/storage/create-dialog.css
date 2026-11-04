@@ -89,12 +89,22 @@
   width: 100%;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
-  background: var(--panel);
   color: var(--ink);
   outline: none;
   transition:
     border-color 0.15s,
     box-shadow 0.15s;
+}
+
+.storage-create-form input:not([type="checkbox"]),
+.storage-create-form textarea {
+  background: var(--panel);
+}
+
+/* select 只覆盖 background-color：用 background 简写会把全局 select 规则提供的
+   下拉箭头（background-image）重置为 none。 */
+.storage-create-form select {
+  background-color: var(--panel);
 }
 
 .storage-create-form input:not([type="checkbox"]),
@@ -340,11 +350,63 @@
   accent-color: var(--blue);
 }
 
+.registry-cluster-select {
+  position: relative;
+  margin-top: 12px;
+}
+
+.storage-create-form .registry-cluster-trigger {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--canvas);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.storage-create-form .registry-cluster-trigger:hover,
+.storage-create-form .registry-cluster-trigger:focus-visible {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+  outline: none;
+}
+
+.registry-cluster-trigger svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+
+.registry-cluster-trigger svg.open {
+  transform: rotate(-90deg);
+}
+
 .registry-cluster-options {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 6px);
+  right: 0;
+  left: 0;
+  max-height: 240px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  margin-top: 12px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
 }
 
 .storage-create-form .registry-cluster-options label {
@@ -405,14 +467,50 @@
   padding: 10px 0;
 }
 
-.storage-create-form .error-text {
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid rgba(239, 90, 122, 0.25);
+.storage-create-error {
+  position: absolute;
+  z-index: 4;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(460px, calc(100% - 52px));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(239, 90, 122, 0.35);
   border-radius: 10px;
-  background: rgba(239, 90, 122, 0.08);
+  background: var(--panel);
+  box-shadow: 0 12px 30px rgba(13, 22, 38, 0.2);
   color: var(--red);
   font-size: 12px;
+  line-height: 1.5;
+}
+
+.storage-create-error svg {
+  margin-top: 1px;
+  flex: none;
+}
+
+.storage-create-error-close {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  margin: -3px -3px -3px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.storage-create-error-close:hover,
+.storage-create-error-close:focus-visible {
+  background: rgba(239, 90, 122, 0.12);
+  outline: 0;
 }
 
 .storage-create-form .form-actions {
@@ -435,9 +533,15 @@
 
 .theme-dark .storage-create-form .form-section,
 .theme-dark .storage-create-form input:not([type="checkbox"]),
-.theme-dark .storage-create-form select,
 .theme-dark .storage-create-form textarea {
   background: #151d2b;
+  border-color: #33425b;
+  color: #e6edf7;
+}
+
+/* 原因同 .storage-create-form select。 */
+.theme-dark .storage-create-form select {
+  background-color: #151d2b;
   border-color: #33425b;
   color: #e6edf7;
 }
@@ -498,6 +602,12 @@
   .storage-cluster-dropdown {
     position: static;
     margin-top: 6px;
+  }
+
+  .storage-create-error {
+    right: 16px;
+    bottom: 72px;
+    max-width: calc(100% - 32px);
   }
 
   .storage-create-form .form-actions {

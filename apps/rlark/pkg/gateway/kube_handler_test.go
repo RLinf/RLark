@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,90 @@ import (
 	rlarkiov1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
+
+func TestValidateTaskCreateNamespaceRejectsIneligibleClusters(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		cluster rlarkiov1alpha1.Cluster
+	}{
+		{name: "cordoned", cluster: rlarkiov1alpha1.Cluster{Spec: rlarkiov1alpha1.ClusterSpec{Cordoned: true}}},
+		{name: "draining", cluster: rlarkiov1alpha1.Cluster{Spec: rlarkiov1alpha1.ClusterSpec{Draining: true}}},
+		{name: "delisted", cluster: rlarkiov1alpha1.Cluster{Spec: rlarkiov1alpha1.ClusterSpec{Delisted: true}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.cluster.Name = "cluster"
+			tt.cluster.Spec.AgentNamespace = "agent"
+			g := &Gateway{kubeClient: clientset.NewSimpleClientset(&tt.cluster)}
+			if err := g.validateTaskCreateNamespace(context.Background(), "agent"); err == nil {
+				t.Fatal("expected Task create rejection")
+			}
+		})
+	}
+}
+
+func TestValidateTaskCreateNamespaceAllowsEligibleCluster(t *testing.T) {
+	cluster := &rlarkiov1alpha1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Spec:       rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent"},
+	}
+	g := &Gateway{kubeClient: clientset.NewSimpleClientset(cluster)}
+	if err := g.validateTaskCreateNamespace(context.Background(), "agent"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskCreateRejectsIneligibleClusterButExistingTaskWritesAreAllowed(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		wantStatus int
+	}{
+		{name: "create", method: http.MethodPost, path: "/tasks?namespace=agent", body: `{"metadata":{"name":"task","namespace":"agent"}}`, wantStatus: http.StatusConflict},
+		{name: "update", method: http.MethodPut, path: "/tasks/task?namespace=agent", body: `{"metadata":{"name":"task","namespace":"agent"}}`, wantStatus: http.StatusOK},
+		{name: "patch", method: http.MethodPatch, path: "/tasks/task?namespace=agent", body: `{"spec":{"suspended":false}}`, wantStatus: http.StatusOK},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			client := clientset.NewSimpleClientset(
+				&rlarkiov1alpha1.Cluster{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+					Spec:       rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent", Cordoned: true},
+				},
+				&rlarkiov1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "agent"}},
+			)
+			g := &Gateway{kubeClient: client, accessors: registerAccessors(client)}
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Params = gin.Params{{Key: "name", Value: "task"}}
+			ctx.Set(authRoleKey, roleAdmin)
+			ctx.Request = httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+
+			switch tt.method {
+			case http.MethodPost:
+				g.handleKubeCreate("tasks")(ctx)
+			case http.MethodPut:
+				g.handleKubeUpdate("tasks")(ctx)
+			case http.MethodPatch:
+				g.handleKubePatch("tasks")(ctx)
+			}
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, tt.wantStatus, recorder.Body.String())
+			}
+			if tt.wantStatus == http.StatusConflict {
+				var response ErrorResponse
+				if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				if response.Code != CodeResourceConflict {
+					t.Fatalf("code = %q, want %q", response.Code, CodeResourceConflict)
+				}
+			}
+		})
+	}
+}
 
 func TestPrepareJobForCreateGeneratesResourceName(t *testing.T) {
 	body := []byte(`{"apiVersion":"rlinf.io/v1alpha1","kind":"Job","metadata":{"name":"Readable Job"}}`)
@@ -168,6 +253,68 @@ func TestHandleListNodesFiltersNamespacesNotOwnedByClusters(t *testing.T) {
 	}
 	if len(result.Items) != 1 || result.Items[0].Name != "owned-node" {
 		t.Fatalf("items = %#v, want only owned-node", result.Items)
+	}
+}
+
+func TestHandleListNodesHidesDelistedClusterNodesFromNonAdmins(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	client := clientset.NewSimpleClientset(
+		&rlarkiov1alpha1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "active-cluster"},
+			Spec:       rlarkiov1alpha1.ClusterSpec{AgentNamespace: "active-agent"},
+		},
+		&rlarkiov1alpha1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "delisted-cluster"},
+			Spec:       rlarkiov1alpha1.ClusterSpec{AgentNamespace: "delisted-agent", Delisted: true},
+		},
+		&rlarkiov1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "active-node", Namespace: "active-agent"}},
+		&rlarkiov1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "delisted-node", Namespace: "delisted-agent"}},
+	)
+	g := &Gateway{kubeClient: client, accessors: registerAccessors(client)}
+
+	response := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(response)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/nodes", nil)
+	g.handleListNodes(ctx)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var result rlarkiov1alpha1.NodeList
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Name != "active-node" {
+		t.Fatalf("items = %#v, want only active-node", result.Items)
+	}
+}
+
+func TestHandleListNodesShowsDelistedClusterNodesToAdmins(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	client := clientset.NewSimpleClientset(
+		&rlarkiov1alpha1.Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "delisted-cluster"},
+			Spec:       rlarkiov1alpha1.ClusterSpec{AgentNamespace: "delisted-agent", Delisted: true},
+		},
+		&rlarkiov1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "delisted-node", Namespace: "delisted-agent"}},
+	)
+	g := &Gateway{kubeClient: client, accessors: registerAccessors(client)}
+
+	response := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(response)
+	ctx.Set(authRoleKey, "admin")
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/nodes", nil)
+	g.handleListNodes(ctx)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var result rlarkiov1alpha1.NodeList
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Name != "delisted-node" {
+		t.Fatalf("items = %#v, want delisted-node", result.Items)
 	}
 }
 
@@ -644,5 +791,56 @@ func TestWithRestoredTypeMetaKeepsExistingKindAndUnknownValues(t *testing.T) {
 	value := map[string]any{"kind": "Domain"}
 	if restored := withRestoredTypeMeta(value); !reflect.DeepEqual(restored, value) {
 		t.Errorf("restored = %#v, want the non-Kubernetes value unchanged", restored)
+	}
+}
+
+// TestParseTagSelectorsGroupsPairsByKey pins the grouping that turns the flat
+// query parameter into the per-key value sets the matcher consumes.
+func TestParseTagSelectorsGroupsPairsByKey(t *testing.T) {
+	selectors := parseTagSelectors("env=prod,env=staging,team=infra,broken,=v,k=")
+	if len(selectors) != 2 {
+		t.Fatalf("selectors = %#v, want only the two well-formed keys", selectors)
+	}
+	if len(selectors["env"]) != 2 {
+		t.Errorf("env values = %#v, want prod and staging", selectors["env"])
+	}
+	if _, ok := selectors["team"]["infra"]; !ok {
+		t.Errorf("team values = %#v, want infra", selectors["team"])
+	}
+}
+
+// TestJobMatchesTagSelectorsAndsKeysAndOrsValues pins the filter semantics the
+// console surfaces in the tag filter popover: selecting several values of one
+// key widens the result, while selecting several keys narrows it.
+func TestJobMatchesTagSelectorsAndsKeysAndOrsValues(t *testing.T) {
+	job := rlarkiov1alpha1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "j1"},
+		Spec: rlarkiov1alpha1.JobSpec{
+			Tags: []rlarkiov1alpha1.JobTag{
+				{Key: "env", Values: []string{"prod"}},
+				{Key: "team", Values: []string{"infra", "platform"}},
+			},
+		},
+	}
+
+	for _, tc := range []struct {
+		name  string
+		raw   string
+		match bool
+	}{
+		{"no selector keeps everything", "", true},
+		{"single pair hits", "env=prod", true},
+		{"unknown value misses", "env=dev", false},
+		{"values of one key are ORed", "env=dev,env=prod", true},
+		{"every value of one key may hit", "team=infra,team=platform", true},
+		{"different keys are ANDed", "env=prod,team=infra", true},
+		{"a missing key fails the whole selector", "env=prod,region=cn", false},
+		{"a wrong value of one key fails the whole selector", "env=prod,team=qa", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := jobMatchesTagSelectors(job, parseTagSelectors(tc.raw)); got != tc.match {
+				t.Errorf("jobMatchesTagSelectors(%q) = %t, want %t", tc.raw, got, tc.match)
+			}
+		})
 	}
 }

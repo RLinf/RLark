@@ -381,6 +381,8 @@ Responses:
 - `spec`: `object`, optional - ClusterSpec declares the durable operational state of a data-plane cluster.
   - `agentNamespace`: `string`, required - AgentNamespace is the management-plane namespace that contains the agent heartbeat Lease and Node CRs.
   - `cordoned`: `boolean`, optional
+  - `delisted`: `boolean`, optional
+  - `drainPreviousCordoned`: `boolean`, optional
   - `draining`: `boolean`, optional
 - `status`: `object`, optional - ClusterStatus reports the controller's current observation of a data-plane cluster.
   - `conditions`: `array`, optional
@@ -393,7 +395,7 @@ Responses:
       - `type`: `string`, required - type of condition in CamelCase or in foo.example.com/CamelCase.
   - `lastHeartbeatTime`: `string`, optional
   - `onlineNodes`: `integer`, optional
-  - `phase`: `string`, optional, enum=Online,Offline,Downgraded,Cordoned,Draining - ClusterPhase summarizes the current lifecycle state of a data-plane cluster. The set is closed in the CRD schema: add...
+  - `phase`: `string`, optional, enum=Online,Offline,Downgraded,Cordoned,Draining,Delisted - ClusterPhase summarizes the current lifecycle state of a data-plane cluster. The set is closed in the CRD schema: add...
   - `totalNodes`: `integer`, optional
 
 ## Domain

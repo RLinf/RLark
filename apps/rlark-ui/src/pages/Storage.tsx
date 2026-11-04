@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   AlertCircle,
   Boxes,
@@ -21,11 +21,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import {
-  clusters as mockClusters,
-  type StorageClass,
-  type StorageProvider,
-} from "../data";
+import { type StorageClass, type StorageProvider } from "../data";
 import { copy, type Copy } from "../i18n";
 import {
   ColumnFilterButton,
@@ -39,8 +35,8 @@ import { formatChinaDateTime } from "../utils/time";
 
 type StorageClassFormState = {
   name: string;
-  provider: StorageProvider;
   clusters: string[];
+  provider: StorageProvider;
   endpoint: string;
   region: string;
   bucket: string;
@@ -50,20 +46,49 @@ type StorageClassFormState = {
   description: string;
 };
 
-type ClusterOption = {
-  id: string;
+type ProviderOption = {
   name: string;
-  description?: string;
+  value: string;
 };
 
-const storageProviders: StorageProvider[] = [
-  "AWS S3",
-  "Google Cloud",
-  "Azure Blob",
-  "MinIO",
-  "Aliyun OSS",
-  "Tencent COS",
-];
+type GatewayErrorBody = {
+  code?: string;
+  details?: { fields?: unknown };
+};
+
+const storageClassFieldLabels: Record<string, { zh: string; en: string }> = {
+  name: { zh: "名称", en: "Name" },
+  bucket: { zh: "存储桶", en: "Bucket" },
+  access_key_secret: { zh: "Access Key Secret", en: "Access Key Secret" },
+};
+
+function storageClassSubmissionError(
+  error: unknown,
+  isChinese: boolean,
+  fallback: string,
+) {
+  if (!(error instanceof ApiError)) return fallback;
+
+  const body = error.body as GatewayErrorBody | undefined;
+  if (body?.code === "STORAGE_CLASS_REQUIRED_FIELDS") {
+    const fields = Array.isArray(body.details?.fields)
+      ? body.details.fields.filter(
+          (field): field is string =>
+            typeof field === "string" && field in storageClassFieldLabels,
+        )
+      : [];
+    if (fields.length > 0) {
+      const labels = fields.map(
+        (field) => storageClassFieldLabels[field][isChinese ? "zh" : "en"],
+      );
+      return isChinese
+        ? `请填写必填字段：${labels.join("、")}。`
+        : `Required fields: ${labels.join(", ")}.`;
+    }
+  }
+
+  return errorMessage(error.body) || error.message || fallback;
+}
 
 function normalizeStorageClass(raw: any): StorageClass {
   const name = raw?.name ?? raw?.id ?? "";
@@ -71,8 +96,8 @@ function normalizeStorageClass(raw: any): StorageClass {
     id: raw?.id ?? name,
     name,
     namespace: raw?.namespace ?? "default",
-    provider: (raw?.provider ?? "MinIO") as StorageProvider,
     clusters: Array.isArray(raw?.clusters) ? raw.clusters : [],
+    provider: (raw?.provider ?? "") as StorageProvider,
     endpoint: raw?.endpoint ?? "",
     region: raw?.region ?? "",
     bucket: raw?.bucket ?? "",
@@ -83,17 +108,22 @@ function normalizeStorageClass(raw: any): StorageClass {
   };
 }
 
+function isMaskedAccessKeyID(value: string): boolean {
+  return /^.{2}\*+.{2}$/.test(value);
+}
+
 function storageClassToForm(
   storageClass?: StorageClass,
 ): StorageClassFormState {
+  const accessKeyID = storageClass?.accessKeyId ?? "";
   return {
     name: storageClass?.name ?? "",
-    provider: storageClass?.provider ?? "MinIO",
     clusters: storageClass?.clusters ?? [],
+    provider: storageClass?.provider ?? "",
     endpoint: storageClass?.endpoint ?? "",
     region: storageClass?.region ?? "",
     bucket: storageClass?.bucket ?? "",
-    access_key_id: storageClass?.accessKeyId ?? "",
+    access_key_id: accessKeyID,
     access_key_secret: "",
     path_style: storageClass?.pathStyle ?? false,
     description: storageClass?.description ?? "",
@@ -112,7 +142,7 @@ export function StorageClassesPage({
   selectedName?: string;
   onSelect: (name?: string) => void;
   onCreate: () => void;
-  onBrowseFiles: (cluster: string, storageClass: string) => void;
+  onBrowseFiles: (storageClass: string) => void;
   refreshKey?: number;
 }) {
   const zh = c === copy.zh;
@@ -122,7 +152,6 @@ export function StorageClassesPage({
   const [search, setSearch] = useState("");
   // 表头列多选筛选；空数组 = 全部
   const [providerFilter, setProviderFilter] = useState<string[]>([]);
-  const [clusterFilter, setClusterFilter] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const columnFilter = useColumnFilter();
@@ -158,10 +187,7 @@ export function StorageClassesPage({
     setFetched(false);
   }, [refreshKey]);
 
-  useEffect(
-    () => setPage(1),
-    [search, providerFilter, clusterFilter, pageSize],
-  );
+  useEffect(() => setPage(1), [search, providerFilter, pageSize]);
 
   const handleDelete = async (id: string, name: string) => {
     if (
@@ -193,17 +219,12 @@ export function StorageClassesPage({
     const matchesSearch =
       sc.name.toLowerCase().includes(query) ||
       sc.provider.toLowerCase().includes(query) ||
-      sc.bucket.toLowerCase().includes(query) ||
-      sc.clusters.some((cluster) => cluster.toLowerCase().includes(query));
+      sc.bucket.toLowerCase().includes(query);
     const providerHit =
       providerFilter.length === 0 || providerFilter.includes(sc.provider);
-    const clusterHit =
-      clusterFilter.length === 0 ||
-      sc.clusters.some((cluster) => clusterFilter.includes(cluster));
-    return matchesSearch && providerHit && clusterHit;
+    return matchesSearch && providerHit;
   });
   const providers = Array.from(new Set(realClasses.map((sc) => sc.provider)));
-  const associatedClusters = new Set(realClasses.flatMap((sc) => sc.clusters));
   // 列表页列不再支持排序，按名称做稳定 tiebreak 即可
   const sortedClasses = [...filtered].sort((a, b) =>
     a.name.localeCompare(b.name, zh ? "zh-CN" : "en", { numeric: true }),
@@ -247,16 +268,6 @@ export function StorageClassesPage({
             <em>{zh ? "个可用存储配置" : "available configurations"}</em>
           </div>
         </div>
-        <div className="storage-overview-card green">
-          <span>
-            <Server size={18} />
-          </span>
-          <div>
-            <small>{zh ? "关联集群" : "Linked clusters"}</small>
-            <strong>{associatedClusters.size}</strong>
-            <em>{zh ? "个集群已接入存储" : "clusters with storage"}</em>
-          </div>
-        </div>
         <div className="storage-overview-card orange">
           <span>
             <Boxes size={18} />
@@ -286,8 +297,8 @@ export function StorageClassesPage({
             <strong>{zh ? "存储资源" : "Storage resources"}</strong>
             <small>
               {zh
-                ? "管理存储桶、集群关联和访问配置"
-                : "Manage buckets, cluster links and access settings"}
+                ? "管理存储桶和访问配置"
+                : "Manage buckets and access settings"}
             </small>
           </div>
           <span>
@@ -306,13 +317,6 @@ export function StorageClassesPage({
                 />
               </th>
               <th>{c.storageClass.bucket}</th>
-              <th>
-                <ColumnFilterButton
-                  label={c.storageClass.clusters}
-                  selectedCount={clusterFilter.length}
-                  onClick={columnFilter.openFor("cluster")}
-                />
-              </th>
               <th>{c.storageClass.description}</th>
               <th className="storage-actions-col">{zh ? "操作" : "Actions"}</th>
             </tr>
@@ -320,7 +324,7 @@ export function StorageClassesPage({
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={6} className="storage-empty-cell">
+                <td colSpan={5} className="storage-empty-cell">
                   {loading
                     ? zh
                       ? "加载中..."
@@ -352,15 +356,6 @@ export function StorageClassesPage({
                   <code className="inline-code">{sc.bucket}</code>
                 </td>
                 <td>
-                  <div className="storage-cluster-list">
-                    {sc.clusters.length > 0
-                      ? sc.clusters.map((cluster) => (
-                          <span key={cluster}>{cluster}</span>
-                        ))
-                      : "—"}
-                  </div>
-                </td>
-                <td>
                   <span className="storage-description">
                     {sc.description || "—"}
                   </span>
@@ -372,16 +367,7 @@ export function StorageClassesPage({
                       title={c.files.eyebrow}
                       onClick={(e) => {
                         e.stopPropagation();
-                        const cluster = sc.clusters[0] || "";
-                        if (!cluster) {
-                          alert(
-                            zh
-                              ? "该存储类未关联集群"
-                              : "This storage class has no associated cluster",
-                          );
-                          return;
-                        }
-                        onBrowseFiles(cluster, sc.id);
+                        onBrowseFiles(sc.id);
                       }}
                     >
                       <FolderOpen size={14} />
@@ -430,19 +416,6 @@ export function StorageClassesPage({
           options={providers.map((p) => ({ value: p, label: p }))}
           selected={providerFilter}
           onChange={setProviderFilter}
-          anchorRect={columnFilter.anchorRect}
-          onClose={columnFilter.close}
-          zh={zh}
-        />
-      )}
-      {columnFilter.openKey === "cluster" && (
-        <ColumnFilterPopover
-          label={c.storageClass.clusters}
-          options={[...associatedClusters]
-            .sort()
-            .map((cl) => ({ value: cl, label: cl }))}
-          selected={clusterFilter}
-          onChange={setClusterFilter}
           anchorRect={columnFilter.anchorRect}
           onClose={columnFilter.close}
           zh={zh}
@@ -542,9 +515,7 @@ export function StorageClassDetailPage({
             {c.storageClass.connection}
           </span>
           <p className="storage-detail-section-copy">
-            {zh
-              ? "访问端点、集群范围与连接方式"
-              : "Endpoint, cluster scope and connection mode"}
+            {zh ? "访问端点与连接方式" : "Endpoint and connection mode"}
           </p>
           <div className="node-detail-grid storage-detail-info-grid">
             <div>
@@ -562,10 +533,6 @@ export function StorageClassDetailPage({
                     ? "禁用"
                     : "Disabled"}
               </strong>
-            </div>
-            <div>
-              <span className="muted">{c.storageClass.clusters}</span>
-              <strong>{storageClass.clusters.join(", ") || "—"}</strong>
             </div>
             <div>
               <span className="muted">{c.storageClass.description}</span>
@@ -593,40 +560,36 @@ export function StorageClassCreatePage({
   const isEdit = Boolean(initialStorageClass);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [clusterOptions, setClusterOptions] = useState<ClusterOption[]>(
-    mockClusters.map((cluster) => ({
-      id: cluster.name,
-      name: cluster.name,
-      description: cluster.region,
-    })),
-  );
   const [form, setForm] = useState<StorageClassFormState>(() =>
     storageClassToForm(initialStorageClass),
   );
+  const [providerOptions, setProviderOptions] = useState<ProviderOption[]>([]);
+  const [clusterOptions, setClusterOptions] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [clustersMenuOpen, setClustersMenuOpen] = useState(false);
+  const clustersMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setForm(storageClassToForm(initialStorageClass));
   }, [initialStorageClass]);
 
+  // 提供商目录来自后端，取值必须与后端校验的 canonical 值一致，否则下发到
+  // 数据面的 rclone 配置无法识别。
   useEffect(() => {
     let cancelled = false;
-    clustersApi
-      .list<{
-        id?: string;
-        name?: string;
-        region?: string;
-        location?: string;
-      }>()
+    storageClassesApi
+      .providers()
       .then((data) => {
         if (cancelled) return;
-        const options: ClusterOption[] = data
-          .map((cluster) => ({
-            id: cluster.id ?? cluster.name ?? "",
-            name: cluster.name ?? cluster.id ?? "",
-            description: cluster.region ?? cluster.location ?? "",
-          }))
-          .filter((cluster: ClusterOption) => cluster.id || cluster.name);
-        if (options.length > 0) setClusterOptions(options);
+        setProviderOptions(
+          data
+            .map((provider) => ({
+              name: provider.name ?? provider.value ?? "",
+              value: provider.value ?? "",
+            }))
+            .filter((provider) => provider.value),
+        );
       })
       .catch(() => {});
     return () => {
@@ -635,21 +598,57 @@ export function StorageClassCreatePage({
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    clustersApi
+      .list<{ id?: string; name?: string }>()
+      .then((clusters) => {
+        if (cancelled) return;
+        setClusterOptions(
+          clusters
+            .map((cluster) => {
+              const id = cluster.id || cluster.name || "";
+              return { id, name: cluster.name || id };
+            })
+            .filter((cluster) => cluster.id),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setClusterOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        clustersMenuRef.current &&
+        !clustersMenuRef.current.contains(event.target as Node)
+      ) {
+        setClustersMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !submitting) onBack();
+      if (event.key === "Escape") {
+        if (clustersMenuOpen) {
+          setClustersMenuOpen(false);
+          return;
+        }
+        if (!submitting) onBack();
+      }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onBack, submitting]);
+  }, [clustersMenuOpen, onBack, submitting]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (form.clusters.length === 0) {
-      setError(
-        zh ? "请至少选择一个关联集群。" : "Select at least one linked cluster.",
-      );
-      return;
-    }
     if (!isEdit && !form.access_key_secret.trim()) {
       setError(
         zh ? "Access Key Secret 不能为空。" : "Access Key Secret is required.",
@@ -664,20 +663,18 @@ export function StorageClassCreatePage({
       else await storageClassesApi.create(form);
       onCreated?.();
       onBack();
-    } catch {
-      setError(c.storageClass.createFailed);
+    } catch (err) {
+      setError(
+        storageClassSubmissionError(err, zh, c.storageClass.createFailed),
+      );
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div
-      className="modal-backdrop storage-create-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !submitting) onBack();
-      }}
-    >
+    // 表单内容无法恢复，遮罩点击不关闭弹层；关闭入口为右上角按钮、取消按钮和 Esc。
+    <div className="modal-backdrop storage-create-backdrop">
       <div
         className="modal storage-create-modal"
         role="dialog"
@@ -699,8 +696,8 @@ export function StorageClassCreatePage({
             <p>
               {isEdit
                 ? zh
-                  ? "调整对象存储配置、访问参数和关联集群。"
-                  : "Update object storage settings, access parameters and linked clusters."
+                  ? "调整对象存储配置和访问参数。"
+                  : "Update object storage settings and access parameters."
                 : c.storageClass.desc}
             </p>
           </div>
@@ -730,6 +727,7 @@ export function StorageClassCreatePage({
               <label>
                 {c.storageClass.provider} *
                 <select
+                  required
                   value={form.provider}
                   onChange={(e) =>
                     setForm({
@@ -738,22 +736,90 @@ export function StorageClassCreatePage({
                     })
                   }
                 >
-                  {storageProviders.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
+                  <option value="">{zh ? "请选择" : "Select"}</option>
+                  {providerOptions.map((p, index) => (
+                    <option key={`${p.value}-${index}`} value={p.value}>
+                      {p.name}
                     </option>
                   ))}
+                  {form.provider &&
+                    !providerOptions.some((p) => p.value === form.provider) && (
+                      <option value={form.provider}>{form.provider}</option>
+                    )}
                 </select>
               </label>
-              <label>
-                {c.storageClass.clusters}
-                <ClusterMultiSelect
-                  zh={zh}
-                  options={clusterOptions}
-                  value={form.clusters}
-                  onChange={(clusters) => setForm({ ...form, clusters })}
+            </div>
+          </div>
+          <div className="form-section">
+            <strong>{zh ? "关联集群" : "Associated clusters"}</strong>
+            <div className="registry-cluster-select" ref={clustersMenuRef}>
+              <button
+                type="button"
+                className="registry-cluster-trigger"
+                aria-expanded={clustersMenuOpen}
+                aria-haspopup="listbox"
+                onClick={() => setClustersMenuOpen((open) => !open)}
+              >
+                <span>
+                  {form.clusters.length === 0
+                    ? zh
+                      ? "请选择集群"
+                      : "Select clusters"
+                    : zh
+                      ? `已选择 ${form.clusters.length} 个集群`
+                      : `${form.clusters.length} cluster${
+                          form.clusters.length === 1 ? "" : "s"
+                        } selected`}
+                </span>
+                <ChevronRight
+                  size={16}
+                  className={clustersMenuOpen ? "open" : ""}
                 />
-              </label>
+              </button>
+              {clustersMenuOpen && (
+                <div className="registry-cluster-options" role="listbox">
+                  {Array.from(
+                    new Set([
+                      ...clusterOptions.map((cluster) => cluster.id),
+                      ...form.clusters,
+                    ]),
+                  )
+                    .sort()
+                    .map((id) => {
+                      const option = clusterOptions.find(
+                        (cluster) => cluster.id === id,
+                      );
+                      return (
+                        <label
+                          key={id}
+                          className={form.clusters.includes(id) ? "active" : ""}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={form.clusters.includes(id)}
+                            onChange={() =>
+                              setForm({
+                                ...form,
+                                clusters: form.clusters.includes(id)
+                                  ? form.clusters.filter(
+                                      (cluster) => cluster !== id,
+                                    )
+                                  : [...form.clusters, id].sort(),
+                              })
+                            }
+                          />
+                          <span>
+                            <strong>{option?.name || id}</strong>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  {clusterOptions.length === 0 &&
+                    form.clusters.length === 0 && (
+                      <p>{zh ? "暂无可选集群" : "No clusters available"}</p>
+                    )}
+                </div>
+              )}
             </div>
           </div>
           <div className="form-section">
@@ -801,12 +867,19 @@ export function StorageClassCreatePage({
               <label>
                 {c.storageClass.accessKeyId} *
                 <input
-                  required
+                  required={!isEdit}
+                  autoComplete="off"
                   value={form.access_key_id}
                   onChange={(e) =>
                     setForm({ ...form, access_key_id: e.target.value })
                   }
-                  placeholder="AKIAIOSFODNN7EXAMPLE"
+                  placeholder={
+                    isEdit
+                      ? zh
+                        ? "留空则保持原 Access Key ID"
+                        : "Leave blank to keep the existing Access Key ID"
+                      : "AKIAIOSFODNN7EXAMPLE"
+                  }
                 />
               </label>
               <label>
@@ -814,6 +887,7 @@ export function StorageClassCreatePage({
                 <input
                   required={!isEdit}
                   type="password"
+                  autoComplete="new-password"
                   value={form.access_key_secret}
                   onChange={(e) =>
                     setForm({ ...form, access_key_secret: e.target.value })
@@ -846,7 +920,20 @@ export function StorageClassCreatePage({
               />
             </label>
           </div>
-          {error && <p className="error-text">{error}</p>}
+          {error && (
+            <div className="storage-create-error" role="alert">
+              <AlertCircle size={18} aria-hidden="true" />
+              <span>{error}</span>
+              <button
+                type="button"
+                className="storage-create-error-close"
+                aria-label={zh ? "关闭错误提示" : "Dismiss error"}
+                onClick={() => setError("")}
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+          )}
           <div className="form-actions">
             <button type="button" className="secondary-button" onClick={onBack}>
               {zh ? "取消" : "Cancel"}
@@ -878,150 +965,6 @@ export function StorageClassCreatePage({
   );
 }
 
-function ClusterMultiSelect({
-  zh,
-  options,
-  value,
-  onChange,
-}: {
-  zh: boolean;
-  options: ClusterOption[];
-  value: string[];
-  onChange: (next: string[]) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const selected = new Set(value);
-  const toggle = (id: string) => {
-    if (!id) return;
-    const next = selected.has(id)
-      ? value.filter((item) => item !== id)
-      : [...value, id];
-    onChange(next);
-  };
-  const selectedOptions = value
-    .map((id) => options.find((option) => option.id === id) ?? { id, name: id })
-    .filter((option) => option.id);
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredOptions = normalizedQuery
-    ? options.filter(
-        (option) =>
-          option.name.toLowerCase().includes(normalizedQuery) ||
-          option.id.toLowerCase().includes(normalizedQuery) ||
-          option.description?.toLowerCase().includes(normalizedQuery),
-      )
-    : options;
-  const allFilteredSelected =
-    filteredOptions.length > 0 &&
-    filteredOptions.every((option) => selected.has(option.id));
-  const toggleAllFiltered = () => {
-    if (filteredOptions.length === 0) return;
-    if (allFilteredSelected) {
-      const filteredIDs = new Set(filteredOptions.map((option) => option.id));
-      onChange(value.filter((id) => !filteredIDs.has(id)));
-    } else {
-      onChange([
-        ...value,
-        ...filteredOptions
-          .map((option) => option.id)
-          .filter((id) => !selected.has(id)),
-      ]);
-    }
-  };
-
-  return (
-    <div className="storage-cluster-picker">
-      <button
-        type="button"
-        className={`storage-cluster-select ${open ? "open" : ""}`}
-        onClick={() => setOpen((next) => !next)}
-      >
-        {selectedOptions.length > 0 ? (
-          <>
-            <span>
-              {zh
-                ? `已选择 ${selectedOptions.length} 个集群`
-                : `${selectedOptions.length} clusters selected`}
-            </span>
-            <strong>
-              {selectedOptions
-                .slice(0, 2)
-                .map((option) => option.name)
-                .join("、")}
-              {selectedOptions.length > 2
-                ? ` +${selectedOptions.length - 2}`
-                : ""}
-            </strong>
-          </>
-        ) : (
-          <span>
-            {zh ? "请选择一个或多个集群" : "Select one or more clusters"}
-          </span>
-        )}
-        <ChevronRight size={16} />
-      </button>
-      {open && (
-        <div className="storage-cluster-dropdown">
-          <div className="storage-cluster-picker-search">
-            <Search size={14} />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={
-                zh
-                  ? "搜索集群名称、ID 或地域"
-                  : "Search cluster name, ID or region"
-              }
-            />
-            <small>
-              {zh
-                ? `${filteredOptions.length}/${options.length} 个`
-                : `${filteredOptions.length}/${options.length}`}
-            </small>
-          </div>
-          <button
-            type="button"
-            className="storage-cluster-select-all"
-            onClick={toggleAllFiltered}
-          >
-            <input type="checkbox" readOnly checked={allFilteredSelected} />
-            <span>
-              {allFilteredSelected
-                ? zh
-                  ? "取消全选当前结果"
-                  : "Clear current results"
-                : zh
-                  ? "全选当前结果"
-                  : "Select all current results"}
-            </span>
-            <em>{zh ? `已选 ${value.length}` : `${value.length} selected`}</em>
-          </button>
-          <div className="storage-cluster-picker-options">
-            {filteredOptions.map((option) => (
-              <label
-                key={option.id}
-                className={selected.has(option.id) ? "active" : ""}
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(option.id)}
-                  onChange={() => toggle(option.id)}
-                />
-                <span>
-                  <strong>{option.name}</strong>
-                </span>
-              </label>
-            ))}
-            {filteredOptions.length === 0 && (
-              <p>{zh ? "没有匹配的集群" : "No matching clusters"}</p>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function StorageClassFilesPage({
   copy: c,
   sub,
@@ -1032,9 +975,7 @@ export function StorageClassFilesPage({
   onBack: () => void;
 }) {
   const zh = c === copy.zh;
-  const parts = sub.split("/");
-  const cluster = decodeURIComponent(parts[0] || "");
-  const name = decodeURIComponent(parts[1] || "");
+  const name = decodeURIComponent(sub);
   const [prefix, setPrefix] = useState("");
   const [objects, setObjects] = useState<any[]>([]);
   const [commonPrefixes, setCommonPrefixes] = useState<string[]>([]);
@@ -1047,11 +988,9 @@ export function StorageClassFilesPage({
   const [pageSize, setPageSize] = useState(20);
 
   const fetchFiles = async () => {
-    if (!cluster || !name) {
+    if (!name) {
       setError(
-        zh
-          ? "参数错误：缺少集群或存储类名称"
-          : "Error: missing cluster or storage class name",
+        zh ? "参数错误：缺少存储类名称" : "Error: missing storage class name",
       );
       return;
     }
@@ -1061,7 +1000,7 @@ export function StorageClassFilesPage({
       const data = await storageObjectsApi.list<{
         objects?: any[];
         common_prefixes?: string[];
-      }>(name, cluster, prefix);
+      }>(name, prefix);
       setObjects(data.objects || []);
       setCommonPrefixes(data.common_prefixes || []);
     } catch (e: any) {
@@ -1075,10 +1014,10 @@ export function StorageClassFilesPage({
 
   useEffect(() => {
     fetchFiles();
-  }, [cluster, name, prefix]);
+  }, [name, prefix]);
 
   const handleUpload = async (files: FileList) => {
-    if (!cluster || !name) return;
+    if (!name) return;
     setUploading(true);
     setError("");
     try {
@@ -1090,7 +1029,7 @@ export function StorageClassFilesPage({
         setUploadProgress(
           `${zh ? "上传中" : "Uploading"}: ${file.name} (${i + 1}/${files.length})`,
         );
-        await storageObjectsApi.upload(name, cluster, formData);
+        await storageObjectsApi.upload(name, formData);
       }
       setUploadProgress("");
       fetchFiles();
@@ -1105,7 +1044,6 @@ export function StorageClassFilesPage({
     try {
       const data = await storageObjectsApi.download<{ url?: string }>(
         name,
-        cluster,
         key,
       );
       if (data.url) {
@@ -1122,21 +1060,28 @@ export function StorageClassFilesPage({
     if (!confirm(zh ? `确定删除文件 "${key}" 吗?` : `Delete file "${key}"?`))
       return;
     try {
-      await storageObjectsApi.remove(name, cluster, key);
+      await storageObjectsApi.remove(name, key);
       fetchFiles();
     } catch (e: any) {
       alert(e?.message || (zh ? "删除失败" : "Delete failed"));
     }
   };
 
+  const normalizeDirectoryPrefix = (directoryPrefix: string) => {
+    const normalized = directoryPrefix.replace(/^\/+|\/+$/g, "");
+    return normalized ? `${normalized}/` : "";
+  };
+
   const navigateFolder = (folderPrefix: string) => {
-    setPrefix(folderPrefix);
+    setPrefix(normalizeDirectoryPrefix(folderPrefix));
   };
 
   const goUp = () => {
-    if (!prefix) return;
-    const lastSlash = prefix.lastIndexOf("/");
-    setPrefix(lastSlash >= 0 ? prefix.slice(0, lastSlash + 1) : "");
+    const currentDirectory = normalizeDirectoryPrefix(prefix).slice(0, -1);
+    const parentEnd = currentDirectory.lastIndexOf("/");
+    setPrefix(
+      parentEnd >= 0 ? `${currentDirectory.slice(0, parentEnd + 1)}` : "",
+    );
   };
 
   const filteredObjects = objects.filter((obj) =>
@@ -1178,8 +1123,13 @@ export function StorageClassFilesPage({
     let path = "";
     for (const part of parts) {
       path += part + "/";
+      const breadcrumbPath = path;
       crumbs.push(
-        <button type="button" key={path} onClick={() => setPrefix(path)}>
+        <button
+          type="button"
+          key={breadcrumbPath}
+          onClick={() => setPrefix(breadcrumbPath)}
+        >
           {part}
         </button>,
       );
@@ -1197,11 +1147,9 @@ export function StorageClassFilesPage({
           </span>
           <h2>{name || c.files.title}</h2>
           <p>
-            {c.files.cluster}: {cluster || "—"} · {c.files.storageClass}:{" "}
-            {name || "—"}
+            {c.files.storageClass}: {name || "—"}
           </p>
           <div className="storage-detail-badges">
-            <span>{cluster || "—"}</span>
             <span>
               {prefix
                 ? zh
@@ -1231,13 +1179,6 @@ export function StorageClassFilesPage({
           </span>
           <small>{zh ? "存储类" : "Storage class"}</small>
           <strong>{name || "—"}</strong>
-        </div>
-        <div>
-          <span>
-            <Server size={17} />
-          </span>
-          <small>{zh ? "所属集群" : "Cluster"}</small>
-          <strong>{cluster || "—"}</strong>
         </div>
         <div>
           <span>
@@ -1469,3 +1410,4 @@ export function StorageClassFilesPage({
   );
 }
 import { clustersApi, storageClassesApi, storageObjectsApi } from "../backend";
+import { ApiError, errorMessage } from "../api";

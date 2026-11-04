@@ -11,11 +11,16 @@ import {
 
 test("formats Kubernetes binary quantities without inflating them", () => {
   assert.equal(
-    formatResourceQuantity("ephemeral-storage", "3748906852Ki"),
+    formatResourceQuantity("ephemeral-storage", "3748906852Ki", true),
     "3575 GiB",
   );
-  assert.equal(formatResourceQuantity("memory", "1Gi"), "1.0 GiB");
-  assert.equal(formatResourceQuantity("memory", "1000M"), "0.9 GiB");
+  assert.equal(formatResourceQuantity("memory", "1Gi", true), "1.0 GiB");
+  assert.equal(formatResourceQuantity("memory", "1000M", true), "0.9 GiB");
+});
+
+test("localizes the CPU core unit", () => {
+  assert.equal(formatResourceQuantity("cpu", "8", true), "8 核");
+  assert.equal(formatResourceQuantity("cpu", "8", false), "8 cores");
 });
 
 test("calculates disk usage against allocatable capacity", () => {

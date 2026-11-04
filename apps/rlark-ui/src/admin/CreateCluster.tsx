@@ -15,6 +15,7 @@ import {
   systemConfigApi,
   type DeploymentConfig,
 } from "../backend";
+import { copyText } from "../utils/clipboard";
 import { buildDeployYaml } from "../utils/deployYaml";
 
 export function CreateClusterPage({ lang }: { lang: Lang }) {
@@ -72,11 +73,10 @@ export function CreateClusterPage({ lang }: { lang: Lang }) {
 
   const deployYaml = result ? buildDeployYaml(result, deploymentConfig) : "";
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(deployYaml).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+  const handleCopy = async () => {
+    if (!(await copyText(deployYaml))) return;
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleExpand = async (cid: string) => {
@@ -92,14 +92,12 @@ export function CreateClusterPage({ lang }: { lang: Lang }) {
     } catch {}
   };
 
-  const handleExpandedCopy = () => {
+  const handleExpandedCopy = async () => {
     if (!expandedResult) return;
-    navigator.clipboard
-      .writeText(buildDeployYaml(expandedResult, deploymentConfig))
-      .then(() => {
-        setExpandedCopied(true);
-        setTimeout(() => setExpandedCopied(false), 2000);
-      });
+    const yaml = buildDeployYaml(expandedResult, deploymentConfig);
+    if (!(await copyText(yaml))) return;
+    setExpandedCopied(true);
+    setTimeout(() => setExpandedCopied(false), 2000);
   };
 
   return (

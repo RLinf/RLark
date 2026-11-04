@@ -122,7 +122,7 @@ graph LR
 **Pull 控制器**（以 Task 为例）：
 
 1. 监听管理面 Task CR 的创建/更新/删除（带 finalizer 保护）
-2. 将 Task 解码为 execution snapshot，并选择 Kubernetes Runtime 和面向 Ray 的 Kubernetes Workload Adapter；旧版 Deployment、DaemonSet 或 StatefulSet discriminator 只选择其 carrier kind
+2. 将 Task 解码为 execution snapshot，并选择 Kubernetes Runtime 和面向 Ray 的 Kubernetes Workload Adapter；carrier 声明选择 Deployment 或 StatefulSet
 3. 编译声明式对象计划，由 Adapter 选择 ownership、lifecycle、owned field、update mode 和 typed Runtime reconcile profile；向 Adapter 请求有界 identity inventory，读取对应 Runtime 快照，再计算所需操作
 4. 按顺序执行幂等 Apply/Delete；`Replace` 对象先按 UID 校验并删除，再由后续 reconcile 重建；运行中的 Task 在期望 generation 变化后也会重新调谐
 5. 在编译期间应用 Ray bootstrap 等 Workload 自有 Pod 模板修改，再解析显式 Environment requirement，并且只向 Adapter 授权的 PodTemplate target 绑定跨 Domain Network Sidecar

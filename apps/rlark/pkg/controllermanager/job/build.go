@@ -32,23 +32,50 @@ func (r *Reconciler) resolveTaskNamespace(ctx context.Context, t *rlarkv1alpha1.
 	}
 
 	selector := labels.SelectorFromSet(simpleSelector)
-
 	var nodeList rlarkv1alpha1.NodeList
 	if err := r.List(ctx, &nodeList, &client.ListOptions{LabelSelector: selector}); err != nil {
 		return "", fmt.Errorf("list Nodes matching selector for Task template %q: %w", t.Name, err)
 	}
-
 	if len(nodeList.Items) == 0 {
 		return "", fmt.Errorf("no Nodes match selector for Task template %q", t.Name)
 	}
 
-	sort.Slice(nodeList.Items, func(i, j int) bool {
-		if nodeList.Items[i].Namespace == nodeList.Items[j].Namespace {
-			return nodeList.Items[i].Name < nodeList.Items[j].Name
+	var clusterList rlarkv1alpha1.ClusterList
+	if err := r.List(ctx, &clusterList); err != nil {
+		return "", fmt.Errorf("list Clusters for Task template %q: %w", t.Name, err)
+	}
+	clustersByNamespace := make(map[string][]rlarkv1alpha1.Cluster)
+	for i := range clusterList.Items {
+		cluster := clusterList.Items[i]
+		clustersByNamespace[cluster.Spec.AgentNamespace] = append(clustersByNamespace[cluster.Spec.AgentNamespace], cluster)
+	}
+
+	eligible := nodeList.Items[:0]
+	for _, node := range nodeList.Items {
+		if node.Spec.Unschedulable || node.Status.Phase != rlarkv1alpha1.NodeOnline {
+			continue
 		}
-		return nodeList.Items[i].Namespace < nodeList.Items[j].Namespace
+		clusters := clustersByNamespace[node.Namespace]
+		if len(clusters) != 1 {
+			continue
+		}
+		cluster := clusters[0]
+		if !cluster.DeletionTimestamp.IsZero() || cluster.Spec.Cordoned || cluster.Spec.Draining || cluster.Spec.Delisted || (cluster.Status.Phase != rlarkv1alpha1.ClusterOnline && cluster.Status.Phase != rlarkv1alpha1.ClusterDowngraded) {
+			continue
+		}
+		eligible = append(eligible, node)
+	}
+	if len(eligible) == 0 {
+		return "", fmt.Errorf("no schedulable Nodes in an Online or Downgraded Cluster match selector for Task template %q", t.Name)
+	}
+
+	sort.Slice(eligible, func(i, j int) bool {
+		if eligible[i].Namespace == eligible[j].Namespace {
+			return eligible[i].Name < eligible[j].Name
+		}
+		return eligible[i].Namespace < eligible[j].Namespace
 	})
-	return nodeList.Items[0].Namespace, nil
+	return eligible[0].Namespace, nil
 }
 
 func buildTaskStatusMap(job *rlarkv1alpha1.Job) map[string]*rlarkv1alpha1.JobTaskStatus {
@@ -117,7 +144,7 @@ func setNetworkEnvironment(spec *rlarkv1alpha1.TaskSpec, domain string) {
 }
 
 func setSSHEnvironment(spec *rlarkv1alpha1.TaskSpec, publicKey string) {
-	parameters, _ := json.Marshal(taskapi.SSHEnvironmentParametersV1{AuthorizedKeys: []string{publicKey}})
+	parameters, _ := json.Marshal(taskapi.SSHEnvironmentParametersV1{AuthorizedKeys: []string{publicKey}, Port: 2222})
 	environment := rlarkv1alpha1.TaskEnvironment{Type: taskapi.EnvironmentTypeSSH, Version: taskapi.EnvironmentVersionSSHV1, Parameters: apiextensionsv1.JSON{Raw: parameters}}
 	for i := range spec.Environments {
 		if spec.Environments[i].Type == environment.Type && spec.Environments[i].Version == environment.Version {

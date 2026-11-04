@@ -4,6 +4,7 @@
 package compatibility
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -62,6 +63,12 @@ func DecodeTask(task *rlarkv1alpha1.Task) (coordination.TaskSnapshot, error) {
 		requirementParameters := parameters
 		if configured.Type == taskapi.EnvironmentTypeSSH {
 			requirementParameters = nil
+			var ssh taskapi.SSHEnvironmentParametersV1
+			if err := json.Unmarshal(configured.Parameters.Raw, &ssh); err == nil && ssh.Port != 0 {
+				requirementParameters, _ = json.Marshal(struct {
+					Port int32 `json:"port"`
+				}{Port: ssh.Port})
+			}
 		}
 		requirements.Environments = append(requirements.Environments, executionplan.EnvironmentRequirement{
 			Name: configured.Type, Type: configured.Type, Version: configured.Version, Parameters: requirementParameters,

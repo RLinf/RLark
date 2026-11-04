@@ -39,15 +39,23 @@ import {
   type PullProgressEntry,
   type Worker as WorkerItem,
 } from "../data";
+import { storageClassesApi } from "../backend";
 import type { Copy as CopyType } from "../i18n";
 import type { CRDNode, NodeEventEntry } from "../types";
 import type { CRDTask } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
-import { crdToJob } from "../utils/crd";
+import { copyText } from "../utils/clipboard";
+import { crdToJob, describeVolumeSource } from "../utils/crd";
 import { effectiveJobPhase, type JobDisplayPhase } from "../utils/jobPhase";
 import { formatChinaDateTime } from "../utils/time";
 import { resolveSSHKeyOwners, type SSHUserKey } from "../utils/sshKeys";
 import { isDiskUsageWarning } from "../utils/nodeResources";
+import { overlayContainer } from "../utils/overlayContainer";
+import {
+  partitionWorkerEvents,
+  refineWorkerEventReason,
+  workerEventTime,
+} from "../utils/workerEvents";
 import {
   isValidJobDisplayName,
   JOB_DISPLAY_NAME_MAX_LENGTH,
@@ -74,50 +82,17 @@ function taskResourceName(jobName: string, taskName: string) {
     .replace(/\s+/g, "-");
 }
 
-async function copyText(value: string) {
-  if (!value) return false;
-
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value);
-      return true;
-    }
-  } catch {
-    // Fall through for browsers that block Clipboard API on local HTTP pages.
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = value;
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.focus({ preventScroll: true });
-  textarea.select();
-  textarea.setSelectionRange(0, value.length);
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  return copied;
-}
-
-// aggregateJobPullProgress collects pullProgress entries from nodePullProgressMap
-// for all nodes referenced by the job's taskStatuses.observedNodes. Used by the
-// list/detail top StatusBadge hover to surface image pull progress while a job
-// is Pending (mirrors WorkerRow's worker-level tooltip).
-function aggregateJobPullProgress(
-  job: Job,
+// aggregateNodePullProgress flattens the detail page's nodeName -> pullProgress
+// cache into a single list for the top StatusBadge hover, surfacing image pull
+// progress while a job is Pending (mirrors WorkerRow's worker-level tooltip).
+// The cache is built from this job's Task.status.observedNodes, so every entry
+// already belongs to the job being displayed.
+function aggregateNodePullProgress(
   nodePullProgressMap: Record<string, PullProgressEntry[]>,
 ): PullProgressEntry[] {
-  const nodeNames = new Set<string>();
-  for (const ts of job.taskStatuses ?? []) {
-    for (const n of ts.observedNodes ?? []) {
-      if (n) nodeNames.add(n);
-    }
-  }
   const aggregated: PullProgressEntry[] = [];
   const seen = new Set<string>();
-  for (const nodeName of nodeNames) {
-    const entries = nodePullProgressMap[nodeName];
-    if (!entries) continue;
+  for (const entries of Object.values(nodePullProgressMap)) {
     for (const p of entries) {
       // Dedup by image+status to avoid showing identical entries from
       // multiple nodes pulling the same image.
@@ -130,25 +105,16 @@ function aggregateJobPullProgress(
   return aggregated;
 }
 
-// aggregateJobEvents mirrors aggregateJobPullProgress but for Node.status.events
-// (DiskPressure 等 Warning 事件)。在任务 Pending 期间，从 taskStatuses 中
-// observedNodes 命中的节点上聚合 warning 事件，供列表/详情顶部 StatusBadge
-// 的 "i" tooltip 展示。多节点同一事件按 (objectKind, objectName, reason)
-// 去重，保留 lastTime 最新的一条。
-function aggregateJobEvents(
-  job: Job,
+// aggregateNodeEvents mirrors aggregateNodePullProgress but for
+// Node.status.events（DiskPressure 等 Warning 事件）。在任务 Pending 期间聚合
+// 详情页节点缓存里的 warning 事件，供顶部 StatusBadge 的 "i" tooltip 展示。
+// 多节点同一事件按 (objectKind, objectName, reason) 去重，保留 lastTime
+// 最新的一条。
+function aggregateNodeEvents(
   nodeEventsMap: Record<string, NodeEventEntry[]>,
 ): NodeEventEntry[] {
-  const nodeNames = new Set<string>();
-  for (const ts of job.taskStatuses ?? []) {
-    for (const n of ts.observedNodes ?? []) {
-      if (n) nodeNames.add(n);
-    }
-  }
   const merged = new Map<string, NodeEventEntry>();
-  for (const nodeName of nodeNames) {
-    const entries = nodeEventsMap[nodeName];
-    if (!entries) continue;
+  for (const entries of Object.values(nodeEventsMap)) {
     for (const ev of entries) {
       const key = `${ev.objectKind ?? ""}|${ev.objectName ?? ""}|${ev.reason ?? ""}`;
       const existing = merged.get(key);
@@ -177,6 +143,9 @@ function aggregateJobEvents(
   });
   return out;
 }
+
+// partitionWorkerEvents 见 utils/workerEvents.ts：把绑定节点之前产生的
+// FailedScheduling 这类历史事件从"当前等待原因"里拆出去。
 
 export function JobsPage({
   copy: c,
@@ -244,23 +213,6 @@ export function JobsPage({
       direction:
         current.key === key && current.direction === "asc" ? "desc" : "asc",
     }));
-  // Per-node pull progress cache, refreshed alongside jobs. Keyed by node name
-  // so list/detail top StatusBadge hover can aggregate progress for nodes
-  // referenced by job.taskStatuses[].observedNodes.
-  const [nodePullProgressMap, setNodePullProgressMap] = useState<
-    Record<string, PullProgressEntry[]>
-  >({});
-  // Per-node warning events cache（Node.status.events），同样 keyed by node
-  // name，供列表/详情顶部 StatusBadge 的 "i" tooltip 在 Pending 时聚合展示。
-  const [nodeEventsMap, setNodeEventsMap] = useState<
-    Record<string, NodeEventEntry[]>
-  >({});
-  const [nodeDeviceModelMap, setNodeDeviceModelMap] = useState<
-    Record<string, { gpuModel?: string; deviceModel?: string }>
-  >({});
-  const [nodeDiskWarningMap, setNodeDiskWarningMap] = useState<
-    Record<string, boolean>
-  >({});
 
   const fetchJobs = async (isInitial = true) => {
     if (isInitial) setLoading(true);
@@ -275,64 +227,6 @@ export function JobsPage({
       ]);
       setRealJobs(items.map(crdToJob));
       setAllJobTags(tags);
-
-      const nodeNames = new Set<string>();
-      const taskResponses = await Promise.all(
-        items.map(async (job) => {
-          const jobName = job.metadata?.name;
-          if (!jobName) return [];
-          return tasksApi
-            .list({ labelSelector: `rlinf.io/job=${jobName}` })
-            .catch(() => []);
-        }),
-      );
-      for (const task of taskResponses.flat()) {
-        for (const nodeName of task.status?.observedNodes ?? []) {
-          if (nodeName) nodeNames.add(nodeName);
-        }
-      }
-
-      // Build nodeName -> pullProgress / nodeName -> events maps. Failures
-      // here are non-fatal: the hover tooltip simply won't appear.
-      const nodeResponses = await Promise.all(
-        [...nodeNames].map(async (nodeName) => {
-          return nodesApi.get(nodeName).catch(() => null);
-        }),
-      );
-      {
-        const nodeItems: CRDNode[] = nodeResponses.filter(
-          (node): node is CRDNode => node !== null,
-        );
-        const progressMap: Record<string, PullProgressEntry[]> = {};
-        const eventsMap: Record<string, NodeEventEntry[]> = {};
-        const deviceModelMap: Record<
-          string,
-          { gpuModel?: string; deviceModel?: string }
-        > = {};
-        const diskWarningMap: Record<string, boolean> = {};
-        for (const n of nodeItems) {
-          const pp = n.status?.pullProgress;
-          if (Array.isArray(pp) && pp.length > 0) {
-            progressMap[n.metadata.name] = pp;
-          }
-          const evs = n.status?.events;
-          if (Array.isArray(evs) && evs.length > 0) {
-            eventsMap[n.metadata.name] = evs;
-          }
-          const gpuModel = n.metadata.annotations?.["rlark.io/gpu-model"];
-          const deviceModel = n.metadata.annotations?.["rlark.io/device-model"];
-          if (gpuModel || deviceModel) {
-            deviceModelMap[n.metadata.name] = { gpuModel, deviceModel };
-          }
-          if (isDiskUsageWarning(n)) {
-            diskWarningMap[n.metadata.name] = true;
-          }
-        }
-        setNodePullProgressMap(progressMap);
-        setNodeEventsMap(eventsMap);
-        setNodeDeviceModelMap(deviceModelMap);
-        setNodeDiskWarningMap(diskWarningMap);
-      }
     } catch (e) {
       setRealJobs([]);
       setError(e instanceof Error ? e.message : String(e));
@@ -604,10 +498,6 @@ export function JobsPage({
           }}
           onSelectNode={onSelectNode}
           onSelectCluster={onSelectCluster}
-          nodePullProgressMap={nodePullProgressMap}
-          nodeEventsMap={nodeEventsMap}
-          nodeDeviceModelMap={nodeDeviceModelMap}
-          nodeDiskWarningMap={nodeDiskWarningMap}
           allJobTags={allJobTags}
           onPatchJob={handlePatchJob}
         />
@@ -804,14 +694,6 @@ export function JobsPage({
               </tr>
             )}
             {pagedJobs.map((job) => {
-              const jobPullProgress =
-                job.phase === "Pending"
-                  ? aggregateJobPullProgress(job, nodePullProgressMap)
-                  : [];
-              const jobEvents =
-                job.phase === "Pending"
-                  ? aggregateJobEvents(job, nodeEventsMap)
-                  : [];
               const jobFailedMessage =
                 effectiveJobPhase(job) === "Failed"
                   ? [
@@ -887,12 +769,9 @@ export function JobsPage({
                   <td>
                     <div className="status-with-info">
                       <StatusBadge phase={effectiveJobPhase(job)} copy={c} />
-                      {(jobPullProgress.length > 0 ||
-                        jobEvents.length > 0 ||
-                        jobFailedMessage) && (
+                      {jobFailedMessage && (
                         <PullProgressInfo
-                          progress={jobPullProgress}
-                          events={jobEvents}
+                          progress={[]}
                           zh={zh}
                           statusMessage={jobFailedMessage}
                         />
@@ -1015,7 +894,7 @@ export function JobsPage({
             zh={zh}
             onClose={() => setTagPopover(null)}
           />,
-          document.body,
+          overlayContainer(),
         )}
       {tagFilterOpen &&
         tagFilterAnchor &&
@@ -1033,7 +912,7 @@ export function JobsPage({
             anchorRect={tagFilterAnchor}
             onClose={() => setTagFilterOpen(false)}
           />,
-          document.body,
+          overlayContainer(),
         )}
       {columnFilter.openKey === "type" &&
         typeof document !== "undefined" &&
@@ -1049,7 +928,7 @@ export function JobsPage({
             onClose={columnFilter.close}
             zh={zh}
           />,
-          document.body,
+          overlayContainer(),
         )}
       {columnFilter.openKey === "phase" &&
         typeof document !== "undefined" &&
@@ -1071,7 +950,7 @@ export function JobsPage({
             onClose={columnFilter.close}
             zh={zh}
           />,
-          document.body,
+          overlayContainer(),
         )}
     </div>
   );
@@ -1652,10 +1531,6 @@ export function JobDetailPage({
   lifecycleActions,
   onSelectNode,
   onSelectCluster,
-  nodePullProgressMap = {},
-  nodeEventsMap = {},
-  nodeDeviceModelMap = {},
-  nodeDiskWarningMap = {},
   allJobTags = [],
   onPatchJob,
 }: {
@@ -1667,17 +1542,6 @@ export function JobDetailPage({
   lifecycleActions: JobLifecycleActions;
   onSelectNode?: (name: string) => void;
   onSelectCluster?: (id: string) => void;
-  // Per-node pullProgress cache shared from JobsPage; used by the top
-  // StatusBadge hover to surface image pull progress while the job is Pending.
-  nodePullProgressMap?: Record<string, PullProgressEntry[]>;
-  // Per-node warning events cache（Node.status.events），用于详情顶部
-  // StatusBadge 的 "i" tooltip 及 worker 行 tooltip 在 Pending 时聚合展示。
-  nodeEventsMap?: Record<string, NodeEventEntry[]>;
-  nodeDeviceModelMap?: Record<
-    string,
-    { gpuModel?: string; deviceModel?: string }
-  >;
-  nodeDiskWarningMap?: Record<string, boolean>;
   allJobTags?: Array<{ key: string; values: string[] }>;
   onPatchJob?: (
     jobName: string,
@@ -1690,6 +1554,35 @@ export function JobDetailPage({
   const isStopping = job.stopped && job.phase !== "Stopped";
   const isUpdating = lifecycleActions.pending !== null || isDeleting;
   const [jobIdCopied, setJobIdCopied] = useState(false);
+  const [storageClassDisplayNames, setStorageClassDisplayNames] = useState<
+    Record<string, string>
+  >({});
+
+  useEffect(() => {
+    let cancelled = false;
+    storageClassesApi
+      .list<{
+        name: string;
+        storageClassName: string;
+      }>()
+      .then((items) => {
+        if (cancelled) return;
+        setStorageClassDisplayNames(
+          Object.fromEntries(
+            Object.values(items).map((item) => [
+              item.storageClassName,
+              item.name,
+            ]),
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setStorageClassDisplayNames({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 任务名称内联编辑状态
   const [nameEditing, setNameEditing] = useState(false);
@@ -1789,6 +1682,20 @@ export function JobDetailPage({
   const [detailNodeDiskWarningMap, setDetailNodeDiskWarningMap] = useState<
     Record<string, boolean>
   >({});
+  // 本 job 的 Node CR 缓存，均由 refreshTasks 在拉取 Task.status.observedNodes
+  // 对应的 Node 时一并构建，keyed by node name：
+  // - pullProgress：供顶部 StatusBadge 与 worker 行展示镜像拉取进度；
+  // - events：供顶部 StatusBadge "i" tooltip 与 worker 行展示 warning 事件；
+  // - deviceModel：供角色配置展示 GPU/设备型号。
+  const [nodePullProgressMap, setNodePullProgressMap] = useState<
+    Record<string, PullProgressEntry[]>
+  >({});
+  const [nodeEventsMap, setNodeEventsMap] = useState<
+    Record<string, NodeEventEntry[]>
+  >({});
+  const [nodeDeviceModelMap, setNodeDeviceModelMap] = useState<
+    Record<string, { gpuModel?: string; deviceModel?: string }>
+  >({});
   const [podEventsMap, setPodEventsMap] = useState<
     Record<string, NodeEventEntry[]>
   >({});
@@ -1876,13 +1783,13 @@ export function JobDetailPage({
   // reflects raw node-agent reported progress while the job is Pending.
   const jobPullProgress =
     job.phase === "Pending"
-      ? aggregateJobPullProgress(job, nodePullProgressMap)
+      ? aggregateNodePullProgress(nodePullProgressMap)
       : [];
   // 同样从 Node CR events 聚合本 job 的 warning 事件，用于详情顶部
   // StatusBadge 的 "i" tooltip。worker 行 tooltip 则按节点取
   // nodeEventsMap[pod.node]，并在 pod.node 缺失时回退到 Task.status.events。
   const jobEvents =
-    job.phase === "Pending" ? aggregateJobEvents(job, nodeEventsMap) : [];
+    job.phase === "Pending" ? aggregateNodeEvents(nodeEventsMap) : [];
 
   const { refresh: refreshTasks } = useAutoRefresh(
     async () => {
@@ -1932,10 +1839,29 @@ export function JobDetailPage({
         }),
       );
       const diskWarningMap: Record<string, boolean> = {};
+      const nodeProgressMap: Record<string, PullProgressEntry[]> = {};
+      const nodeWarningEventsMap: Record<string, NodeEventEntry[]> = {};
+      const deviceModelMap: Record<
+        string,
+        { gpuModel?: string; deviceModel?: string }
+      > = {};
       for (const node of nodeResponses) {
         const nodeName = node?.metadata?.name;
-        if (nodeName) {
-          diskWarningMap[nodeName] = isDiskUsageWarning(node as CRDNode);
+        if (!nodeName) continue;
+        const n = node as CRDNode;
+        diskWarningMap[nodeName] = isDiskUsageWarning(n);
+        const pp = n.status?.pullProgress;
+        if (Array.isArray(pp) && pp.length > 0) {
+          nodeProgressMap[nodeName] = pp;
+        }
+        const evs = n.status?.events;
+        if (Array.isArray(evs) && evs.length > 0) {
+          nodeWarningEventsMap[nodeName] = evs;
+        }
+        const gpuModel = n.metadata.annotations?.["rlark.io/gpu-model"];
+        const deviceModel = n.metadata.annotations?.["rlark.io/device-model"];
+        if (gpuModel || deviceModel) {
+          deviceModelMap[nodeName] = { gpuModel, deviceModel };
         }
       }
 
@@ -1947,6 +1873,9 @@ export function JobDetailPage({
       // 保存 Task 列表，用于获取节点 RANK
       setTasks(items);
       setDetailNodeDiskWarningMap(diskWarningMap);
+      setNodePullProgressMap(nodeProgressMap);
+      setNodeEventsMap(nodeWarningEventsMap);
+      setNodeDeviceModelMap(deviceModelMap);
     },
     10000,
     [job.name],
@@ -2272,15 +2201,20 @@ export function JobDetailPage({
     message: string | undefined,
     events: NodeEventEntry[],
     failed: boolean,
+    scheduled: boolean,
   ) => {
-    if (
+    const schedulingFailed =
       message === "FailedScheduling" ||
-      events.some((event) => event.reason === "FailedScheduling")
-    ) {
+      events.some((event) => event.reason === "FailedScheduling");
+    // 仅在尚未调度时才把 FailedScheduling 当作当前原因展示；已绑定节点的
+    // worker 只是在绑定前失败过一次（见 partitionWorkerEvents 的说明），
+    // 继续展示"没有合适的节点"会误导用户。
+    if (schedulingFailed && !scheduled) {
       return zh
         ? "没有合适的节点可调度，资源可能被占用"
         : "No suitable node is available; resources may be occupied";
     }
+    if (message === "FailedScheduling") return undefined;
     return failed ? jobFailureMessage(message, zh) : message;
   };
 
@@ -2315,6 +2249,12 @@ export function JobDetailPage({
                   ? (nodeEventsMap[pod.node] ?? [])
                   : (taskEventsMap[pod.taskName?.toLowerCase() ?? ""] ?? [])
               : [];
+          // pod.node 非空即表示 kube-scheduler 已完成绑定，此后 Pending 只可能
+          // 来自容器创建或镜像拉取；把绑定前的 FailedScheduling 拆到
+          // resolvedEvents，避免首条调度失败事件被当成当前阻塞原因。
+          const scheduled = Boolean(pod.node);
+          const { active: activeWorkerEvents, resolved: resolvedWorkerEvents } =
+            partitionWorkerEvents(workerEvents, scheduled);
           return {
             id: `${pod.namespace}/${pod.podNamespace}/${pod.podName}`,
             name: pod.podName || `${role}-${index}`,
@@ -2336,9 +2276,11 @@ export function JobDetailPage({
               pod.message,
               workerEvents,
               phase === "Failed",
+              scheduled,
             ),
             pullProgress: nodePullProgress,
-            events: workerEvents,
+            events: activeWorkerEvents,
+            resolvedEvents: resolvedWorkerEvents,
           };
         })
       : fallbackWorkers;
@@ -2393,9 +2335,11 @@ export function JobDetailPage({
   }, [jobWorkers]);
   const workerKindOptions = useMemo(() => {
     const set = new Set<string>();
-    jobWorkers.forEach((w) => set.add(getNodeKindLabel(w)));
-    return [...set].sort().map((v) => ({ value: v, label: v }));
-  }, [jobWorkers]);
+    jobWorkers.forEach((w) => set.add(getNodeKind(w)));
+    return [...set]
+      .sort()
+      .map((v) => ({ value: v, label: nodeKindLabel(v, zh) }));
+  }, [jobWorkers, zh]);
   // 在过滤 + 排序前叠加表头多选筛选（角色/状态/集群/节点类型）
   const columnFilteredWorkers = filteredWorkers.filter((worker) => {
     const roleHit =
@@ -2409,7 +2353,7 @@ export function JobDetailPage({
       workerClusterFilter.includes(worker.cluster ?? "");
     const kindHit =
       workerKindFilter.length === 0 ||
-      workerKindFilter.includes(getNodeKindLabel(worker));
+      workerKindFilter.includes(getNodeKind(worker));
     return roleHit && phaseHit && clusterHit && kindHit;
   });
   const sortedWorkers = columnFilteredWorkers
@@ -2589,13 +2533,9 @@ export function JobDetailPage({
       parts.push(entry.message);
       return parts.join(" ");
     });
-    try {
-      await navigator.clipboard.writeText(lines.join("\n"));
-      setLogCopied(true);
-      window.setTimeout(() => setLogCopied(false), 2000);
-    } catch {
-      // 剪贴板不可用（非安全上下文等）时静默失败
-    }
+    if (!(await copyText(lines.join("\n")))) return;
+    setLogCopied(true);
+    window.setTimeout(() => setLogCopied(false), 2000);
   };
   const tabs: Array<{ id: typeof activeTab; label: string }> = [
     { id: "workers", label: zh ? "详情" : "Details" },
@@ -2837,6 +2777,7 @@ export function JobDetailPage({
               copy={c}
               roles={workerRoles}
               selectedRole={workerRoleFilter}
+              storageClassDisplayNames={storageClassDisplayNames}
               nodeDeviceModelMap={nodeDeviceModelMap}
               onRoleChange={(role) => {
                 setWorkerRoleFilter(role);
@@ -2883,7 +2824,7 @@ export function JobDetailPage({
                         setWorkerPage(1);
                       }}
                     >
-                      All
+                      {zh ? "全部" : "All"}
                     </button>
                     {workerRoles.map((role) => (
                       <button
@@ -3004,9 +2945,7 @@ export function JobDetailPage({
                           onSelectNode={onSelectNode}
                           onSelectCluster={onSelectCluster}
                           diskWarning={
-                            detailNodeDiskWarningMap[worker.node] ??
-                            nodeDiskWarningMap[worker.node] ??
-                            false
+                            detailNodeDiskWarningMap[worker.node] ?? false
                           }
                           tasks={tasks}
                         />
@@ -3214,7 +3153,7 @@ export function JobDetailPage({
                           color: "var(--text-secondary)",
                         }}
                       >
-                        至
+                        {zh ? "至" : "to"}
                       </span>
                       <input
                         type="datetime-local"
@@ -3434,10 +3373,10 @@ export function JobDetailPage({
                         </div>
                       </div>
                     );
-                    // 全屏时挂到 body 下，避免侧边栏/顶栏的 stacking context
-                    // （半透明 + backdrop-filter）与全屏终端叠出脏视觉。
+                    // 全屏时挂到 app shell 下，避免侧边栏/顶栏的 stacking
+                    // context（半透明 + backdrop-filter）与全屏终端叠出脏视觉。
                     return logFullscreen
-                      ? createPortal(terminalNode, document.body)
+                      ? createPortal(terminalNode, overlayContainer())
                       : terminalNode;
                   })()
                 )}
@@ -3480,7 +3419,7 @@ export function JobDetailPage({
             onClose={workerColumnFilter.close}
             zh={zh}
           />,
-          document.body,
+          overlayContainer(),
         )}
       {workerColumnFilter.openKey === "phase" &&
         typeof document !== "undefined" &&
@@ -3494,7 +3433,7 @@ export function JobDetailPage({
             onClose={workerColumnFilter.close}
             zh={zh}
           />,
-          document.body,
+          overlayContainer(),
         )}
       {workerColumnFilter.openKey === "cluster" &&
         typeof document !== "undefined" &&
@@ -3508,7 +3447,7 @@ export function JobDetailPage({
             onClose={workerColumnFilter.close}
             zh={zh}
           />,
-          document.body,
+          overlayContainer(),
         )}
       {workerColumnFilter.openKey === "kind" &&
         typeof document !== "undefined" &&
@@ -3522,7 +3461,7 @@ export function JobDetailPage({
             onClose={workerColumnFilter.close}
             zh={zh}
           />,
-          document.body,
+          overlayContainer(),
         )}
     </div>
   );
@@ -3734,20 +3673,35 @@ function JobPublicOverview({
                 {resolvedSSHKeys.length > 0 ? (
                   <ul className="job-ssh-key-list">
                     {resolvedSSHKeys.map(({ publicKey, owners }, index) => {
+                      const ownerRemoved = owners.length === 0 && sshKeysLoaded;
                       const ownerLabel =
                         owners.length > 0
                           ? owners.map(({ user }) => user).join(", ")
                           : sshKeysLoaded
                             ? zh
-                              ? "未知用户"
-                              : "Unknown user"
+                              ? "用户已删除"
+                              : "User deleted"
                             : zh
                               ? "加载用户中…"
                               : "Loading user…";
+                      const ownerTitle = ownerRemoved
+                        ? zh
+                          ? "该公钥的用户记录已从 SSH 公钥管理中删除，公钥仍注入在运行中的 Pod 内"
+                          : "The owner record was removed from SSH key management; the key stays injected in running pods"
+                        : ownerLabel;
 
                       return (
                         <li key={`${publicKey}-${index}`} title={publicKey}>
-                          <strong title={ownerLabel}>{ownerLabel}</strong>
+                          <strong
+                            className={
+                              ownerRemoved
+                                ? "job-ssh-key-owner-removed"
+                                : undefined
+                            }
+                            title={ownerTitle}
+                          >
+                            {ownerLabel}
+                          </strong>
                           <code>{publicKey}</code>
                         </li>
                       );
@@ -3827,19 +3781,13 @@ function JobPublicOverview({
                     zh={zh}
                     onClose={() => setTagPopover(null)}
                   />,
-                  document.body,
+                  overlayContainer(),
                 )}
               {tagsEditing &&
                 typeof document !== "undefined" &&
                 createPortal(
-                  <div
-                    className="modal-backdrop job-tags-modal-backdrop"
-                    onMouseDown={(event) =>
-                      event.target === event.currentTarget &&
-                      !tagsSaving &&
-                      cancelTagsEdit()
-                    }
-                  >
+                  // 标签编辑内容无法恢复，遮罩点击不关闭弹层；关闭入口为右上角按钮和取消按钮。
+                  <div className="modal-backdrop job-tags-modal-backdrop">
                     <section
                       className="modal job-tags-modal"
                       role="dialog"
@@ -3900,7 +3848,7 @@ function JobPublicOverview({
                       </div>
                     </section>
                   </div>,
-                  document.querySelector(".app-shell") ?? document.body,
+                  overlayContainer(),
                 )}
             </div>
           </div>
@@ -3983,6 +3931,7 @@ function RoleRuntimeConfig({
   roles,
   selectedRole,
   onRoleChange,
+  storageClassDisplayNames,
   nodeDeviceModelMap,
 }: {
   job: Job;
@@ -3990,13 +3939,20 @@ function RoleRuntimeConfig({
   roles: string[];
   selectedRole: string;
   onRoleChange: (role: string) => void;
+  storageClassDisplayNames: Record<string, string>;
   nodeDeviceModelMap: Record<
     string,
     { gpuModel?: string; deviceModel?: string }
   >;
 }) {
   const zh = c.nav.overview === "总览";
+  const [imageCopied, setImageCopied] = useState(false);
   const resource = job.resources.find((item) => item.role === selectedRole);
+  const handleCopyImage = async () => {
+    if (!(await copyText(resource?.image ?? ""))) return;
+    setImageCopied(true);
+    window.setTimeout(() => setImageCopied(false), 1600);
+  };
   const taskName = resource ? taskResourceName(job.name, resource.role) : "";
   const taskStatus = job.taskStatuses.find(
     (status) =>
@@ -4082,12 +4038,31 @@ function RoleRuntimeConfig({
             <span>{zh ? "镜像" : "Image"}</span>
             <code>{resource.image || "—"}</code>
             <button
-              className="icon-button"
-              onClick={() => copyText(resource.image || "")}
-              aria-label={zh ? "复制镜像地址" : "Copy image"}
+              className={
+                imageCopied ? "icon-button copy-confirmed" : "icon-button"
+              }
+              onClick={handleCopyImage}
+              aria-label={
+                imageCopied
+                  ? zh
+                    ? "镜像地址已复制"
+                    : "Image copied"
+                  : zh
+                    ? "复制镜像地址"
+                    : "Copy image"
+              }
+              title={
+                imageCopied
+                  ? zh
+                    ? "已复制"
+                    : "Copied"
+                  : zh
+                    ? "复制镜像地址"
+                    : "Copy image"
+              }
               disabled={!resource.image}
             >
-              <Copy size={14} />
+              {imageCopied ? <Check size={14} /> : <Copy size={14} />}
             </button>
           </div>
           <div className="role-runtime-resource-summary">
@@ -4154,18 +4129,31 @@ function RoleRuntimeConfig({
                 zh ? "大小" : "Size",
                 zh ? "挂载到 Worker" : "Mount in worker",
               ]}
-              rows={resource.mounts.map((mount) => [
-                mount.type === "storage"
-                  ? zh
-                    ? "对象存储"
-                    : "Object storage"
-                  : zh
-                    ? "主机目录"
-                    : "Host directory",
-                mount.type === "storage" ? mount.objectStorage : mount.hostPath,
-                mount.type === "storage" ? `${mount.pvcSizeGb} Gi` : "",
-                mount.mountPath,
-              ])}
+              rows={resource.mounts.map((mount) => {
+                if (mount.type === "opaque") {
+                  return [
+                    zh ? "其他卷类型" : "Other volume",
+                    describeVolumeSource(mount.rawVolume),
+                    "",
+                    mount.mountPath,
+                  ];
+                }
+                return [
+                  mount.type === "storage"
+                    ? zh
+                      ? "对象存储"
+                      : "Object storage"
+                    : zh
+                      ? "主机目录"
+                      : "Host directory",
+                  mount.type === "storage"
+                    ? (storageClassDisplayNames[mount.objectStorage] ??
+                      mount.objectStorage)
+                    : mount.hostPath,
+                  mount.type === "storage" ? `${mount.pvcSizeGb} Gi` : "",
+                  mount.mountPath,
+                ];
+              })}
               empty={zh ? "未配置数据挂载" : "No data mounts configured"}
             />
           </div>
@@ -4234,11 +4222,26 @@ function formatWorkerCreatedAt(startedAt: string, index: number) {
   return formatChinaDateTime(date.toISOString());
 }
 
-function getNodeKindLabel(worker: WorkerItem) {
+// Node kind is derived from worker node/role naming. getNodeKind returns a
+// stable key so column filters keep matching across language switches, while
+// nodeKindLabel renders the localized text.
+const nodeKindLabels: Record<string, { zh: string; en: string }> = {
+  robot: { zh: "具身真机", en: "Embodied robot" },
+  edge: { zh: "具身算力", en: "Embodied compute" },
+  cloud: { zh: "云算力", en: "Cloud compute" },
+};
+
+function getNodeKind(worker: WorkerItem) {
   const value = `${worker.node} ${worker.role}`.toLowerCase();
-  if (value.includes("robot")) return "具身真机";
-  if (value.includes("edge") || value.includes("camera")) return "具身算力";
-  return "云算力";
+  if (value.includes("robot")) return "robot";
+  if (value.includes("edge") || value.includes("camera")) return "edge";
+  return "cloud";
+}
+
+function nodeKindLabel(kind: string, zh: boolean) {
+  const label = nodeKindLabels[kind];
+  if (!label) return kind;
+  return zh ? label.zh : label.en;
 }
 
 function exportLogs(
@@ -4428,7 +4431,7 @@ function MetricsDashboard({
       </div>
       <div className="time-series-grid">
         {metricCards.map((metric) => (
-          <TimeSeriesCard key={metric.label} {...metric} />
+          <TimeSeriesCard key={metric.label} {...metric} zh={zh} />
         ))}
       </div>
     </div>
@@ -4440,11 +4443,13 @@ function TimeSeriesCard({
   unit,
   color,
   values,
+  zh,
 }: {
   label: string;
   unit: string;
   color: string;
   values: number[];
+  zh: boolean;
 }) {
   const max = Math.max(...values);
   const min = Math.min(...values);
@@ -4470,7 +4475,7 @@ function TimeSeriesCard({
       <svg
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
-        aria-label={`${label} time series`}
+        aria-label={zh ? `${label} 时序图` : `${label} time series`}
       >
         <line x1="0" x2="100" y1="25" y2="25" />
         <line x1="0" x2="100" y1="55" y2="55" />
@@ -4480,7 +4485,7 @@ function TimeSeriesCard({
       <div className="time-series-foot">
         <span>-60m</span>
         <span>-30m</span>
-        <span>now</span>
+        <span>{zh ? "现在" : "now"}</span>
       </div>
     </section>
   );
@@ -4596,6 +4601,20 @@ function workerEventReasonLabel(
   return zh ? "等待 Worker 启动" : "Waiting for Worker startup";
 }
 
+// workerEventLabel 先把 kubelet 的通用 Failed 事件按 message 收敛到更精确的
+// reason，再取展示文案：否则"镜像拉取失败"会一律显示成"Worker 启动失败"。
+function workerEventLabel(
+  event: NodeEventEntry,
+  zh: boolean,
+  failed = false,
+): string {
+  return workerEventReasonLabel(
+    refineWorkerEventReason(event.reason, event.message),
+    zh,
+    failed,
+  );
+}
+
 function jobFailureMessage(message: string | undefined, zh: boolean): string {
   if (!message) return zh ? "Worker 运行失败" : "Worker failed";
   if (/oomkilled|out of memory/i.test(message)) {
@@ -4636,6 +4655,7 @@ function jobFailureMessage(message: string | undefined, zh: boolean): string {
 export function PullProgressInfo({
   progress,
   events = [],
+  resolvedEvents = [],
   zh,
   emptyMessage,
   statusMessage,
@@ -4646,6 +4666,7 @@ export function PullProgressInfo({
 }: {
   progress: PullProgressEntry[];
   events?: NodeEventEntry[];
+  resolvedEvents?: NodeEventEntry[];
   zh: boolean;
   emptyMessage?: string;
   statusMessage?: string;
@@ -4664,20 +4685,25 @@ export function PullProgressInfo({
     above: boolean;
     arrowLeft: number;
   } | null>(null);
-  const recentEvents = [
-    ...new Map(
-      [...events]
-        .sort((left, right) => {
-          const leftTime = Date.parse(left.lastTime ?? "") || 0;
-          const rightTime = Date.parse(right.lastTime ?? "") || 0;
-          return rightTime - leftTime;
-        })
-        .map((event) => [
-          workerEventReasonLabel(event.reason, zh, failed),
-          event,
-        ]),
-    ).values(),
-  ].slice(0, 4);
+  // 按展示文案去重后取最近 4 条，避免 tooltip 被重复 reason 撑爆。同一 reason
+  // 会被反复上报，这里保留 lastTime 最新的一条，再整体按时间倒序。注意不能用
+  // new Map(pairs) 直接去重：重复 key 会保留首次出现的位置但取最后一次出现的
+  // 值，先排序再去重就会得到"位置是最新、时间戳是最旧"的错乱结果。
+  const summarizeEvents = (entries: NodeEventEntry[]) => {
+    const newest = new Map<string, NodeEventEntry>();
+    for (const event of entries) {
+      const key = workerEventLabel(event, zh, failed);
+      const existing = newest.get(key);
+      if (!existing || workerEventTime(event) >= workerEventTime(existing)) {
+        newest.set(key, event);
+      }
+    }
+    return [...newest.values()]
+      .sort((left, right) => workerEventTime(right) - workerEventTime(left))
+      .slice(0, 4);
+  };
+  const recentEvents = summarizeEvents(events);
+  const recentResolvedEvents = summarizeEvents(resolvedEvents);
 
   const measure = () => {
     const icon = wrapperRef.current;
@@ -4689,11 +4715,19 @@ export function PullProgressInfo({
     const gap = 10;
     const margin = 12;
 
-    const spaceAbove = iconRect.top;
+    // 顶栏是 position: sticky 且始终覆盖视口顶部，它占住的高度不是可用空间。
+    // 不扣掉它的话，详情页顶部徽章的 tooltip 会被放到顶栏底下而被遮挡。
+    const topbar = document.querySelector(".topbar");
+    const topInset = topbar ? topbar.getBoundingClientRect().bottom : 0;
+    const spaceAbove = iconRect.top - topInset;
     const spaceBelow = window.innerHeight - iconRect.bottom;
     const above = spaceAbove >= tooltipH + gap || spaceAbove >= spaceBelow;
 
-    const top = above ? iconRect.top - tooltipH - gap : iconRect.bottom + gap;
+    let top = above ? iconRect.top - tooltipH - gap : iconRect.bottom + gap;
+    top = Math.max(
+      topInset + margin,
+      Math.min(top, window.innerHeight - tooltipH - margin),
+    );
 
     const iconCenter = iconRect.left + iconRect.width / 2;
     let left = iconCenter - tooltipW / 2;
@@ -4890,7 +4924,33 @@ export function PullProgressInfo({
                             : "event-pending"
                       }`}
                     >
-                      {workerEventReasonLabel(ev.reason, zh, failed)}
+                      {workerEventLabel(ev, zh, failed)}
+                    </span>
+                    {ev.lastTime && (
+                      <span className="pull-detail">
+                        {formatChinaDateTime(ev.lastTime)}
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </>
+            )}
+            {recentResolvedEvents.length > 0 && (
+              <>
+                <strong className="status-info-tooltip-section">
+                  {zh ? "历史事件" : "Earlier Events"}
+                  {resolvedEvents.length > recentResolvedEvents.length && (
+                    <small>
+                      {zh
+                        ? `最近 ${recentResolvedEvents.length} 条`
+                        : `Latest ${recentResolvedEvents.length}`}
+                    </small>
+                  )}
+                </strong>
+                {recentResolvedEvents.map((ev, i) => (
+                  <span key={`r-${i}`} className="pull-entry event-entry">
+                    <span className="event-chip event-resolved">
+                      {workerEventLabel(ev, zh)}
                     </span>
                     {ev.lastTime && (
                       <span className="pull-detail">
@@ -4902,7 +4962,7 @@ export function PullProgressInfo({
               </>
             )}
           </span>,
-          document.body,
+          overlayContainer(),
         )}
     </>
   );
@@ -4953,11 +5013,8 @@ function WorkerTableRow({
   const sshJump = sshConfig?.jumpHost
     ? `${sshConfig.jumpHost}${sshConfig.jumpPort ? ":" + sshConfig.jumpPort : ""}`
     : "";
-  // head 节点直连 Pod 的 22 端口；非 head 节点通过节点 sshd 的 2222 端口转发到目标 Pod。
   const sshCommand = sshJump
-    ? isHeader
-      ? `ssh -J ${sshJump} root@${worker.name}`
-      : `ssh -J ${sshJump} root@${worker.name} -p 2222`
+    ? `ssh -J ${sshJump} root@${worker.name} -p 2222`
     : "";
   const handleCopy = async () => {
     if (!(await copyText(sshCommand))) return;
@@ -5038,10 +5095,13 @@ function WorkerTableRow({
               (worker.phase === "Pending" ||
                 worker.phase === "Failed" ||
                 (worker.pullProgress && worker.pullProgress.length > 0) ||
-                (worker.events && worker.events.length > 0)) && (
+                (worker.events && worker.events.length > 0) ||
+                (worker.resolvedEvents &&
+                  worker.resolvedEvents.length > 0)) && (
                 <PullProgressInfo
                   progress={worker.pullProgress ?? []}
                   events={worker.events ?? []}
+                  resolvedEvents={worker.resolvedEvents ?? []}
                   zh={zh}
                   statusMessage={
                     worker.phase === "Failed"
@@ -5093,7 +5153,9 @@ function WorkerTableRow({
           </span>
         </td>
         <td>
-          <span className="node-kind-chip">{getNodeKindLabel(worker)}</span>
+          <span className="node-kind-chip">
+            {nodeKindLabel(getNodeKind(worker), zh)}
+          </span>
         </td>
         <td>
           <span className="node-rank-chip">{getNodeRank(worker, pods)}</span>

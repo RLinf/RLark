@@ -14,6 +14,7 @@ import {
 } from "../dist/test/api.js";
 import {
   apiReferenceApi,
+  clustersApi,
   domainsApi,
   nodesApi,
   systemConfigApi,
@@ -99,6 +100,24 @@ test("request falls back to the raw body when it carries no detail", async () =>
   );
   assert.equal(error.message, "HTTP 502: upstream failure");
   assert.equal(errorMessage(error.body), "");
+});
+
+test("cluster lifecycle actions use the gateway lifecycle route", async () => {
+  globalThis.sessionStorage = storage();
+  globalThis.window = { dispatchEvent() {} };
+  const calls = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({ input: String(input), init });
+    return new Response(JSON.stringify({ data: {} }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  await clustersApi.lifecycle("cluster/a", "delete");
+
+  assert.equal(calls[0].input, "/api/v1/clusters/cluster%2Fa/delete");
+  assert.equal(calls[0].init.method, "POST");
 });
 
 test("resource APIs encode paths, query values, and JSON bodies", async () => {

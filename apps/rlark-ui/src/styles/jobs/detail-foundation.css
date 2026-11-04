@@ -570,6 +570,25 @@
   font-size: 13px;
 }
 
+.pod-subtable-truncated {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 260px;
+}
+
+.pod-subtable-truncated > svg {
+  flex: none;
+}
+
+.pod-subtable-truncated > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pod-subtable tbody tr:nth-child(even) td {
   background: #f6f9fd;
 }
@@ -1448,6 +1467,12 @@
   font-size: 10px;
 }
 
+.job-ssh-key-list strong.job-ssh-key-owner-removed {
+  color: var(--muted);
+  font-style: italic;
+  font-weight: 500;
+}
+
 .public-basic-config-list .job-ssh-key-list code {
   padding: 2px 0;
   border: 0;
@@ -1598,7 +1623,7 @@
 .job-detail-page .role-runtime-config.job-detail-summary-card {
   border: 1px solid var(--line);
   border-radius: 18px;
-  background: #fff;
+  background: var(--panel);
   box-shadow: var(--shadow-soft);
   padding: 16px;
   position: relative;
@@ -1834,18 +1859,6 @@
   font-weight: 850;
 }
 
-.restart-choice-backdrop {
-  z-index: 1200;
-}
-
-.delete-job-backdrop {
-  z-index: 1200;
-}
-
-.job-lifecycle-backdrop {
-  z-index: 1200;
-}
-
 .job-lifecycle-modal {
   width: min(500px, calc(100vw - 32px));
   border-radius: 18px;
@@ -1858,6 +1871,10 @@
   align-items: start;
   padding: 22px 22px 18px;
   border-bottom: 1px solid var(--line);
+}
+
+.cluster-action-confirm-head {
+  grid-template-columns: minmax(0, 1fr) 34px;
 }
 
 .job-lifecycle-icon {

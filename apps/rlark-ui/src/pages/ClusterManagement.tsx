@@ -4,6 +4,7 @@ import {
   Bot,
   ChevronRight,
   CloudCog,
+  MoreHorizontal,
   MapPin,
   Network,
   Server,
@@ -28,8 +29,41 @@ import {
 } from "../components/shared";
 import { ColumnFilterPopover } from "../components/ColumnFilterPopover";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
+import { clustersApi, nodesApi } from "../backend";
 
-// 集群类型中文化：数据层保留英文枚举，渲染时映射
+type ClusterAction =
+  "cordon" | "uncordon" | "drain" | "undrain" | "delist" | "restore" | "delete";
+
+const clusterActionDescriptions: Record<
+  Exclude<ClusterAction, "delete">,
+  { zh: string; en: string }
+> = {
+  cordon: {
+    zh: "暂停新任务调度到集群",
+    en: "Stop scheduling new tasks to this cluster",
+  },
+  uncordon: {
+    zh: "恢复集群的新任务调度",
+    en: "Resume scheduling new tasks to this cluster",
+  },
+  drain: {
+    zh: "停止集群内所有运行中的 RLark 任务",
+    en: "Stop all running RLark tasks in this cluster",
+  },
+  undrain: {
+    zh: "取消排空并恢复排空前的调度状态",
+    en: "Cancel draining and restore the pre-drain scheduling state",
+  },
+  delist: {
+    zh: "下架后用户将无法看到该集群和节点",
+    en: "Delist: stop showing this cluster and its nodes to users",
+  },
+  restore: {
+    zh: "恢复集群和节点对用户可见",
+    en: "Make this cluster and its nodes visible to users again",
+  },
+};
+
 function clusterTypeLabel(type: string, zh: boolean): string {
   if (!type) return "—";
   const map: Record<string, { zh: string; en: string }> = {
@@ -42,91 +76,65 @@ function clusterTypeLabel(type: string, zh: boolean): string {
   return zh ? entry.zh : entry.en;
 }
 
-function clusterIDForNode(node: CRDNode) {
-  return (
-    node.metadata.labels?.["rlark.io/cluster-id"] ??
-    node.metadata.namespace ??
-    "default"
-  );
-}
-
-function aggregateClusters(
+function aggregateClusterNodes(
+  cluster: ClusterSummary,
   nodes: CRDNode[],
-  clusterTypes = new Map<string, string>(),
   workerOnly = false,
-): ClusterSummary[] {
-  const groups = new Map<string, CRDNode[]>();
-  nodes.forEach((node) => {
-    const id = clusterIDForNode(node);
-    groups.set(id, [...(groups.get(id) ?? []), node]);
-  });
-
-  return [...groups.entries()]
-    .map(([id, clusterNodes]) => {
-      const categories: Record<NodeCategory, number> = {
-        cloud: 0,
-        edge: 0,
-        robot: 0,
-        unknown: 0,
-      };
-      clusterNodes.forEach((node) =>
-        getNodeCategories(node).forEach((category) => categories[category]++),
+): ClusterSummary {
+  const clusterNodes = cluster.agentNamespaceConflict
+    ? []
+    : nodes.filter(
+        (node) => node.metadata.namespace === cluster.agentNamespace,
       );
-      const inferredType =
-        categories.cloud > 0 && categories.edge === 0 && categories.robot === 0
-          ? "Cloud"
-          : categories.cloud === 0 &&
-              (categories.edge > 0 || categories.robot > 0)
-            ? "Embodied"
-            : "Hybrid";
-      const type = clusterTypes.get(id) ?? inferredType;
-      const workerNodes = workerOnly
-        ? clusterNodes.filter(isBusinessWorkerNode)
-        : clusterNodes;
-      const onlineNodes = workerNodes.filter(
-        (node) => node.status?.phase === "Online",
-      ).length;
-      const totalNodes = workerNodes.length;
-      const phase =
-        onlineNodes === 0
-          ? "Offline"
-          : onlineNodes === totalNodes
-            ? "Online"
-            : "Downgraded";
-      const models = (category: NodeCategory) => [
-        ...new Set(
-          clusterNodes
-            .filter((node) => hasNodeCategory(node, category))
-            .map((node) =>
-              category === "cloud"
-                ? getNodeGPUModel(node)
-                : getNodeDeviceModel(node),
-            )
-            .filter((value): value is string => Boolean(value)),
-        ),
-      ];
-      return {
-        id,
-        name: id,
-        type,
-        region: "",
-        location: "",
-        phase,
-        totalNodes,
-        onlineNodes,
-        offlineNodes: totalNodes - onlineNodes,
-        cloudNodes: categories.cloud,
-        embodiedNodes: categories.edge,
-        robots: categories.robot,
-        gpuModels: models("cloud"),
-        robotModels: models("robot"),
-        runningJobs: clusterNodes.filter((node) =>
-          Boolean(node.metadata.labels?.["rlark.io/embodied-task-name"]),
-        ).length,
-        description: "",
-      } satisfies ClusterSummary;
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const categories: Record<NodeCategory, number> = {
+    cloud: 0,
+    edge: 0,
+    robot: 0,
+    unknown: 0,
+  };
+  clusterNodes.forEach((node) =>
+    getNodeCategories(node).forEach((category) => categories[category]++),
+  );
+  const inferredType =
+    categories.cloud > 0 && categories.edge === 0 && categories.robot === 0
+      ? "Cloud"
+      : categories.cloud === 0 && (categories.edge > 0 || categories.robot > 0)
+        ? "Embodied"
+        : "Hybrid";
+  const workerNodes = workerOnly
+    ? clusterNodes.filter(isBusinessWorkerNode)
+    : clusterNodes;
+  const onlineNodes = workerNodes.filter(
+    (node) => node.status?.phase === "Online",
+  ).length;
+  const totalNodes = workerNodes.length;
+  const models = (category: NodeCategory) => [
+    ...new Set(
+      clusterNodes
+        .filter((node) => hasNodeCategory(node, category))
+        .map((node) =>
+          category === "cloud"
+            ? getNodeGPUModel(node)
+            : getNodeDeviceModel(node),
+        )
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  return {
+    ...cluster,
+    type: cluster.type || inferredType,
+    totalNodes,
+    onlineNodes,
+    offlineNodes: totalNodes - onlineNodes,
+    cloudNodes: categories.cloud,
+    embodiedNodes: categories.edge,
+    robots: categories.robot,
+    gpuModels: models("cloud"),
+    robotModels: models("robot"),
+    runningJobs: clusterNodes.filter((node) =>
+      Boolean(node.metadata.labels?.["rlark.io/embodied-task-name"]),
+    ).length,
+  };
 }
 
 function validCount(value: unknown): value is number {
@@ -181,9 +189,9 @@ function ClusterStatus({ phase, zh }: { phase: string; zh: boolean }) {
     Online: { zh: "在线", en: "Online" },
     Offline: { zh: "离线", en: "Offline" },
     Downgraded: { zh: "服务降级", en: "Downgraded" },
+    Delisted: { zh: "已下架", en: "Delisted" },
     Cordoned: { zh: "停用调度", en: "Cordoned" },
     Draining: { zh: "排空中", en: "Draining" },
-    Deleted: { zh: "已删除", en: "Deleted" },
   };
   const label = labels[phase] ?? { zh: phase, en: phase };
   return (
@@ -199,12 +207,14 @@ export function ClusterManagementPage({
   onSelectCluster,
   onSelectNode,
   workerOnly = false,
+  adminMode = false,
 }: {
   copy: Copy;
   selectedClusterID?: string;
   onSelectCluster: (id?: string) => void;
   onSelectNode: (name: string) => void;
   workerOnly?: boolean;
+  adminMode?: boolean;
 }) {
   const zh = c.nav.overview === "总览";
   const [clusters, setClusters] = useState<ClusterSummary[]>([]);
@@ -216,6 +226,13 @@ export function ClusterManagementPage({
   const [phaseFilterValues, setPhaseFilterValues] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [actionClusterID, setActionClusterID] = useState<string>();
+  const [confirmation, setConfirmation] = useState<{
+    cluster: ClusterSummary;
+    action: ClusterAction;
+  }>();
+  const [actionPending, setActionPending] = useState(false);
+  const [error, setError] = useState("");
   const { openKey, anchorRect, openFor, close } = useColumnFilter();
 
   const fetchClusters = async (isInitial = true) => {
@@ -232,33 +249,20 @@ export function ClusterManagementPage({
     let resolvedClusters: ClusterSummary[] = [];
     try {
       const rawClusters = await clustersApi.list<ClusterSummary>();
-      const clusterTypes = new Map(
-        rawClusters.map((cluster) => [
-          cluster.id || cluster.name,
-          cluster.type,
-        ]),
-      );
-      const nodeAggregates = new Map(
-        aggregateClusters(resolvedNodes, clusterTypes, workerOnly).map(
-          (cluster) => [cluster.id, cluster],
-        ),
-      );
       resolvedClusters = rawClusters.map((cluster) =>
         normalizeClusterSummary(
           cluster,
-          nodeAggregates.get(cluster.id || cluster.name),
+          aggregateClusterNodes(cluster, resolvedNodes, workerOnly),
         ),
       );
     } catch {
       resolvedClusters = [];
     }
-    const existingClusterIDs = new Set(
-      resolvedClusters.map((cluster) => cluster.id || cluster.name),
-    );
-    resolvedNodes = resolvedNodes.filter((node) =>
-      existingClusterIDs.has(clusterIDForNode(node)),
-    );
-    const visibleClusterIDs = new Set(existingClusterIDs);
+    if (!adminMode) {
+      resolvedClusters = resolvedClusters.filter(
+        (cluster) => cluster.phase !== "Delisted",
+      );
+    }
 
     if (selectedClusterID) {
       try {
@@ -266,9 +270,11 @@ export function ClusterManagementPage({
           ClusterSummary & { nodes?: CRDNode[] }
         >(selectedClusterID);
         if (!detail) throw new Error("cluster not found");
-        const fullNodes = resolvedNodes.filter(
-          (node) => clusterIDForNode(node) === selectedClusterID,
-        );
+        const fullNodes = detail.agentNamespaceConflict
+          ? []
+          : resolvedNodes.filter(
+              (node) => node.metadata.namespace === detail.agentNamespace,
+            );
         const fullNodeByKey = new Map(
           fullNodes.map((node) => [
             `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
@@ -290,29 +296,63 @@ export function ClusterManagementPage({
               }
             : node;
         });
-        setDetailNodes(fullNodes.length > 0 ? fullNodes : enrichedDetailNodes);
-        if (!resolvedClusters.some((cluster) => cluster.id === detail.id)) {
-          resolvedClusters = [detail, ...resolvedClusters];
-        }
-        visibleClusterIDs.add(detail.id || detail.name);
-      } catch {
+        const detailNodeSource =
+          fullNodes.length > 0 ? fullNodes : enrichedDetailNodes;
         setDetailNodes(
-          resolvedNodes.filter(
-            (node) => clusterIDForNode(node) === selectedClusterID,
-          ),
+          workerOnly
+            ? detailNodeSource.filter(isBusinessWorkerNode)
+            : detailNodeSource,
         );
+        if (!resolvedClusters.some((cluster) => cluster.id === detail.id)) {
+          resolvedClusters = [
+            normalizeClusterSummary(
+              detail,
+              aggregateClusterNodes(detail, resolvedNodes, workerOnly),
+            ),
+            ...resolvedClusters,
+          ];
+        }
+      } catch {
+        setDetailNodes([]);
       }
     } else {
       setDetailNodes([]);
     }
-    resolvedClusters = resolvedClusters.filter((cluster) =>
-      visibleClusterIDs.has(cluster.id || cluster.name),
-    );
     setClusters(resolvedClusters);
     setLoading(false);
   };
 
-  useAutoRefresh(fetchClusters, 10000, [selectedClusterID]);
+  useAutoRefresh(fetchClusters, 10000, [selectedClusterID, adminMode]);
+
+  const handleClusterAction = (
+    cluster: ClusterSummary,
+    action: ClusterAction,
+  ) => {
+    setError("");
+    setActionClusterID(undefined);
+    setConfirmation({ cluster, action });
+  };
+
+  const confirmClusterAction = async () => {
+    if (!confirmation) return;
+    const { cluster, action } = confirmation;
+    setActionPending(true);
+    setError("");
+    try {
+      if (action === "delete") {
+        await clustersApi.remove(cluster.id);
+        if (selectedClusterID === cluster.id) onSelectCluster(undefined);
+      } else {
+        await clustersApi.lifecycle(cluster.id, action);
+      }
+      await fetchClusters(false);
+      setConfirmation(undefined);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setActionPending(false);
+    }
+  };
 
   const handleRefresh = async () => {
     if (refreshing) return;
@@ -479,6 +519,11 @@ export function ClusterManagementPage({
         onRefresh={handleRefresh}
         refreshing={refreshing}
       />
+      {error && (
+        <div className="cert-error" style={{ marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
       <section
         className={`panel cluster-management-table-panel refreshable-region${refreshing ? " is-refreshing" : ""}`}
         aria-busy={refreshing}
@@ -495,7 +540,7 @@ export function ClusterManagementPage({
             selectedCount={phaseFilterValues.length}
             onClick={openFor("phase")}
           />
-          <span />
+          <span>{adminMode ? (zh ? "操作" : "Actions") : ""}</span>
         </div>
         <div className="cluster-management-table-body">
           {loading ? (
@@ -512,11 +557,22 @@ export function ClusterManagementPage({
                 ? Math.round((cluster.onlineNodes / cluster.totalNodes) * 100)
                 : 0;
               return (
-                <button
+                <div
                   key={cluster.id}
-                  type="button"
                   className="cluster-management-row"
-                  onClick={() => onSelectCluster(cluster.id)}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    setActionClusterID(undefined);
+                    onSelectCluster(cluster.id);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setActionClusterID(undefined);
+                      onSelectCluster(cluster.id);
+                    }
+                  }}
                 >
                   <span className="cluster-management-name">
                     <i>
@@ -528,6 +584,8 @@ export function ClusterManagementPage({
                   </span>
                   <span className="cluster-type-chip">
                     {clusterTypeLabel(cluster.type, zh)}
+                    {cluster.agentNamespaceConflict &&
+                      (zh ? " · 命名空间冲突" : " · Namespace conflict")}
                   </span>
                   <strong>{cluster.totalNodes}</strong>
                   <span>{cluster.onlineNodes}</span>
@@ -539,8 +597,144 @@ export function ClusterManagementPage({
                     <small>{rate}%</small>
                   </span>
                   <ClusterStatus phase={cluster.phase} zh={zh} />
-                  <ChevronRight size={15} />
-                </button>
+                  {adminMode ? (
+                    <span
+                      className="cluster-actions"
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        className="icon-button"
+                        title={zh ? "集群操作" : "Cluster actions"}
+                        aria-label={zh ? "集群操作" : "Cluster actions"}
+                        onClick={() =>
+                          setActionClusterID((current) =>
+                            current === cluster.id ? undefined : cluster.id,
+                          )
+                        }
+                      >
+                        <MoreHorizontal size={16} />
+                      </button>
+                      {actionClusterID === cluster.id && (
+                        <span className="cluster-action-menu">
+                          {cluster.phase === "Delisted" ? (
+                            <button
+                              type="button"
+                              disabled={actionPending}
+                              title={
+                                zh
+                                  ? "上架：集群对用户恢复可见状态"
+                                  : "Restore: make the cluster visible to users"
+                              }
+                              onClick={() =>
+                                handleClusterAction(cluster, "restore")
+                              }
+                            >
+                              {zh ? "上架" : "Restore"}
+                            </button>
+                          ) : (
+                            <>
+                              {cluster.phase === "Cordoned" ? (
+                                <button
+                                  type="button"
+                                  disabled={actionPending}
+                                  title={
+                                    zh
+                                      ? "故障恢复：恢复集群的新任务调度"
+                                      : "Uncordon: resume scheduling new tasks to the cluster"
+                                  }
+                                  onClick={() =>
+                                    handleClusterAction(cluster, "uncordon")
+                                  }
+                                >
+                                  {zh ? "故障恢复" : "Uncordon"}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={actionPending}
+                                  title={
+                                    zh
+                                      ? "故障维修：暂停新任务调度到集群"
+                                      : "Cordon: stop scheduling new tasks to the cluster"
+                                  }
+                                  onClick={() =>
+                                    handleClusterAction(cluster, "cordon")
+                                  }
+                                >
+                                  {zh ? "故障维修" : "Cordon"}
+                                </button>
+                              )}
+                              {cluster.phase === "Draining" ? (
+                                <button
+                                  type="button"
+                                  disabled={actionPending}
+                                  title={
+                                    zh
+                                      ? "取消驱逐任务并恢复排空前的调度状态"
+                                      : "Cancel draining and restore the pre-drain scheduling state"
+                                  }
+                                  onClick={() =>
+                                    handleClusterAction(cluster, "undrain")
+                                  }
+                                >
+                                  {zh ? "取消驱逐" : "Cancel drain"}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={actionPending}
+                                  title={
+                                    zh
+                                      ? "驱逐任务：停止集群内所有运行中的 RLark 任务"
+                                      : "Drain: stop all running RLark tasks in the cluster"
+                                  }
+                                  onClick={() =>
+                                    handleClusterAction(cluster, "drain")
+                                  }
+                                >
+                                  {zh ? "驱逐任务" : "Drain"}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={actionPending}
+                                title={
+                                  zh
+                                    ? "下架：集群不再对用户可见"
+                                    : "Delist: stop showing the cluster to users"
+                                }
+                                onClick={() =>
+                                  handleClusterAction(cluster, "delist")
+                                }
+                              >
+                                {zh ? "下架" : "Delist"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={actionPending}
+                                className="danger"
+                                title={
+                                  zh
+                                    ? "删除：永久清理集群及其数据面资源"
+                                    : "Delete: permanently remove the cluster and its data-plane resources"
+                                }
+                                onClick={() =>
+                                  handleClusterAction(cluster, "delete")
+                                }
+                              >
+                                {zh ? "删除" : "Delete"}
+                              </button>
+                            </>
+                          )}
+                        </span>
+                      )}
+                    </span>
+                  ) : (
+                    <ChevronRight size={15} />
+                  )}
+                </div>
               );
             })
           )}
@@ -550,16 +744,27 @@ export function ClusterManagementPage({
           label={zh ? "正在刷新集群列表" : "Refreshing cluster list"}
         />
       </section>
+      {confirmation && (
+        <ClusterActionConfirmDialog
+          cluster={confirmation.cluster}
+          action={confirmation.action}
+          zh={zh}
+          pending={actionPending}
+          error={error}
+          onClose={() => setConfirmation(undefined)}
+          onConfirm={confirmClusterAction}
+        />
+      )}
       {openKey === "phase" && (
         <ColumnFilterPopover
           label={zh ? "状态" : "Status"}
           options={[
             { value: "Online", label: zh ? "在线" : "Online" },
             { value: "Downgraded", label: zh ? "服务降级" : "Downgraded" },
+            { value: "Delisted", label: zh ? "已下架" : "Delisted" },
             { value: "Cordoned", label: zh ? "停用调度" : "Cordoned" },
             { value: "Draining", label: zh ? "排空中" : "Draining" },
             { value: "Offline", label: zh ? "离线" : "Offline" },
-            { value: "Deleted", label: zh ? "已删除" : "Deleted" },
           ]}
           selected={phaseFilterValues}
           onChange={setPhaseFilterValues}
@@ -579,4 +784,112 @@ export function ClusterManagementPage({
     </div>
   );
 }
-import { clustersApi, nodesApi } from "../backend";
+
+function ClusterActionConfirmDialog({
+  cluster,
+  action,
+  zh,
+  pending,
+  error,
+  onClose,
+  onConfirm,
+}: {
+  cluster: ClusterSummary;
+  action: ClusterAction;
+  zh: boolean;
+  pending: boolean;
+  error: string;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !pending) onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose, pending]);
+
+  const confirmedAction = action === "delete" ? undefined : action;
+  const content =
+    action === "delete"
+      ? {
+          eyebrow: zh ? "危险操作" : "Danger zone",
+          title: zh ? "确认删除集群？" : "Delete this cluster?",
+          description: zh
+            ? "删除将清理集群及其数据面资源，且无法恢复。"
+            : "Delete will remove the cluster and its data-plane resources permanently.",
+          confirm: zh ? "确认删除" : "Delete cluster",
+          pending: zh ? "删除中…" : "Deleting…",
+          danger: true,
+        }
+      : {
+          eyebrow: zh ? "集群操作" : "Cluster action",
+          title: zh ? "确认执行集群操作？" : "Confirm cluster action?",
+          description: zh
+            ? clusterActionDescriptions[confirmedAction!].zh
+            : clusterActionDescriptions[confirmedAction!].en,
+          confirm: zh ? "确认执行" : "Confirm",
+          pending: zh ? "处理中…" : "Processing…",
+          danger: false,
+        };
+
+  return (
+    <div
+      className="modal-backdrop job-lifecycle-backdrop"
+      onMouseDown={(event) =>
+        event.target === event.currentTarget && !pending && onClose()
+      }
+    >
+      <section
+        className="modal job-lifecycle-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cluster-action-title"
+      >
+        <div className="job-lifecycle-head cluster-action-confirm-head">
+          <div>
+            <span className="eyebrow">{content.eyebrow}</span>
+            <h2 id="cluster-action-title">{content.title}</h2>
+          </div>
+          <button
+            className="icon-button"
+            onClick={onClose}
+            disabled={pending}
+            aria-label={zh ? "关闭" : "Close"}
+          >
+            ×
+          </button>
+        </div>
+        <div className="job-lifecycle-body">
+          <p>{content.description}</p>
+          <div className="delete-job-target">
+            <span>{zh ? "目标集群" : "Target cluster"}</span>
+            <strong>{cluster.name}</strong>
+          </div>
+          {error && (
+            <div className="delete-job-error" role="alert">
+              {error}
+            </div>
+          )}
+        </div>
+        <div className="job-lifecycle-actions">
+          <button
+            className="secondary-button"
+            onClick={onClose}
+            disabled={pending}
+          >
+            {zh ? "取消" : "Cancel"}
+          </button>
+          <button
+            className={content.danger ? "danger-button" : "primary-button"}
+            onClick={() => void onConfirm()}
+            disabled={pending}
+          >
+            {pending ? content.pending : content.confirm}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}

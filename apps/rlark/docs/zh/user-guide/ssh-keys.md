@@ -16,6 +16,8 @@
 
 RLark 会校验公钥格式，并要求 SSH 用户名和公钥内容在全局范围内均不可重复。任一内容已存在时，表单会在上传前显示行内错误提示。当 Server SSH 地址可用时，页面还会显示配置好的跳板连接命令。
 
+连接命令和列表中每条公钥右侧都提供复制按钮。复制成功后按钮会短暂变为绿色对勾，与控制台其他复制按钮一致；复制失败时按钮不会给出成功提示。控制台通过 HTTP 访问（非安全上下文）时浏览器不提供异步剪贴板接口，此时复制会自动回退到兼容方式，无需改用 HTTPS。
+
 ## 任务二：为 Job 选择密钥
 
 1. 打开**任务**并开始创建 Job。
@@ -34,14 +36,18 @@ RLark 会校验公钥格式，并要求 SSH 用户名和公钥内容在全局范
 
 每条选中的公钥会写入适用 Task 模板的 `rlinf.io/ssh/v1` Environment，供 workload 交付。只在 SSH 公钥页面登记或修改记录不会改变已有 Job 或 Task。Job 详情中的多条已配置公钥会通过可滚动列表展示。
 
+由于 Job 保存的是公钥原文而不是对密钥记录的引用，公钥的生命周期可能长于其用户记录。此时 Job 详情不再显示用户名，而是标记为`用户已删除`，并通过提示说明该用户记录已从 SSH 公钥管理中删除、公钥仍注入在运行中的 Pod 内。复制、编辑或编辑后重启 Job 时，这类公钥会从草稿中移除，因为选择列表无法展示也无法取消勾选没有用户记录的公钥；表单会提示移除了多少条公钥，便于在提交前补充替换密钥。
+
 对于内置 Ray-on-Kubernetes workload，Agent 会把 Task 选中的公钥存入归当前 Task incarnation 所有的 Secret，将其 `authorized_key` item 以只读方式挂载到每个 main container 的 `/var/run/rlark/ssh/authorized_key`，并将 `rlark-tools sshd` 作为 optional supervised service 启动。该 mount 不使用 `subPath`，`sshd` 每次认证都会重新打开该文件。空文件表示关闭 workload key 认证。SSH 服务故障可能导致 Pod 无法通过 SSH 访问，但不会停止 Task。Docker、Raw 或任意自定义 workload implementation 不具备这一自动服务生命周期。
+
+Job Controller 为所有 Task 统一设置 SSH 端口 2222。前端复制的 SSH 命令会通过节点 sshd 的 2222 端口转发到目标 Pod。
 
 ## 任务三：通过堡垒机连接
 
 管理员配置 Server SSH 入口后，使用控制台显示的命令，或从 Job/节点详情复制指定 Worker 的命令。典型命令如下：
 
 ```bash
-ssh -J <bastion-host>:<port> root@<worker-name>
+ssh -J <bastion-host>:<port> root@<worker-name> -p 2222
 ```
 
 外层 SSH 用户名必须与公钥登记的用户名一致。目标容器必须提供 SSH 服务，并接受所选公钥。

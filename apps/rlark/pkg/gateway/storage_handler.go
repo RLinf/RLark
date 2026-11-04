@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -33,17 +35,19 @@ import (
 
 // StorageClassData 定义StorageClass的响应数据结构.
 type StorageClassData struct {
-	Name        string   `json:"name"`
-	Clusters    []string `json:"clusters"`
-	Description string   `json:"description"`
-	Bucket      string   `json:"bucket"`
-	Provider    string   `json:"provider"`
-	Endpoint    string   `json:"endpoint"`
-	Region      string   `json:"region"`
-	PathStyle   bool     `json:"pathStyle"`
-	AccessKeyId string   `json:"accessKeyId"`
-	TenantID    string   `json:"tenantID"`
-	CreatedBy   string   `json:"createdBy,omitempty"`
+	Name             string   `json:"name"`
+	StorageClassName string   `json:"storageClassName"`
+	Clusters         []string `json:"clusters"`
+	Description      string   `json:"description"`
+	Bucket           string   `json:"bucket"`
+	Provider         string   `json:"provider"`
+	Endpoint         string   `json:"endpoint"`
+	Region           string   `json:"region"`
+	PathStyle        bool     `json:"pathStyle"`
+	AccessKeyId      string   `json:"accessKeyId"`
+	TenantID         string   `json:"tenantID"`
+	CreatedBy        string   `json:"createdBy,omitempty"`
+	CreatedAt        string   `json:"createdAt"`
 }
 
 // Provider 定义存储提供商信息.
@@ -64,7 +68,7 @@ func (g *Gateway) listStorageClass(c *gin.Context) {
 	requestedClusters := parseStorageClassClusters(c.Query("clusters"))
 	data := make(map[string]*StorageClassData, len(secrets))
 	for i := range secrets {
-		_, stored, err := storageClassFromSecret(&secrets[i])
+		id, stored, err := storageClassFromSecret(&secrets[i])
 		if err != nil {
 			log.FromContext(c.Request.Context()).Error(err, "invalid storage class replication", "secret", secrets[i].Name)
 			respondError(c, http.StatusInternalServerError, CodeInternalError, "invalid storage class data")
@@ -78,12 +82,25 @@ func (g *Gateway) listStorageClass(c *gin.Context) {
 			}
 		}
 		data[stored.Name] = &StorageClassData{
-			Name: stored.Name, Clusters: clusters, Description: stored.Description, Bucket: stored.Bucket,
+			Name: stored.Name, StorageClassName: id, Clusters: clusters, Description: stored.Description, Bucket: stored.Bucket,
 			Provider: stored.Provider, Endpoint: stored.Endpoint, Region: stored.Region, PathStyle: stored.PathStyle,
-			AccessKeyId: stored.AccessKeyID, TenantID: tenant.IDOf(&secrets[i]), CreatedBy: secrets[i].Annotations[tenant.CreatedByAnnotation],
+			AccessKeyId: maskStorageAccessKeyID(stored.AccessKeyID), TenantID: tenant.IDOf(&secrets[i]), CreatedBy: secrets[i].Annotations[tenant.CreatedByAnnotation], CreatedAt: secrets[i].CreationTimestamp.UTC().Format(time.RFC3339),
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"data": data, "success": true})
+}
+
+const storageAccessKeyMask = "*****"
+
+func maskStorageAccessKeyID(value string) string {
+	if len(value) <= 4 {
+		return storageAccessKeyMask
+	}
+	return value[:2] + storageAccessKeyMask + value[len(value)-2:]
+}
+
+func isMaskedStorageAccessKeyID(value string) bool {
+	return strings.Contains(value, storageAccessKeyMask)
 }
 
 func parseStorageClassClusters(value string) map[string]struct{} {
@@ -107,40 +124,13 @@ func intersectStorageClassClusters(clusters []string, requested map[string]struc
 	return filtered
 }
 
-// listProvider 列出支持的存储提供商.
+// listProvider 列出支持的存储提供商. 目录由 storage.Providers 单一维护,
+// 与创建/更新时的 provider 校验共用同一份数据, 避免客户端提交 rclone 无法
+// 识别的取值.
 func (g *Gateway) listProvider(c *gin.Context) {
-	providers := []Provider{
-		{Name: "AWS S3", Value: "AWS"},
-		{Name: "阿里云 OSS", Value: "Alibaba"},
-		{Name: "腾讯云 COS", Value: "TencentCOS"},
-		{Name: "华为云 OBS", Value: "HuaweiOBS"},
-		{Name: "七牛云 Kodo", Value: "Qiniu"},
-		{Name: "移动云 EOS", Value: "ChinaMobile"},
-		{Name: "网易 NOS", Value: "Netease"},
-		{Name: "UCloud US3", Value: "Ucloud"},
-		{Name: "MinIO", Value: "Minio"},
-		{Name: "Ceph RGW", Value: "Ceph"},
-		{Name: "SeaweedFS", Value: "SeaweedFS"},
-		{Name: "Cloudflare R2", Value: "Cloudflare"},
-		{Name: "Google Cloud Storage", Value: "GCS"},
-		{Name: "DigitalOcean Spaces", Value: "DigitalOcean"},
-		{Name: "Wasabi", Value: "Wasabi"},
-		{Name: "Backblaze B2 (S3)", Value: "Other"},
-		{Name: "IBM COS", Value: "IBMCOS"},
-		{Name: "Scaleway", Value: "Scaleway"},
-		{Name: "OVHcloud", Value: "OVH"},
-		{Name: "Linode / Akamai", Value: "Linode"},
-		{Name: "IDrive e2", Value: "IDrive"},
-		{Name: "Seagate Lyve Cloud", Value: "LyveCloud"},
-		{Name: "Storj (S3 网关)", Value: "Storj"},
-		{Name: "Synology C2", Value: "Synology"},
-		{Name: "ArvanCloud", Value: "ArvanCloud"},
-		{Name: "Hetzner", Value: "Hetzner"},
-		{Name: "IONOS", Value: "IONOS"},
-		{Name: "MEGA S4", Value: "Mega"},
-		{Name: "RackCorp", Value: "RackCorp"},
-		{Name: "Dreamhost", Value: "Dreamhost"},
-		{Name: "其他 S3 兼容", Value: "Other"},
+	providers := make([]Provider, 0, len(storage.Providers))
+	for _, provider := range storage.Providers {
+		providers = append(providers, Provider{Name: provider.DisplayName, Value: provider.Value})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -156,11 +146,14 @@ const annoStorageClassDescription = "rlark.io/description"
 const annoStorageClassName = "rlark.io/name"
 
 const (
-	storageClassVersion          = "v1"
-	storageClassCreateAttempts   = 3
-	storageClassNamespacePrefix  = "rlark-"
-	storageClassReplicationLabel = "rlark.io/storageclass-replication"
-	storageClassDeliveryLabel    = "rlark.io/storageclass-delivery"
+	storageClassVersion           = "v1"
+	storageClassCreateAttempts    = 3
+	storageClassValidationTimeout = 10 * time.Second
+	storageClassNamespacePrefix   = "rlark-"
+	storageClassReplicationLabel  = "rlark.io/storageclass-replication"
+	storageClassDeliveryLabel     = "rlark.io/storageclass-delivery"
+
+	CodeStorageClassRequiredFields = "STORAGE_CLASS_REQUIRED_FIELDS"
 )
 
 var storageClassIDPattern = regexp.MustCompile(`^sc-[0-9a-f]{16}$`)
@@ -242,7 +235,11 @@ func (g *Gateway) createStorageClass(c *gin.Context) {
 	}
 	stored, err := normalizeStorageClass(req)
 	if err != nil {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		respondStorageClassValidationError(c, err)
+		return
+	}
+	if err := validateStorageClassCredentials(c.Request.Context(), stored); err != nil {
+		respondStorageClassCredentialValidationError(c, err)
 		return
 	}
 	for range storageClassCreateAttempts {
@@ -282,9 +279,35 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "storage class name cannot be changed")
 		return
 	}
+	if req.AccessKeyId == "" || isMaskedStorageAccessKeyID(req.AccessKeyId) || req.AccessKeySecret == "" {
+		secret, err := getStorageClassSecretByName(c.Request.Context(), g.rawClient, g.managementNamespace(), name)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				respondError(c, http.StatusNotFound, CodeResourceNotFound, "storage class not found")
+				return
+			}
+			respondKubeError(c, fmt.Sprintf("get storage class replication: %v", err), err)
+			return
+		}
+		_, existing, err := storageClassFromSecret(secret)
+		if err != nil {
+			respondKubeError(c, fmt.Sprintf("decode storage class replication: %v", err), err)
+			return
+		}
+		if req.AccessKeyId == "" || isMaskedStorageAccessKeyID(req.AccessKeyId) {
+			req.AccessKeyId = existing.AccessKeyID
+		}
+		if req.AccessKeySecret == "" {
+			req.AccessKeySecret = existing.AccessKey
+		}
+	}
 	stored, err := normalizeStorageClass(req)
 	if err != nil {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+		respondStorageClassValidationError(c, err)
+		return
+	}
+	if err := validateStorageClassCredentials(c.Request.Context(), stored); err != nil {
+		respondStorageClassCredentialValidationError(c, err)
 		return
 	}
 	if err := g.updateStorageClassByName(c.Request.Context(), name, stored); err != nil {
@@ -323,10 +346,67 @@ func (g *Gateway) deleteStorageClass(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+type storageClassValidationError struct {
+	fields []string
+}
+
+func (e *storageClassValidationError) Error() string {
+	return strings.Join(e.fields, ", ") + " are required"
+}
+
+func requiredStorageClassFields(req CreateStorageClassRequest) []string {
+	var fields []string
+	if strings.TrimSpace(req.Name) == "" {
+		fields = append(fields, "name")
+	}
+	if strings.TrimSpace(req.Bucket) == "" {
+		fields = append(fields, "bucket")
+	}
+	if strings.TrimSpace(req.AccessKeySecret) == "" {
+		fields = append(fields, "access_key_secret")
+	}
+	return fields
+}
+
+func respondStorageClassValidationError(c *gin.Context, err error) {
+	var validationErr *storageClassValidationError
+	if stderrors.As(err, &validationErr) {
+		respondErrorWithDetails(c, http.StatusBadRequest, CodeStorageClassRequiredFields, validationErr.Error(), map[string]any{"fields": validationErr.fields})
+		return
+	}
+	respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
+}
+
+var validateStorageClassCredentials = func(ctx context.Context, stored storedStorageClass) error {
+	config := storage.DefaultConfig()
+	config.Provider = stored.Provider
+	config.Endpoint = stored.Endpoint
+	config.AccessKeyId = stored.AccessKeyID
+	config.SecretAccessKey = stored.AccessKey
+	config.Region = stored.Region
+	config.UsePathStyle = stored.PathStyle
+	config.Bucket = stored.Bucket
+	client, err := storage.NewClient(config)
+	if err != nil {
+		return fmt.Errorf("create storage client: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, storageClassValidationTimeout)
+	defer cancel()
+	if err := client.ValidateBucketCredentials(ctx); err != nil {
+		return fmt.Errorf("head storage bucket: %w", err)
+	}
+	return nil
+}
+
+func respondStorageClassCredentialValidationError(c *gin.Context, err error) {
+	log.FromContext(c.Request.Context()).Error(err, "storage credential validation failed")
+	respondError(c, http.StatusBadRequest, CodeInvalidRequest, "storage credentials cannot access the configured bucket")
+}
+
 func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, error) {
 	name := strings.TrimSpace(req.Name)
-	if name == "" || req.Bucket == "" || req.AccessKeySecret == "" {
-		return storedStorageClass{}, fmt.Errorf("name, bucket, and access_key_secret are required")
+	if fields := requiredStorageClassFields(req); len(fields) != 0 {
+		return storedStorageClass{}, &storageClassValidationError{fields: fields}
 	}
 	clusters := make([]string, 0, len(req.Clusters))
 	for _, cluster := range req.Clusters {
@@ -344,13 +424,24 @@ func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, e
 	}
 	sort.Strings(clusters)
 	clusters = slices.Compact(clusters)
-	if strings.EqualFold(req.Provider, "Alibaba") {
-		req.Endpoint = fmt.Sprintf("%s.oss-%s.aliyuncs.com", req.Bucket, req.Region)
+	// Provider 必须来自已知目录: rclone 对未知 provider 只记录告警并回退到通用
+	// 配置, 错误取值在数据面只表现为挂载后的 I/O 错误. 这里同时把历史客户端提交
+	// 的展示名(如 "Aliyun OSS")改写为 canonical 取值.
+	provider, ok := storage.LookupProvider(req.Provider)
+	if !ok {
+		return storedStorageClass{}, fmt.Errorf("unsupported provider %q", req.Provider)
+	}
+	// Endpoint 只描述服务端地址, 不含 bucket: AWS SDK 与 rclone 都会自行按
+	// virtual-hosted 规则拼接 bucket.
+	endpoint, err := storage.NormalizeEndpoint(provider.Value, req.Endpoint, req.Region)
+	if err != nil {
+		return storedStorageClass{}, err
 	}
 	return storedStorageClass{
 		Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters,
-		Provider: req.Provider, Endpoint: req.Endpoint, AccessKeyID: req.AccessKeyId, AccessKey: req.AccessKeySecret,
-		Bucket: req.Bucket, Region: req.Region, PathStyle: req.PathStyle,
+		Provider: provider.Value, Endpoint: endpoint, AccessKeyID: req.AccessKeyId, AccessKey: req.AccessKeySecret,
+		Bucket: req.Bucket, Region: strings.TrimSpace(req.Region),
+		PathStyle: storage.EffectivePathStyle(provider.Value, req.PathStyle),
 	}, nil
 }
 
@@ -445,6 +536,12 @@ func storageClassFromSecret(secret *v1.Secret) (string, storedStorageClass, erro
 	if stored.Version != storageClassVersion {
 		return "", storedStorageClass{}, fmt.Errorf("unsupported storage class version %q", stored.Version)
 	}
+	// 读取历史记录时把 provider 的展示名改写为 canonical 取值, 并按该 provider
+	// 实际支持的寻址方式修正 path_style, 使旧记录与新写入的记录行为一致.
+	if provider, ok := storage.LookupProvider(stored.Provider); ok {
+		stored.Provider = provider.Value
+		stored.PathStyle = storage.EffectivePathStyle(provider.Value, stored.PathStyle)
+	}
 	return id, stored, nil
 }
 
@@ -509,9 +606,8 @@ func (g *Gateway) invalidateStorageClients(name string) {
 	}
 }
 
-func (g *Gateway) getStorageClient(ctx context.Context, cluster, name string) (*storage.Client, error) {
-	cluster = strings.TrimPrefix(strings.TrimSpace(cluster), storageClassNamespacePrefix)
-	cacheKey := cluster + "/" + name
+func (g *Gateway) getStorageClient(ctx context.Context, name string) (*storage.Client, error) {
+	cacheKey := name
 	g.storageClientsMu.RLock()
 	if client, ok := g.storageClients[cacheKey]; ok {
 		g.storageClientsMu.RUnlock()
@@ -527,10 +623,6 @@ func (g *Gateway) getStorageClient(ctx context.Context, cluster, name string) (*
 	if err != nil {
 		return nil, fmt.Errorf("decode storage class declaration: %w", err)
 	}
-	if !slices.Contains(stored.Clusters, cluster) {
-		return nil, fmt.Errorf("storage class %s is not configured for cluster %s", name, cluster)
-	}
-
 	config := storage.DefaultConfig()
 	config.Provider = stored.Provider
 	config.Endpoint = stored.Endpoint
@@ -549,13 +641,12 @@ func (g *Gateway) getStorageClient(ctx context.Context, cluster, name string) (*
 	return client, nil
 }
 
-// listStorageClassFiles handles GET /api/v1/storage/storageclass/:cluster/:name/list
+// listStorageClassFiles handles GET /api/v1/storage/storageclass/:name/list
 // with query parameters: prefix, delimiter, marker, maxKeys.
 func (g *Gateway) listStorageClassFiles(c *gin.Context) {
-	cluster := c.Param("cluster")
 	name := c.Param("name")
 
-	client, err := g.getStorageClient(c.Request.Context(), cluster, name)
+	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return
@@ -601,12 +692,11 @@ func (g *Gateway) listStorageClassFiles(c *gin.Context) {
 	})
 }
 
-// uploadStorageClassFile handles POST /api/v1/storage/storageclass/:cluster/:name/upload.
+// uploadStorageClassFile handles POST /api/v1/storage/storageclass/:name/upload.
 func (g *Gateway) uploadStorageClassFile(c *gin.Context) {
-	cluster := c.Param("cluster")
 	name := c.Param("name")
 
-	client, err := g.getStorageClient(c.Request.Context(), cluster, name)
+	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return
@@ -628,10 +718,9 @@ func (g *Gateway) uploadStorageClassFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"key": objectKey})
 }
 
-// getStorageClassObject handles GET /api/v1/storage/storageclass/:cluster/:name/object/*key
+// getStorageClassObject handles GET /api/v1/storage/storageclass/:name/object/*key
 // It returns a presigned URL for downloading the object.
 func (g *Gateway) getStorageClassObject(c *gin.Context) {
-	cluster := c.Param("cluster")
 	name := c.Param("name")
 	// gin's *key catch-all includes the leading slash; strip it so the object
 	// key doesn't start with "/", which would produce a "//" in the presigned
@@ -643,7 +732,7 @@ func (g *Gateway) getStorageClassObject(c *gin.Context) {
 		return
 	}
 
-	client, err := g.getStorageClient(c.Request.Context(), cluster, name)
+	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return
@@ -666,9 +755,8 @@ func (g *Gateway) getStorageClassObject(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"url": url})
 }
 
-// deleteStorageClassObject handles DELETE /api/v1/storage/storageclass/:cluster/:name/object/*key.
+// deleteStorageClassObject handles DELETE /api/v1/storage/storageclass/:name/object/*key.
 func (g *Gateway) deleteStorageClassObject(c *gin.Context) {
-	cluster := c.Param("cluster")
 	name := c.Param("name")
 	key := strings.TrimPrefix(c.Param("key"), "/")
 	if key == "" {
@@ -676,7 +764,7 @@ func (g *Gateway) deleteStorageClassObject(c *gin.Context) {
 		return
 	}
 
-	client, err := g.getStorageClient(c.Request.Context(), cluster, name)
+	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
 		return

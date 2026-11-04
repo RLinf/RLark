@@ -107,23 +107,6 @@ func BuildDeployment(task *rlarkv1alpha1.Task, namespace string, spec *rlarkv1al
 	return result
 }
 
-// BuildDaemonSet compiles a Kubernetes Task spec into a legacy-compatible DaemonSet.
-func BuildDaemonSet(task *rlarkv1alpha1.Task, namespace string, spec *rlarkv1alpha1.TaskWorkloadSpec) *appsv1.DaemonSet {
-	result := &appsv1.DaemonSet{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        task.Name,
-			Namespace:   namespace,
-			Annotations: WorkloadAnnotations(task),
-		},
-		Spec: appsv1.DaemonSetSpec{
-			Selector: WorkloadSelector(task),
-			Template: *spec.Template.DeepCopy(),
-		},
-	}
-	tenant.Inherit(task, result)
-	return result
-}
-
 // BuildStatefulSet compiles a Kubernetes Task spec into a legacy-compatible StatefulSet.
 func BuildStatefulSet(task *rlarkv1alpha1.Task, namespace string, spec *rlarkv1alpha1.TaskWorkloadSpec, replicas *int32) *appsv1.StatefulSet {
 	result := &appsv1.StatefulSet{

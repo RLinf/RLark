@@ -4,12 +4,7 @@ import type { Job } from "./data";
 import { copy, type Lang, type Theme } from "./i18n";
 import { navItems } from "./constants";
 import type { Page } from "./types";
-import {
-  filesPath,
-  hasTerminalSession,
-  parseRoute,
-  useIsAdminPath,
-} from "./utils/route";
+import { hasTerminalSession, parseRoute, useIsAdminPath } from "./utils/route";
 import { Logo, Header, PlatformFooter } from "./components/shared";
 import { TerminalPage } from "./components/terminal";
 import { Overview } from "./pages/Overview";
@@ -75,13 +70,17 @@ export default function App() {
     document.title = isTerminal
       ? "WebTerminal · RLark"
       : isAdmin
-        ? "RLark 管理后台"
-        : "RLark具身智能云原生纳管平台";
+        ? lang === "zh"
+          ? "RLark 管理后台"
+          : "RLark Admin Console"
+        : lang === "zh"
+          ? "RLark具身智能云原生纳管平台"
+          : "RLark Cloud-Native Embodied Intelligence Platform";
     const favicon = document.querySelector<HTMLLinkElement>("#app-favicon");
     if (favicon) {
       favicon.href = "/favicon.png";
     }
-  }, [isAdmin, isTerminal]);
+  }, [isAdmin, isTerminal, lang]);
 
   const navigate = (
     next: Page,
@@ -135,6 +134,7 @@ export default function App() {
   if (!userLoggedIn && !(isTerminal && terminalLoggedIn)) {
     return (
       <UserLogin
+        lang={lang}
         onLogin={(name) => {
           setUserName(name);
           setUserLoggedIn(true);
@@ -151,7 +151,9 @@ export default function App() {
     if (!workerCRName) {
       return (
         <div className="terminal-page-error">
-          缺少 Worker 参数，无法连接终端。
+          {lang === "zh"
+            ? "缺少 Worker 参数，无法连接终端。"
+            : "Missing worker parameter, cannot open the terminal."}
         </div>
       );
     }
@@ -161,6 +163,7 @@ export default function App() {
         workerName={workerCRName}
         jobName={jobName}
         workerStatus={workerStatus}
+        lang={lang}
       />
     );
   }
@@ -179,7 +182,9 @@ export default function App() {
             const Icon = item.icon;
             const isParent = item.children && item.children.length > 0;
             const itemLabel = isParent ? c.nav.clustersParent : c.nav[item.id];
-            const isActive = page === item.id;
+            const isActive =
+              page === item.id ||
+              (item.id === "storageClass" && page === "files");
             const isChildActive = isParent
               ? item.children!.some((ch) => ch.id === page)
               : false;
@@ -353,9 +358,7 @@ export default function App() {
               navigate("storageClass", name, { replace: !name })
             }
             onCreate={() => setStorageCreateOpen(true)}
-            onBrowseFiles={(cluster, storageClass) =>
-              window.open(filesPath(cluster, storageClass), "_blank")
-            }
+            onBrowseFiles={(storageClass) => navigate("files", storageClass)}
             refreshKey={storageRefreshKey}
           />
         )}

@@ -120,7 +120,6 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 	taskController.PullMaxConcurrentReconciles = c.a.config.ControllerConcurrency.TaskPull
 	taskController.PushMaxConcurrentReconciles = map[string]int{
 		"task-deployment":  c.a.config.ControllerConcurrency.TaskDeployment,
-		"task-daemonset":   c.a.config.ControllerConcurrency.TaskDaemonSet,
 		"task-statefulset": c.a.config.ControllerConcurrency.TaskStatefulSet,
 	}
 	tc := task.NewTaskController(taskController)

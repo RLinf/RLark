@@ -16,6 +16,8 @@ Use this guide to register a public key for RLark SSH bastion authentication and
 
 RLark validates the public-key format and requires both the SSH username and public key content to be globally unique. The form shows an inline error before upload when either value already exists. The page also shows the configured jump host command when the Server SSH address is available.
 
+The connect command and every listed public key provide a copy button. On success the button briefly turns into a green check, matching the other copy buttons in the console; no success feedback is shown when the copy fails. When the console is served over HTTP (a non-secure context) the browser does not expose the async clipboard API, so copying automatically falls back to a compatible path and does not require switching to HTTPS.
+
 ## Task 2: Select a Key for a Job
 
 1. Open **Jobs** and start creating a Job.
@@ -34,14 +36,18 @@ RLark validates the public-key format and requires both the SSH username and pub
 
 Each selected public key is written into the applicable Task template's `rlinf.io/ssh/v1` Environment. Registering or changing a record on the SSH Keys page alone does not modify existing Jobs or Tasks. Job details display multiple configured keys in a scrollable list.
 
+Because a Job stores raw public keys rather than a reference to the key record, a key can outlive its owner record. Job details label such a key `User deleted` instead of a user name, with a tooltip explaining that the owner record was removed from SSH Key Management while the key stays injected in running Pods. Cloning, editing, or edit-and-restarting a Job drops those keys from the draft, because the selection list cannot render or deselect a key that has no owner record; the form reports how many keys were removed so you can add a replacement before submitting.
+
 For built-in Ray-on-Kubernetes workloads, the Agent stores the Task's selected public key in a Task-incarnation-owned Secret, mounts its `authorized_key` item read-only at `/var/run/rlark/ssh/authorized_key` in each main container, and starts `rlark-tools sshd` as an optional supervised service. The mount does not use `subPath`, and `sshd` reopens the file for every authentication attempt. An empty file disables workload key authentication. An SSH service failure can make the Pod unreachable over SSH, but does not stop the Task. This automatic service lifecycle does not apply to Docker, Raw, or arbitrary custom workload implementations.
+
+The Job Controller sets the SSH port to 2222 for all Tasks. The frontend-generated SSH command forwards through the node sshd on port 2222 to reach the target Pod.
 
 ## Task 3: Connect Through the Bastion
 
 After an administrator configures the Server SSH endpoint, use the command displayed by the console or copy the Worker-specific command from Job or Node details. A typical Worker command is:
 
 ```bash
-ssh -J <bastion-host>:<port> root@<worker-name>
+ssh -J <bastion-host>:<port> root@<worker-name> -p 2222
 ```
 
 The outer SSH username must match the username attached to the registered key. The target container must provide its SSH service and accept the selected key.

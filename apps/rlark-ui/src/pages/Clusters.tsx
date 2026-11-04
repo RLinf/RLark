@@ -31,6 +31,7 @@ import type { Copy } from "../i18n";
 import type { CRDNode } from "../types";
 import type { CRDTask } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
+import { copyText } from "../utils/clipboard";
 import {
   categoryLabels,
   formatResourceQuantity,
@@ -44,6 +45,7 @@ import {
   getNodeResourceSummary,
   getResourceUsagePercent,
   isBusinessWorkerNode,
+  nodeStatusReasonLabel,
   parseResourceQuantity,
 } from "../utils/nodes";
 import {
@@ -362,7 +364,7 @@ export function ClustersPage({
             <div className="panel cluster-map-card">
               <div className="panel-title">
                 <div>
-                  <span>Distribution</span>
+                  <span>{zh ? "分布" : "Distribution"}</span>
                   <h3>{zh ? "集群分布" : "Cluster Distribution"}</h3>
                 </div>
               </div>
@@ -613,7 +615,10 @@ export function NodeDetailReal({
               crName: pod.metadata?.name ?? "",
               name: pod.spec?.podName || pod.metadata?.name || "—",
               job,
-              role: task?.spec?.role ?? "—",
+              role:
+                task?.metadata?.annotations?.["rlark.io/ray-role"] ??
+                task?.spec?.role ??
+                "—",
               node: node.metadata.name,
               cluster: pod.metadata?.namespace ?? "default",
               domain: pod.spec?.domain ?? "",
@@ -679,7 +684,7 @@ export function NodeDetailReal({
   const formatUsedResource = (key: string) => {
     const raw = used[key];
     if (!raw && (allocatable[key] ?? capacity[key])) {
-      return formatResourceQuantity(key, "0");
+      return formatResourceQuantity(key, "0", zh);
     }
     if (raw?.endsWith("%")) {
       const capacityValue = parseResourceQuantity(
@@ -691,10 +696,11 @@ export function NodeDetailReal({
         return formatResourceQuantity(
           key,
           String((capacityValue * percent) / 100),
+          zh,
         );
       }
     }
-    return formatResourceQuantity(key, raw);
+    return formatResourceQuantity(key, raw, zh);
   };
   const formatAvailableResource = (key: string) => {
     const total = parseResourceQuantity(key, allocatable[key] ?? capacity[key]);
@@ -707,6 +713,7 @@ export function NodeDetailReal({
     return formatResourceQuantity(
       key,
       String(Math.max(0, total - (requested ?? 0))),
+      zh,
     );
   };
   const gpuResourceKey = getGPUResourceKey(node);
@@ -829,7 +836,7 @@ export function NodeDetailReal({
         {node.status?.reason && (
           <div className="node-health-message">
             <Activity size={15} />
-            <span>{node.status.reason}</span>
+            <span>{nodeStatusReasonLabel(node.status.reason, zh)}</span>
           </div>
         )}
 
@@ -892,23 +899,30 @@ export function NodeDetailReal({
                         : "Requested";
                   const usedValue =
                     key === "ephemeral-storage" && diskUsage
-                      ? formatResourceQuantity(key, String(diskUsage.usedBytes))
+                      ? formatResourceQuantity(
+                          key,
+                          String(diskUsage.usedBytes),
+                          zh,
+                        )
                       : formatUsedResource(key);
                   const totalValue =
                     key === "ephemeral-storage" && diskUsage
                       ? formatResourceQuantity(
                           key,
                           String(diskUsage.capacityBytes),
+                          zh,
                         )
                       : formatResourceQuantity(
                           key,
                           allocatable[key] ?? capacity[key],
+                          zh,
                         );
                   const availableValue =
                     key === "ephemeral-storage" && diskUsage
                       ? formatResourceQuantity(
                           key,
                           String(diskUsage.availableBytes),
+                          zh,
                         )
                       : formatAvailableResource(key);
                   return (
@@ -1111,7 +1125,9 @@ export function NodeDetailReal({
                   <dd>
                     {deviceResourceKeys.length > 0
                       ? getNodeDeviceModel(node) ||
-                        deviceResourceKeys.map(deviceLabel).join("、")
+                        deviceResourceKeys
+                          .map(deviceLabel)
+                          .join(zh ? "、" : ", ")
                       : zh
                         ? "无端设备"
                         : "No device"}
@@ -1289,14 +1305,16 @@ function NodeWorkerTable({
               ? `${sshConfig.sshJumpHost}${sshConfig.sshJumpPort ? `:${sshConfig.sshJumpPort}` : ""}`
               : "";
             const sshCommand = sshJump
-              ? `ssh -J ${sshJump} root@${worker.name}`
+              ? `ssh -J ${sshJump} root@${worker.name} -p 2222`
               : "";
             const isExpanded = expanded === worker.id;
             return (
               <Fragment key={worker.id}>
                 <tr>
                   <td>
-                    <strong>{worker.name}</strong>
+                    <strong className="node-worker-name" title={worker.name}>
+                      {worker.name}
+                    </strong>
                   </td>
                   <td>
                     <button
@@ -1323,7 +1341,7 @@ function NodeWorkerTable({
                         title={zh ? "复制 SSH 命令" : "Copy SSH command"}
                         onClick={async () => {
                           if (!sshCommand) return;
-                          await navigator.clipboard.writeText(sshCommand);
+                          if (!(await copyText(sshCommand))) return;
                           setCopied(worker.id);
                           window.setTimeout(() => setCopied(null), 1500);
                         }}
@@ -1389,9 +1407,7 @@ function NodeWorkerTable({
                               <button
                                 className="icon-button"
                                 onClick={async () => {
-                                  await navigator.clipboard.writeText(
-                                    sshCommand,
-                                  );
+                                  if (!(await copyText(sshCommand))) return;
                                   setCopied(worker.id);
                                   window.setTimeout(
                                     () => setCopied(null),
@@ -1453,13 +1469,13 @@ function NodeWorkerTable({
                                 <td>{worker.ip}</td>
                                 <td>
                                   {worker.domain ? (
-                                    <>
-                                      <Network
-                                        size={13}
-                                        style={{ marginRight: 4 }}
-                                      />
-                                      {worker.domain}
-                                    </>
+                                    <span
+                                      className="pod-subtable-truncated"
+                                      title={worker.domain}
+                                    >
+                                      <Network size={13} />
+                                      <span>{worker.domain}</span>
+                                    </span>
                                   ) : (
                                     "—"
                                   )}

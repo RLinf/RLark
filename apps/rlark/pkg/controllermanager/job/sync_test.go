@@ -154,6 +154,23 @@ func TestPendingCanReachTerminalStates(t *testing.T) {
 	}
 }
 
+func TestBuildTaskUsesOnlyJobSuspension(t *testing.T) {
+	job := &rlarkv1alpha1.Job{}
+	task := buildTask(job, rlarkv1alpha1.JobTaskTemplate{
+		Name:     "worker",
+		TaskSpec: rlarkv1alpha1.TaskSpec{Suspended: true},
+	}, "job-worker", "default")
+	if task.Spec.Suspended {
+		t.Fatal("Task inherited template suspension without a suspended Job")
+	}
+
+	job.Spec.Suspended = true
+	task = buildTask(job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"}, "job-worker", "default")
+	if !task.Spec.Suspended {
+		t.Fatal("Task did not inherit Job suspension")
+	}
+}
+
 func TestBuildTaskCarriesJobRestartOperation(t *testing.T) {
 	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{
 		Name:        "job",

@@ -237,6 +237,25 @@
   color: #f5f7fb;
 }
 
+/* 浅色模式聚焦时用白底提升对比度；深色模式必须改用深色底，
+   否则白底叠加浅色文字会让正在输入的角色名完全不可见。 */
+.theme-dark .role-edit-row input:focus {
+  background: #0f1725;
+  border-color: #a78bfa;
+}
+
+.theme-dark .role-edit-row input::placeholder {
+  color: #7c8798;
+}
+
+.theme-dark .role-edit-row small {
+  color: #9ca8ba;
+}
+
+.theme-dark .role-edit-row.active small {
+  color: #c4b5fd;
+}
+
 .role-resource-grid {
   display: grid;
   grid-template-columns: 1fr;

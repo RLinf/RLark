@@ -28,7 +28,9 @@ export function TagFilterPopover({
   onClose,
 }: TagFilterPopoverProps) {
   const [search, setSearch] = useState("");
-  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  // 右栏展示哪个 key 的 value 列表。只由点击切换：悬停切换太灵敏，指针从左栏
+  // 移向右栏的途中会扫过其他 key，右栏内容跟着跳变，下方 key 的 value 就勾不中。
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const [valuePage, setValuePage] = useState(1);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -78,8 +80,6 @@ export function TagFilterPopover({
     return () => document.removeEventListener("mousedown", handler);
   }, [onClose]);
 
-  const allKeys = [...grouped.keys()];
-
   const keySelected = (k: string) =>
     selection[k] !== undefined && selection[k].length > 0;
 
@@ -114,27 +114,6 @@ export function TagFilterPopover({
     onReset();
   };
 
-  const toggleSelectAllKeys = () => {
-    const newSel: Record<string, string[]> = {};
-    // 如果全部已选则清空，否则全选
-    let allSelected = allKeys.length > 0;
-    for (const k of allKeys) {
-      const sel = selection[k];
-      if (!sel || sel.length !== (grouped.get(k)?.length ?? 0)) {
-        allSelected = false;
-        break;
-      }
-    }
-    if (allSelected) {
-      onChange({});
-    } else {
-      for (const k of allKeys) {
-        newSel[k] = grouped.get(k) ?? [];
-      }
-      onChange(newSel);
-    }
-  };
-
   // 计算定位位置
   const style: React.CSSProperties = {};
   if (anchorRect) {
@@ -147,10 +126,14 @@ export function TagFilterPopover({
     style.top = anchorRect.bottom + 6;
   }
 
-  const effectiveHover = hoveredKey ?? filteredKeys.find(keySelected) ?? null;
+  // activeKey 可能因搜索过滤而不在当前列表中，此时才回退到已选中的 key。
+  const effectiveKey =
+    activeKey && filteredKeys.includes(activeKey)
+      ? activeKey
+      : (filteredKeys.find(keySelected) ?? null);
   const selectedValues = useMemo(
-    () => (effectiveHover ? (grouped.get(effectiveHover) ?? []) : []),
-    [effectiveHover, grouped],
+    () => (effectiveKey ? (grouped.get(effectiveKey) ?? []) : []),
+    [effectiveKey, grouped],
   );
   // 已选中 key 时，搜索同时筛选该 key 下不符合的 value
   const matchedValues = useMemo(() => {
@@ -158,8 +141,8 @@ export function TagFilterPopover({
     if (!q) return selectedValues;
     return selectedValues.filter((v) => v.toLowerCase().includes(q));
   }, [selectedValues, search]);
-  const selectedValsForHover = effectiveHover
-    ? (selection[effectiveHover] ?? [])
+  const selectedValsForKey = effectiveKey
+    ? (selection[effectiveKey] ?? [])
     : [];
   const valuePageSize = 10;
   const valuePageCount = Math.max(
@@ -174,7 +157,7 @@ export function TagFilterPopover({
 
   useEffect(() => {
     setValuePage(1);
-  }, [effectiveHover, search]);
+  }, [effectiveKey, search]);
 
   return (
     <div
@@ -194,18 +177,19 @@ export function TagFilterPopover({
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        <p className="tag-filter-hint">
+          {zh
+            ? "多个标签 key 之间为「且」，同一 key 下的多个值之间为「或」。"
+            : "Different keys are ANDed; values within the same key are ORed."}
+        </p>
       </div>
       <div className="tag-filter-body">
         {/* 左栏：key 列表 */}
         <div className="tag-filter-keys">
           <div className="tag-filter-col-head">
-            <button
-              type="button"
-              className="tag-filter-link-btn"
-              onClick={toggleSelectAllKeys}
-            >
-              {zh ? "全选/取消" : "All / None"}
-            </button>
+            <span className="tag-filter-col-title">
+              {zh ? "标签 key" : "Keys"}
+            </span>
           </div>
           {filteredKeys.length === 0 ? (
             <div className="tag-filter-empty">
@@ -216,31 +200,33 @@ export function TagFilterPopover({
               const totalVals = grouped.get(k)?.length ?? 0;
               const selVals = selection[k]?.length ?? 0;
               return (
-                <label
+                <div
                   key={k}
-                  className={`tag-filter-key-item${keySelected(k) ? " selected" : ""}${hoveredKey === k ? " hovered" : ""}`}
-                  onMouseEnter={() => {
-                    setHoveredKey(k);
-                    setValuePage(1);
-                  }}
-                  onMouseLeave={() =>
-                    setHoveredKey((prev) => (prev === k ? null : prev))
-                  }
-                  onClick={() => {
-                    setHoveredKey(k);
-                    setValuePage(1);
-                  }}
+                  className={`tag-filter-key-item${keySelected(k) ? " selected" : ""}${effectiveKey === k ? " active" : ""}`}
                 >
                   <input
                     type="checkbox"
+                    aria-label={
+                      zh ? `全选 ${k} 的值` : `Select all values of ${k}`
+                    }
                     checked={keySelected(k)}
-                    onChange={() => toggleKeyAll(k)}
+                    onChange={() => {
+                      setActiveKey(k);
+                      toggleKeyAll(k);
+                    }}
                   />
-                  <span>{k}</span>
-                  <small className="tag-filter-key-count">
-                    {selVals > 0 ? `${selVals}/${totalVals}` : `${totalVals}`}
-                  </small>
-                </label>
+                  <button
+                    type="button"
+                    className="tag-filter-key-main"
+                    aria-pressed={effectiveKey === k}
+                    onClick={() => setActiveKey(k)}
+                  >
+                    <span className="tag-filter-key-name">{k}</span>
+                    <small className="tag-filter-key-count">
+                      {selVals > 0 ? `${selVals}/${totalVals}` : `${totalVals}`}
+                    </small>
+                  </button>
+                </div>
               );
             })
           )}
@@ -250,20 +236,29 @@ export function TagFilterPopover({
         <div className="tag-filter-values">
           <div className="tag-filter-col-head">
             <span className="tag-filter-col-title">
-              {effectiveHover
+              {effectiveKey
                 ? zh
-                  ? `标签值 — ${effectiveHover}`
-                  : `Values — ${effectiveHover}`
+                  ? `标签值 — ${effectiveKey}`
+                  : `Values — ${effectiveKey}`
                 : zh
                   ? "标签值"
                   : "Values"}
             </span>
+            {effectiveKey && selectedValues.length > 0 && (
+              <button
+                type="button"
+                className="tag-filter-link-btn"
+                onClick={() => toggleKeyAll(effectiveKey)}
+              >
+                {zh ? "全选/取消" : "All / None"}
+              </button>
+            )}
           </div>
-          {!effectiveHover || selectedValues.length === 0 ? (
+          {!effectiveKey || selectedValues.length === 0 ? (
             <div className="tag-filter-empty">
               {zh
-                ? "选择左侧的 key 查看对应的值"
-                : "Select a key on the left to see its values"}
+                ? "点击左侧的 key 查看对应的值"
+                : "Click a key on the left to see its values"}
             </div>
           ) : matchedValues.length === 0 ? (
             <div className="tag-filter-empty">
@@ -275,8 +270,8 @@ export function TagFilterPopover({
                 <label key={v} className="tag-filter-value-item">
                   <input
                     type="checkbox"
-                    checked={selectedValsForHover.includes(v)}
-                    onChange={() => toggleValue(effectiveHover, v)}
+                    checked={selectedValsForKey.includes(v)}
+                    onChange={() => toggleValue(effectiveKey, v)}
                   />
                   <span>{v}</span>
                 </label>

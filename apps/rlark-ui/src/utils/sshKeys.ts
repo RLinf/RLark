@@ -74,3 +74,26 @@ export function resolveSSHKeyOwners(
     owners: ownersByKey.get(publicKey) ?? [],
   }));
 }
+
+/**
+ * Splits selected public keys into the ones still registered in SSH key
+ * management and the ones whose owner record was removed. A removed record
+ * cannot be rendered or deselected in the selection list, so a cloned or
+ * edited Job must not carry it forward silently.
+ */
+export function partitionSelectableSSHPublicKeys(
+  selected: string[],
+  knownKeys: SSHUserKey[],
+): { known: string[]; orphaned: string[] } {
+  const registered = new Set(
+    groupSSHUserKeys(knownKeys).map(({ publicKey }) => publicKey),
+  );
+  const known: string[] = [];
+  const orphaned: string[] = [];
+
+  for (const publicKey of selected) {
+    (registered.has(publicKey.trim()) ? known : orphaned).push(publicKey);
+  }
+
+  return { known, orphaned };
+}

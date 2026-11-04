@@ -31,6 +31,8 @@ export interface ICluster {
      */
     "agentNamespace": string;
     "cordoned"?: boolean;
+    "delisted"?: boolean;
+    "drainPreviousCordoned"?: boolean;
     "draining"?: boolean;
   };
   /**
@@ -78,7 +80,7 @@ export interface ICluster {
      * The set is closed in the CRD schema: adding a value requires updating the
      * enum marker, regenerating the CRD manifests, and updating the documentation.
      */
-    "phase"?: "Online" | "Offline" | "Downgraded" | "Cordoned" | "Draining";
+    "phase"?: "Online" | "Offline" | "Downgraded" | "Cordoned" | "Draining" | "Delisted";
     "totalNodes"?: number;
   };
 }

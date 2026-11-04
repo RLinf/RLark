@@ -2,13 +2,14 @@
 
 ## 存储类型
 
-Job 编辑器提供两种存储选择：主机目录和 PVC 存储挂载。其生命周期由 Kubernetes 原生 PodTemplate volume 形态决定：
+Job 编辑器可创建两种存储：主机目录和 PVC 存储挂载。通过 API 提交的 Job 还可以使用其他 Kubernetes 原生 PodTemplate volume，编辑器对这类卷只做展示。其生命周期由 Kubernetes 原生 PodTemplate volume 形态决定：
 
 | 类型 | 适用场景 | 生命周期 |
 |------|----------|----------|
 | 主机目录 | 数据已在节点上，高 I/O | 任务生命周期操作不删除数据 |
 | 对象存储（Pod 级临时 PVC） | 当前 Web UI 为 PVC 挂载写入的形态 | Kubernetes 随 Pod 创建和删除 PVC |
 | 已有持久 PVC 引用 | Task volume 使用 `persistentVolumeClaim.claimName` | RLark 不创建或删除该 PVC；生命周期由管理员管理 |
+| 其他 Kubernetes 原生卷（`emptyDir`、`configMap`、`secret` 等） | 通过 API 提交，Job 编辑器仅展示 | 由卷类型本身决定；编辑或复制任务时 RLark 原样写回其原始定义 |
 
 ## 主机目录
 
@@ -56,6 +57,7 @@ Job 编辑器提供两种存储选择：主机目录和 PVC 存储挂载。其�
 - 已有 `persistentVolumeClaim`：RLark 不创建、收养、修改或删除引用的 PVC；其生命周期和数据保留不属于 Task 管理范围
 - Pod 级 `ephemeral.volumeClaimTemplate`：删除 Worker Pod 时删除对应临时 PVC，新 Pod 获得新 PVC
 - hostPath：生命周期操作不删除节点数据
+- 其他 Kubernetes 原生卷：Job 编辑器无法创建或修改；编辑或复制任务时会原样写回其原始定义，因此生命周期仍由该卷类型本身决定
 
 已有 PVC 引用必须填写 `claimName`，且该 claim 必须已存在于 workload namespace。挂载或绑定失败由 Kubernetes 通过 workload 和 Pod 状态报告。删除被引用的 PVC 属于外部管理操作；删除前应确认没有 workload 使用它，并考虑绑定 PV 的 reclaim policy。
 

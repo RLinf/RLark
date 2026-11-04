@@ -1,0 +1,3 @@
+# 本地运行绑定与产物不入库；模板见 config.example.yaml
+config.yaml
+reports/

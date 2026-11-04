@@ -462,7 +462,7 @@ the name, so `fieldSelector` on `metadata.name` already expresses it.
 | `order` | `field [asc\|desc]`; field must match `^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$`, and an unknown direction is rejected instead of silently sorting ascending. |
 | `fieldSelector` | Comma-separated `key=value` or `key!=value` pairs; each key must match the same dotted-identifier pattern as `order`. |
 | `labelSelector` | Comma-separated `key=value` or `key!=value` pairs on the database path, a Kubernetes label selector on the Kubernetes path. Keys must be valid qualified names. |
-| `tagSelector` | Comma-separated `key=value` pairs. Applied after the server window. |
+| `tagSelector` | Comma-separated `key=value` pairs. Values of the same key are ORed, different keys are ANDed. Applied after the server window. |
 | `continue` | Opaque Kubernetes continue token. Kubernetes path only. |
 
 Selector paths and label keys come from the query string and are therefore

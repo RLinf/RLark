@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# kindtest 启动器：让任意工作目录都能运行框架，无需安装。
+#
+# 用法（在你自己写测例的目录里按路径调用本脚本）：
+#   <rlark-repo>/test/kindtest/kt plan -c config.yaml
+#   <rlark-repo>/test/kindtest/kt run  -c config.yaml
+set -euo pipefail
+
+# 本脚本位于 <framework>/kt，框架根目录即其所在目录。
+self="$(readlink -f "${BASH_SOURCE[0]}")"
+framework_dir="$(cd "$(dirname "$self")" && pwd)"
+
+export PYTHONPATH="$framework_dir${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m kindtest "$@"

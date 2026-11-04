@@ -4,7 +4,7 @@
   gap: 8px;
   padding: 12px 18px;
   border: 0;
-  background: #fff;
+  background: var(--panel);
 }
 
 .worker-filter-bar label,
@@ -24,8 +24,10 @@
   height: 34px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: #fff;
-  color: var(--text);
+  /* 必须用 background-color 而非 background 简写：简写会连带重置全局 select 规则
+     提供的 background-image/repeat/position/size，导致下拉箭头平铺铺满控件。 */
+  background-color: var(--panel);
+  color: var(--ink);
   padding: 0 28px 0 9px;
   font-size: 12px;
   outline: 0;
@@ -136,8 +138,8 @@
   margin-bottom: 14px;
   border: 1px solid color-mix(in srgb, #23a36d 35%, var(--line));
   border-radius: 10px;
-  background: color-mix(in srgb, #23a36d 8%, var(--surface));
-  color: var(--text);
+  background: color-mix(in srgb, #23a36d 8%, var(--panel));
+  color: var(--ink);
   padding: 10px 12px;
   font-size: 13px;
   font-weight: 650;
@@ -281,7 +283,7 @@
 .worker-detail-head strong {
   display: block;
   margin-top: 4px;
-  color: var(--text);
+  color: var(--ink);
   font-size: 13px;
 }
 
@@ -305,7 +307,7 @@
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--panel);
   overflow: hidden;
 }
 
@@ -350,7 +352,7 @@
   margin: 0;
   padding: 9px 10px;
   border-bottom: 1px solid var(--line);
-  background: #fff;
+  background: var(--panel);
 }
 
 .role-runtime-selector-card p:last-child {
@@ -362,11 +364,11 @@
   display: block;
   width: auto;
   max-width: 100%;
-  border: 1px solid #e6ebf2;
+  border: 1px solid var(--line);
   border-radius: 7px;
-  background: #f8fafc;
+  background: var(--canvas);
   padding: 5px 7px;
-  color: #475569;
+  color: var(--ink);
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
   overflow-wrap: anywhere;
@@ -378,8 +380,8 @@
   width: 20px;
   height: 20px;
   border-radius: 999px;
-  background: #f1f4f8;
-  color: #7b8797;
+  background: var(--canvas);
+  color: var(--muted);
   font-size: 11px;
 }
 
@@ -394,7 +396,7 @@
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--panel);
   overflow: hidden;
 }
 
@@ -427,16 +429,16 @@
 
 .role-runtime-table-card th {
   color: var(--muted);
-  background: #eef3f9;
+  background: var(--canvas);
   font-weight: 800;
 }
 
 .role-runtime-table-card td {
-  background: #fbfdff;
+  background: var(--panel);
 }
 
 .role-runtime-table-card tbody tr:nth-child(even) td {
-  background: #f6f9fd;
+  background: var(--canvas);
 }
 
 .role-runtime-table-card tr:last-child td {
@@ -447,9 +449,9 @@
   display: inline-flex;
   max-width: 100%;
   border-radius: 6px;
-  background: #eef3fb;
+  background: var(--canvas);
   padding: 4px 7px;
-  color: #39475a;
+  color: var(--ink);
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
   white-space: pre-wrap;
@@ -596,7 +598,7 @@
   flex-wrap: wrap;
   margin: 16px 18px;
   padding: 12px;
-  background: var(--bg-secondary, #f8f9fa);
+  background: var(--canvas);
   border-radius: 8px;
   border: 1px solid var(--line);
 }
@@ -610,9 +612,9 @@
   height: 36px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  background: var(--panel);
   padding: 0 12px;
-  color: #8793a6;
+  color: var(--muted);
 }
 
 .log-search-field input {
@@ -621,7 +623,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--text);
+  color: var(--ink);
   font-size: 13px;
 }
 
@@ -632,16 +634,19 @@
   height: 36px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  background: var(--panel);
   padding: 0 12px;
-  color: #8793a6;
+  color: var(--muted);
 }
 
 .log-order-filter select {
   border: 0;
   outline: none;
-  background: transparent;
-  color: var(--text);
+  /* 该控件由 .log-order-filter::after 自绘箭头，需显式关闭全局 select 的背景箭头，
+     同时避免用 background 简写（简写会把 repeat/position/size 重置成平铺）。 */
+  background-color: transparent;
+  background-image: none;
+  color: var(--ink);
   font-size: 13px;
   cursor: pointer;
   -webkit-appearance: none;
@@ -653,6 +658,13 @@
 .log-order-filter select:focus {
   outline: none;
   box-shadow: none;
+}
+
+/* .theme-dark select 的特异性（0,1,1）与 .log-order-filter select 相同且导入更靠后，
+   会把背景箭头重新画回来，导致深色下出现 SVG 箭头 + ::after "▼" 的双箭头。 */
+.theme-dark .log-order-filter select {
+  background-color: transparent;
+  background-image: none;
 }
 
 .log-order-filter::after {
@@ -667,16 +679,16 @@
   height: 36px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  background: var(--panel);
   padding: 0 12px;
   font-size: 13px;
-  color: var(--text);
+  color: var(--ink);
   font-family: inherit;
 }
 
 .log-custom-datetime:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--blue);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
 }
 
@@ -687,8 +699,8 @@
   height: 36px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
-  color: #788598;
+  background: var(--panel);
+  color: var(--muted);
   padding: 0 12px;
   font-size: 12px;
   font-weight: 600;
@@ -743,8 +755,8 @@
   margin: 0;
   border: none;
   border-radius: 0;
-  /* 高于侧栏(5)、顶栏(4)、tooltip(999)，低于弹窗(1200) */
-  z-index: 1100;
+  /* 高于侧栏(5)、tooltip(999)、顶栏(1200)，低于弹窗遮罩(1300) */
+  z-index: 1250;
   /* 不透明深色，彻底盖住下层内容 */
   background: #0d1520;
   display: flex;
@@ -885,7 +897,7 @@
   font-size: 10px;
 }
 .log-worker-name {
-  color: var(--text);
+  color: var(--ink);
   font-family: "JetBrains Mono", monospace;
   font-size: 11px;
   font-weight: 750;
@@ -966,7 +978,7 @@
 }
 
 .metrics-integration-state strong {
-  color: var(--text);
+  color: var(--ink);
   font-size: 16px;
 }
 
@@ -1000,14 +1012,14 @@
   height: 32px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
-  color: var(--text);
+  background-color: var(--panel);
+  color: var(--ink);
   padding: 0 24px 0 9px;
   font-size: 11px;
 }
 .metrics-filter-bar select:disabled {
-  background: #f3f5f8;
-  color: #9aa4b2;
+  background-color: var(--canvas);
+  color: var(--muted);
   cursor: not-allowed;
 }
 .metrics-scope-toggle {
@@ -1080,7 +1092,7 @@
 .time-series-head strong {
   display: block;
   margin-top: 5px;
-  color: var(--text);
+  color: var(--ink);
   font-size: 20px;
 }
 .time-series-head strong small {
@@ -1157,7 +1169,7 @@
 .role-worker-group-head > div > strong,
 .role-worker-resource-summary strong {
   display: block;
-  color: var(--text);
+  color: var(--ink);
   font-size: 14px;
   line-height: 1.45;
 }
@@ -1205,7 +1217,7 @@
 
 .worker-access-head strong {
   display: block;
-  color: var(--text);
+  color: var(--ink);
   font-size: 13px;
   line-height: 1.35;
   overflow: hidden;
@@ -1257,7 +1269,7 @@
 .worker-access-meta b {
   display: block;
   margin-top: 2px;
-  color: var(--text);
+  color: var(--ink);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1316,7 +1328,7 @@
 
 .config-section-head h3 {
   margin: 4px 0 0;
-  color: var(--text);
+  color: var(--ink);
   font-size: 16px;
   line-height: 1.35;
 }
@@ -1358,7 +1370,7 @@
 
 .config-kv-card strong {
   margin-top: 6px;
-  color: var(--text);
+  color: var(--ink);
   font-size: 14px;
 }
 
@@ -1474,7 +1486,7 @@
 }
 
 .role-config-head strong {
-  color: var(--text);
+  color: var(--ink);
   font-size: 12px;
 }
 
@@ -1498,7 +1510,7 @@
 .role-config-facts dd {
   min-width: 0;
   margin: 0;
-  color: var(--text);
+  color: var(--ink);
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;

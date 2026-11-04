@@ -183,6 +183,10 @@ tr.clickable:hover {
   color: var(--muted, #8b95a7);
 }
 
+.field-hint.field-hint-warning {
+  color: var(--danger, #e05270);
+}
+
 .label-row {
   display: flex;
   align-items: baseline;

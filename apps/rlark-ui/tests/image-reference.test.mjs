@@ -8,7 +8,10 @@ test("accepts valid container image references", () => {
     imageReferenceHasWhitespace("docker.io/library/ubuntu:22.04"),
     false,
   );
-  assert.equal(imageReferenceHasWhitespace("registry/team/image@sha256:abc"), false);
+  assert.equal(
+    imageReferenceHasWhitespace("registry/team/image@sha256:abc"),
+    false,
+  );
 });
 
 test("rejects spaces and other whitespace in image references", () => {

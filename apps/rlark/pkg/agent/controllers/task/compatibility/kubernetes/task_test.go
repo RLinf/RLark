@@ -15,7 +15,6 @@ import (
 func TestDecodeTaskSeparatesWorkloadAndCarrier(t *testing.T) {
 	carriers := []string{
 		taskapi.CarrierTypeKubernetesDeployment,
-		taskapi.CarrierTypeKubernetesDaemonSet,
 		taskapi.CarrierTypeKubernetesStatefulSet,
 	}
 	for _, carrier := range carriers {

@@ -176,7 +176,7 @@ A Job contains multiple Task templates, each representing a role in training (e.
 
 Before dispatching any Task, the Job Controller validates every template as one desired unit. Template names must be non-empty and unique, and `runtime.kind`, workload kind/version, and carrier type/version must be non-empty open identifiers. For the current Job-to-Ray-on-Kubernetes path, the controller additionally requires a Pod template containing exactly one regular container named `main`. This is an implementation capability check, not a universal Task CRD constraint: the CRD permits omitting `workload.template`, and other Workload Adapter/Runtime combinations define their own requirements. If any template is invalid, the controller creates none of them and reports `Validated=False` on the Job with the failing field path. It does not silently skip individual templates. The Agent independently validates the selected implementation before Runtime effects. The Job Controller does not enforce Ray head count or head replica topology.
 
-The Web UI keeps its existing Job and Workflow creation, editing, cloning, lifecycle, storage, and Worker interactions, but serializes them directly with the generated CRD contracts. New requests use `runtime`, `workload`, `carrier`, `placement`, and `environments`; lifecycle actions write `spec.suspended`; and storage selections become Kubernetes-native Pod template volumes. The UI does not emit the removed `agentType`, nested `kubernetes.workload`, `stopped`, `pvcStorageMap`, or `pvcSizeGbMap` forms.
+The Web UI keeps its existing Job and Workflow creation, editing, cloning, lifecycle, storage, and Worker interactions, but serializes them directly with the generated CRD contracts. New requests use `runtime`, `workload`, `carrier`, `placement`, and `environments`; lifecycle actions write `spec.suspended`; and storage selections become Kubernetes-native Pod template volumes. Volume types the form cannot express, such as `emptyDir`, `configMap`, or `secret`, are displayed read-only and preserved from the source definition when a Job is edited or cloned. The UI does not emit the removed `agentType`, nested `kubernetes.workload`, `stopped`, `pvcStorageMap`, or `pvcSizeGbMap` forms.
 
 ### Key Properties
 
@@ -364,7 +364,7 @@ status:
 
 | Type | Description | Use Case |
 |------|-------------|----------|
-| `Kubernetes` | Run RLark/Ray Tasks using Deployment, DaemonSet, or StatefulSet as the Kubernetes carrier | GPU clusters for large-scale training |
+| `Kubernetes` | Run RLark/Ray Tasks using Deployment or StatefulSet as the Kubernetes carrier | GPU clusters for large-scale training |
 | `Docker` | Planned provider that lowers the common Pod template to Docker containers; not implemented or advertised | Edge devices (robot arm, sensor, camera) |
 | `Raw` | Planned provider that lowers the common Pod template to host processes; not implemented or advertised | Bare metal servers, embedded devices |
 
@@ -407,7 +407,7 @@ When a Pod is created in the data plane cluster, the Agent's Pod Push controller
 ```mermaid
 graph TD
     job -->|"1:N"| task["Task<br/>(Namespaced: agent-{id})<br/>Exec Unit"]
-    task -->|"1:1 (K8s workload)"| workload["Deployment /<br/>DaemonSet /<br/>StatefulSet<br/>(Local k8s cluster)"]
+    task -->|"1:1 (K8s workload)"| workload["Deployment /<br/>StatefulSet<br/>(Local k8s cluster)"]
     workload -->|"1:N"| pod["Pod + Sidecar<br/>Agent Push reports → Pod CR"]
     domain["Domain<br/>(Cluster scoped)<br/>Network Isolation"] -->|"1:N (one per cluster)"| dp["DomainPeer<br/>(Namespaced: agent-{id})<br/>Pod Routing Table"]
     node["Node<br/>(Namespaced)<br/>Compute Node"]

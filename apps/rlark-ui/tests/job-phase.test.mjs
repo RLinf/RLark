@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { effectiveJobPhase } from "../dist/test/utils/jobPhase.js";
+import { effectiveJobPhase, isActiveJob } from "../dist/test/utils/jobPhase.js";
 
 function job(phase, stopped, taskPhases) {
   return {
@@ -43,7 +43,10 @@ test("distinguishes stopping from normal Pending states", () => {
 });
 
 test("deleting takes precedence over stopping", () => {
-  assert.equal(effectiveJobPhase(job("Deleting", true, ["Stopped"])), "Deleting");
+  assert.equal(
+    effectiveJobPhase(job("Deleting", true, ["Stopped"])),
+    "Deleting",
+  );
 });
 
 test("does not infer terminal states from task phases", () => {
@@ -55,4 +58,19 @@ test("does not infer terminal states from task phases", () => {
     effectiveJobPhase(job("Pending", false, ["Succeeded", "Succeeded"])),
     "Pending",
   );
+});
+
+test("isActiveJob keeps running and stopping jobs, drops terminal ones", () => {
+  assert.equal(isActiveJob(job("Running", false, ["Running"])), true);
+  assert.equal(isActiveJob(job("Pending", false, [])), true);
+  assert.equal(isActiveJob(job("Stopped", true, ["Stopped"])), false);
+  assert.equal(isActiveJob(job("Succeeded", false, ["Succeeded"])), false);
+  assert.equal(isActiveJob(job("Failed", false, ["Failed"])), false);
+  assert.equal(isActiveJob(job("Deleting", true, ["Stopped"])), false);
+});
+
+test("isActiveJob treats the Stopping transition as still active", () => {
+  const stopping = job("Running", true, ["Stopped", "Running"]);
+  assert.equal(effectiveJobPhase(stopping), "Stopping");
+  assert.equal(isActiveJob(stopping), true);
 });

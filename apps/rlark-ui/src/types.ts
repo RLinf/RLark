@@ -1,5 +1,6 @@
 import type { Activity, LayoutDashboard } from "lucide-react";
-import type { JobType, PullProgressEntry } from "./data";
+import type { JobType, MountType, PullProgressEntry } from "./data";
+import type { CRDVolume } from "./crdModels";
 
 export type Page =
   | "overview"
@@ -28,6 +29,7 @@ export interface ResourceRow {
 
 export interface ClusterSummary {
   id: string;
+  agentNamespace: string;
   name: string;
   type: "Cloud" | "Embodied" | "Hybrid" | string;
   region: string;
@@ -36,9 +38,9 @@ export interface ClusterSummary {
     | "Online"
     | "Offline"
     | "Downgraded"
+    | "Delisted"
     | "Cordoned"
     | "Draining"
-    | "Deleted"
     | string;
   totalNodes: number;
   onlineNodes: number;
@@ -50,6 +52,7 @@ export interface ClusterSummary {
   robotModels: string[];
   runningJobs: number;
   description: string;
+  agentNamespaceConflict?: boolean;
 }
 
 export interface CRDPod {
@@ -109,11 +112,12 @@ export interface RoleResource {
   prepareScript: string;
   envs: Array<{ key: string; value: string }>;
   mounts: Array<{
-    type: "host" | "storage";
+    type: MountType;
     objectStorage: string;
     mountPath: string;
     hostPath: string;
     pvcSizeGb: number | "";
+    rawVolume?: CRDVolume;
   }>;
 }
 

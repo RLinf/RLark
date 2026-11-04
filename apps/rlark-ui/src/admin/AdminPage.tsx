@@ -239,7 +239,7 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
         <div className="panel cluster-map-card">
           <div className="panel-title">
             <div>
-              <span>Distribution</span>
+              <span>{zh ? "分布" : "Distribution"}</span>
               <h3>{zh ? "集群分布" : "Cluster Distribution"}</h3>
             </div>
           </div>
@@ -1595,7 +1595,7 @@ export function AdminPage({
                               (category) =>
                                 categoryLabels[category][zh ? "zh" : "en"],
                             )
-                            .join("、")
+                            .join(zh ? "、" : ", ")
                         : zh
                           ? "当前未设置"
                           : "Not set"}

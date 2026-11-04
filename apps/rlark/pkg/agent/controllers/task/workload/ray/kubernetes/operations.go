@@ -11,11 +11,10 @@ import (
 
 const (
 	CarrierDeployment  = "Deployment"
-	CarrierDaemonSet   = "DaemonSet"
 	CarrierStatefulSet = "StatefulSet"
 )
 
-// Operations is the compatibility port used by the three current Kubernetes
+// Operations is the compatibility port used by the current Kubernetes
 // workload adapters. Its implementation remains in the Task controller while
 // object operations are migrated incrementally into the Kubernetes runtime.
 type Operations interface {

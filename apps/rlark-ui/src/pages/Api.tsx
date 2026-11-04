@@ -13,6 +13,7 @@ import {
   type ApiReferenceResponse,
 } from "../backend";
 import type { Copy } from "../i18n";
+import { copyText } from "../utils/clipboard";
 
 export function ApiPage({ copy: c }: { copy: Copy }) {
   const lang = c.nav.overview === "总览" ? "zh" : "en";
@@ -81,9 +82,8 @@ export function ApiPage({ copy: c }: { copy: Copy }) {
   };
 
   const copyExample = async (endpoint: ApiReferenceEndpoint) => {
-    await navigator.clipboard.writeText(
-      JSON.stringify(endpoint.example, null, 2),
-    );
+    const ok = await copyText(JSON.stringify(endpoint.example, null, 2));
+    if (!ok) return;
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   };

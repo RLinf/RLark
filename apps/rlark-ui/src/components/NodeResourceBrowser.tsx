@@ -493,7 +493,7 @@ export function NodeResourceBrowser({
                   </span>
                   <span
                     className="node-row-task"
-                    title={workload?.jobs.join("、") ?? ""}
+                    title={workload?.jobs.join(zh ? "、" : ", ") ?? ""}
                   >
                     <i
                       className={`embodied-task-dot ${jobCount ? "active" : "idle"}`}

@@ -9,3 +9,10 @@ export type CRDWorkflow = IWorkflow;
 export type CRDJobTask = NonNullable<
   NonNullable<IJob["spec"]>["tasks"]
 >[number];
+
+/** A single entry of the Pod template `spec.volumes` list carried by a Job task. */
+export type CRDVolume = NonNullable<
+  NonNullable<
+    NonNullable<CRDJobTask["workload"]["template"]>["spec"]
+  >["volumes"]
+>[number];

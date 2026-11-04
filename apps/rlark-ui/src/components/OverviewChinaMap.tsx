@@ -110,13 +110,13 @@ function parseNodeLocations(nodes: CRDNode[]): {
   const totalByCat = { cloud: 0, edge: 0, robot: 0 };
 
   for (const node of nodes) {
-    const city = getNodeLocation(node);
-    if (!city) continue;
-
     const categories = getNodeCategories(node).filter(
       (category) => category !== "unknown",
     );
     categories.forEach((category) => totalByCat[category]++);
+
+    const city = getNodeLocation(node);
+    if (!city) continue;
 
     const ns = node.metadata.namespace ?? "";
     if (!cityMap.has(city)) {
