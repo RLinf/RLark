@@ -47,11 +47,32 @@ command -v docker  >/dev/null 2>&1 || err "docker is required"
 command -v kind    >/dev/null 2>&1 || err "kind is required"
 command -v kubectl >/dev/null 2>&1 || err "kubectl is required"
 command -v jq      >/dev/null 2>&1 || err "jq is required"
+command -v curl    >/dev/null 2>&1 || err "curl is required"
 
-# Verify control plane is running
-if [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes 2>/dev/null)" != "200" ]; then
-  err "Control plane not reachable at http://localhost:9000. Run quickstart-cp.sh first."
+# Authenticate before creating or deleting kind clusters. An existing admin
+# token may be supplied; otherwise use the local quickstart credentials.
+if [ -z "${RLARK_TOKEN:-}" ]; then
+  ADMIN_PASSWORD=$(kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard \
+    -n default get secret rlark-ui-auth -o json | \
+    jq -er '.data["admin-password"] | select(type == "string" and length > 0) | @base64d') || \
+    err "Cannot read quickstart admin credentials; supply an admin JWT through RLARK_TOKEN."
+  RLARK_TOKEN=$(jq -n --arg password "$ADMIN_PASSWORD" '{username:"admin",password:$password}' | \
+    curl -fsS --connect-timeout 5 --max-time 15 \
+      -H 'Content-Type: application/json' --data-binary @- \
+      http://localhost:9000/api/v1/auth/login | \
+    jq -er 'select(.role == "admin") | .token | select(type == "string" and length > 0)') || \
+    err "Gateway login failed; check rlark-gateway logs and the UI credentials."
+  unset ADMIN_PASSWORD
 fi
+
+gateway_curl() {
+  curl -fsS --connect-timeout 5 --max-time 30 \
+    -H "Authorization: Bearer $RLARK_TOKEN" "$@"
+}
+
+# Verify the authenticated API, rather than treating an anonymous 401 as downtime.
+gateway_curl http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes >/dev/null || \
+  err "Authenticated node query failed; check Gateway logs and token validity."
 ok "Control plane is reachable"
 
 # Get registry IP
@@ -129,9 +150,12 @@ log "Step 3: Requesting agent certificates..."
 for i in $(seq 1 $CLUSTER_COUNT); do
   CID="${CLUSTER_IDS[$((i-1))]}"
   log "Requesting cert for cluster-id: $CID"
-  curl -s -X POST "http://localhost:9000/api/v1/certificates/agent" \
+  gateway_curl -X POST "http://localhost:9000/api/v1/certificates/agent" \
     -H "Content-Type: application/json" \
-    -d "{\"cluster_id\":\"${CID}\"}" > "/tmp/rlark/agent-cert-$i.json"
+    -d "$(jq -n --arg cid "$CID" '{cluster_id:$cid}')" > "/tmp/rlark/agent-cert-$i.json" || \
+    err "Agent certificate request failed for $CID"
+  jq -e 'all(.ca_cert, .agent_cert, .agent_key; type == "string" and length > 0)' \
+    "/tmp/rlark/agent-cert-$i.json" >/dev/null || err "Incomplete agent certificate response for $CID"
   jq -r .ca_cert "/tmp/rlark/agent-cert-$i.json" > "/tmp/rlark/ca-$i.pem"
   jq -r .agent_cert "/tmp/rlark/agent-cert-$i.json" > "/tmp/rlark/cert-$i.pem"
   jq -r .agent_key "/tmp/rlark/agent-cert-$i.json" > "/tmp/rlark/key-$i.pem"
@@ -197,7 +221,7 @@ log "Step 5: Verifying node registration (waiting for agents to report)..."
 for attempt in $(seq 1 30); do
   REGISTERED=0
   for CID in "${CLUSTER_IDS[@]}"; do
-    if curl -fsS "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
+    if gateway_curl "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
       jq -e --arg cid "rlark-${CID}" '.items[] | select(.metadata.labels["rlark.io/cluster-id"] == $cid)' >/dev/null; then
       REGISTERED=$((REGISTERED + 1))
     fi
@@ -206,7 +230,7 @@ for attempt in $(seq 1 30); do
   sleep 2
 done
 [ "${REGISTERED:-0}" -eq "$CLUSTER_COUNT" ] || err "Only ${REGISTERED:-0}/$CLUSTER_COUNT expected nodes registered"
-curl -fsS "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
+gateway_curl "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
   jq -r '.items[] | "  \(.metadata.name)  cluster-id=\(.metadata.labels["rlark.io/cluster-id"])"'
 ok "All $CLUSTER_COUNT nodes verified"
 
