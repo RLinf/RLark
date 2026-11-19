@@ -1,0 +1,216 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: networkenrollments.station.rlark.io
+spec:
+  group: station.rlark.io
+  names:
+    kind: NetworkEnrollment
+    listKind: NetworkEnrollmentList
+    plural: networkenrollments
+    shortNames:
+    - netenroll
+    singular: networkenrollment
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.site
+      name: Site
+      type: string
+    - jsonPath: .status.role
+      name: Role
+      type: string
+    - jsonPath: .status.address
+      name: Address
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          NetworkEnrollment is one node's request to join the SiteNetwork and the
+          answer to it. station-api writes spec from the node's verified identity and
+          its report; station-controller writes status. Its name is the Node name in
+          the namespace mapped to the cluster.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              addresses:
+                description: |-
+                  Addresses are the node's own addresses as it reported them, the first
+                  being the source it uses towards station-api.
+                items:
+                  maxLength: 15
+                  type: string
+                maxItems: 8
+                type: array
+              bindingVersion:
+                format: int64
+                minimum: 1
+                type: integer
+              clusterID:
+                maxLength: 128
+                minLength: 1
+                type: string
+              nodeUID:
+                maxLength: 128
+                minLength: 1
+                type: string
+              observedSource:
+                description: |-
+                  ObservedSource is the address station-api saw the request arrive from.
+                  It differs from Addresses when the node is behind NAT.
+                maxLength: 45
+                type: string
+              publicKey:
+                description: |-
+                  PublicKey is the node's WireGuard public key; the private key never
+                  leaves the node. Empty for a node that runs no tunnel.
+                maxLength: 44
+                type: string
+              stationUID:
+                description: |-
+                  StationUID and BindingVersion are the identity the request was verified
+                  against; the controller rejects the enrollment when they are no longer current.
+                maxLength: 128
+                minLength: 1
+                type: string
+            required:
+            - bindingVersion
+            - clusterID
+            - nodeUID
+            - stationUID
+            type: object
+          status:
+            properties:
+              address:
+                description: Address is the one address every other member reaches
+                  this node at.
+                type: string
+              config:
+                description: Config is the document station-gateway reconciles, for
+                  PublicKey.
+                maxLength: 262144
+                type: string
+              configHash:
+                description: ConfigHash is the SHA-256 of Config in hex.
+                type: string
+              linkSummary:
+                description: |-
+                  LinkSummary is Links in one line a page shows as it is. It is empty
+                  while every link is Connected.
+                maxLength: 1024
+                type: string
+              links:
+                description: |-
+                  Links says, for a Leaf, what each Hub it dials sees of it. A Leaf that
+                  has dropped off cannot report anything, so this is the Hubs' account.
+                items:
+                  properties:
+                    hub:
+                      description: Hub is the member the Leaf dials, "<clusterID>/<nodeName>".
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    latestHandshake:
+                      description: |-
+                        LatestHandshake is the last handshake the Hub completed with the Leaf,
+                        kept while the link is Unanswered or Silent. A Connected link has a new
+                        one every two minutes, in the Hub's StationObservation.
+                      format: date-time
+                      type: string
+                    observedAt:
+                      format: date-time
+                      type: string
+                    receivedBytes:
+                      description: |-
+                        ReceivedBytes is what the Hub had received from the Leaf at ObservedAt,
+                        the Hub's report the next one is compared with: a counter that grows
+                        without a handshake is Unanswered. Both are kept only while the
+                        handshake is stale, and here so that they outlive the controller.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    since:
+                      description: Since is when State last changed.
+                      format: date-time
+                      type: string
+                    state:
+                      enum:
+                      - Connected
+                      - Unanswered
+                      - Silent
+                      - Unknown
+                      type: string
+                  required:
+                  - hub
+                  - since
+                  - state
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-map-keys:
+                - hub
+                x-kubernetes-list-type: map
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                enum:
+                - Pending
+                - Enrolled
+                - Rejected
+                type: string
+              problems:
+                items:
+                  type: string
+                maxItems: 16
+                type: array
+              publicKey:
+                description: PublicKey is the key Config was computed for.
+                type: string
+              reason:
+                description: Reason explains Pending and Rejected in one line.
+                maxLength: 512
+                type: string
+              relay:
+                description: Relay is the hub that relays for this Leaf, "<clusterID>/<nodeName>".
+                type: string
+              role:
+                type: string
+              site:
+                type: string
+              tunnelAddress:
+                description: TunnelAddress is the node's address inside the tunnel,
+                  when it has one.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

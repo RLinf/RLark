@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: csi-driver-rclone-node
+  namespace: rlark-system
+  labels:
+    app: csi-driver-rclone-node
+spec:
+  updateStrategy:
+    type: {{ .Values.nodeUpdateStrategy }}
+    {{- if eq .Values.nodeUpdateStrategy "RollingUpdate" }}
+    rollingUpdate:
+      maxUnavailable: 1
+    {{- end }}
+  selector:
+    matchLabels:
+      app: csi-driver-rclone-node
+  template:
+    metadata:
+      labels:
+        app: csi-driver-rclone-node
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: csi-driver-rclone
+      priorityClassName: system-cluster-critical
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- $parts := splitList "=" .Values.nodeSelector }}
+        {{- if eq (len $parts) 2 }}
+        {{ index $parts 0 }}: {{ index $parts 1 }}
+        {{- end }}
+      {{- end }}
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: rclone
+          image: {{ .Values.rcloneImage }}
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
+          args:
+            - "-v={{ .Values.nodeLogLevel }}"
+            - "--nodeid=$(NODE_ID)"
+            - "--endpoint=$(CSI_ENDPOINT)"
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
+            {{- if .Values.nodeTpsLimit }}
+            - name: RCLONE_TPSLIMIT
+              value: "{{ .Values.nodeTpsLimit }}"
+            {{- end }}
+          securityContext:
+            privileged: true
+          livenessProbe:
+            httpGet:
+              host: localhost
+              path: /healthz
+              port: 29653
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: mount-dir
+              mountPath: /var/lib/kubelet/pods
+              mountPropagation: Bidirectional
+        - name: node-driver-registrar
+          image: {{ .Values.nodeDriverRegistrarImage }}
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
+          args:
+            - "--csi-address=$(ADDRESS)"
+            - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
+            - "--v={{ .Values.nodeLogLevel }}"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: DRIVER_REG_SOCK_PATH
+              value: /var/lib/kubelet/plugins/{{ .Values.driverName }}/csi.sock
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+        - name: liveness-probe
+          image: {{ .Values.livenessProbeImage }}
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--probe-timeout=3s"
+            - "--http-endpoint=localhost:29653"
+            - "--v={{ .Values.nodeLogLevel }}"
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+      volumes:
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/{{ .Values.driverName }}
+            type: DirectoryOrCreate
+        - name: mount-dir
+          hostPath:
+            path: /var/lib/kubelet/pods
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: DirectoryOrCreate

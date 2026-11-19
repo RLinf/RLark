@@ -1,0 +1,175 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .AddonName }}
+  namespace: rlark-system
+data:
+  config.yml: |
+    version: 0.1
+    log:
+      level: warn
+    storage:
+{{- if or (eq .Values.role "cache") (and (eq .Values.role "registry") (eq .Values.storage "filesystem")) }}
+      filesystem:
+        rootdirectory: /var/lib/registry
+{{- end }}
+{{- if eq .Values.role "cache" }}
+    proxy:
+      remoteurl: {{ .Values.upstream }}
+      ttl: {{ .Values.ttl }}
+      # The login comes from a credential helper rather than username/password: with the latter the cache
+      # asks the origin for its login method when it starts and exits if the origin is unreachable, so a
+      # site cut off from the origin could not serve even what it holds.
+      exec:
+        command: /etc/distribution/credential-helper
+{{- else if ne .Values.storage "filesystem" }}
+      s3:
+        bucket: {{ .Values.s3Bucket }}
+        region: {{ .Values.s3Region }}
+        regionendpoint: {{ .Values.s3Endpoint }}
+        rootdirectory: {{ .Values.s3RootDirectory }}
+        chunksize: 5242880
+        secure: true
+        v4auth: true
+{{- end }}
+{{- if eq .Values.role "mirror" }}
+      maintenance:
+        readonly:
+          enabled: true
+        uploadpurging:
+          enabled: false
+      redirect:
+        disable: false
+    http:
+      addr: {{ .Values.listen }}
+{{- else }}
+{{- if eq .Values.role "registry" }}
+      # Images go by digest (an image no one names any more is deleted, then garbage-collect frees its layers).
+      delete:
+        enabled: true
+{{- if ne .Values.storage "filesystem" }}
+      redirect:
+        disable: true
+{{- end }}
+{{- end }}
+    http:
+      addr: {{ .Values.listen }}
+      tls:
+        certificate: /run/site-registry/tls.crt
+        key: /run/site-registry/tls.key
+    auth:
+      htpasswd:
+        realm: RLark registry
+        path: /run/site-registry/htpasswd
+{{- end }}
+{{- if eq .Values.role "cache" }}
+  upstream-ca.crt: |
+{{ indent 4 .Values.caCert }}
+  credential-helper: |
+    #!/bin/sh
+    # docker credential helper protocol: "get", the server URL on stdin; answers the cache's login to its origin
+    [ "$1" = get ] || exit 1
+    cat > /dev/null
+    printf '{"Username":"%s","Secret":"%s"}' "$(cat /run/site-registry/proxy-username)" "$(cat /run/site-registry/proxy-password)"
+  prewarm.sh: |
+    # Pulls every layer of each image in PREWARM through this site's cache, so the cache holds it before the
+    # site's nodes ask for it: the cache stores a layer only for the first of several simultaneous requests.
+    # A read that stalls for STALL seconds is dropped and the layer asked for again (up to 5 times). An image
+    # counts as warm once a pass returns every layer at local speed (over LOCAL_MBPS); a layer whose first
+    # fetch stalled reaches the cache only after that fetch ends, so the pass is repeated until then.
+    set -eu
+    auth="Authorization: Basic $(printf '%s:%s' "$(cat /run/site-registry/proxy-username)" "$(cat /run/site-registry/proxy-password)" | base64 | tr -d '\n')"
+    accept="Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"
+    get() { # url file
+      for attempt in 1 2 3 4 5; do
+        wget -q -T "$STALL" --header "$auth" --header "$accept" -O "$2" "$1" && return 0
+        echo "  retry $attempt: $1"; sleep $((attempt * 5))
+      done
+      echo "FAILED: $1"; return 1
+    }
+    slow=0
+    fetch() { # repo digest: the manifest, and every blob below it; counts in $slow the blobs that came slower than local
+      m=/tmp/manifest.$$.$2; get "$URL/v2/$1/manifests/$2" "$m"
+      if grep -q '"manifests"' "$m"; then
+        for d in $(grep -o 'sha256:[0-9a-f]\{64\}' "$m"); do fetch "$1" "$d"; done
+      else
+        # each blob entry holds one "digest" and one "size", in either order: take them two at a time. What a
+        # manifest is about (an attestation's "subject") is a manifest, fetched as the index names it, not a blob.
+        tr -d '\n' < "$m" | sed 's/"subject": *{[^}]*}//g' | grep -o '"digest": *"sha256:[0-9a-f]\{64\}"\|"size": *[0-9]*' | sed 's/"digest": *"\(.*\)"/D \1/; s/"size": *\([0-9]*\)/S \1/' | paste -d' ' - - |
+          while read -r k1 v1 k2 v2; do
+            if [ "$k1" = D ]; then d=$v1 s=$v2; else d=$v2 s=$v1; fi
+            start=$(date +%s); get "$URL/v2/$1/blobs/$d" /dev/null
+            [ $(( $(date +%s) - start )) -le $(( s / (LOCAL_MBPS * 1048576) + 1 )) ] || echo slow
+        done > /tmp/slow.$$
+        slow=$((slow + $(wc -l < /tmp/slow.$$)))
+      fi
+      rm -f "$m" /tmp/slow.$$
+    }
+    for ref in $(echo "$PREWARM" | tr ',' ' '); do
+      path=${ref#*/}; digest=${path##*@}; repo=${path%@*}; repo=${repo%:*}
+      for pass in 1 2 3 4 5 6 7 8 9 10; do
+        slow=0; start=$(date +%s); fetch "$repo" "$digest"
+        echo "pass $pass: $ref, $(( $(date +%s) - start ))s, $slow layers slower than local"
+        [ "$slow" = 0 ] && break
+        [ "$pass" = 10 ] && { echo "NOT WARM: $ref"; exit 1; }
+        sleep 30
+      done
+    done
+    echo "prewarm done"
+{{- end }}
+{{- if and (eq .Values.role "registry") .Values.localListen }}
+  # The same store at an entry on the node's loopback, for what runs on the node itself: plain HTTP, no account.
+  config-local.yml: |
+    version: 0.1
+    log:
+      level: warn
+    storage:
+{{- if eq .Values.storage "filesystem" }}
+      filesystem:
+        rootdirectory: /var/lib/registry
+{{- else }}
+      s3:
+        bucket: {{ .Values.s3Bucket }}
+        region: {{ .Values.s3Region }}
+        regionendpoint: {{ .Values.s3Endpoint }}
+        rootdirectory: {{ .Values.s3RootDirectory }}
+        chunksize: 5242880
+        secure: true
+        v4auth: true
+      redirect:
+        disable: true
+{{- end }}
+      delete:
+        enabled: true
+    http:
+      addr: {{ .Values.localListen }}
+{{- end }}
+{{- if .Values.volumeSize }}
+  # Run on the node (chroot into its root) with NAME SIZE PATH: the node volume NAME of SIZE at PATH, as the
+  # installer makes a node's volumes (bootstrap/lib.sh volume_make, volume_mount): a file of fixed size with an
+  # ext4 filesystem in /var/lib/rlark/volumes, mounted by systemd now and on every boot. A PATH that is a mount
+  # already is a volume of its own as it is; a volume once made keeps its size.
+  volume.sh: |
+    set -eu
+    name=$1 size=$2 path=$3
+    if mountpoint -q "$path"; then echo "$path: a volume of its own"; exit 0; fi
+    [ -z "$(ls -A "$path" 2>/dev/null)" ] || { echo "$path holds data on the node's disk: move it into a volume first (node-volumes.sh)"; exit 1; }
+    image=/var/lib/rlark/volumes/$name.img bytes=$(numfmt --from=iec "$size")
+    if [ -e "$image" ]; then
+      [ "$(stat -c %s "$image")" = "$bytes" ] || { echo "the volume $name is $(stat -c %s "$image" | numfmt --to=iec), not $size: a volume is not resized"; exit 1; }
+    else
+      install -d /var/lib/rlark/volumes
+      fallocate -l "$bytes" "$image.new" || { rm -f "$image.new"; echo "no room for $size in /var/lib/rlark/volumes: $(df -h --output=avail /var/lib/rlark/volumes | tail -1) free"; exit 1; }
+      mkfs.ext4 -q -F -m 0 -L "$name" "$image.new"
+      debugfs -w -R 'rmdir lost+found' "$image.new" >/dev/null 2>&1 || true
+      mv "$image.new" "$image"
+      echo "volume $name: $size in $image"
+    fi
+    unit=$(systemd-escape --path --suffix=mount "$path")
+    printf '[Unit]\nDescription=RLark node volume %s\n\n[Mount]\nWhat=%s\nWhere=%s\nType=ext4\nOptions=loop\n\n[Install]\nWantedBy=local-fs.target\n' "$name" "$image" "$path" > "/etc/systemd/system/$unit"
+    systemctl daemon-reload
+    systemctl enable "$unit" >/dev/null 2>&1
+    install -d "$path"
+    systemctl start "$unit"
+    echo "$path: volume $name mounted"
+{{- end }}

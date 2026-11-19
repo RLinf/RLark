@@ -1,0 +1,8 @@
+# Cross-cluster test: Domain
+apiVersion: rlinf.io/v1alpha1
+kind: Domain
+metadata:
+  name: cross-cluster-net-test
+  namespace: rlark-system
+spec:
+  cidr: 10.200.0.0/24

@@ -1,0 +1,28 @@
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  except:
+    # The gRPC wire contract embeds the proto package and the service name in the
+    # fully qualified method name (e.g. /ros.controller.v1.RobotController/Move).
+    # The following names predate this configuration and are already consumed by
+    # released Go and Python SDKs, so renaming them to satisfy the rules would be
+    # a wire-breaking change. New files are still expected to follow STANDARD.
+    #
+    # ros.controller.v1 lives in roscontroller/v1, camera.controller.v1 lives in
+    # cameracontroller/v1.
+    - PACKAGE_DIRECTORY_MATCH
+    # RobotController and CameraController are not suffixed with "Service".
+    - SERVICE_SUFFIX
+    # CameraController.WatchFrames streams VideoFrame instead of
+    # WatchFramesResponse.
+    - RPC_RESPONSE_STANDARD_NAME
+breaking:
+  # FILE also rejects source-breaking changes (renamed messages, moved
+  # declarations). The generated Go and Python stubs under sdks/ are checked in
+  # and published as public SDKs, so source compatibility is part of the
+  # contract, not just wire compatibility.
+  use:
+    - FILE

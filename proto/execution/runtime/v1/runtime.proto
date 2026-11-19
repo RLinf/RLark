@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package rlark.execution.runtime.v1;
+
+import "common/v1/types.proto";
+
+option go_package = "github.com/rlinf/rlark/sdks/execution-go/gen/runtime/v1;runtimev1";
+
+service RuntimeProvider {
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+  rpc GetObject(GetObjectRequest) returns (GetObjectResponse);
+  rpc ListManagedObjects(ListManagedObjectsRequest) returns (ListManagedObjectsResponse);
+  rpc ApplyObject(ApplyObjectRequest) returns (ApplyObjectResponse);
+  rpc DeleteObject(DeleteObjectRequest) returns (DeleteObjectResponse);
+  rpc ListInstances(ListInstancesRequest) returns (ListInstancesResponse);
+  rpc ListCandidateObjects(ListCandidateObjectsRequest) returns (ListCandidateObjectsResponse);
+  rpc GetClaimedWorkload(GetClaimedWorkloadRequest) returns (GetClaimedWorkloadResponse);
+}
+
+message GetInfoRequest {
+  repeated rlark.execution.common.v1.ProtocolVersion supported_protocol_versions = 1;
+}
+
+message RuntimeInfo {
+  string id = 1;
+  string kind = 2;
+  rlark.execution.common.v1.ProtocolVersion protocol_version = 3;
+  repeated rlark.execution.common.v1.TypeReference object_types = 4;
+  repeated rlark.execution.common.v1.ProtocolCapability capabilities = 5;
+}
+
+message GetInfoResponse {
+  RuntimeInfo info = 1;
+}
+
+message GetObjectRequest {
+  rlark.execution.common.v1.ObjectReference reference = 1;
+}
+
+message GetObjectResponse {
+  rlark.execution.common.v1.RuntimeObject object = 1;
+}
+
+message ListManagedObjectsRequest {
+  rlark.execution.common.v1.TaskIdentity task = 1;
+}
+
+message ListManagedObjectsResponse {
+  string revision = 1;
+  repeated rlark.execution.common.v1.RuntimeObject objects = 2;
+}
+
+message ApplyObjectRequest {
+  string idempotency_key = 2;
+  rlark.execution.common.v1.TaskIdentity task = 3;
+  rlark.execution.common.v1.DesiredRuntimeObject desired = 4;
+  rlark.execution.common.v1.ObjectReference current = 5;
+  repeated rlark.execution.common.v1.ObjectReference proven_owners = 6;
+}
+
+message ApplyObjectResponse {
+  rlark.execution.common.v1.RuntimeObject object = 1;
+}
+
+message DeleteObjectRequest {
+  string idempotency_key = 2;
+  rlark.execution.common.v1.TaskIdentity task = 3;
+  rlark.execution.common.v1.ObjectReference reference = 4;
+}
+
+message DeleteObjectResponse {}
+
+message ListInstancesRequest {
+  rlark.execution.common.v1.TaskIdentity task = 1;
+  repeated rlark.execution.common.v1.ObjectReference workloads = 2;
+  repeated string roots = 3;
+  rlark.execution.common.v1.TypedValue options = 4;
+}
+
+message ListInstancesResponse {
+  string revision = 1;
+  repeated rlark.execution.common.v1.RuntimeInstance instances = 2;
+}
+
+message ListCandidateObjectsRequest {
+  rlark.execution.common.v1.TaskIdentity task = 1;
+  repeated rlark.execution.common.v1.RuntimeObjectCandidate candidates = 2;
+}
+
+message ListCandidateObjectsResponse {
+  string revision = 1;
+  repeated rlark.execution.common.v1.RuntimeObject objects = 2;
+}
+
+message GetClaimedWorkloadRequest {
+  rlark.execution.common.v1.TaskIdentity task = 1;
+}
+
+message GetClaimedWorkloadResponse {
+  string workload_type = 1;
+  string workload_version = 2;
+}

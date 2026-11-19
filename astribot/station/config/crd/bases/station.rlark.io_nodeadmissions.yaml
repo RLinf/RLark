@@ -1,0 +1,198 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: nodeadmissions.station.rlark.io
+spec:
+  group: station.rlark.io
+  names:
+    kind: NodeAdmission
+    listKind: NodeAdmissionList
+    plural: nodeadmissions
+    shortNames:
+    - admit
+    singular: nodeadmission
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.address
+      name: Address
+      type: string
+    - jsonPath: .spec.expiresAt
+      name: Expires
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          NodeAdmission lets one machine that is not yet a node join: an operator
+          writes it and hands the machine the one-time code whose hash it holds. The
+          machine redeems the code at Station API with its WireGuard public key and
+          receives its tunnel configuration and what it needs to join the cluster.
+          The admission stays afterwards as the node's network declaration. Its name
+          is the Node name in the namespace mapped to the cluster.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              address:
+                description: Address pins the tunnel address; empty lets the controller
+                  allocate one.
+                maxLength: 15
+                type: string
+              clusterID:
+                maxLength: 128
+                minLength: 1
+                type: string
+              codeHash:
+                description: |-
+                  CodeHash is the SHA-256 of the one-time code in hex. The code itself is
+                  shown once to the operator and stored nowhere.
+                maxLength: 64
+                minLength: 64
+                type: string
+              expiresAt:
+                description: ExpiresAt ends the time in which the code can be redeemed.
+                format: date-time
+                type: string
+              issuedAt:
+                format: date-time
+                type: string
+              issuedBy:
+                description: |-
+                  IssuedBy and IssuedAt are who gave out the current code and when: the
+                  authenticated identity at the Gateway, never a value the request names.
+                maxLength: 256
+                type: string
+              labels:
+                additionalProperties:
+                  type: string
+                description: Labels and Taints (key=value:effect) are what the node
+                  registers with.
+                maxProperties: 32
+                type: object
+              nodeClass:
+                description: |-
+                  NodeClass names the NodeClass of the machine. The node follows what
+                  the class declares, and the class says what lets the machine out to
+                  its site (uplink).
+                maxLength: 63
+                type: string
+              publicKey:
+                description: |-
+                  PublicKey is written by Station API when the code is redeemed; the code
+                  then stays valid for this key only.
+                maxLength: 44
+                type: string
+              redeemedAt:
+                description: RedeemedAt is when Station API accepted the code.
+                format: date-time
+                type: string
+              serial:
+                description: |-
+                  Serial is the serial of the machine the name was given to: the same
+                  machine, admitted again, is the same node.
+                maxLength: 128
+                type: string
+              site:
+                description: |-
+                  Site is the site the machine stands in when it is not its cluster's.
+                  A node the SiteNetwork declares with a site is in that one.
+                maxLength: 63
+                type: string
+              taints:
+                items:
+                  maxLength: 317
+                  type: string
+                maxItems: 8
+                type: array
+              uplink:
+                description: |-
+                  SiteNetworkUplink makes the node reach the endpoints it dials through a
+                  given gateway instead of its default route. The node dials from its own
+                  address in the gateway's network, on the interface that has it: an address
+                  of another network would be one nothing has given the node, and whatever
+                  is given that address later takes the node's answers.
+                properties:
+                  gateway:
+                    format: ipv4
+                    type: string
+                required:
+                - gateway
+                type: object
+            required:
+            - clusterID
+            - codeHash
+            - expiresAt
+            type: object
+          status:
+            properties:
+              address:
+                description: Address is the tunnel address; once set it stays with
+                  this admission.
+                type: string
+              config:
+                description: |-
+                  Config is the document station-gateway reconciles until the node has
+                  enrolled under its own identity, for PublicKey.
+                maxLength: 262144
+                type: string
+              configHash:
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                enum:
+                - Pending
+                - Redeemed
+                - Joined
+                - Expired
+                type: string
+              publicKey:
+                type: string
+              reason:
+                maxLength: 512
+                type: string
+              redeemedAt:
+                description: RedeemedAt is the redemption (spec.redeemedAt) this status
+                  answers.
+                format: date-time
+                type: string
+              rejoinsNodeUID:
+                description: |-
+                  RejoinsNodeUID is set while a machine that already is this node, with
+                  the same key, joins again: its cluster got a new control plane. It is
+                  the Node UID the machine had when it redeemed the code; the admission
+                  is Joined once the node has enrolled under another.
+                maxLength: 128
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,154 @@
+name: Lint
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+jobs:
+  lint-go:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: [api, apps/rlark, apps/embodied-runtime]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "${{ matrix.module }}/go.mod"
+          cache: true
+
+      - name: golangci-lint (${{ matrix.module }})
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          install-mode: goinstall
+          working-directory: ${{ matrix.module }}
+          args: --timeout 5m
+
+  lint-proto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # buf breaking resolves its baseline from the local .git directory,
+          # so the clone must contain the default branch.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache: true
+
+      # The checked-in stubs embed their generator versions, so regenerating with
+      # a different toolchain rewrites every file. Install the versions pinned in
+      # proto/toolchain.mk and requirements-dev.txt.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: sdks/embodied-runtime-python/requirements*.txt
+
+      - name: Install pinned Python proto toolchain
+        run: python -m pip install --requirement sdks/embodied-runtime-python/requirements-dev.txt
+
+      - name: Install pinned protoc
+        run: make protoc-install
+
+      - name: Lint protobuf definitions
+        run: make lint-proto
+
+      - name: Check protobuf compatibility
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || format('origin/{0}', github.event.repository.default_branch) }}
+        run: make proto-breaking PROTO_BREAKING_REF="ref=$BASE_REF"
+
+      - name: Verify generated gRPC stubs are up to date
+        run: make verify-proto-generated
+
+  verify-generated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: apps/rlark-ui/package-lock.json
+
+      - name: Verify generated artifacts are up to date
+        run: make verify-generated
+
+  lint-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: apps/rlark-ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/rlark-ui
+        run: npm ci
+
+      - name: Run lint
+        working-directory: apps/rlark-ui
+        run: make lint
+
+      - name: Run prettier
+        working-directory: apps/rlark-ui
+        run: npx prettier --check 'src/' 'scripts/' 'index.html' 'package.json' 'vite.config.ts' 'tsconfig*.json' --ignore-path .prettierignore
+
+  lint-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: apps/rlark/docs/requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install --requirement apps/rlark/docs/requirements.txt
+
+      - name: Build documentation
+        run: mkdocs build --strict --config-file apps/rlark/mkdocs.yml
+
+      - name: Check Markdown internal links
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
+        with:
+          args: --offline --no-progress --root-dir "${{ github.workspace }}" 'apps/rlark/docs/**/*.md'
+          lycheeVersion: v0.24.2
+
+      - name: Build Chinese Read the Docs output
+        env:
+          READTHEDOCS_CANONICAL_URL: https://rlark.readthedocs.io/zh-cn/latest/
+          READTHEDOCS_LANGUAGE: zh-cn
+          READTHEDOCS_VERSION: latest
+        run: |
+          python apps/rlark/docs/rtd_patch.py
+          mkdocs build --strict --config-file apps/rlark/mkdocs.yml --site-dir "$GITHUB_WORKSPACE/site-rtd-zh"
+          grep -F 'src="images/logo-zh.png"' site-rtd-zh/index.html
+          grep -F 'src="images/architecture-zh.svg"' site-rtd-zh/index.html
+          grep -F 'src="../images/architecture-zh.svg"' site-rtd-zh/architecture/index.html
+          test -f site-rtd-zh/images/logo-zh.png
+          test -f site-rtd-zh/images/architecture-zh.svg

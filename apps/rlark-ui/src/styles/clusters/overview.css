@@ -1,0 +1,253 @@
+.cluster-overview-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.cluster-overview-page .section-heading {
+  flex-shrink: 0;
+}
+.cluster-overview-page .cluster-overview-grid {
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+.cluster-overview-page .cluster-overview-grid .metric-card {
+  min-height: 0;
+  padding: 10px 14px 9px;
+}
+.cluster-overview-page .cluster-overview-grid .metric-card .metric-head {
+  margin-bottom: 8px;
+}
+.cluster-overview-page
+  .cluster-overview-grid
+  .metric-card
+  .metric-value-row
+  strong {
+  font-size: 22px;
+}
+.cluster-overview-page .cluster-overview-grid .metric-card > small {
+  font-size: 10px;
+}
+.cluster-overview-page .cluster-topology-grid {
+  flex-shrink: 0;
+  margin-bottom: 0;
+  height: 320px;
+}
+.cluster-overview-page .cluster-topology-grid > * {
+  min-height: 0;
+  max-height: 100%;
+}
+.cluster-overview-page .cluster-map-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.cluster-overview-page .cluster-map-card .cluster-map {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.cluster-overview-page .selected-cluster-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.cluster-overview-page .selected-cluster-panel .cluster-detail-header {
+  flex-shrink: 0;
+}
+.cluster-overview-page .selected-cluster-panel .cluster-node-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.cluster-overview-page .cluster-list-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.cluster-overview-page .cluster-list-panel .panel-title {
+  flex-shrink: 0;
+}
+.cluster-overview-page .cluster-list-panel .cluster-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+
+.cluster-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.cluster-list-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f7f8fa;
+  text-align: left;
+  padding: 9px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8d97a6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--line);
+}
+.cluster-list-table tbody tr {
+  cursor: pointer;
+  border-bottom: 1px solid #f0f1f4;
+  transition: background 0.15s;
+}
+.cluster-list-table tbody tr:hover {
+  background: #f7f8ff;
+}
+.cluster-list-table tbody tr.selected {
+  background: #f0ecff;
+}
+.cluster-list-table tbody tr.selected td {
+  color: var(--blue);
+}
+.cluster-list-table td {
+  padding: 10px 14px;
+  color: #4a5568;
+  vertical-align: middle;
+}
+.cluster-list-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.cluster-list-name strong {
+  font-size: 13px;
+  color: #202733;
+}
+.cluster-list-rate {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.cluster-list-rate i {
+  display: block;
+  width: 50px;
+  height: 5px;
+  border-radius: 999px;
+  background: #e8edf4;
+  overflow: hidden;
+}
+.cluster-list-rate b {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--blue), #c4b5fd);
+}
+.cluster-list-rate small {
+  font-size: 11px;
+  color: #8d97a6;
+  min-width: 32px;
+}
+
+.cluster-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.cluster-detail-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.cluster-detail-title strong {
+  font-size: 15px;
+  color: #202733;
+}
+.cluster-detail-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #7f8998;
+}
+.cluster-detail-meta .dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #c4c9d4;
+  display: inline-block;
+}
+
+.cluster-node-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.cluster-node-table {
+  width: 100%;
+  min-width: 940px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.cluster-node-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f7f8fa;
+  text-align: left;
+  padding: 9px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8d97a6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--line);
+}
+.cluster-node-table td {
+  padding: 9px 14px;
+  color: #4a5568;
+  border-bottom: 1px solid #f0f1f4;
+  vertical-align: middle;
+}
+.cluster-node-table td strong {
+  color: #202733;
+  font-size: 13px;
+}
+.cluster-node-table td small {
+  color: #8d97a6;
+  font-size: 12px;
+}
+
+.table-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  /* 防止在 grid 表头里被 stretch 拉满整个 cell */
+  justify-self: start;
+  width: fit-content;
+}
+
+.table-sort-button:hover,
+.table-sort-button.active {
+  color: var(--blue);
+}
+
+.table-sort-placeholder {
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.45;
+}

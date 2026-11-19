@@ -1,0 +1,143 @@
+/* Final responsive safeguards for resource views. These rules intentionally
+   live after the resource components so later component styles cannot undo
+   the compact layout. */
+@media (max-width: 1250px) {
+  .node-admin-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .node-resource-detail {
+    position: static;
+    width: 100%;
+  }
+}
+
+@media (max-width: 780px) {
+  .job-worker-overview,
+  .job-detail-summary-head,
+  .job-detail-summary-grid,
+  .job-detail-summary-columns,
+  .worker-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .job-detail-summary-card {
+    padding: 16px;
+  }
+
+  .job-detail-summary-status {
+    justify-items: start;
+  }
+
+  .role-worker-group-head,
+  .config-section-head {
+    flex-direction: column;
+  }
+
+  .role-worker-resource-summary,
+  .config-section-head small {
+    min-width: 0;
+    max-width: none;
+    text-align: left;
+  }
+
+  .worker-access-grid,
+  .role-config-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .worker-access-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .worker-access-meta span:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .job-detail-summary-grid,
+  .job-detail-summary-columns,
+  .time-series-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metrics-source-label {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .log-list-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .log-list-head {
+    display: none;
+  }
+
+  .worker-role-strip,
+  .worker-metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .worker-panel-head,
+  .observe-panel-head {
+    flex-direction: column;
+  }
+
+  .role-runtime-tabs {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .role-runtime-summary {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .role-runtime-image {
+    flex-basis: 100%;
+  }
+
+  .role-runtime-details {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .worker-panel-head small {
+    max-width: none;
+    text-align: left;
+  }
+
+  .worker-primary-panel .worker-table {
+    overflow-x: auto;
+  }
+
+  .worker-primary-panel .worker-table table {
+    min-width: 820px;
+  }
+
+  .node-category-grid {
+    grid-template-columns: 1fr !important;
+    width: 100%;
+  }
+
+  .node-category-column {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .node-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .node-detail-panel {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 520px) {
+  .node-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}

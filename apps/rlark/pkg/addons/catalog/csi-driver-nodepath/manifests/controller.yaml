@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csi-driver-nodepath-controller
+  namespace: rlark-system
+  labels:
+    app: csi-driver-nodepath-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: csi-driver-nodepath-controller
+  template:
+    metadata:
+      labels:
+        app: csi-driver-nodepath-controller
+    spec:
+      serviceAccountName: csi-driver-nodepath
+      priorityClassName: system-cluster-critical
+      tolerations:
+        - {key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}
+        - {key: CriticalAddonsOnly, operator: Exists, effect: NoSchedule}
+      containers:
+        - name: nodepath
+          image: {{ .Values.image }}
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
+          command: ["/usr/local/bin/csi-nodepath", "--endpoint=unix:///csi/csi.sock"]
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          volumeMounts:
+            - {name: socket-dir, mountPath: /csi}
+          livenessProbe:
+            # The Pod is on the Pod network: kubelet probes its address, where the liveness-probe sidecar listens.
+            httpGet: {path: /healthz, port: 29662}
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+            periodSeconds: 30
+        # The claim is bound once its Pod is scheduled (WaitForFirstConsumer):
+        # the provisioner names the volume, the node plugin binds the directory.
+        - name: csi-provisioner
+          image: {{ .Values.csiProvisionerImage }}
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--leader-election"
+            - "--leader-election-namespace=$(POD_NAMESPACE)"
+          env:
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+          volumeMounts:
+            - {name: socket-dir, mountPath: /csi}
+        - name: liveness-probe
+          image: {{ .Values.livenessProbeImage }}
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
+          args: ["--csi-address=/csi/csi.sock", "--probe-timeout=3s", "--http-endpoint=:29662"]
+          volumeMounts:
+            - {name: socket-dir, mountPath: /csi}
+      volumes:
+        - name: socket-dir
+          emptyDir: {}

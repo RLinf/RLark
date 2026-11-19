@@ -1,0 +1,12 @@
+apiVersion: v2
+name: embodied-runtime
+description: Kubernetes device plugin and controllers for robotic learning / teleoperation clusters (Franka arms + cameras).
+type: application
+version: 0.1.0
+appVersion: v0.1.0
+keywords:
+  - robotics
+  - franka
+  - ros
+  - device-plugin
+  - kubernetes

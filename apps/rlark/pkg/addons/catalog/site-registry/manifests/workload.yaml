@@ -1,0 +1,212 @@
+{{- /* local: the content lives in a volume of the node (a cache's layers, a registry's store on a site) */ -}}
+{{- $local := or (eq .Values.role "cache") (and (eq .Values.role "registry") (eq .Values.storage "filesystem")) -}}
+{{- $dir := .Values.dataDir -}}
+{{- if eq .Values.role "cache" }}{{ $dir = .Values.cacheDir }}{{ end -}}
+{{- /* relayed: it reads an origin or an object store over the network */ -}}
+{{- $relayed := and (ne .Values.role "mirror") (not (and (eq .Values.role "registry") (eq .Values.storage "filesystem"))) -}}
+apiVersion: apps/v1
+kind: {{ if eq .Values.role "mirror" }}DaemonSet{{ else }}Deployment{{ end }}
+metadata:
+  name: {{ .AddonName }}
+  namespace: rlark-system
+  labels:
+    app: {{ .AddonName }}
+{{- if eq .Values.role "cache" }}
+  annotations:
+    rlark.io/not-ready-message: 站点缓存不可用
+{{- else if eq .Values.role "registry" }}
+  annotations:
+    rlark.io/not-ready-message: 站点仓库不可用
+{{- end }}
+spec:
+{{- if ne .Values.role "mirror" }}
+  replicas: 1
+  strategy:
+    type: Recreate
+{{- end }}
+  selector:
+    matchLabels:
+      app: {{ .AddonName }}
+  template:
+    metadata:
+      labels:
+        app: {{ .AddonName }}
+      annotations:
+        rlark.io/config: {{ printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" .Values.listen .Values.storage .Values.s3Bucket .Values.s3Region .Values.s3Endpoint .Values.s3RootDirectory .Values.upstream .Values.ttl .Values.caCert .Values.relayImage .Values.relayIdle $dir .Values.localListen | printf "%q" }}
+    spec:
+      hostNetwork: true
+{{- if and $local .Values.volumeSize }}
+      hostPID: true
+{{- end }}
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      priorityClassName: system-node-critical
+{{- if eq .Values.role "mirror" }}
+      tolerations:
+        - operator: Exists
+{{- else }}
+      nodeSelector:
+        {{ index (splitList "=" .Values.nodeSelector) 0 }}: {{ index (splitList "=" .Values.nodeSelector) 1 | printf "%q" }}
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        # A node under disk or memory pressure keeps the Pod (with its critical priority it is not evicted)
+        - {key: node.kubernetes.io/disk-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/memory-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/pid-pressure, operator: Exists, effect: NoSchedule}
+{{- end }}
+{{- if $local }}
+      initContainers:
+{{- if .Values.volumeSize }}
+        # The node volume at the directory, made and mounted on the node (volume.sh) where it is not yet: run in
+        # the node's own namespaces, as its systemd mounts it (systemctl does nothing from a chroot).
+        - name: make-volume
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, 'nsenter -t 1 -m -u -i -n -p -- /bin/sh -s $(basename {{ $dir }}) {{ .Values.volumeSize }} {{ $dir }} < /etc/distribution/volume.sh']
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/distribution
+{{- end }}
+        # The directory must be a volume of its own (a node volume), not a directory on the disk the node itself
+        # runs on: compare the device of the two mounts.
+        - name: volume
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, 'cache=$(awk ''$5 == "/var/lib/registry" {print $3}'' /proc/self/mountinfo); parent=$(awk ''$5 == "/run/parent" {print $3}'' /proc/self/mountinfo); [ -n "$cache" ] && [ "$cache" != "$parent" ] || { echo "{{ $dir }} is not a volume of its own (device $cache, same as its parent); declare it as a node volume"; exit 1; }']
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+            - name: cache-parent
+              mountPath: /run/parent
+              readOnly: true
+{{- end }}
+      containers:
+        - name: registry
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          args: [/etc/distribution/config.yml]
+          env:
+            - name: OTEL_TRACES_EXPORTER
+              value: none
+{{- if $relayed }}
+            # Every fetch from the origin (cache) or from the object store (registry) goes through the relay,
+            # which ends a connection that stays open but silent: the client reads a body without a deadline.
+            - name: HTTPS_PROXY
+              value: http://127.0.0.1:{{ .Values.relayPort }}
+{{- end }}
+{{- if eq .Values.role "cache" }}
+            - name: SSL_CERT_FILE
+              value: /etc/distribution/upstream-ca.crt
+            # One connection per upstream request: over HTTP/2 every request shares one TCP connection, and one
+            # stalled stream on it held up all fetches from the origin (rehearsal 11-14).
+            - name: GODEBUG
+              value: http2client=0
+{{- else if not $local }}
+            - name: REGISTRY_STORAGE_S3_ACCESSKEY
+              valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: s3-accesskey}}
+            - name: REGISTRY_STORAGE_S3_SECRETKEY
+              valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: s3-secretkey}}
+{{- end }}
+            - name: REGISTRY_HTTP_SECRET
+              valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: http-secret}}
+          readinessProbe:
+            tcpSocket:
+              host: {{ index (splitList ":" .Values.listen) 0 | printf "%q" }}
+              port: {{ index (splitList ":" .Values.listen) 1 }}
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/distribution
+{{- if $local }}
+            - name: data
+              mountPath: /var/lib/registry
+{{- end }}
+{{- if ne .Values.role "mirror" }}
+            - name: credentials
+              mountPath: /run/site-registry
+              readOnly: true
+{{- end }}
+{{- if and (eq .Values.role "registry") .Values.localListen }}
+        # The node's own entry of the same store (config-local.yml).
+        - name: local
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          args: [/etc/distribution/config-local.yml]
+          env:
+            - name: OTEL_TRACES_EXPORTER
+              value: none
+{{- if $relayed }}
+            - name: HTTPS_PROXY
+              value: http://127.0.0.1:{{ .Values.relayPort }}
+            - name: REGISTRY_STORAGE_S3_ACCESSKEY
+              valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: s3-accesskey}}
+            - name: REGISTRY_STORAGE_S3_SECRETKEY
+              valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: s3-secretkey}}
+{{- end }}
+            - name: REGISTRY_HTTP_SECRET
+              valueFrom: {secretKeyRef: {name: {{ .Values.secret }}, key: http-secret}}
+          readinessProbe:
+            tcpSocket:
+              host: {{ index (splitList ":" .Values.localListen) 0 | printf "%q" }}
+              port: {{ index (splitList ":" .Values.localListen) 1 }}
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/distribution
+{{- if $local }}
+            - name: data
+              mountPath: /var/lib/registry
+{{- end }}
+{{- end }}
+{{- if $relayed }}
+        - name: relay
+          image: {{ .Values.relayImage }}
+          imagePullPolicy: IfNotPresent
+          command: [rlark-tools, idle-relay, --listen, "127.0.0.1:{{ .Values.relayPort }}", --idle, "{{ .Values.relayIdle }}"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+{{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .AddonName }}
+            defaultMode: 0755
+{{- if $local }}
+        # A volume of its own: content filling the node's root disk would put the node under disk pressure, have
+        # its Pods evicted and their images collected.
+        - name: data
+          hostPath:
+            path: {{ $dir }}
+            type: DirectoryOrCreate
+        - name: cache-parent
+          hostPath:
+            path: /var/lib
+            type: Directory
+{{- end }}
+{{- if ne .Values.role "mirror" }}
+        - name: credentials
+          secret:
+            secretName: {{ .Values.secret }}
+            items:
+              - {key: htpasswd, path: htpasswd}
+              - {key: tls.crt, path: tls.crt}
+              - {key: tls.key, path: tls.key}
+{{- if eq .Values.role "cache" }}
+              - {key: proxy-username, path: proxy-username}
+              - {key: proxy-password, path: proxy-password}
+{{- end }}
+{{- end }}

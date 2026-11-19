@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: embodied-runtime-device-plugin-template
+  namespace: rlark-system
+data:
+  device-plugin.yaml: |
+    model: franka
+    device_count: {{ .Values.deviceCount }}
+    skip_register: false
+    camera:
+      manager_mode: pod
+      http_addr: :8080
+      pod:
+        namespace: rlark-system
+        image: {{ .Values.cameraImage }}
+        pod_generate_name: camera-controller
+        subdomain: camera-controller-headless
+        labels:
+          app.kubernetes.io/name: camera-controller
+      auto_detect_v4l2: true
+      cameras: []
+    ros:
+      manager_mode: pod
+      http_addr: :8080
+      pod:
+        namespace: rlark-system
+        image: {{ .Values.rosImage }}
+        pod_generate_name: ros-controller
+        subdomain: ros-controller-headless
+        labels:
+          app.kubernetes.io/name: ros-controller
+      types:
+        - type: franka
+          modes:
+            impedance:
+              package: serl_franka_controllers
+              launch_file: impedance.launch
+              passthrough_robot_args: true
+            joint:
+              package: serl_franka_controllers
+              launch_file: joint.launch
+              passthrough_robot_args: true
+      macvlans:
+        {{- if .Values.macvlans }}
+{{ indent 8 .Values.macvlans }}
+        {{- else }}
+        []
+        {{- end }}
+      robots:
+        {{- if .Values.robots }}
+{{ indent 8 .Values.robots }}
+        {{- else }}
+        []
+        {{- end }}
+      allowed_launch_packages:
+        - serl_franka_controllers
+  node-overrides.yaml: |
+{{ if .Values.nodeOverrides }}{{ indent 4 .Values.nodeOverrides }}{{ end }}
+  render.sh: |
+    #!/bin/sh
+    set -e
+    TEMPLATE=/etc/rlinf/template/device-plugin.yaml
+    OUTPUT=/etc/rlinf/rendered/device-plugin.yaml
+    OVERRIDES=/etc/rlinf/template/node-overrides.yaml
+    cp "$TEMPLATE" "$OUTPUT"
+    if [ -s "$OVERRIDES" ]; then
+      NODE_CONFIG=$(yq ".\"$NODE_NAME\"" "$OVERRIDES" 2>/dev/null || echo "")
+      if [ -n "$NODE_CONFIG" ] && [ "$NODE_CONFIG" != "null" ]; then
+        echo "$NODE_CONFIG" > /tmp/node-config.yaml
+        yq eval-all 'select(fileIndex == 0) * select(fileIndex == 1)' "$OUTPUT" /tmp/node-config.yaml > /tmp/merged.yaml
+        cp /tmp/merged.yaml "$OUTPUT"
+      fi
+    fi

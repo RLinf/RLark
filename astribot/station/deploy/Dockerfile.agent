@@ -1,0 +1,15 @@
+# Build from the repository root.
+# The images it starts from and where Go modules come from, as a release's build names them (astribot/release/images: the
+# office registry's mirror/…, goproxy.cn).
+ARG GO_IMAGE=golang:1.26
+ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot
+FROM ${GO_IMAGE} AS build
+ARG GOPROXY
+WORKDIR /src
+COPY api/ ./api/
+COPY sdks/execution-go/ ./sdks/execution-go/
+COPY apps/rlark/ ./apps/rlark/
+RUN cd apps/rlark && GOWORK=off CGO_ENABLED=0 go build -trimpath -o /station-agent ./astribot/cmd/station-agent
+FROM ${RUNTIME_IMAGE}
+COPY --from=build /station-agent /usr/local/bin/station-agent
+ENTRYPOINT ["/usr/local/bin/station-agent"]

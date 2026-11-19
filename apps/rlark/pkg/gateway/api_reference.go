@@ -1,0 +1,209 @@
+package gateway
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+type localizedText struct {
+	ZH string `json:"zh"`
+	EN string `json:"en"`
+}
+
+type apiReferenceEndpoint struct {
+	Method      string         `json:"method"`
+	Path        string         `json:"path"`
+	Description localizedText  `json:"description"`
+	Example     map[string]any `json:"example"`
+}
+
+type apiReferenceSection struct {
+	ID          string                 `json:"id"`
+	Title       localizedText          `json:"title"`
+	Description localizedText          `json:"description"`
+	Endpoints   []apiReferenceEndpoint `json:"endpoints"`
+}
+
+type apiReferenceResponse struct {
+	Title       localizedText         `json:"title"`
+	Description localizedText         `json:"description"`
+	Sections    []apiReferenceSection `json:"sections"`
+}
+
+func (g *Gateway) handleAPIReference(c *gin.Context) {
+	c.JSON(http.StatusOK, apiReferenceResponse{
+		Title: localizedText{ZH: "接口参考", EN: "API Reference"},
+		Description: localizedText{
+			ZH: "Gateway 提供的认证、集群与工作负载资源 API。",
+			EN: "Authentication, cluster, and workload resource APIs exposed by Gateway.",
+		},
+		Sections: []apiReferenceSection{
+			{
+				ID:    "overview",
+				Title: localizedText{ZH: "概览", EN: "Overview"},
+				Description: localizedText{
+					ZH: "工作流、任务、子任务、节点和 Pod 使用 /api/v1/rlinf.io/v1alpha1 资源路径。带命名空间的资源需要提供 namespace 查询参数。",
+					EN: "Workflows, jobs, tasks, nodes, and pods use the /api/v1/rlinf.io/v1alpha1 resource path. Namespaced resources require the namespace query parameter.",
+				},
+			},
+			{
+				ID:    "authentication",
+				Title: localizedText{ZH: "认证", EN: "Authentication"},
+				Description: localizedText{
+					ZH: "调用登录接口获取 JWT。除登录接口外，请在请求中携带 Authorization: Bearer <token>。",
+					EN: "Obtain a JWT from the login endpoint. Send Authorization: Bearer <token> with every request except login.",
+				},
+				Endpoints: []apiReferenceEndpoint{
+					{
+						Method: "POST",
+						Path:   "/api/v1/auth/login",
+						Description: localizedText{
+							ZH: "使用用户名和密码登录",
+							EN: "Log in with a username and password",
+						},
+						Example: map[string]any{"ok": true, "role": "user", "token": "<token>", "expiresAt": "2026-09-23T18:00:00Z"},
+					},
+				},
+			},
+			{
+				ID:          "clusters",
+				Title:       localizedText{ZH: "集群", EN: "Clusters"},
+				Description: localizedText{ZH: "查询已连接到控制平面的数据面集群。", EN: "List data-plane clusters connected to the control plane."},
+				Endpoints: []apiReferenceEndpoint{
+					{
+						Method:      "GET",
+						Path:        "/api/v1/clusters",
+						Description: localizedText{ZH: "查询集群列表", EN: "List clusters"},
+						Example:     map[string]any{"data": []any{map[string]any{"id": "cluster-beijing", "name": "Beijing GPU Cluster", "status": "Ready"}}},
+					},
+					{
+						Method:      "GET",
+						Path:        "/api/v1/clusters/{cluster_id}",
+						Description: localizedText{ZH: "查询集群详情", EN: "Get cluster details"},
+						Example:     map[string]any{"data": map[string]any{"id": "cluster-beijing", "name": "Beijing GPU Cluster", "status": "Ready"}},
+					},
+					{
+						Method:      "POST",
+						Path:        "/api/v1/clusters/{cluster_id}/cordon",
+						Description: localizedText{ZH: "管理员暂停新任务调度到集群", EN: "Administrator: stop scheduling new tasks to a cluster"},
+						Example:     map[string]any{"success": true},
+					},
+					{
+						Method:      "POST",
+						Path:        "/api/v1/clusters/{cluster_id}/uncordon",
+						Description: localizedText{ZH: "管理员恢复集群的新任务调度", EN: "Administrator: resume scheduling new tasks to a cluster"},
+						Example:     map[string]any{"success": true},
+					},
+					{
+						Method:      "POST",
+						Path:        "/api/v1/clusters/{cluster_id}/drain",
+						Description: localizedText{ZH: "管理员排空集群中的 RLark Task", EN: "Administrator: drain RLark Tasks from a cluster"},
+						Example:     map[string]any{"success": true},
+					},
+					{
+						Method:      "POST",
+						Path:        "/api/v1/clusters/{cluster_id}/delist",
+						Description: localizedText{ZH: "管理员下架集群", EN: "Administrator: delist a cluster so it is not shown to users"},
+						Example:     map[string]any{"success": true},
+					},
+					{
+						Method:      "POST",
+						Path:        "/api/v1/clusters/{cluster_id}/delete",
+						Description: localizedText{ZH: "管理员永久删除集群及其数据面资源", EN: "Administrator: permanently delete a cluster and its data-plane resources"},
+						Example:     map[string]any{"success": true},
+					},
+					{
+						Method:      "POST",
+						Path:        "/api/v1/clusters/{cluster_id}/restore",
+						Description: localizedText{ZH: "管理员恢复已下架集群", EN: "Administrator: restore a hidden cluster"},
+						Example:     map[string]any{"success": true},
+					},
+				},
+			},
+			resourceReferenceSection("nodes", "节点", "Nodes", "查询集群中的节点资源；节点写操作仅允许管理员执行。", "List cluster nodes; node write operations require an administrator.", "Node", "NodeList"),
+			resourceReferenceSection("workflows", "工作流", "Workflows", "创建和管理由多个任务组成的工作流。", "Create and manage workflows composed of multiple jobs.", "Workflow", "WorkflowList"),
+			{
+				ID:          "jobs",
+				Title:       localizedText{ZH: "任务", EN: "Jobs"},
+				Description: localizedText{ZH: "创建、查询和控制任务，并读取任务运行日志。", EN: "Create, inspect, and control jobs, and read their runtime logs."},
+				Endpoints: append(resourceEndpoints("jobs", "任务", "job", "Job", "JobList"), apiReferenceEndpoint{
+					Method:      "GET",
+					Path:        "/api/v1/rlinf.io/v1alpha1/jobs/{name}/logs",
+					Description: localizedText{ZH: "查看任务日志", EN: "Get job logs"},
+					Example:     map[string]any{"source": "pod", "pods": []any{map[string]any{"taskName": "training-job-worker", "podName": "training-job-worker-0", "phase": "Running", "logs": "Worker started"}}},
+				}),
+			},
+			resourceReferenceSection("tasks", "子任务", "Tasks", "查询和管理任务生成的子任务。", "List and manage tasks generated by jobs.", "Task", "TaskList"),
+			{
+				ID: "registry-browse", Title: localizedText{ZH: "仓库镜像浏览", EN: "Registry image browsing"},
+				Description: localizedText{ZH: "管理员只读接口；需配置 Gateway 允许的 HTTPS 仓库及证书信任。支持 Basic 认证。", EN: "Administrator-only read access; configure the Gateway HTTPS registry allowlist and certificate trust. Basic authentication is supported."},
+				Endpoints: []apiReferenceEndpoint{
+					{Method: "GET", Path: "/api/v1/image-registries/{id}/repositories?last={cursor}", Description: localizedText{ZH: "分页查询仓库镜像", EN: "List repositories by page"}, Example: map[string]any{"items": []string{"example/image"}, "next": ""}},
+					{Method: "GET", Path: "/api/v1/image-registries/{id}/tags?repository={name}&last={cursor}", Description: localizedText{ZH: "分页查询标签", EN: "List tags by page"}, Example: map[string]any{"items": []string{"v1"}, "next": ""}},
+					{Method: "GET", Path: "/api/v1/image-registries/{id}/manifest?repository={name}&tag={tag}", Description: localizedText{ZH: "查询 manifest 摘要", EN: "Get the manifest digest"}, Example: map[string]any{"digest": "sha256:<digest>"}},
+				},
+			},
+			{
+				ID:          "pods",
+				Title:       localizedText{ZH: "Pod", EN: "Pods"},
+				Description: localizedText{ZH: "查询子任务对应的 Pod 运行实例和事件。", EN: "Inspect pod instances and events created for tasks."},
+				Endpoints: []apiReferenceEndpoint{
+					{
+						Method:      "GET",
+						Path:        "/api/v1/rlinf.io/v1alpha1/pods?namespace={namespace}",
+						Description: localizedText{ZH: "查询 Pod 列表", EN: "List pods"},
+						Example:     map[string]any{"apiVersion": "v1", "kind": "PodList", "items": []any{}},
+					},
+					{
+						Method:      "GET",
+						Path:        "/api/v1/rlinf.io/v1alpha1/pods/{name}/events?namespace={namespace}",
+						Description: localizedText{ZH: "查询 Pod 事件", EN: "List pod events"},
+						Example:     map[string]any{"events": []any{}},
+					},
+				},
+			},
+		},
+	})
+}
+
+func resourceReferenceSection(id, zhTitle, enTitle, zhDescription, enDescription, kind, listKind string) apiReferenceSection {
+	return apiReferenceSection{
+		ID:          id,
+		Title:       localizedText{ZH: zhTitle, EN: enTitle},
+		Description: localizedText{ZH: zhDescription, EN: enDescription},
+		Endpoints:   resourceEndpoints(id, zhTitle, stringsToLower(enTitle), kind, listKind),
+	}
+}
+
+func resourceEndpoints(resource, zhName, enName, kind, listKind string) []apiReferenceEndpoint {
+	path := "/api/v1/rlinf.io/v1alpha1/" + resource
+	query := ""
+	if resource == "nodes" || resource == "tasks" {
+		query = "?namespace={namespace}"
+	}
+	return []apiReferenceEndpoint{
+		{
+			Method:      "GET",
+			Path:        path + query,
+			Description: localizedText{ZH: "查询" + zhName + "列表", EN: "List " + enName},
+			Example:     map[string]any{"apiVersion": "rlinf.io/v1alpha1", "kind": listKind, "items": []any{}},
+		},
+		{
+			Method:      "POST",
+			Path:        path + query,
+			Description: localizedText{ZH: "创建" + zhName, EN: "Create " + enName},
+			Example:     map[string]any{"apiVersion": "rlinf.io/v1alpha1", "kind": kind, "metadata": map[string]any{"name": "example"}},
+		},
+	}
+}
+
+func stringsToLower(value string) string {
+	if value == "Nodes" {
+		return "nodes"
+	}
+	if value == "Workflows" {
+		return "workflows"
+	}
+	return "tasks"
+}

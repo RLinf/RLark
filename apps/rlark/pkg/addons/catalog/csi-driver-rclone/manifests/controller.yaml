@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: csi-driver-rclone-controller
+  namespace: rlark-system
+  labels:
+    app: csi-driver-rclone-controller
+spec:
+  replicas: {{ .Values.controllerReplicas }}
+  selector:
+    matchLabels:
+      app: csi-driver-rclone-controller
+  template:
+    metadata:
+      labels:
+        app: csi-driver-rclone-controller
+    spec:
+      serviceAccountName: csi-driver-rclone
+      {{- if .Values.controllerNodeSelector }}
+      nodeSelector:
+        {{- $parts := splitList "=" .Values.controllerNodeSelector }}
+        {{ index $parts 0 }}: "{{ index $parts 1 }}"
+      {{- end }}
+      priorityClassName: system-cluster-critical
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: CriticalAddonsOnly
+          operator: Exists
+          effect: NoSchedule
+        # A node under disk or memory pressure keeps the Pod (with its critical priority it is not evicted)
+        - {key: node.kubernetes.io/disk-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/memory-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/pid-pressure, operator: Exists, effect: NoSchedule}
+      containers:
+        - name: rclone
+          image: {{ .Values.rcloneImage }}
+          imagePullPolicy: Always
+          args:
+            - "-v={{ .Values.controllerLogLevel }}"
+            - "--nodeid=$(NODE_ID)"
+            - "--endpoint=$(CSI_ENDPOINT)"
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+        - name: csi-provisioner
+          image: {{ .Values.csiProvisionerImage }}
+          imagePullPolicy: Always
+          args:
+            - "-v={{ .Values.controllerLogLevel }}"
+            - "--csi-address=$(ADDRESS)"
+            - "--leader-election"
+            - "--leader-election-namespace=$(POD_NAMESPACE)"
+            - "--extra-create-metadata=true"
+            - "--timeout=1200s"
+            - "--retry-interval-max=30m"
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+        - name: liveness-probe
+          image: {{ .Values.livenessProbeImage }}
+          imagePullPolicy: Always
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--probe-timeout=3s"
+            - "--http-endpoint=localhost:29652"
+            - "--v={{ .Values.controllerLogLevel }}"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+      volumes:
+        - name: socket-dir
+          emptyDir: {}

@@ -1,0 +1,34 @@
+# The tuner, orin and clock containers publish their results on their own Node (labels, annotations) and record an
+# Orin's trusted host key, its replacement and a camera reset as Events; nothing else.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: s1u-robot
+  namespace: rlark-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: s1u-robot
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    # list: a robot's wave waits for the robots of the earlier waves (node_tuner.py gate). watch: the power container
+    # follows its own Node's claim (power.py watch).
+    verbs: [get, list, watch, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: s1u-robot
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: s1u-robot
+subjects:
+  - kind: ServiceAccount
+    name: s1u-robot
+    namespace: rlark-system

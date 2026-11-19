@@ -1,0 +1,264 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: nodeclasses.station.rlark.io
+spec:
+  group: station.rlark.io
+  names:
+    kind: NodeClass
+    listKind: NodeClassList
+    plural: nodeclasses
+    singular: nodeclass
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          NodeClass is everything RLark knows of one kind of machine: a robot model,
+          a GPU server. How one is recognised before it is a node, how it is reached,
+          where the accounts of the kind are kept, what its nodes are named and
+          register with. It is declared once for the whole management plane, so that
+          the hundredth machine of a kind comes in the way the first did.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              access:
+                description: Access is how RLark logs in to a machine of the class.
+                properties:
+                  entry:
+                    description: |-
+                      Entry is the device of the machine that stands on the site's network
+                      (a robot's Orin): the one a scan of the site sees.
+                    properties:
+                      password:
+                        description: Password is the password of User on the device.
+                        properties:
+                          key:
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                          secret:
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                        required:
+                        - key
+                        - secret
+                        type: object
+                      port:
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                      rotateHostKey:
+                        description: |-
+                          RotateHostKey gives the device SSH host keys of its own when its
+                          machine joins. From then on the factory's key is shown only by
+                          machines that have not joined.
+                        type: boolean
+                      serialFile:
+                        description: |-
+                          SerialFile is the file on the device that holds the machine's serial,
+                          its identity (a Jetson module's /proc/device-tree/serial-number). It is
+                          read on the device itself: a machine whose computer does not answer
+                          has its identity all the same.
+                        maxLength: 255
+                        pattern: ^/[A-Za-z0-9._/-]+$
+                        type: string
+                      user:
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                    required:
+                    - password
+                    - port
+                    - serialFile
+                    - user
+                    type: object
+                  node:
+                    description: |-
+                      Node is the computer that becomes the node (a robot's x86), dialed
+                      through Entry at the address it has on every machine of the class.
+                    properties:
+                      address:
+                        format: ipv4
+                        type: string
+                      password:
+                        description: |-
+                          Password is the password of User on the computer. Until it has been
+                          entered, the machines of the class are listed and nobody logs in to them.
+                        properties:
+                          key:
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                          secret:
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                        required:
+                        - key
+                        - secret
+                        type: object
+                      port:
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                      sudoPassword:
+                        description: |-
+                          SudoPassword is what the account's sudo asks for where that is another
+                          password than Password.
+                        properties:
+                          key:
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                          secret:
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                        required:
+                        - key
+                        - secret
+                        type: object
+                      user:
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                    required:
+                    - address
+                    - password
+                    - port
+                    - user
+                    type: object
+                required:
+                - entry
+                - node
+                type: object
+              addons:
+                description: |-
+                  Addons are the Addons, by the names of their Addon objects in the
+                  node's cluster, that run a pod on every node of the class (DaemonSets).
+                  A machine's join is done when each has a ready pod on its node.
+                items:
+                  type: string
+                maxItems: 16
+                type: array
+                x-kubernetes-list-type: set
+              discovery:
+                description: |-
+                  Discovery is how a machine of the class is recognised on a site's
+                  network before anybody has logged in to it.
+                properties:
+                  hostKeyFingerprints:
+                    description: |-
+                      HostKeyFingerprints are the SHA256 fingerprints of the ED25519 SSH host
+                      keys a machine of the class shows as it leaves the factory, one for every
+                      image the factory has used. A host that shows one is a machine of the
+                      class that has not joined; nothing else on the network is asked to
+                      authenticate anybody.
+                    items:
+                      pattern: ^SHA256:[A-Za-z0-9+/]{43}$
+                      type: string
+                    maxItems: 16
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: set
+                required:
+                - hostKeyFingerprints
+                type: object
+              labels:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Labels and Taints (key=value:effect) are what a node of the class
+                  registers with. A change of Labels reaches the nodes that have joined
+                  as far as the cluster agent carries management labels to the cluster
+                  (rlark.io/node-category, rlark.io/robot-* and the prefixes the agent
+                  is started with); a change of Taints reaches a node when it is
+                  installed anew.
+                maxProperties: 32
+                type: object
+              naming:
+                description: |-
+                  Naming is how a machine of the class that is admitted from the list of
+                  machines gets its node name. Without it such a machine cannot be.
+                properties:
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: Labels are labels whose values carry the same number,
+                      written the same way.
+                    maxProperties: 8
+                    type: object
+                  nodeName:
+                    description: |-
+                      NodeName is the node's name with one decimal verb for the number, as
+                      "s1u-%02d-x86".
+                    maxLength: 63
+                    pattern: ^[a-z0-9][-a-z0-9.]*%(0[1-9])?d([-a-z0-9.]*[a-z0-9])?$|^%(0[1-9])?d[-a-z0-9.]*[a-z0-9]$
+                    type: string
+                required:
+                - nodeName
+                type: object
+              taints:
+                items:
+                  maxLength: 317
+                  type: string
+                maxItems: 8
+                type: array
+              uplink:
+                description: Uplink is what lets a machine of the class out to its
+                  site.
+                properties:
+                  setup:
+                    description: |-
+                      Setup is what the entry device of a new machine runs once so that the
+                      machine's node can reach the site at all.
+                    properties:
+                      addon:
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                      path:
+                        description: Path is the file's path inside the Addon's package.
+                        maxLength: 255
+                        minLength: 1
+                        pattern: ^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$
+                        type: string
+                    required:
+                    - addon
+                    - path
+                    type: object
+                required:
+                - setup
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true

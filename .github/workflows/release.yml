@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # =============================================== build binaries ====================================================
+  build-binaries:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "apps/rlark/go.mod"
+          cache: true
+          cache-dependency-path: "apps/rlark/go.sum"
+
+      - name: Build binaries
+        working-directory: apps/rlark
+        run: |
+          echo "=== Building binaries ==="
+          echo "GOOS=${{ matrix.goos }}, GOARCH=${{ matrix.goarch }}, VERSION=${{ github.ref_name }}"
+          echo "Git ref: ${{ github.ref }}, SHA: ${{ github.sha }}"
+          VERSION=${{ github.ref_name }} GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} make build
+          echo "Build completed. Listing built binaries:"
+          ls -la bin/
+          echo "=== Creating archive ==="
+          mkdir -p ../../dist/
+          tar -czf ../../dist/rlark_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz -C bin .
+          echo "Archive created: $(ls -lh ../../dist/rlark_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz | awk '{print $5, $NF}')"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+
+  # =============================================== build & push docker images =========================================
+  build-push-images:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push rlark image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/rlark/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository }}/rlark:${{ github.ref_name }},ghcr.io/${{ github.repository }}/rlark:latest
+          platforms: linux/amd64,linux/arm64
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify rlark image metadata
+        run: |
+          echo "=== Verifying rlark image ==="
+          echo "Image: ghcr.io/${{ github.repository }}/rlark:${{ github.ref_name }}"
+          docker buildx imagetools inspect ghcr.io/${{ github.repository }}/rlark:${{ github.ref_name }} || echo "Image inspection skipped (not pulled)"
+
+      - name: Build and push rlark-ui image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/rlark-ui/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository }}/rlark-ui:${{ github.ref_name }},ghcr.io/${{ github.repository }}/rlark-ui:latest
+          platforms: linux/amd64,linux/arm64
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify rlark-ui image metadata
+        run: |
+          echo "=== Verifying rlark-ui image ==="
+          echo "Image: ghcr.io/${{ github.repository }}/rlark-ui:${{ github.ref_name }}"
+          docker buildx imagetools inspect ghcr.io/${{ github.repository }}/rlark-ui:${{ github.ref_name }} || echo "Image inspection skipped (not pulled)"
+
+      - name: Build and push embodied-runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/embodied-runtime/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository }}/embodied-runtime:${{ github.ref_name }},ghcr.io/${{ github.repository }}/embodied-runtime:latest
+          platforms: linux/amd64,linux/arm64
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify embodied-runtime image metadata
+        run: |
+          echo "=== Verifying embodied-runtime image ==="
+          echo "Image: ghcr.io/${{ github.repository }}/embodied-runtime:${{ github.ref_name }}"
+          docker buildx imagetools inspect ghcr.io/${{ github.repository }}/embodied-runtime:${{ github.ref_name }} || echo "Image inspection skipped (not pulled)"
+
+  # =============================================== create github release ==============================================
+  create-release:
+    needs: [build-binaries, build-push-images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: cd dist && sha256sum *.tar.gz > checksums.txt
+
+      - name: Generate CHANGELOG
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip all
+        env:
+          OUTPUT: dist/CHANGELOG.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: dist/*
+          body_path: dist/CHANGELOG.md
+          generate_release_notes: true

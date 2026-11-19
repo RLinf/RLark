@@ -1,0 +1,159 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ros2-controller-config
+  namespace: default
+  labels:
+    app: ros2-controller
+data:
+  ros2-controller.yaml: |
+    # ros2-controller configuration — macvlans, robot types, and robots.
+    # This file is mounted into the pod at /etc/rlinf/ros2-controller.yaml.
+
+    macvlans:
+      - host_nic: eno1
+        name: robot1-macvlan
+        ip: 172.16.0.101/24
+        # gateway: 172.16.0.1
+
+    types:
+      - type: franka
+        modes:
+          impedance:
+            package: moveit_servo
+            launch_file: servo.launch.py
+            passthrough_robot_args: true
+          joint:
+            package: moveit_servo
+            launch_file: joint_trajectory.launch.py
+            passthrough_robot_args: true
+
+    robots:
+      - id: franka-robot-1
+        type: franka
+        params:
+          robot_ip: 172.16.0.2
+        web_service: https://172.16.0.2/
+        domain_id: 5  # explicit ROS_DOMAIN_ID override (auto-assigned if 0)
+
+    allowed_launch_packages:
+      - moveit_servo
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ros2-controller-franka
+  namespace: default
+  labels:
+    app: ros2-controller
+  annotations:
+    description: "ROS 2 Controller for Franka robot — manages ros2 launch lifecycle"
+spec:
+  hostPID: true
+
+  priorityClassName: system-cluster-critical
+
+  initContainers:
+    - name: binary-init
+      image: rlinf/embodied-runtime:v0.1.0
+      imagePullPolicy: Always
+      command:
+        - sh
+        - -c
+        - |
+          set -e
+          cp /usr/local/bin/ros2-controller /opt/rlinf/bin/ros2-controller
+          cp /usr/local/bin/rosctr /opt/rlinf/bin/rosctr
+          cp /usr/local/bin/rosctr /host-bin/rosctr
+          echo "binaries deployed"
+      volumeMounts:
+        - name: ros-bin
+          mountPath: /opt/rlinf/bin
+        - name: rosctr-host-bin
+          mountPath: /host-bin
+
+  containers:
+    - name: ros2-controller
+      # ros2-base image has ROS 2 Humble + compiled workspace built in.
+      # The ros2-controller binary is provided via the binary-init emptyDir.
+      image: rlinf/ros2-base:v0.1.0
+      imagePullPolicy: Always
+
+      command:
+        - bash
+        - -c
+      args:
+        - |
+          source /opt/ros/humble/setup.bash
+          source /colcon_ws/install/setup.bash
+          /opt/rlinf/bin/ros2-controller \
+            --config=/etc/rlinf/ros2-controller.yaml \
+            --http-addr=:8080
+      env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        # RMW_IMPLEMENTATION selects the DDS implementation. Cyclone DDS is
+        # the default in the ros2-base image and is recommended for
+        # multi-robot / cross-subnet scenarios.
+        - name: RMW_IMPLEMENTATION
+          value: rmw_cyclonedds_cpp
+        # NOTE: ROS 2 DDS uses IP multicast for node discovery by default.
+        # The cluster's network layer (CNI, node switches) MUST support
+        # multicast routing for ROS 2 nodes in different pods / nodes to
+        # discover each other. If multicast is blocked (common in cloud
+        # CNIs), set CYCLONEDDS_URI to a unicast peer-list XML profile in
+        # each robot's mode-level env, or deploy a DDS Discovery Server.
+
+      securityContext:
+        privileged: true
+
+      volumeMounts:
+        - name: config
+          mountPath: /etc/rlinf
+          readOnly: true
+
+        - name: ros-bin
+          mountPath: /opt/rlinf/bin
+
+        - name: socket-dir
+          mountPath: /var/run/rlark
+
+      livenessProbe:
+        exec:
+          command: ["/opt/rlinf/bin/rosctr", "--socket-path=/var/run/rlark/ros2-ctrl.sock", "list"]
+        initialDelaySeconds: 10
+        periodSeconds: 15
+
+      readinessProbe:
+        exec:
+          command: ["/opt/rlinf/bin/rosctr", "--socket-path=/var/run/rlark/ros2-ctrl.sock", "list"]
+        initialDelaySeconds: 5
+        periodSeconds: 10
+
+  volumes:
+    - name: config
+      configMap:
+        name: ros2-controller-config
+
+    - name: ros-bin
+      emptyDir: {}
+
+    - name: rosctr-host-bin
+      hostPath:
+        path: /opt/rlinf/bin
+        type: DirectoryOrCreate
+
+    - name: socket-dir
+      hostPath:
+        path: /var/run/rlark
+        type: DirectoryOrCreate
+
+  nodeSelector:
+    kubernetes.io/hostname: your-node-name
+
+  tolerations:
+    - key: "rlinf.io/robot"
+      operator: "Exists"
+      effect: "NoSchedule"

@@ -1,0 +1,4 @@
+# The console is built inside the image; host build outputs never enter it.
+**/node_modules
+apps/rlark-ui/dist
+.git

@@ -1,0 +1,532 @@
+import type { NodeEventEntry } from "./types";
+import type { CRDVolume, CRDWorkflow } from "./crdModels";
+
+/**
+ * Mount kinds the create/clone form can express.
+ * `opaque` covers every other Kubernetes volume source (emptyDir, configMap,
+ * secret, projected, ...). Such volumes are preserved verbatim in `rawVolume`
+ * so a clone round-trip does not silently rewrite them.
+ */
+export type MountType = "host" | "storage" | "opaque";
+
+export type Phase =
+  | "Running"
+  | "Pending"
+  | "Succeeded"
+  | "Failed"
+  | "Stopped"
+  | "Stopping"
+  | "Deleting"
+  | "Unknown"
+  | "Online"
+  | "Offline"
+  | "Downgraded";
+
+export type ClusterType = "Cloud" | "Embodied";
+export type NodeKind = "CloudCompute" | "EmbodiedCompute" | "Robot";
+export type JobType = "RL" | "DataCollection" | "Evaluation" | "Custom";
+
+export interface Cluster {
+  id: string;
+  name: string;
+  type: ClusterType;
+  region: string;
+  location: string;
+  phase: Phase;
+  cloudNodes: number;
+  embodiedNodes: number;
+  robots: number;
+  gpuModels: string[];
+  robotModels: string[];
+  cpuUsage: number;
+  gpuUsage: number;
+  robotUsage: number;
+  runningJobs: number;
+  description: string;
+}
+
+export interface NodeItem {
+  id: string;
+  name: string;
+  cluster: string;
+  kind: NodeKind;
+  phase: Phase;
+  address: string;
+  model: string;
+  cpu: number;
+  memory: number;
+  gpu: string;
+  robotState?: string;
+  cameraUrl?: string;
+  telemetryUrl?: string;
+  controlUrl?: string;
+  battery?: number;
+  tasks: number;
+}
+
+export interface PullProgressEntry {
+  image: string;
+  downloaded: number;
+  total: number;
+  speed: number;
+  status: string;
+  message?: string;
+}
+
+export interface Worker {
+  id: string;
+  name: string;
+  jobId: string;
+  role: string;
+  node: string;
+  cluster?: string;
+  phase: Phase;
+  cpu: string;
+  memory: string;
+  gpu?: string;
+  webTerminalUrl?: string;
+  logs: string[];
+  // 任务状态消息（如 CrashLoopBackOff / ImagePullBackOff 等异常原因），
+  // 来源于 Task.status.message 或 Pod.status.message，仅在 worker 处于
+  // Failed 等异常状态时填充，供状态徽标 "i" tooltip 展示。
+  statusMessage?: string;
+  pullProgress?: PullProgressEntry[];
+  // 节点级 Warning 事件（DiskPressure 等），来源于 Node.status.events 或
+  // Task.status.events 聚合，仅在 worker 处于 Pending 时填充，供状态
+  // 徽标 "i" tooltip 展示。
+  events?: NodeEventEntry[];
+  // 已被后续进展取代的历史事件（如 Pod 绑定节点之前的 FailedScheduling）。
+  // 与 events 分开存放，tooltip 以"已恢复"的弱化样式单独分区展示，既不把
+  // 历史告警误报成当前原因，也不丢失排查线索。
+  resolvedEvents?: NodeEventEntry[];
+  // Task 名称，用于获取节点 RANK
+  taskName?: string;
+}
+
+// JobTag 表示任务标签，id 为前端生成的稳定标识（用于 React key），
+// key/value 为用户输入的实际标签内容（均不超过 10 字符）。
+export interface JobTag {
+  id: string;
+  key: string;
+  value: string;
+}
+
+export interface Job {
+  id: string;
+  name: string;
+  displayName: string;
+  type: JobType;
+  phase: Phase;
+  owner: string;
+  cluster: string;
+  target: string;
+  workers: number;
+  runningWorkers: number;
+  startedAt: string;
+  submittedAt: string;
+  stoppedAt: string;
+  roleCount: number;
+  duration: string;
+  progress: number;
+  defaultRoles: string[];
+  image: string;
+  command: string;
+  env: Array<{ key: string; value: string }>;
+  mounts: Array<{
+    type: MountType;
+    objectStorage: string;
+    mountPath: string;
+    hostPath: string;
+    rawVolume?: CRDVolume;
+  }>;
+  headerRole: string;
+  headerWorker: string;
+  sshAddress: string;
+  stopped?: boolean;
+  domain?: string;
+  tensorBoardDir?: string;
+  sshPublicKey?: string;
+  tags?: JobTag[];
+  resources: Array<{
+    role: string;
+    cluster: string;
+    nodeSelector: string;
+    replicas: number;
+    cpu: string;
+    memory: string;
+    gpu: string;
+    devices: Array<{ name: string; quantity: string }>;
+    image: string;
+    prepareScript: string;
+    env: Array<{ key: string; value: string }>;
+    mounts: Array<{
+      type: MountType;
+      objectStorage: string;
+      mountPath: string;
+      hostPath: string;
+      profile: string;
+      readOnly: boolean;
+      rawVolume?: CRDVolume;
+    }>;
+  }>;
+  taskStatuses: Array<{
+    name: string;
+    phase: string;
+    message: string;
+    observedNodes?: string[];
+  }>;
+}
+
+export interface PodInfo {
+  name: string;
+  namespace: string;
+  taskName: string;
+  taskNamespace: string;
+  podName: string;
+  podNamespace: string;
+  domain: string;
+  phase: string;
+  node: string;
+  ip: string;
+  message: string;
+  env?: Array<{ name: string; value: string }>;
+}
+
+export interface Domain {
+  id: string;
+  name: string;
+  cidr: string;
+  ipAllocations: Array<{ ip: string; job: string; task: string; pod: string }>;
+  createdAt: string;
+}
+
+/**
+ * Provider 取值由后端 `/api/v1/storage/storageclass/provider` 维护，
+ * 前端不再枚举：旧版枚举里混入了展示名和非 S3 的后端，提交后会被下发成
+ * rclone 无法识别的配置。
+ */
+export type StorageProvider = string;
+
+/** "s3" 为 S3 兼容对象存储；"smb" 为 SMB/CIFS 共享（NAS）。 */
+export type StorageType = "s3" | "smb" | "hostpath";
+
+export interface StorageClass {
+  id: string;
+  name: string;
+  namespace: string;
+  clusters: string[];
+  type: StorageType;
+  provider: StorageProvider;
+  endpoint: string;
+  mount_endpoint?: string;
+  /** A cluster's own mount endpoint, for example a cloud's internal address. */
+  cluster_mount_endpoints?: Record<string, string>;
+  prefix?: string;
+  vfs_cache_mode?: "off" | "writes";
+  mount_profile?: "default" | "read" | "archive";
+  mount_options?: string[];
+  /** Mount profile → StorageClass a volume choosing it gets. */
+  profiles?: Record<string, string>;
+  default_profile?: string;
+  /** Host-path storage: the directory the selected nodes have mounted. */
+  path?: string;
+  fs_type?: string;
+  effective_mount_options?: string[];
+  effective_backend_options?: Record<string, string>;
+  region: string;
+  bucket: string;
+  accessKeyId: string;
+  pathStyle: boolean;
+  host: string;
+  share: string;
+  subPath: string;
+  username: string;
+  domain: string;
+  description: string;
+  createdAt: string;
+}
+
+export interface StorageClassCreateRequest {
+  name: string;
+  namespace: string;
+  provider: StorageProvider;
+  endpoint: string;
+  mount_endpoint?: string;
+  prefix: string;
+  vfs_cache_mode: "off" | "writes";
+  mount_profile?: "default" | "read" | "archive";
+  mount_options?: string[];
+  region: string;
+  bucket: string;
+  access_key_id: string;
+  access_key_secret: string;
+  path_style: boolean;
+  type: StorageType;
+  host: string;
+  share: string;
+  sub_path: string;
+  username: string;
+  password: string;
+  domain: string;
+  description: string;
+}
+
+export const clusters: Cluster[] = [
+  {
+    id: "cloud-east-a",
+    name: "云训练集群 East-A",
+    type: "Cloud",
+    region: "华东 · cn-shanghai",
+    location: "上海",
+    phase: "Online",
+    cloudNodes: 42,
+    embodiedNodes: 0,
+    robots: 0,
+    gpuModels: ["NVIDIA H800", "NVIDIA A100"],
+    robotModels: [],
+    cpuUsage: 64,
+    gpuUsage: 78,
+    robotUsage: 0,
+    runningJobs: 7,
+    description: "承载强化学习训练和大规模 rollout 的主力云 GPU 集群。",
+  },
+  {
+    id: "cloud-north-b",
+    name: "云评测集群 North-B",
+    type: "Cloud",
+    region: "华北 · cn-beijing",
+    location: "北京",
+    phase: "Online",
+    cloudNodes: 18,
+    embodiedNodes: 0,
+    robots: 0,
+    gpuModels: ["NVIDIA L40S", "NVIDIA A10"],
+    robotModels: [],
+    cpuUsage: 42,
+    gpuUsage: 51,
+    robotUsage: 0,
+    runningJobs: 3,
+    description: "用于离线回归评测、仿真评测和批量指标聚合。",
+  },
+  {
+    id: "robot-lab-sh",
+    name: "上海具身实验集群",
+    type: "Embodied",
+    region: "上海机器人实验室",
+    location: "上海",
+    phase: "Online",
+    cloudNodes: 0,
+    embodiedNodes: 9,
+    robots: 26,
+    gpuModels: ["Jetson Orin", "RTX 4090 Edge"],
+    robotModels: ["Unitree G1", "Franka Panda", "AgileX Scout"],
+    cpuUsage: 55,
+    gpuUsage: 46,
+    robotUsage: 68,
+    runningJobs: 5,
+    description: "连接实验室内真机、边缘算力和传感器通道的具身实验集群。",
+  },
+  {
+    id: "robot-warehouse-hz",
+    name: "杭州仓储真机场",
+    type: "Embodied",
+    region: "杭州 · Warehouse A2",
+    location: "杭州",
+    phase: "Online",
+    cloudNodes: 0,
+    embodiedNodes: 6,
+    robots: 18,
+    gpuModels: ["Jetson AGX Orin"],
+    robotModels: ["Robodog OT-T12", "AMR Forklift"],
+    cpuUsage: 48,
+    gpuUsage: 39,
+    robotUsage: 72,
+    runningJobs: 2,
+    description: "面向仓储巡检、导航采集和 AMR 任务的现场真机场。",
+  },
+];
+
+export const storageClasses: StorageClass[] = [
+  {
+    id: "training-datasets",
+    name: "training-datasets",
+    namespace: "default",
+    clusters: ["cloud-east-a"],
+    type: "s3",
+    provider: "MinIO",
+    endpoint: "https://minio.mock.local",
+    region: "local",
+    bucket: "rlark-training",
+    accessKeyId: "mock-access-key",
+    pathStyle: true,
+    host: "",
+    share: "",
+    subPath: "",
+    username: "",
+    domain: "",
+    description: "用于训练数据集的 Mock 对象存储",
+    createdAt: "2026-08-01T08:00:00Z",
+  },
+  {
+    id: "evaluation-results",
+    name: "evaluation-results",
+    namespace: "default",
+    clusters: ["cloud-east-a"],
+    type: "s3",
+    provider: "AWS S3",
+    endpoint: "https://s3.mock.local",
+    region: "cn-east-1",
+    bucket: "rlark-evaluation",
+    accessKeyId: "mock-access-key",
+    pathStyle: false,
+    host: "",
+    share: "",
+    subPath: "",
+    username: "",
+    domain: "",
+    description: "用于评估产物的 Mock 对象存储",
+    createdAt: "2026-08-02T08:00:00Z",
+  },
+  {
+    id: "lab-nas",
+    name: "lab-nas",
+    namespace: "default",
+    clusters: ["cloud-east-a"],
+    type: "smb",
+    provider: "",
+    endpoint: "",
+    region: "",
+    bucket: "",
+    accessKeyId: "",
+    pathStyle: false,
+    host: "10.0.0.10",
+    share: "shared",
+    subPath: "datasets",
+    username: "mock-user",
+    domain: "",
+    description: "用于共享数据集的 Mock SMB 存储",
+    createdAt: "2026-08-03T08:00:00Z",
+  },
+];
+
+export const nodes: NodeItem[] = [
+  {
+    id: "gpu-cloud-01",
+    name: "gpu-cloud-01",
+    cluster: "云训练集群 East-A",
+    kind: "CloudCompute",
+    phase: "Online",
+    address: "10.20.0.11",
+    model: "H800 SXM · 8 GPU",
+    cpu: 62,
+    memory: 71,
+    gpu: "6 / 8",
+    tasks: 14,
+  },
+  {
+    id: "gpu-cloud-03",
+    name: "gpu-cloud-03",
+    cluster: "云训练集群 East-A",
+    kind: "CloudCompute",
+    phase: "Online",
+    address: "10.20.0.13",
+    model: "A100 80G · 8 GPU",
+    cpu: 78,
+    memory: 69,
+    gpu: "8 / 8",
+    tasks: 18,
+  },
+  {
+    id: "eval-l40s-07",
+    name: "eval-l40s-07",
+    cluster: "云评测集群 North-B",
+    kind: "CloudCompute",
+    phase: "Online",
+    address: "10.32.4.17",
+    model: "L40S · 4 GPU",
+    cpu: 44,
+    memory: 52,
+    gpu: "2 / 4",
+    tasks: 6,
+  },
+  {
+    id: "edge-orin-02",
+    name: "edge-orin-02",
+    cluster: "上海具身实验集群",
+    kind: "EmbodiedCompute",
+    phase: "Online",
+    address: "192.168.7.42",
+    model: "Jetson Orin",
+    cpu: 56,
+    memory: 61,
+    gpu: "1 / 1",
+    tasks: 4,
+  },
+  {
+    id: "robot-g1-12",
+    name: "robot-g1-12",
+    cluster: "上海具身实验集群",
+    kind: "Robot",
+    phase: "Online",
+    address: "192.168.7.112",
+    model: "Unitree G1",
+    cpu: 38,
+    memory: 45,
+    gpu: "0 / 1",
+    robotState: "执行抓取序列",
+    cameraUrl: "rtsp://192.168.7.112/front-camera",
+    telemetryUrl: "ws://192.168.7.112/telemetry",
+    controlUrl: "grpc://192.168.7.112:9090/control",
+    battery: 82,
+    tasks: 1,
+  },
+  {
+    id: "robot-dog-08",
+    name: "robot-dog-08",
+    cluster: "杭州仓储真机场",
+    kind: "Robot",
+    phase: "Online",
+    address: "172.18.4.88",
+    model: "Robodog OT-T12",
+    cpu: 41,
+    memory: 48,
+    gpu: "0 / 1",
+    robotState: "巡检中",
+    cameraUrl: "rtsp://172.18.4.88/inspection-cam",
+    telemetryUrl: "ws://172.18.4.88/state",
+    controlUrl: "grpc://172.18.4.88:9090/control",
+    battery: 67,
+    tasks: 1,
+  },
+  {
+    id: "robot-franka-03",
+    name: "robot-franka-03",
+    cluster: "上海具身实验集群",
+    kind: "Robot",
+    phase: "Offline",
+    address: "192.168.7.203",
+    model: "Franka Panda",
+    cpu: 0,
+    memory: 0,
+    gpu: "0 / 1",
+    robotState: "维护中",
+    cameraUrl: "rtsp://192.168.7.203/wrist-camera",
+    telemetryUrl: "ws://192.168.7.203/telemetry",
+    controlUrl: "grpc://192.168.7.203:9090/control",
+    battery: 0,
+    tasks: 0,
+  },
+];
+
+export const jobs: Job[] = [];
+
+export const workflowCRDs: CRDWorkflow[] = [];
+
+export const workers: Worker[] = [];
+
+export const activity: {
+  time: string;
+  type: string;
+  title: string;
+  meta: string;
+}[] = [];

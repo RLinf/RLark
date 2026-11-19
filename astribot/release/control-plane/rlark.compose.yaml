@@ -1,0 +1,105 @@
+# RLark 自己的控制面服务（server、controller-manager、gateway）和控制台 rlark-ui，从合并树同一个提交构建出的镜像起。
+# kcp、数据库和仓库不在这里，发布不动它们。
+#
+# 每个组件用自己在 kcp 里的身份（kcp 每次启动都换管理员令牌，组件不能拿它的拷贝）：
+#   ${R}/identity/<组件>/{kubeconfig,token}，由 rlarkadm 写出，管理员凭据只在这一刻读一次：
+#     rlarkadm identity issue --kcp-kubeconfig <kcp 本次启动写的 admin.kubeconfig> --kcp-server https://<组件到 kcp 的地址>:6443 \
+#       --output-dir ${R}/identity [--station-kubeconfig <Station 所在集群的 kubeconfig>]
+#   再执行一次只会补齐缺的，不换已发的令牌。轮换：rlarkadm identity rotate …（组件一分钟内读到新令牌，不用重启）。
+#
+# 这个文件和 env 文件都由发布写（`rlarkctl release apply`），机器上不手改：文件就是发布所出自的树里的这一份，
+# env 文件（没有任何密钥）是环境文件给的站点取值加上各服务的镜像：
+#   R                          组件身份、证书、数据库配置所在的目录（环境文件 controlPlane.variables）
+#   STATION_API_ADDRESS        网关到 Station API 的地址（同上）
+#   GATEWAY_TOKEN_TTL          网关签的登录令牌有效期（同上）
+#   STATION_API_BOOTSTRAP_URL  入网的机器到 Station API 的地址（环境文件 station.bootstrapURL）
+#   ADDONS                     运行时加载的 Addon 目录（环境文件 addonCatalog；每个 Addon 一个子目录：addon.yaml 和它的清单，放进去 5 秒内生效）
+#   RLARK_SERVER_IMAGE、RLARK_CONTROLLER_MANAGER_IMAGE、RLARK_GATEWAY_IMAGE、RLARK_UI_IMAGE  各服务在跑的镜像
+# 发布在 gateway 一步写这两个文件，各服务在自己那一步（gateway 先于各集群 agent，server 在它们之后，console 最后）
+# 镜像或定义（docker compose config --hash）变了才 `up -d --no-deps <服务>`；退回时按运行前的记录写回原来的两个文件。
+
+name: rlark
+
+x-rlark: &rlark
+  restart: unless-stopped
+  networks: [rlark]
+
+services:
+  rlark-server:
+    <<: *rlark
+    image: ${RLARK_SERVER_IMAGE:?the release's rlark-server}
+    container_name: rlark-server
+    command:
+      - /usr/local/bin/server
+      - --kubeconfig=/etc/rlark/kcp/kubeconfig
+      - --https-port=8443
+      - --ssh-port=2222
+      - --auto-sign-tls-ca-cert
+      - --tls-domains=localhost,rlark-server
+      - --db-config=/etc/rlark/db-config.yaml
+    ports: ["2222:2222", "8443:8443"]
+    volumes:
+      - ${R}/identity/rlark-server:/etc/rlark/kcp:ro
+      - ${R}/db-config.yaml:/etc/rlark/db-config.yaml:ro
+
+  rlark-controller-manager:
+    <<: *rlark
+    image: ${RLARK_CONTROLLER_MANAGER_IMAGE:?the release's rlark-controller-manager}
+    container_name: rlark-controller-manager
+    command:
+      - /usr/local/bin/controller-manager
+      - --kubeconfig=/etc/rlark/kcp/kubeconfig
+      - --server-address=https://rlark-server:8443
+      - --leader-election=false
+      - --metrics-bind-address=:0
+      - --health-probe-bind-address=:0
+      - --db-config=/etc/rlark/db-config.yaml
+    volumes:
+      - ${R}/identity/rlark-controller-manager:/etc/rlark/kcp:ro
+      - ${R}/db-config.yaml:/etc/rlark/db-config.yaml:ro
+    depends_on: [rlark-server]
+
+  rlark-gateway:
+    <<: *rlark
+    image: ${RLARK_GATEWAY_IMAGE:?the release's rlark-gateway}
+    container_name: rlark-gateway
+    user: "0"
+    environment:
+      SSL_CERT_FILE: /etc/rlark/registry-ca.crt
+      RLARK_ADDON_CATALOG_DIR: /etc/rlark/addons
+    command:
+      - /usr/local/bin/gateway
+      - --kubeconfig=/etc/rlark/kcp/kubeconfig
+      - --addr=:8080
+      - --server-address=https://rlark-server:8443
+      - --db-config=/etc/rlark/db-config.yaml
+      - --registry-browse-allowed-hosts=10.0.0.0/8,192.168.0.0/16
+      - --station-api-address=${STATION_API_ADDRESS:?the environment's controlPlane.variables}
+      - --station-api-ca-file=/etc/rlark/station-ca.crt
+      - --station-gateway-credential-file=/etc/rlark/station-service/token
+      - --station-api-bootstrap-url=${STATION_API_BOOTSTRAP_URL:?the environment's station.bootstrapURL}
+      - --jwt-token-ttl=${GATEWAY_TOKEN_TTL:?the environment's controlPlane.variables}
+    ports: ["19000:8080"]
+    volumes:
+      - ${R}/registry-ca.crt:/etc/rlark/registry-ca.crt:ro
+      - ${R}/station-network-summary/station-ca.crt:/etc/rlark/station-ca.crt:ro
+      - ${R}/station-service-credential:/etc/rlark/station-service:ro
+      - ${R}/identity/rlark-gateway:/etc/rlark/kcp:ro
+      - ${R}/db-config.yaml:/etc/rlark/db-config.yaml:ro
+      - ${ADDONS:?the environment's addonCatalog}:/etc/rlark/addons:ro
+    depends_on: [rlark-server]
+
+  # 控制台：同一个提交构建的 rlark-ui 镜像（astribot/release/rlark-ui.Dockerfile），/api/ 转给上面的网关。
+  # 用户打开 http://<控制面地址>/ ；登录态是网关签的令牌（有效期 GATEWAY_TOKEN_TTL），过期后界面回到登录页。
+  rlark-ui:
+    image: ${RLARK_UI_IMAGE:?the release's rlark-ui}
+    container_name: rlark-ui
+    restart: unless-stopped
+    networks: [rlark]
+    environment:
+      RLARK_GATEWAY_URL: http://rlark-gateway:8080
+    ports: ["80:80"]
+    depends_on: [rlark-gateway]
+
+networks:
+  rlark: {external: true, name: fleet-rlark-env_rlark-network}

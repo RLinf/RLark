@@ -1,0 +1,219 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: clusterprovisions.rlinf.io
+spec:
+  group: rlinf.io
+  names:
+    kind: ClusterProvision
+    listKind: ClusterProvisionList
+    plural: clusterprovisions
+    singular: clusterprovision
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.site
+      name: Site
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.stage
+      name: Stage
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ClusterProvision is the making of a cluster from a machine: the record the
+          console shows while the Gateway makes it and where it stopped. Its name is
+          the cluster's.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              ClusterProvisionSpec is what the cluster is made of: a new site, and its
+              first machine, which becomes the site's first hub and the cluster's control
+              plane. The machine's password is never part of it: it is given with the
+              request that starts or retries the making, and lives only while that runs.
+            properties:
+              machine:
+                description: Machine is how the Gateway reaches the first machine
+                  over SSH.
+                properties:
+                  address:
+                    description: Address is the machine's address as the management
+                      plane reaches it.
+                    minLength: 1
+                    type: string
+                  port:
+                    default: 22
+                    format: int32
+                    type: integer
+                  tunnelEndpoint:
+                    description: |-
+                      TunnelEndpoint is the IPv4 ip:port other sites dial for the machine's
+                      tunnel, and the machine listens on its port: Address, port 51820, for a
+                      machine with an address of its own; the address and port its cloud
+                      forwards to it for machines behind one address.
+                    maxLength: 21
+                    minLength: 9
+                    type: string
+                  user:
+                    minLength: 1
+                    type: string
+                required:
+                - address
+                - tunnelEndpoint
+                - user
+                type: object
+              requestedBy:
+                description: RequestedBy is the user who asked for the cluster.
+                type: string
+              site:
+                description: Site is the new site's name in the SiteNetwork.
+                minLength: 1
+                type: string
+            required:
+            - machine
+            - site
+            type: object
+          status:
+            description: ClusterProvisionStatus is how the making went, stage by stage.
+            properties:
+              facts:
+                description: |-
+                  ClusterProvisionFacts are what the stages found and chose; later stages,
+                  and a retry, go on from them.
+                properties:
+                  bundleSHA256:
+                    type: string
+                  cacheVolume:
+                    type: boolean
+                  controlPlaneName:
+                    type: string
+                  diskFree:
+                    type: string
+                  gpus:
+                    items:
+                      description: ClusterProvisionGPU is one model of GPU on the
+                        machine.
+                      properties:
+                        count:
+                          format: int32
+                          type: integer
+                        model:
+                          type: string
+                      required:
+                      - count
+                      - model
+                      type: object
+                    type: array
+                  kernel:
+                    type: string
+                  nodeName:
+                    type: string
+                  os:
+                    type: string
+                  podSubnet:
+                    type: string
+                  privateAddress:
+                    type: string
+                  publicKey:
+                    type: string
+                  registryCA:
+                    description: RegistryCA is the CA of the site registry the machine's
+                      installer trusts (PEM).
+                    type: string
+                  release:
+                    type: string
+                  routes:
+                    items:
+                      type: string
+                    type: array
+                  serviceSubnet:
+                    type: string
+                  tunnelAddress:
+                    type: string
+                type: object
+              hostKey:
+                description: |-
+                  HostKey is the SHA256 fingerprint the machine showed the first time;
+                  every later connection must show the same.
+                type: string
+              phase:
+                description: ClusterProvisionPhase is where the making of a cluster
+                  stands.
+                enum:
+                - Running
+                - Succeeded
+                - Failed
+                type: string
+              stage:
+                description: Stage is the stage running, or the one the making stopped
+                  at.
+                type: string
+              stages:
+                items:
+                  description: ClusterProvisionStage is one stage, as it went.
+                  properties:
+                    finishedAt:
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message is why the stage stopped, or the last line
+                        of its progress.
+                      type: string
+                    name:
+                      type: string
+                    readback:
+                      description: Readback is what was read back once the stage had
+                        done its work.
+                      type: string
+                    startedAt:
+                      format: date-time
+                      type: string
+                    state:
+                      description: ClusterProvisionStageState is where one stage stands.
+                      enum:
+                      - Pending
+                      - Running
+                      - Done
+                      - Skipped
+                      - Failed
+                      type: string
+                  required:
+                  - name
+                  - state
+                  type: object
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

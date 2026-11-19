@@ -1,0 +1,60 @@
+{{- $namespace := .Values.namespace -}}
+{{- $svc := include "embodied-runtime.webhookServiceName" . -}}
+{{- $cfg := include "embodied-runtime.webhookConfigName" . -}}
+{{- $port := .Values.webhook.port -}}
+{{- if include "embodied-runtime.webhookEnabled" . }}
+# Service exposing the mutating webhook to the API server. The device plugin's
+# --webhook-service-name is set to this name (see daemonset.yaml) so the
+# serving certificate's DNS SANs match the Service DNS the API server dials.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svc }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "embodied-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+spec:
+  selector:
+    app: {{ include "embodied-runtime.devicePluginName" . }}
+  ports:
+    - name: webhook
+      port: {{ $port }}
+      targetPort: {{ $port }}
+---
+# MutatingWebhookConfiguration with an EMPTY caBundle. The device plugin
+# auto-generates a self-signed CA on startup and patches this caBundle when it
+# is empty (see pkg/deviceplugin/webhook.go + pkg/mutatingwebhook). The
+# webhook matches CREATE/UPDATE on pods in all namespaces; the handler is a
+# no-op (Allowed, no patch) for pods that do not request the rlinf.io/device
+# resource, so coexisting workloads are unaffected.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ $cfg }}
+  labels:
+    {{- include "embodied-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+webhooks:
+  - name: devinit.webhook.rlark.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    matchPolicy: Equivalent
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    timeoutSeconds: 10
+    namespaceSelector: {} # all namespaces
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE", "UPDATE"]
+        scope: "*"
+    clientConfig:
+      service:
+        name: {{ $svc }}
+        namespace: {{ $namespace }}
+        path: {{ .Values.webhook.path }}
+        port: {{ $port }}
+      # caBundle is intentionally empty — the device plugin fills it.
+      caBundle: ""
+{{- end }}

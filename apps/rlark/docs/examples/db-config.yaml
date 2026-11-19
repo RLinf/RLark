@@ -1,0 +1,7 @@
+host: localhost
+port: 5432
+database: rlark
+user: postgres
+# IMPORTANT: Replace "postgres" with a strong password before deploying.
+password: postgres
+debug: true

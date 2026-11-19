@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin
+  namespace: rlark-system
+  labels:
+    app: nvidia-device-plugin
+spec:
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 100%
+  selector:
+    matchLabels:
+      app: nvidia-device-plugin
+  template:
+    metadata:
+      labels:
+        app: nvidia-device-plugin
+    spec:
+      # The sandbox's runtime is chosen when the Pod is made: nvidia, which exists once nvidia-runtime has run.
+      runtimeClassName: nvidia
+      priorityClassName: system-node-critical
+      nodeSelector:
+        {{ index (splitList "=" .Values.nodeSelector) 0 }}: {{ index (splitList "=" .Values.nodeSelector) 1 | printf "%q" }}
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: device-plugin
+          image: {{ .Values.devicePluginImage }}
+          imagePullPolicy: IfNotPresent
+          env:
+            # A GPU the driver cannot initialize leaves the plugin running, reporting the others.
+            - name: FAIL_ON_INIT_ERROR
+              value: "false"
+            # The GPUs a container is given go to the runtime as mounts, which only the plugin can ask for.
+            - name: DEVICE_LIST_STRATEGY
+              value: volume-mounts
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: all
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: utility
+          # Privileged: the runtime takes NVIDIA_VISIBLE_DEVICES from no other container.
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          volumeMounts:
+            - name: device-plugins
+              mountPath: /var/lib/kubelet/device-plugins
+      volumes:
+        - name: device-plugins
+          hostPath:
+            path: /var/lib/kubelet/device-plugins

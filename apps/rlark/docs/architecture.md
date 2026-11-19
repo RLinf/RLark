@@ -1,0 +1,362 @@
+# Technical Architecture
+
+## 1. Design Goals
+
+RLark is an embodied intelligence cloud-native management platform for cross-cluster, multi-runtime scenarios. Core design goals:
+
+1. **Cloud-to-Edge workload orchestration**: From cloud GPU training (RL/LLM) to edge deployment (robot arm, sensor, camera), unified declarative abstraction across the full embodied AI pipeline
+2. **Multi-runtime data plane**: Kubernetes provides unified management for cloud GPU clusters and edge devices, completing the path from cloud training and cross-cluster collaboration to embodied device deployment; Docker and Raw runtimes will extend coverage to additional lightweight edge scenarios
+3. **Cross-cluster resource pooling**: Unify GPU clusters and edge devices distributed across different regions into a single logical resource pool
+4. **Direct Pod-to-Pod network communication**: Embodied AI workloads require real-time communication between training actors and edge robots, requiring cross-cluster Pods to establish direct TCP connections
+5. **Security isolation**: Multi-tenant embodied AI tasks require network isolation — different teams/projects must not access each other's devices or data
+
+## 2. Overall Architecture
+
+RLark uses a **control plane—data plane** separation architecture. The control plane uses kcp as its Kubernetes-compatible API server, while Agents connect cloud GPU clusters and edge Kubernetes nodes through one management plane. The optional **embodied-runtime** Device Plugin runs on Kubernetes nodes equipped with robot (ROS 1/2) or camera hardware and exposes those devices as Kubernetes resources; future Docker and Raw data plane runtimes will extend coverage to additional lightweight edge environments.
+
+![System Architecture](images/architecture.svg)
+
+## 3. Control Plane Components
+
+### 3.1 Server
+
+Server is the core of the control plane, responsible for managing all Agent and external client connections.
+
+**Key Responsibilities**:
+
+| Function                | Implementation                                                                                | Key File                                                     |
+| ----------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Agent Tunnel Management | Reverse proxy based on remotedialer; Agent actively connects to Server via WebSocket          | [handle\_proxy.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/handle_proxy.go)         |
+| Certificate Signing     | X.509 and SSH certificate issuance/revocation, supporting agent/domain/ssh-guest roles        | [sign.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/sign.go)                          |
+| SSH Service             | Two-phase user SSH authentication (certificate + public key), direct-tcpip channel forwarding | [ssh\_server.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/ssh_server.go)             |
+| Peer Interconnection    | Server-to-Server P2P connection management                                                     | [peer\_manager.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/peer_manager.go)         |
+| K8s Proxy               | Forward K8s API requests to data plane clusters via Agent tunnels                             | [kube\_proxy.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/kube_proxy.go)             |
+| Pod Cache               | In-memory Pod cache based on Informer for fast SSH Pod lookup                                 | [caches/pod\_cache.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/server/caches/pod_cache.go) |
+
+**Agent Connection Lifecycle**:
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant S as Server
+
+    Note over A: Startup
+    A->>S: 1. Establish HTTPS WebSocket connection with client certificate
+    S->>S: 2. handleProxyConnect validates certificate
+    S->>S: 3. registerAgent() creates RBAC<br/>(ClusterRole + ClusterRoleBinding)
+    S->>S: 4. AgentBroadcaster broadcasts Agent presence
+    Note over A,S: 5. Tunnel established, control plane can access Agent local services
+```
+
+### 3.2 Gateway
+
+Gateway is the user-facing HTTP API gateway providing RESTful interfaces.
+
+**Key Responsibilities**:
+
+| Function               | Route                                                            | File                                                  |
+| ---------------------- | ---------------------------------------------------------------- | ----------------------------------------------------- |
+| CRD CRUD               | `GET/POST/PUT/PATCH/DELETE /api/v1/rlinf.io/v1alpha1/{resource}` | [router.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/router.go)              |
+| Certificate Management | `POST /api/v1/certificates/agent`                                | [cert\_handler.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/cert_handler.go) |
+| SSH Keys               | `GET/POST/DELETE /api/v1/ssh-user-keys`                          | [suk\_handler.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/suk_handler.go)   |
+| Pod Logs               | `GET /api/v1/.../jobs/:name/logs`                                | [job\_logs.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/job_logs.go)         |
+| Prometheus Metrics     | Middleware                                                       | [metrics.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/metrics.go)            |
+
+### 3.3 Controller-Manager
+
+Controller-Manager runs in the control plane, coordinating the lifecycle of high-level resources.
+
+**Controller List**:
+
+| Controller          | Responsibility                                                               | Key File                                           |
+| ------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------- |
+| Job Controller      | Split Job into Tasks, drive state machine (Pending→Running→Succeeded/Failed) | [job/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/job/)           |
+| Domain Controller   | Manage Domain CRD, allocate IP subnets, sign DomainPeer certificates         | [domain/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/domain/)     |
+| Task Controller     | Watch Task status, sync to corresponding Job                                 | [task/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/task/)         |
+| Node Controller     | Watch Node registration/offline events                                       | [node/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/node/)         |
+
+**Job State Machine**:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending : init
+    Pending --> Running : tasks-running
+    Running --> Failed : any-task-failed
+    Running --> Succeeded : all-tasks-succeeded
+    Failed --> [*]
+    Succeeded --> [*]
+```
+
+## 4. Data Plane Components
+
+### 4.1 Agent
+
+Agent is deployed in each data plane cluster with two operating modes:
+
+| Mode      | Component    | Responsibility                                                                                                                   |
+| --------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `cluster` | clusterAgent | Resource sync: Pull controllers (control plane CR → local k8s resources) + Push controllers (local k8s state → control plane CR) |
+| `node`    | nodeAgent    | Network routing: Runs NodeServer, handles cross-cluster Pod traffic forwarding; Image pre-pull: pre-pulls dispatched task images into the node container runtime (containerd/docker) |
+
+**clusterAgent Controllers**:
+
+```mermaid
+graph LR
+    subgraph mgmt["Control Plane (kcp)"]
+        task[Task CR]
+        node[Node CR]
+        pod[Pod CR]
+    end
+
+    subgraph local["Local Cluster (kind/k8s)"]
+        deploy[Deployment]
+        k8snode[K8s Node]
+        k8spod[K8s Pod]
+    end
+
+    task -->|Pull Controller| deploy
+    node -->|Push Controller| k8snode
+    pod -->|Push Controller| k8spod
+```
+
+**Pull Controller** (Task example):
+
+1. Watch control plane Task CR create/update/delete events (with finalizer protection)
+2. Decode the Task into an execution snapshot and select the Kubernetes Runtime plus the Ray-oriented Kubernetes Workload Adapter; the carrier declaration selects Deployment or StatefulSet
+3. Compile a declarative object plan whose Adapter selects ownership, lifecycle, owned fields, update mode, and a typed Runtime reconcile profile; ask the Adapter for bounded identity inventory, read that Runtime snapshot, and compute the required operations
+4. Execute ordered, idempotent Apply/Delete operations; a `Replace` object is UID-fenced and deleted before a later reconciliation recreates it, and running Tasks are reconciled again when their desired generation changes
+5. Apply Workload-owned Pod-template mutations such as Ray bootstrap during compilation, then resolve explicit Environment requirements and bind the cross-domain network sidecar only to the Adapter-authorized PodTemplate target
+6. For stop, restart, or deletion, use the Workload implementation frozen in the claim to derive identity inventory without recompiling the current Spec, and keep the finalizer until owned primary workloads are confirmed absent; for upgrade compatibility only, a deleting pre-freeze claim with both selector fields absent may decode and registration-check the selector from the still-finalized Task without compiling resources or persisting that selector; an undecodable claimed Task preserves its workload and waits for recovery
+
+**Push Controller**:
+
+1. Watch local K8s resource changes (Pod create/delete/status changes)
+2. Observe the changed workload root, its owned Pods, and Pod events without running a full desired-plan diff
+3. Sync workload state to the corresponding control plane Task and Pod CRs
+4. Periodically report Node info (addresses, capacity, GPU count)
+
+The in-process Kubernetes implementation is the only production workload path. Versioned Runtime Provider and Workload Adapter gRPC contracts exist for future external implementations, but the default Task controller does not select remote implementations. A selected Workload Adapter receives the complete Workload configuration and owns all Workload-specific optional features; there is no separate Workload Extension service. See [Runtime, Workload, and Environment Boundary](developer-guide/runtime-provider.md).
+
+### 4.2 Network Sidecar
+
+For a Task with a domain, the Workload Adapter declares a cross-domain Environment requirement and an exact PodTemplate target. A trusted Kubernetes Environment Handler always injects the sidecar as a restartable init container. During final Runtime lowering, Kubernetes preserves that representation when `KUBERNETES_SUPPORT_SIDECAR_FEATURE` is not `false`; when it is `false`, every restartable init container in an Adapter-declared Pod or PodTemplate unit is converted into a regular container. Missing trusted image configuration or conflicting container/volume declarations fail closed before Runtime effects.
+
+**Key File**: [sidecar/server.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/network/sidecar/server.go)
+
+**Dual Role**:
+
+```mermaid
+graph LR
+    subgraph outbound["Outbound"]
+        o1[Pod Process] --> o2[TUN Device] --> o3[gVisor Netstack] --> o4[Unix Socket] --> o5[NodeServer] --> o6[SSH Tunnel] --> o7[Target Pod]
+    end
+
+    subgraph inbound["Inbound"]
+        i1[Remote NodeServer] -->|TCP| i2[Proxy :5700] --> i3[Target Pod Process]
+    end
+```
+
+**Startup Process**:
+
+1. Obtain virtual IP and subnet prefix from NodeServer's `/get_ip` endpoint
+2. Start Proxy listener (`:5700`) to receive forwarded connections from other Pods
+3. Create TUN device + gVisor netstack to intercept Pod outbound traffic
+4. Send outbound traffic to NodeServer via Unix socket for routing
+
+### 4.3 NodeServer
+
+NodeServer runs on each node (managed by nodeAgent), handling node-level network routing.
+
+**Key File**: [nodeserver/server.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/network/nodeserver/server.go)
+
+**Core Functions**:
+
+- Accept Unix socket connections from Sidecar, parse target addresses
+- Call `ContainerNetworkAdapter` to locate target Pod across all DomainPeers
+- Same cluster: direct TCP connection to target Pod's Proxy
+- Cross-cluster: SSH tunnel through Server, then forward to target Agent's NodeServer
+
+### 4.4 ContainerNetworkAdapter
+
+**Key File**: [container/network.go](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/agent/container/network.go)
+
+**Routing Decision**:
+
+```go
+func (a *containerNetworkAdapter) GetContainerNetworkDial(...) (utils.Dial, error) {
+    // 1. Same cluster → direct TCP to target Pod's Proxy
+    if targetPod.GlobalNamespace == a.globalNamespace {
+        return dialer.DialContext(ctx, "tcp", net.JoinHostPort(targetPod.LocalIP, "5700"))
+    }
+    // 2. Cross-cluster → SSH tunnel
+    dialer := a.sshDialerManager.GetDialer(sshdialer.DomainInfo{
+        ID: domainID, SSHAddress: sshAddr, Certificate: cert, PrivateKey: key,
+    })
+    return dialer.DialContext(ctx, "tcp", target)
+}
+```
+
+### 4.5 SSH Dialer Manager
+
+**Key Package**: [network/sshdialer](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/network/sshdialer)
+
+`DialerManager` owns the connection pools and `GetDialer(DomainInfo)` returns a dialer bound to one Domain. Design highlights:
+
+- Each Domain establishes one shared, multiplexed SSH transport during recovery; concurrent callers wait for the same bounded handshake instead of creating a reconnect storm
+- New channels use the least-loaded healthy connection; idle physical connections are reclaimed by background GC
+- Caller cancellation only stops that caller from waiting and does not cancel or penalize the shared recovery attempt
+- Definite transport failures are closed immediately; channel-local timeouts stay isolated, while keepalive timeouts drain active channels before forced closure
+- Exponential backoff on reconnection failure (1s → 2s → 4s → ... → 30s)
+- SSH handshakes have a hard timeout, and manager shutdown cancels pending reconnects
+- Certificate, private-key, or endpoint changes advance a Domain generation and drain transports created from the old generation
+- Background GC closes idle or over-age connections and evicts inactive Domain entries (default 24 hour timeout)
+- Data-path activity timestamps are updated atomically and rate-limited to avoid a mutex on every read and write
+
+### 4.6 Embodied Runtime
+
+The **embodied-runtime** is centered on a node-level Device Plugin, typically deployed as a DaemonSet on each data plane node, for managing robot (ROS 1/2) and camera hardware. Camera, ROS 1, and ROS 2 controllers can independently run as local subprocesses, dedicated Pods, or remain disabled. It integrates with the Agent to expose physical devices as Kubernetes device resources (`rlinf.io/device`), allowing training Tasks to request robot arms and cameras just like GPU resources.
+
+**Key Files**: [apps/embodied-runtime/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/)
+
+**Component Overview**:
+
+| Component | Responsibility | Key File |
+|-----------|---------------|----------|
+| Device Plugin | Registers `rlinf.io/device` with kubelet; detects node-local hardware; injects sockets and CLI binaries into Task Pods | [plugin.go](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/pkg/deviceplugin/plugin.go) |
+| Mutating Webhook | Auto-injects `devinit` init container into Pods requesting `rlinf.io/device`; manages CA certificate and serving certificate | [webhook.go](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/pkg/deviceplugin/webhook.go) |
+| ros-controller | Manages ROS 1 (`roscore` + `roslaunch`) robot lifecycle; exposes gRPC API via Unix socket | [roscontroller/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/pkg/roscontroller/) |
+| ros2-controller | Manages ROS 2 robot lifecycle; exposes gRPC API via Unix socket | [ros2controller/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/pkg/ros2controller/) |
+| camera-controller | Manages camera (V4L2 / RTSP / RealSense) lifecycle; ffmpeg transcoding; exposes gRPC API via Unix socket | [cameracontroller/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/pkg/cameracontroller/) |
+| CLI (rosctr / camctr) | Command-line tools mounted into Task Pods for direct robot/camera control | [cmd/rosctr/](https://github.com/RLinf/RLark/tree/main/apps/embodied-runtime/cmd/rosctr/) |
+
+**Device Lifecycle**:
+
+1. Device Plugin detects hardware (V4L2 cameras, robot controllers) and registers them with kubelet
+2. Task Pod requests `rlinf.io/device` resources in its spec
+3. **Mutating Webhook** intercepts the Pod creation and auto-injects a `devinit` init container (requesting the same resource) that runs `devinit setup` to create macvlans in the Pod's network namespace
+4. On Allocate, Device Plugin injects Unix sockets and CLI binaries into the Pod
+5. The task container communicates with ros-controller / camera-controller via gRPC over Unix sockets
+6. On Pod termination, Device Plugin cleans up and returns the device to the pool
+
+## 5. Cross-Cluster Pod Network Data Flow
+
+Pod A (Cluster Beijing) accessing Pod B (Cluster Shanghai):
+
+```mermaid
+sequenceDiagram
+    participant PA as Pod A Process
+    participant SA as Sidecar A
+    participant NS as NodeServer A
+    participant CNA as ContainerNetworkAdapter
+    participant SD as SSH Dialer Manager
+    participant SRV as Server
+    participant NB as NodeServer B
+    participant SB as Sidecar Proxy B
+    participant PB as Pod B Process
+
+    PA->>SA: TCP → 10.0.0.5:8080 (Pod B virtual IP)
+    SA->>SA: TUN device intercepts
+    SA->>SA: gVisor netstack handles TCP SYN
+    SA->>NS: Unix socket
+    NS->>CNA: Look up target Pod location
+    CNA->>CNA: Check DomainPeer<br/>"10.0.0.5 → agent-shanghai"
+    alt Same cluster
+        CNA-->>NS: Direct TCP connection
+    else Cross-cluster
+        CNA->>SD: Establish SSH tunnel
+        SD->>SRV: SSH direct-tcpip channel
+        SRV->>SRV: Verify cert role: domain<br/>Permission check: checkHostInDomain()
+        SRV->>NS: Agent B tunnel
+    end
+    NS->>SB: TCP → 10.0.0.5:5700
+    SB->>PB: Connect real process 10.0.0.5:8080
+    Note over PA,PB: Bidirectional data forwarding (PipeConnections)
+```
+
+## 6. Security System
+
+### 6.1 Certificate Hierarchy
+
+```mermaid
+graph TD
+    ca[CA Root Certificate]
+    ca --> agent[Agent Certificate<br/>X.509<br/>Data Plane Access]
+    ca --> domain[Domain Certificate<br/>X.509<br/>Cross-Cluster Communication]
+    ca --> ssh[SSH-Guest Certificate<br/>SSH<br/>User SSH Login]
+```
+
+### 6.2 Permission Model
+
+| Certificate Role | Permissions                                                                 |
+| ---------------- | --------------------------------------------------------------------------- |
+| `agent`          | Connect to Server tunnel, proxy K8s API requests                            |
+| `domain`         | Access Pods in the same Domain, establish cross-cluster network connections |
+| `ssh-guest`      | SSH bastion access after user-key authentication; per-Pod authorization is not implemented |
+| `admin`          | Issue certificates and Kubernetes impersonation; Gateway revocation is not implemented |
+
+### 6.3 User SSH Login Flow
+
+```mermaid
+sequenceDiagram
+    participant Admin as Administrator
+    participant GW as Gateway
+    participant User as User
+    participant S as Server
+    participant DB as PostgreSQL
+    participant Agent as Agent
+
+    Admin->>GW: POST /api/v1/ssh-user-keys<br/>{user, public_key}
+    GW->>DB: Store public key
+
+    User->>S: ssh user@server -p 2222
+    S->>S: Phase 1: Certificate auth (CertChecker)
+    S->>S: Phase 2: UserKeyFallback
+    S->>DB: Query user's public keys
+    DB-->>S: Return public keys
+    S->>S: Match client public key → Auth success
+    S->>S: Issue temporary ssh-guest certificate
+
+    User->>S: ssh -L 8080:pod-name:8080<br/>(direct-tcpip channel)
+    S->>S: PodCache lookup for Pod's Agent
+    S->>Agent: Forward via tunnel to Pod
+```
+
+## 7. CRD Resource Model
+
+```mermaid
+flowchart LR
+    job["Job<br/><i>Cluster</i>"]
+    task["Task<br/><i>Namespaced</i>"]
+    node["Node<br/><i>Namespaced</i>"]
+    domain["Domain<br/><i>Cluster</i>"]
+    dp["DomainPeer<br/><i>Namespaced</i>"]
+
+    wf -->|"1:N"| job
+    job -->|"1:N"| task
+    task -->|"NodeSelector"| node
+    task -->|"belongs to"| domain
+    domain -->|"1:N"| dp
+```
+
+## 8. Key Design Decisions
+
+### 8.1 Why kcp instead of native k8s API Server?
+
+kcp is more lightweight than a native k8s API Server and can run independently without a full Kubernetes cluster, reducing the control plane's resource overhead and operational complexity. Additionally, kcp's native logical cluster concept aligns naturally with RLark's Domain concept, leaving room for future multi-tenant scenarios.
+
+### 8.2 Why SSH tunnels instead of VPN?
+
+VPN solutions require opening the underlying network, which is complex in heterogeneous cluster environments. SSH tunnel approach:
+
+- TCP-based, no network infrastructure changes needed
+- Fine-grained permission control via SSH certificates (one certificate per Domain)
+- Connection multiplexing (ssh.Client multiplexing) reduces handshake overhead
+- Native support for user authentication (SSH public key login)
+
+### 8.3 Why TUN + gVisor instead of iptables/CNI?
+
+iptables/CNI solutions require modifying node network configuration with high privilege requirements. TUN + gVisor approach:
+
+- Runs in userspace; creating TUN devices still requires privileged access
+- gVisor netstack supports the required network protocol handling
+- Can be injected as a Sidecar container, decoupled from business containers

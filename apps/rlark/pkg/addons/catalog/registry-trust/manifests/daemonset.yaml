@@ -1,0 +1,150 @@
+{{- $values := .Values }}
+{{- range $robot := splitList "," "false,true" }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: registry-trust{{ if eq $robot "true" }}-robot{{ end }}
+  namespace: rlark-system
+  labels:
+    app: registry-trust{{ if eq $robot "true" }}-robot{{ end }}
+spec:
+  # Each node's Pod only installs and then idles, so a node that cannot run it
+  # (out of disk, say) must not hold back the others.
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 100%
+  selector:
+    matchLabels:
+      app: registry-trust{{ if eq $robot "true" }}-robot{{ end }}
+  template:
+    metadata:
+      labels:
+        app: registry-trust{{ if eq $robot "true" }}-robot{{ end }}
+    spec:
+      serviceAccountName: registry-trust
+      hostPID: true
+      # Not evicted under disk pressure, so its image is not collected and pulled again from a slow registry.
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: rlark.io/node-category
+                    operator: {{ if eq $robot "true" }}In{{ else }}NotIn{{ end }}
+                    values: [robot]
+      terminationGracePeriodSeconds: 1
+      initContainers:
+        - name: install
+          image: {{ $values.image }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              # The runtime is the one this node's kubelet is configured with, read from
+              # the host's kubelet files, not from a process: a host may run more kubelets
+              # inside containers.
+              endpoint=$(sed -n 's/.*--container-runtime-endpoint=\([^ "]*\).*/\1/p' /host/var/lib/kubelet/kubeadm-flags.env 2>/dev/null | head -n 1)
+              [ -n "$endpoint" ] || endpoint=$(sed -n 's/^containerRuntimeEndpoint: *//p' /host/var/lib/kubelet/config.yaml 2>/dev/null | tr -d "\"'")
+              runtime=$(basename "$(dirname "${endpoint:-unix:///run/containerd/containerd.sock}")")
+              config=/host/etc/$runtime/config.toml
+              certs=$(sed -n "s/^ *config_path *= *[\"']\([^\"':]*\).*/\1/p" "$config" 2>/dev/null | grep . | head -n 1 || true)
+              certs=${certs:-/etc/$runtime/certs.d}
+              for host in $(echo "$HOSTS" | tr ',' ' '); do
+                mkdir -p "/host$certs/$host"
+                printf '%s\n' "$CA_CERT" > "/host$certs/$host/ca.crt"
+                {
+                  printf 'server = "https://%s"\n' "$host"
+                  for mirror in $(echo "$MIRRORS" | tr ',' ' '); do
+                    printf '\n[host."%s"]\n  capabilities = ["pull", "resolve"]\n' "$mirror"
+                  done
+                  # ca is relative to this directory: the same file holds for any runtime's certs.d, so the
+                  # installer can lay down exactly these bytes before the node joins
+                  printf '\n[host."https://%s"]\n  capabilities = ["pull", "resolve"]\n  ca = "ca.crt"\n' "$host"
+                } > "/host$certs/$host/hosts.toml"
+                echo "trusted $host in $certs"
+              done
+              # containerd 2.x pulls through its transfer service, which takes the registry
+              # config_path as one directory: a list there ('a:b', the 2.x default config)
+              # leaves certs.d unread. Such a config keeps its first directory and the
+              # runtime restarts once; running containers are not affected. Any other
+              # config is left alone. The node's annotation says what was done.
+              # What this node is asked for (a digest of the parameters) and whether it holds.
+              spec=$(printf '%s\n%s\n%s' "$HOSTS" "$MIRRORS" "$CA_CERT" | sha256sum | cut -c1-16)
+              state="applied $spec"
+              fix=""
+              old=$(sed -n "s/^ *config_path *= *[\"']\([^\"']*:[^\"']*\)[\"'].*/\1/p" "$config" 2>/dev/null | head -n 1)
+              if [ -n "$old" ] && grep -q "^ *use_local_image_pull *= *false" "$config"; then
+                stamp=$(date -u +%Y%m%dT%H%M%SZ)
+                if [ "$ROBOT" = true ]; then
+                  # A robot's runtime restarts only while no Station holds its device layer.
+                  # That check does not exist yet, so the change waits here.
+                  note="$stamp: registry config_path '$old' needs '$certs'; deferred on a robot node"
+                  state="deferred $spec: containerd config_path waits for a robot restart window"
+                else
+                  cp -p "$config" "$config.registry-trust.$stamp"
+                  sed -i "s#^\( *config_path *= *[\"']\)$old#\1$certs#" "$config"
+                  nsenter -t 1 -m -u -i -n -p -- systemctl restart "$runtime" ||
+                    { cp -p "$config.registry-trust.$stamp" "$config"; echo "cannot restart $runtime; its config is restored"; exit 1; }
+                  note="$stamp: registry config_path '$old' -> '$certs', $runtime restarted; was ${config#/host}.registry-trust.$stamp"
+                fi
+                echo "$note"
+                fix=$(printf ',"rlark.io/registry-trust-containerd":"%s"' "$note")
+              fi
+              echo "$state"
+              printf '{"metadata":{"annotations":{"rlark.io/registry-trust.spec":"%s","rlark.io/registry-trust.state":"%s"%s}}}\n' "$spec" "$state" "$fix" > /shared/node.json
+          env:
+            - name: ROBOT
+              value: "{{ $robot }}"
+            - name: HOSTS
+              value: "{{ $values.hosts }}"
+            - name: MIRRORS
+              value: "{{ $values.mirrors }}"
+            - name: CA_CERT
+              value: |
+{{ indent 16 $values.caCert }}
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: host-etc
+              mountPath: /host/etc
+            - name: kubelet
+              mountPath: /host/var/lib/kubelet
+              readOnly: true
+            - name: shared
+              mountPath: /shared
+        - name: annotate
+          image: {{ $values.kubectlImage }}
+          imagePullPolicy: IfNotPresent
+          args: [patch, node, $(NODE_NAME), --type=merge, --patch-file=/shared/node.json]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      containers:
+        - name: idle
+          image: {{ $values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, -c, "while :; do sleep 3600; done"]
+          resources:
+            requests:
+              cpu: 1m
+              memory: 8Mi
+      volumes:
+        - name: host-etc
+          hostPath:
+            path: /etc
+        - name: kubelet
+          hostPath:
+            path: /var/lib/kubelet
+        - name: shared
+          emptyDir: {}
+{{- end }}

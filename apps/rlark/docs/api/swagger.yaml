@@ -1,0 +1,1686 @@
+openapi: 3.0.3
+info:
+  title: RLark Gateway CRD API Subset
+  description: >-
+    A maintained subset of routes registered by the RLark Gateway, focused on CRD operations and selected supporting endpoints; this is not a complete Gateway specification. The Gateway login endpoint
+    does not issue a token or establish a session, and these routes currently
+    do not enforce the UI login result. Deploy the Gateway only on a trusted
+    network or behind an authenticated access-control layer. Domain resources
+    group virtual addresses and scope cross-cluster forwarding; they do not
+    isolate underlying infrastructure or ordinary Kubernetes networking. The
+    registered Gateway certificate-revocation route is not implemented and is
+    intentionally omitted from this specification.
+  version: v1alpha1
+
+servers:
+  - url: http://localhost:8080
+    description: Standalone Gateway default
+
+externalDocs:
+  description: API Reference and usage examples
+  url: ./reference/
+
+tags:
+  - name: Cluster
+    description: Registered data-plane cluster summaries and details
+  - name: Job
+    description: Cluster-scoped Job resources
+  - name: Node
+    description: Namespaced Node resources
+  - name: Task
+    description: Namespaced Task resources
+  - name: Image
+    description: Images referenced by Jobs and Tasks
+  - name: Observability
+    description: Gateway Prometheus metrics
+
+paths:
+  /api/v1/images:
+    get:
+      tags: [Image]
+      summary: List used images
+      description: Returns images referenced by current Jobs and Tasks, with usage counts and last-used timestamps.
+      operationId: listImages
+      responses:
+        '200':
+          description: Image usage records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageUsageList'
+
+  /metrics:
+    get:
+      tags: [Observability]
+      summary: Get Gateway metrics
+      description: Returns Gateway metrics in the Prometheus text exposition format.
+      operationId: readGatewayMetrics
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  # ─── Cluster Collection ──────────────────────────────────────────
+  /api/v1/clusters:
+    get:
+      tags: [Cluster]
+      summary: List clusters
+      description: Lists registered Cluster resources with aggregated Node counts.
+      operationId: listClusters
+      responses:
+        '200':
+          description: Cluster summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterInfoListResponse'
+        '500':
+          description: Failed to list Clusters or aggregate their Nodes
+
+  /api/v1/clusters/{cluster_id}:
+    get:
+      tags: [Cluster]
+      summary: Get cluster details
+      description: Returns a Cluster summary and all Nodes in its authoritative agent namespace.
+      operationId: getCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Cluster details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterDetailResponse'
+        '404':
+          description: Cluster not found
+        '500':
+          description: Failed to read the Cluster or list Nodes in its agent namespace
+
+  /api/v1/clusters/{cluster_id}/cordon:
+    post:
+      tags: [Cluster]
+      summary: Cordon a cluster
+      description: Administrator-only. Stops new task placement on the cluster.
+      operationId: cordonCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster cordoned}
+        '404': {description: Cluster not found}
+
+  /api/v1/clusters/{cluster_id}/uncordon:
+    post:
+      tags: [Cluster]
+      summary: Uncordon a cluster
+      description: Administrator-only. Resumes new task placement on the cluster. A delisted or draining cluster must be restored or finish draining first.
+      operationId: uncordonCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster uncordoned}
+        '404': {description: Cluster not found}
+        '409': {description: Cluster cannot be uncordoned in its current lifecycle state}
+
+  /api/v1/clusters/{cluster_id}/drain:
+    post:
+      tags: [Cluster]
+      summary: Drain a cluster
+      description: Administrator-only. Stops RLark Tasks in the cluster while the desired draining state remains enabled.
+      operationId: drainCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster drain requested}
+        '404': {description: Cluster not found}
+
+  /api/v1/clusters/{cluster_id}/undrain:
+    post:
+      tags: [Cluster]
+      summary: Cancel cluster drain
+      description: Administrator-only. Cancels draining and restores the cluster's pre-drain cordon state.
+      operationId: undrainCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster drain cancelled}
+        '404': {description: Cluster not found}
+        '409': {description: Delisted clusters must be restored before their drain can be cancelled}
+
+  /api/v1/clusters/{cluster_id}/delist:
+    post:
+      tags: [Cluster]
+      summary: Delist a cluster
+      description: Administrator-only. Stops showing the cluster and its Nodes to users. The cluster can be restored.
+      operationId: delistCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster delisted}
+        '404': {description: Cluster not found}
+        '409': {description: Cluster must finish draining before it can be delisted}
+
+  /api/v1/clusters/{cluster_id}/delete:
+    post:
+      tags: [Cluster]
+      summary: Delete a cluster
+      description: Administrator-only. Permanently deletes the Cluster resource. The Cluster controller cleans up owned data-plane resources before final deletion.
+      operationId: deleteCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster deletion requested}
+        '404': {description: Cluster not found}
+
+  /api/v1/clusters/{cluster_id}/restore:
+    post:
+      tags: [Cluster]
+      summary: Restore a cluster
+      description: Administrator-only. Makes a previously hidden cluster visible again.
+      operationId: restoreCluster
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Cluster restored}
+        '404': {description: Cluster not found}
+
+  # ─── Job Collection ───────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/jobs:
+    get:
+      tags: [Job]
+      summary: List jobs
+      description: List jobs resources.
+      operationId: listJob
+      parameters:
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/continue'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fieldSelector'
+        - $ref: '#/components/parameters/labelSelector'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobList'
+
+    post:
+      tags: [Job]
+      summary: Create a Job
+      description: Create a Job resource.
+      operationId: createJob
+      parameters:
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/dryRun'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Job'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+
+  # ─── Job Named ────────────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/jobs/{name}:
+    get:
+      tags: [Job]
+      summary: Get a Job
+      description: Get a Job resource.
+      operationId: readJob
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Not Found
+
+    put:
+      tags: [Job]
+      summary: Replace a Job
+      description: Replace a Job resource.
+      operationId: replaceJob
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Job'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Not Found
+
+    patch:
+      tags: [Job]
+      summary: Patch a Job
+      description: Patch a Job resource.
+      operationId: patchJob
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+        - $ref: '#/components/parameters/force'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Job'
+          application/strategic-merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Job'
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Job'
+          application/json-patch+json:
+            schema:
+              $ref: '#/components/schemas/JSONPatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Not Found
+
+    delete:
+      tags: [Job]
+      summary: Delete a Job
+      description: Delete a Job resource.
+      operationId: deleteJob
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '404':
+          description: Not Found
+
+  # ─── Job Start ───────────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/jobs/{name}/start:
+    post:
+      tags: [Job]
+      summary: Start a Job
+      description: >-
+        Unified start endpoint. If the Job is active (KCP has the CR), patches
+        spec.suspended=false directly. If archived (KCP CR was removed after stop),
+        restores the Job from the persistence backend and creates a new CR.
+      operationId: startJob
+      parameters:
+        - $ref: '#/components/parameters/name'
+      responses:
+        '200':
+          description: Started Job (patched or restored)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Job not found or not archived
+        '503':
+          description: Persistence backend not configured
+
+  # ─── Job Logs ────────────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs:
+    get:
+      tags: [Job]
+      summary: Get Job logs
+      description: >-
+        Queries the configured backend when from is supplied. If no backend is
+        configured, no from value is supplied, or the backend query fails, the
+        handler falls back to current Pod logs.
+      operationId: readJobLogs
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/logFrom'
+        - $ref: '#/components/parameters/logTo'
+        - $ref: '#/components/parameters/logTask'
+        - $ref: '#/components/parameters/logPod'
+        - name: query
+          in: query
+          description: Raw backend-specific log query.
+          schema: {type: string}
+        - name: cursor
+          in: query
+          description: Backend pagination cursor returned as nextCursor.
+          schema: {type: string}
+        - name: limit
+          in: query
+          description: >-
+            Maximum number of backend log entries to return. Must be a positive
+            integer no greater than 1000.
+          schema: {type: integer, format: int32, default: 99, minimum: 1, maximum: 1000}
+        - name: order
+          in: query
+          description: Use asc for ascending backend results; all other values are descending.
+          schema: {type: string, default: desc}
+      responses:
+        '200':
+          description: Backend log entries or Pod-log fallback
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/BackendLogResponse'
+                  - $ref: '#/components/schemas/PodLogResponse'
+        '400':
+          description: A query parameter is malformed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Failed to list Tasks for the Pod fallback
+
+  /api/v1/rlinf.io/v1alpha1/jobs/{name}/logs/label-values:
+    get:
+      tags: [Job]
+      summary: List Job log label values
+      description: Returns unique values for a backend log label; label defaults to pod. Returns an empty values array when no backend is configured.
+      operationId: listJobLogLabelValues
+      parameters:
+        - $ref: '#/components/parameters/name'
+        - name: label
+          in: query
+          schema: {type: string, default: pod}
+        - $ref: '#/components/parameters/logFrom'
+        - $ref: '#/components/parameters/logTo'
+        - $ref: '#/components/parameters/logTask'
+        - $ref: '#/components/parameters/logPod'
+      responses:
+        '200':
+          description: Unique label values
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogLabelValuesResponse'
+        '500':
+          description: Log backend query failed
+
+  # ─── Node Collection ─────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/nodes:
+    get:
+      tags: [Node]
+      summary: List nodes
+      description: List nodes resources.
+      operationId: listNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/continue'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fieldSelector'
+        - $ref: '#/components/parameters/labelSelector'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeList'
+
+    post:
+      tags: [Node]
+      summary: Create a Node
+      description: Create a Node resource.
+      operationId: createNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/dryRun'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Node'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+
+  # ─── Node Named ──────────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}:
+    get:
+      tags: [Node]
+      summary: Get a Node
+      description: Get a Node resource.
+      operationId: readNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '404':
+          description: Not Found
+
+    put:
+      tags: [Node]
+      summary: Replace a Node
+      description: Replace a Node resource.
+      operationId: replaceNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Node'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '404':
+          description: Not Found
+
+    patch:
+      tags: [Node]
+      summary: Patch a Node
+      description: Patch a Node resource.
+      operationId: patchNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+        - $ref: '#/components/parameters/force'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Node'
+          application/strategic-merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Node'
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Node'
+          application/json-patch+json:
+            schema:
+              $ref: '#/components/schemas/JSONPatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '404':
+          description: Not Found
+
+    delete:
+      tags: [Node]
+      summary: Delete a Node
+      description: Delete a Node resource.
+      operationId: deleteNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '404':
+          description: Not Found
+
+  # ─── Task Collection ─────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/tasks:
+    get:
+      tags: [Task]
+      summary: List tasks
+      description: List tasks resources.
+      operationId: listTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/continue'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/fieldSelector'
+        - $ref: '#/components/parameters/labelSelector'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskList'
+
+    post:
+      tags: [Task]
+      summary: Create a Task
+      description: Create a Task resource.
+      operationId: createTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/dryRun'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+
+  # ─── Task Named ──────────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/tasks/{name}:
+    get:
+      tags: [Task]
+      summary: Get a Task
+      description: Get a Task resource.
+      operationId: readTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          description: Not Found
+
+    put:
+      tags: [Task]
+      summary: Replace a Task
+      description: Replace a Task resource.
+      operationId: replaceTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          description: Not Found
+
+    patch:
+      tags: [Task]
+      summary: Patch a Task
+      description: Patch a Task resource.
+      operationId: patchTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+        - $ref: '#/components/parameters/fieldManager'
+        - $ref: '#/components/parameters/fieldValidation'
+        - $ref: '#/components/parameters/force'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/strategic-merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/json-patch+json:
+            schema:
+              $ref: '#/components/schemas/JSONPatch'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          description: Not Found
+
+    delete:
+      tags: [Task]
+      summary: Delete a Task
+      description: Delete a Task resource.
+      operationId: deleteTask
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - $ref: '#/components/parameters/pretty'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '404':
+          description: Not Found
+
+components:
+  parameters:
+    name:
+      name: name
+      in: path
+      required: true
+      description: Name of the resource
+      schema:
+        type: string
+
+    namespace:
+      name: namespace
+      in: query
+      description: Namespace of the resource (required for namespaced resources)
+      schema:
+        type: string
+
+    pretty:
+      name: pretty
+      in: query
+      description: If 'true', then the output is pretty printed.
+      schema:
+        type: string
+
+    continue:
+      name: continue
+      in: query
+      description: The continue option should be set when retrieving more results from the server.
+      schema:
+        type: string
+
+    limit:
+      name: limit
+      in: query
+      description: >-
+        Maximum number of responses to return for a list call. Must be a
+        positive integer no greater than 500; a value outside that range is
+        rejected with 400 rather than silently ignored.
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 500
+
+    fieldSelector:
+      name: fieldSelector
+      in: query
+      description: A selector to restrict the list of returned objects by their fields.
+      schema:
+        type: string
+
+    labelSelector:
+      name: labelSelector
+      in: query
+      description: A selector to restrict the list of returned objects by their labels.
+      schema:
+        type: string
+
+    dryRun:
+      name: dryRun
+      in: query
+      description: When present, indicates that modifications should not be persisted.
+      schema:
+        type: string
+        enum:
+          - All
+
+    fieldManager:
+      name: fieldManager
+      in: query
+      description: fieldManager is a name associated with the actor or entity that is making these changes.
+      schema:
+        type: string
+
+    fieldValidation:
+      name: fieldValidation
+      in: query
+      description: fieldValidation instructs the server on how to handle objects in the request that contain unknown or duplicate fields.
+      schema:
+        type: string
+        enum:
+          - Ignore
+          - Warn
+          - Strict
+
+    force:
+      name: force
+      in: query
+      description: Force is going to force the apply requests through.
+      schema:
+        type: boolean
+
+    logFrom:
+      name: from
+      in: query
+      description: RFC 3339 start time. Its presence enables a configured backend query.
+      schema:
+        type: string
+        format: date-time
+
+    logTo:
+      name: to
+      in: query
+      description: RFC 3339 end time; the backend query defaults to the current time when omitted.
+      schema:
+        type: string
+        format: date-time
+
+    logTask:
+      name: task
+      in: query
+      description: Filter backend logs or label values by task label.
+      schema:
+        type: string
+
+    logPod:
+      name: pod
+      in: query
+      description: Filter backend logs or label values by pod label.
+      schema:
+        type: string
+
+  schemas:
+    LogEntry:
+      type: object
+      additionalProperties: true
+      description: A backend-specific structured log entry.
+
+    BackendLogResponse:
+      type: object
+      required: [source, entries, hasMore, nextCursor]
+      properties:
+        source:
+          type: string
+          enum: [backend]
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogEntry'
+        hasMore:
+          type: boolean
+        nextCursor:
+          type: string
+
+    PodLogInfo:
+      type: object
+      required: [taskName, podName, phase, node, logs]
+      properties:
+        taskName:
+          type: string
+        podName:
+          type: string
+        phase:
+          type: string
+        node:
+          type: string
+        logs:
+          type: string
+
+    PodLogResponse:
+      type: object
+      required: [source, pods]
+      properties:
+        source:
+          type: string
+          enum: [pod]
+        pods:
+          type: array
+          items:
+            $ref: '#/components/schemas/PodLogInfo'
+
+    LogLabelValuesResponse:
+      type: object
+      required: [values]
+      properties:
+        values:
+          type: array
+          items:
+            type: string
+
+    ImageUsage:
+      type: object
+      required: [image, useCount, lastUsedAt]
+      properties:
+        image:
+          type: string
+        useCount:
+          type: integer
+          format: int32
+        lastUsedAt:
+          type: string
+          format: date-time
+    ImageUsageList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImageUsage'
+
+    # ─── Common Kubernetes Schemas ──────────────────────────────────
+    ObjectMeta:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Name of the resource.
+        generateName:
+          type: string
+          description: GenerateName is an optional prefix used to generate a unique name.
+        namespace:
+          type: string
+          description: Namespace of the resource.
+        selfLink:
+          type: string
+        uid:
+          type: string
+          description: UID is the unique in time and space value for this object.
+        resourceVersion:
+          type: string
+          description: An opaque value that represents the internal version of this object.
+        generation:
+          type: integer
+          format: int64
+          description: A sequence number representing a specific generation of the desired state.
+        creationTimestamp:
+          type: string
+          format: date-time
+          description: CreationTimestamp is a timestamp representing the server time when this object was created.
+        deletionTimestamp:
+          type: string
+          format: date-time
+        deletionGracePeriodSeconds:
+          type: integer
+          format: int64
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          description: Map of string keys and values that can be used to organize and categorize objects.
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+          description: Annotations is an unstructured key value map stored with a resource.
+        ownerReferences:
+          type: array
+          items:
+            $ref: '#/components/schemas/OwnerReference'
+        finalizers:
+          type: array
+          items:
+            type: string
+        managedFields:
+          type: array
+          items:
+            type: object
+
+    OwnerReference:
+      type: object
+      required:
+        - apiVersion
+        - kind
+        - name
+        - uid
+      properties:
+        apiVersion:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+        uid:
+          type: string
+        controller:
+          type: boolean
+        blockOwnerDeletion:
+          type: boolean
+
+    TypeMeta:
+      type: object
+      properties:
+        apiVersion:
+          type: string
+          description: APIVersion defines the versioned schema of this representation of an object.
+        kind:
+          type: string
+          description: Kind is a string value representing the REST resource this object represents.
+
+    ClusterInfo:
+      type: object
+      required: [id, name, type, region, location, phase, totalNodes, onlineNodes, offlineNodes, cloudNodes, embodiedNodes, robots, gpuModels, robotModels, cpuUsage, gpuUsage, robotUsage, runningJobs, description]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        type: {type: string}
+        region: {type: string}
+        location: {type: string}
+        phase: {type: string}
+        totalNodes: {type: integer}
+        onlineNodes: {type: integer}
+        offlineNodes: {type: integer}
+        cloudNodes: {type: integer}
+        embodiedNodes: {type: integer}
+        robots: {type: integer}
+        gpuModels:
+          type: array
+          items: {type: string}
+        robotModels:
+          type: array
+          items: {type: string}
+        cpuUsage: {type: integer}
+        gpuUsage: {type: integer}
+        robotUsage: {type: integer}
+        runningJobs: {type: integer}
+        description: {type: string}
+
+    ClusterInfoListResponse:
+      type: object
+      required: [data, success]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClusterInfo'
+        success: {type: boolean}
+
+    ClusterDetail:
+      allOf:
+        - $ref: '#/components/schemas/ClusterInfo'
+        - type: object
+          required: [nodes]
+          properties:
+            nodes:
+              type: array
+              items:
+                $ref: '#/components/schemas/Node'
+
+    ClusterDetailResponse:
+      type: object
+      required: [data, success]
+      properties:
+        data:
+          $ref: '#/components/schemas/ClusterDetail'
+        success: {type: boolean}
+
+    ListPagination:
+      type: object
+      description: >-
+        Pagination fields shared by every list endpoint, so that a client reads
+        the same contract no matter which backend served the request.
+
+        Two backends can answer a list request. The Kubernetes path returns the
+        apiVersion, kind and metadata fields and carries its own opaque continue
+        token inside metadata; that token is only valid for a direct Kubernetes
+        list and must not be treated as an archive cursor. The archive path
+        (database-backed, enabled when persistence is configured) omits
+        apiVersion, kind and metadata and paginates with limit and offset
+        instead.
+      properties:
+        limit:
+          type: integer
+          description: >-
+            The page size that was applied. A request that omits limit still
+            gets the bounded default of 500, so this field is never 0.
+        offset:
+          type: integer
+          description: >-
+            The applied offset. Only reported by the archive path; the
+            Kubernetes path has no offset semantics and omits this field.
+        total:
+          type: integer
+          description: >-
+            Total number of matching items. A value of -1 means the total is
+            unknown, including for aggregated Node lists that combine independently
+            paginated namespaces.
+        hasMore:
+          type: boolean
+          description: Whether more items exist beyond the returned page.
+
+    ListMeta:
+      type: object
+      properties:
+        selfLink:
+          type: string
+        resourceVersion:
+          type: string
+        continue:
+          type: string
+          description: continue may be set if the resource set ran out of items.
+        remainingItemCount:
+          type: integer
+          format: int64
+
+    Condition:
+      type: object
+      description: Condition contains details for one aspect of the current state of this API Resource.
+      required:
+        - lastTransitionTime
+        - message
+        - reason
+        - status
+        - type
+      properties:
+        lastTransitionTime:
+          type: string
+          format: date-time
+          description: The last time the condition transitioned from one status to another.
+        message:
+          type: string
+          description: A human readable message indicating details about the transition.
+        observedGeneration:
+          type: integer
+          format: int64
+          description: The .metadata.generation that the condition was set based upon.
+        reason:
+          type: string
+          description: A programmatic identifier indicating the reason for the condition's last transition.
+        status:
+          type: string
+          enum:
+            - "True"
+            - "False"
+            - Unknown
+          description: Status of the condition, one of True, False, Unknown.
+        type:
+          type: string
+          description: Type of condition in CamelCase or in foo.example.com/CamelCase.
+
+    ErrorResponse:
+      type: object
+      description: >-
+        The single error body shape returned by every Gateway endpoint. Clients
+        should branch on code, not on message text.
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: >-
+            Stable machine readable identifier. Existing values are never
+            renamed or repurposed.
+          enum:
+            - INVALID_QUERY_PARAMETER
+            - INVALID_REQUEST_BODY
+            - INVALID_REQUEST
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - RESOURCE_NOT_FOUND
+            - RESOURCE_ALREADY_EXISTS
+            - RESOURCE_CONFLICT
+            - RESOURCE_INVALID
+            - UPSTREAM_UNAVAILABLE
+            - INTERNAL_ERROR
+            - NOT_CONFIGURED
+        message:
+          type: string
+          description: Human readable description. Not a stable contract.
+        reason:
+          type: string
+          description: >-
+            Mirrors the Kubernetes StatusReason when the failure originated from
+            the management API; empty otherwise.
+        requestId:
+          type: string
+          description: >-
+            Correlation identifier, also returned in the X-Request-Id response
+            header, for matching the response against Gateway logs.
+        details:
+          type: object
+          additionalProperties: true
+          description: >-
+            Structured, non-sensitive context, such as the offending query
+            parameter and the reason it was rejected.
+
+    Status:
+      type: object
+      description: Status is a return value for calls that don't return other objects.
+      properties:
+        apiVersion:
+          type: string
+        kind:
+          type: string
+        metadata:
+          $ref: '#/components/schemas/ListMeta'
+        status:
+          type: string
+        message:
+          type: string
+        reason:
+          type: string
+        details:
+          type: object
+          properties:
+            name:
+              type: string
+            group:
+              type: string
+            kind:
+              type: string
+            uid:
+              type: string
+            causes:
+              type: array
+              items:
+                type: object
+                properties:
+                  reason:
+                    type: string
+                  message:
+                    type: string
+                  field:
+                    type: string
+            retryAfterSeconds:
+              type: integer
+              format: int32
+        code:
+          type: integer
+          format: int32
+
+    ResourceList:
+      type: object
+      description: ResourceList is a set of (resource name, quantity) pairs.
+      additionalProperties:
+        type: string
+
+    JSONPatch:
+      type: array
+      description: A JSON Patch document as defined by RFC 6902.
+      items:
+        type: object
+        required:
+          - op
+          - path
+        properties:
+          op:
+            type: string
+            enum:
+              - add
+              - remove
+              - replace
+              - move
+              - copy
+              - test
+          path:
+            type: string
+          from:
+            type: string
+          value: {}
+
+    # ─── Job Schemas ────────────────────────────────────────────────
+    Job:
+      type: object
+      required:
+        - apiVersion
+        - kind
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - rlinf.io/v1alpha1
+        kind:
+          type: string
+          enum:
+            - Job
+        metadata:
+          $ref: '#/components/schemas/ObjectMeta'
+        spec:
+          $ref: '#/components/schemas/JobSpec'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+
+    JobSpec:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobTaskTemplate'
+
+    JobTaskTemplate:
+      type: object
+      required:
+        - role
+      properties:
+        agentType:
+          type: string
+        docker:
+          $ref: '#/components/schemas/DockerTaskSpec'
+        head:
+          type: boolean
+        kubernetes:
+          $ref: '#/components/schemas/KubernetesTaskSpec'
+        name:
+          type: string
+        nodeSelector:
+          type: object
+          additionalProperties:
+            type: string
+        raw:
+          $ref: '#/components/schemas/RawTaskSpec'
+        role:
+          type: string
+        tensorBoardDir:
+          type: string
+
+    DockerTaskSpec:
+      type: object
+      properties:
+        containers:
+          type: array
+          items:
+            type: object
+
+    KubernetesTaskSpec:
+      type: object
+      properties:
+        workload:
+          $ref: '#/components/schemas/KubernetesWorkload'
+
+    KubernetesWorkload:
+      type: object
+      properties:
+        kind:
+          type: string
+        replicas:
+          type: integer
+        template:
+          type: object
+          description: PodTemplateSpec describes the data a pod should have when created from a template.
+
+    RawTaskSpec:
+      type: object
+      properties:
+        artifact:
+          type: string
+        entrypoint:
+          type: array
+          items:
+            type: string
+        environment:
+          type: array
+          items:
+            type: object
+
+    JobStatus:
+      type: object
+      properties:
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Condition'
+        endTime:
+          type: string
+          format: date-time
+        phase:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobTaskStatus'
+
+    JobTaskStatus:
+      type: object
+      properties:
+        message:
+          type: string
+        name:
+          type: string
+        phase:
+          type: string
+
+    JobList:
+      allOf:
+        - $ref: '#/components/schemas/ListPagination'
+        - type: object
+          properties:
+            apiVersion:
+              type: string
+              enum:
+                - rlinf.io/v1alpha1
+            kind:
+              type: string
+              enum:
+                - JobList
+            metadata:
+              $ref: '#/components/schemas/ListMeta'
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Job'
+
+    # ─── Node Schemas ──────────────────────────────────────────────
+    Node:
+      type: object
+      required:
+        - apiVersion
+        - kind
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - rlinf.io/v1alpha1
+        kind:
+          type: string
+          enum:
+            - Node
+        metadata:
+          $ref: '#/components/schemas/ObjectMeta'
+        spec:
+          $ref: '#/components/schemas/NodeSpec'
+        status:
+          $ref: '#/components/schemas/NodeStatus'
+
+    NodeSpec:
+      type: object
+      properties:
+        agentType:
+          type: string
+        unschedulable:
+          type: boolean
+
+    NodeStatus:
+      type: object
+      properties:
+        addresses:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeAddress'
+        allocatable:
+          $ref: '#/components/schemas/ResourceList'
+        capacity:
+          $ref: '#/components/schemas/ResourceList'
+        diskPressure:
+          type: boolean
+          description: Whether Kubernetes reports disk pressure on the node.
+        nodeInfo:
+          $ref: '#/components/schemas/NodeSystemInfo'
+        phase:
+          type: string
+        reason:
+          type: string
+        used:
+          $ref: '#/components/schemas/ResourceList'
+
+    NodeAddress:
+      type: object
+      description: NodeAddress contains information for the node's address.
+      required:
+        - address
+        - type
+      properties:
+        address:
+          type: string
+          description: The node address.
+        type:
+          type: string
+          description: Node address type, one of Hostname, ExternalIP or InternalIP.
+
+    NodeSystemInfo:
+      type: object
+      properties:
+        agentVersion:
+          type: string
+        architecture:
+          type: string
+        kernelVersion:
+          type: string
+        operatingSystem:
+          type: string
+
+    NodeList:
+      allOf:
+        - $ref: '#/components/schemas/ListPagination'
+        - type: object
+          properties:
+            apiVersion:
+              type: string
+              enum:
+                - rlinf.io/v1alpha1
+            kind:
+              type: string
+              enum:
+                - NodeList
+            metadata:
+              $ref: '#/components/schemas/ListMeta'
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Node'
+
+    # ─── Task Schemas ──────────────────────────────────────────────
+    Task:
+      type: object
+      required:
+        - apiVersion
+        - kind
+      properties:
+        apiVersion:
+          type: string
+          enum:
+            - rlinf.io/v1alpha1
+        kind:
+          type: string
+          enum:
+            - Task
+        metadata:
+          $ref: '#/components/schemas/ObjectMeta'
+        spec:
+          $ref: '#/components/schemas/TaskSpec'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+
+    TaskSpec:
+      type: object
+      required:
+        - role
+      properties:
+        agentType:
+          type: string
+        docker:
+          $ref: '#/components/schemas/DockerTaskSpec'
+        kubernetes:
+          $ref: '#/components/schemas/TaskKubernetesSpec'
+        nodeSelector:
+          type: object
+          additionalProperties:
+            type: string
+        raw:
+          $ref: '#/components/schemas/RawTaskSpec'
+        role:
+          type: string
+        tensorBoardDir:
+          type: string
+
+    TaskKubernetesSpec:
+      type: object
+      properties:
+        workload:
+          $ref: '#/components/schemas/KubernetesWorkload'
+
+    TaskStatus:
+      type: object
+      properties:
+        completionTime:
+          type: string
+          format: date-time
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Condition'
+        message:
+          type: string
+        observedNodes:
+          type: array
+          items:
+            type: object
+        phase:
+          type: string
+        retryCount:
+          type: integer
+        startTime:
+          type: string
+          format: date-time
+
+    TaskList:
+      allOf:
+        - $ref: '#/components/schemas/ListPagination'
+        - type: object
+          properties:
+            apiVersion:
+              type: string
+              enum:
+                - rlinf.io/v1alpha1
+            kind:
+              type: string
+              enum:
+                - TaskList
+            metadata:
+              $ref: '#/components/schemas/ListMeta'
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Task'

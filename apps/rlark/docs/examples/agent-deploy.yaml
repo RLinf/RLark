@@ -1,0 +1,50 @@
+# Agent Deployment
+# IMAGE is replaced by quickstart.sh (default: localhost:5555/rlark:latest).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rlark-agent
+  namespace: rlark-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rlark-agent
+  template:
+    metadata:
+      labels:
+        app: rlark-agent
+    spec:
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: rlark-agent
+      containers:
+      - name: agent
+        image: ${IMAGE}
+        imagePullPolicy: IfNotPresent
+        command: ["/rlark-agent"]
+        args:
+        - "--mode=both"
+        - "--server-address=https://rlark-server:8443"
+        - "--client-cert=/etc/agent-certs/cert.pem"
+        - "--client-key=/etc/agent-certs/key.pem"
+        - "--ca-cert=/etc/agent-certs/ca-cert.pem"
+        - "--rlark-server-ssh-address=client@rlark-server:2222"
+        - "--in-cluster"
+        - "--metrics-bind-address=:0"
+        - "--image=${IMAGE}"
+        volumeMounts:
+        - name: agent-certs
+          mountPath: /etc/agent-certs
+          readOnly: true
+        - name: nodeserver-socket
+          mountPath: /var/run/rlark
+      volumes:
+      - name: agent-certs
+        secret:
+          secretName: agent-certs
+      - name: nodeserver-socket
+        hostPath:
+          path: /var/run/rlark
+          type: DirectoryOrCreate

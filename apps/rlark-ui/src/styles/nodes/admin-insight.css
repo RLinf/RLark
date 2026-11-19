@@ -1,0 +1,240 @@
+/* Admin node operations */
+.admin-node-insight {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-node-actionbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 17px 19px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.admin-node-actionbar > div:first-child {
+  min-width: 0;
+}
+
+.admin-node-actionbar strong,
+.admin-node-actionbar small {
+  display: block;
+}
+
+.admin-node-actionbar strong {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.admin-node-actionbar small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.admin-node-actionbar .row-actions {
+  flex: 0 0 auto;
+}
+
+.admin-cordon-button {
+  color: var(--red);
+  border-color: rgba(239, 90, 122, 0.24);
+  background: rgba(239, 90, 122, 0.05);
+}
+
+.admin-cordon-button:hover {
+  background: rgba(239, 90, 122, 0.1);
+}
+
+.admin-node-insight > .node-insight-detail {
+  box-shadow: var(--shadow-soft);
+}
+
+.admin-node-labels {
+  padding: 20px;
+  box-shadow: var(--shadow-soft);
+}
+
+.admin-node-labels .node-insight-section-head > b {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--canvas);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.admin-node-labels .label-list {
+  max-width: none;
+  gap: 8px;
+}
+
+.admin-node-labels .label-chip {
+  max-width: min(100%, 360px);
+  padding: 6px 9px;
+  border-radius: 8px;
+}
+
+.admin-label-editor {
+  display: grid;
+  gap: 9px;
+}
+
+.admin-node-managed-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--canvas);
+}
+
+.admin-node-managed-field {
+  display: grid;
+  gap: 7px;
+}
+
+.admin-node-managed-field label {
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.admin-node-managed-field input {
+  width: 100%;
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  box-sizing: border-box;
+}
+
+.admin-node-managed-categories {
+  grid-column: 1 / -1;
+}
+
+.admin-node-extension-head {
+  margin-top: 8px;
+}
+
+.admin-node-extension-head strong,
+.admin-node-extension-head small {
+  display: block;
+}
+
+.admin-node-extension-head strong {
+  font-size: 12px;
+}
+
+.admin-node-extension-head small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.admin-label-editor .label-edit-row {
+  grid-template-columns: minmax(180px, 0.8fr) minmax(180px, 1.2fr) 36px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--canvas);
+}
+
+.admin-label-editor .label-edit-row code {
+  overflow: hidden;
+  color: var(--blue);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-label-editor .label-edit-row input,
+.admin-label-editor .label-add-row input {
+  height: 36px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  outline: none;
+}
+
+.admin-label-editor .label-edit-row input:focus,
+.admin-label-editor .label-add-row input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+}
+
+.admin-label-editor .label-add-row {
+  grid-template-columns: minmax(180px, 0.8fr) minmax(180px, 1.2fr) auto;
+  padding: 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 11px;
+  background: var(--panel);
+}
+
+.admin-label-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  padding-top: 5px;
+}
+
+.admin-label-empty {
+  width: 100%;
+  min-height: 86px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 9px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: var(--canvas);
+  color: var(--muted);
+}
+
+.theme-dark .admin-node-actionbar,
+.theme-dark .admin-node-labels {
+  background: #151d2b;
+  border-color: #2b3850;
+}
+
+.theme-dark .admin-label-editor .label-edit-row,
+.theme-dark .admin-label-empty {
+  background: #111a29;
+  border-color: #33425b;
+}
+
+.theme-dark .admin-label-editor .label-edit-row input,
+.theme-dark .admin-label-editor .label-add-row,
+.theme-dark .admin-label-editor .label-add-row input {
+  background: #151d2b;
+  border-color: #33425b;
+  color: #e6edf7;
+}
+
+@media (max-width: 780px) {
+  .admin-node-actionbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-node-actionbar .row-actions {
+    justify-content: flex-end;
+  }
+
+  .admin-label-editor .label-edit-row,
+  .admin-label-editor .label-add-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-node-managed-fields {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,35 @@
+# IDE
+.idea/
+.vscode/
+.codex/
+*.swp
+
+# Build output
+**/bin/
+**/dist/
+*.tsbuildinfo
+tmp/
+
+# macOS
+**/.DS_Store
+
+# Local config overrides
+*.local
+
+# Test and coverage output
+*.out
+*.profraw
+/coverage/
+/apps/rlark-ui/coverage/
+/_artifacts/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Dependencies
+**/node_modules/
+.glab/
+
+# MkDocs build output
+**/site/

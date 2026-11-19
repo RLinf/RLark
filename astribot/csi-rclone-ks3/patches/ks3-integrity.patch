@@ -1,0 +1,570 @@
+diff --git a/pkg/rclone/config_isolation.go b/pkg/rclone/config_isolation.go
+new file mode 100644
+index 00000000..23cf463f
+--- /dev/null
++++ b/pkg/rclone/config_isolation.go
+@@ -0,0 +1,52 @@
++package rclone
++
++import (
++	"crypto/sha256"
++	"fmt"
++	"sort"
++	"strings"
++)
++
++// isolateVolumeRemotes prevents two StorageClasses named "s3" from sharing
++// rclone's process-wide remote configuration or filesystem cache entries.
++func isolateVolumeRemotes(pvp *publishVolumeParams, volumeID, targetPath string) error {
++	remotes, err := parseAllConfigRemotes(pvp.configData)
++	if err != nil {
++		return err
++	}
++	if _, ok := remotes[pvp.remoteName]; !ok {
++		return fmt.Errorf("selected remote missing from config")
++	}
++	sum := sha256.Sum256([]byte(volumeID + "\x00" + targetPath))
++	suffix := fmt.Sprintf("_%x", sum[:12])
++	names := make([]string, 0, len(remotes))
++	for name := range remotes {
++		names = append(names, name)
++	}
++	sort.Strings(names)
++	var text strings.Builder
++	for _, name := range names {
++		fmt.Fprintf(&text, "[%s%s]\n", name, suffix)
++		keys := make([]string, 0, len(remotes[name]))
++		for key := range remotes[name] {
++			keys = append(keys, key)
++		}
++		sort.Strings(keys)
++		for _, key := range keys {
++			value := remotes[name][key]
++			// Wrapper backends reference another remote in their "remote" option.
++			if key == "remote" {
++				for _, other := range names {
++					if strings.HasPrefix(value, other+":") {
++						value = other + suffix + strings.TrimPrefix(value, other)
++						break
++					}
++				}
++			}
++			fmt.Fprintf(&text, "%s = %s\n", key, value)
++		}
++	}
++	pvp.configData = text.String()
++	pvp.remoteName += suffix
++	return nil
++}
+diff --git a/pkg/rclone/config_isolation_test.go b/pkg/rclone/config_isolation_test.go
+new file mode 100644
+index 00000000..abaaf6ba
+--- /dev/null
++++ b/pkg/rclone/config_isolation_test.go
+@@ -0,0 +1,21 @@
++package rclone
++
++import (
++	"github.com/stretchr/testify/require"
++	"strings"
++	"testing"
++)
++
++func TestVolumeRemoteIsolation(t *testing.T) {
++	config := "[s3]\ntype = s3\nendpoint = https://example.test\nsecret_access_key = private\n"
++	a := &publishVolumeParams{remoteName: "s3", configData: config}
++	b := &publishVolumeParams{remoteName: "s3", configData: config}
++	require.NoError(t, isolateVolumeRemotes(a, "pv-a", "/mount-a"))
++	require.NoError(t, isolateVolumeRemotes(b, "pv-b", "/mount-b"))
++	require.NotEqual(t, a.remoteName, b.remoteName)
++	require.Contains(t, a.configData, "secret_access_key = private")
++	require.False(t, strings.Contains(a.configData, b.remoteName))
++	again := &publishVolumeParams{remoteName: "s3", configData: config}
++	require.NoError(t, isolateVolumeRemotes(again, "pv-a", "/mount-a"))
++	require.Equal(t, a.configData, again.configData)
++}
+diff --git a/pkg/rclone/nodeserver.go b/pkg/rclone/nodeserver.go
+index 33498c0f..47fe1ed8 100644
+--- a/pkg/rclone/nodeserver.go
++++ b/pkg/rclone/nodeserver.go
+@@ -843,6 +843,10 @@ func (ns *NodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
+ 		return nil, err
+ 	}
+ 
++	// Each published volume owns separate remote/config-cache names.
++	if err := isolateVolumeRemotes(pvp, req.GetVolumeId(), targetPath); err != nil {
++		return nil, err
++	}
+ 	// Load rclone config
+ 	remotes, err := ns.loadRcloneConfig(ctx, pvp)
+ 	if err != nil {
+diff --git a/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64.go b/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64.go
+new file mode 100644
+index 00000000..c07d74cb
+--- /dev/null
++++ b/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64.go
+@@ -0,0 +1,153 @@
++package s3
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"fmt"
++	"hash"
++	"hash/crc64"
++	"io"
++	"net/url"
++	"strconv"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/aws/aws-sdk-go-v2/service/s3"
++	smithy "github.com/aws/smithy-go"
++	"github.com/aws/smithy-go/middleware"
++	smithyhttp "github.com/aws/smithy-go/transport/http"
++	"github.com/rclone/rclone/fs"
++)
++
++// KS3 ETags are not a portable content MD5. Use its server CRC64 instead.
++func (f *Fs) isKS3() bool {
++	u, err := url.Parse(f.opt.Endpoint)
++	return err == nil && strings.HasPrefix(u.Hostname(), "ks3-") && strings.HasSuffix(u.Hostname(), ".ksyuncs.com")
++}
++
++type ks3CRCKey struct{}
++type ks3CRCResult struct{ value string }
++
++func captureKS3CRC64(result *ks3CRCResult) func(*middleware.Stack) error {
++	return func(stack *middleware.Stack) error {
++		return stack.Deserialize.Add(middleware.DeserializeMiddlewareFunc("KS3CRC64", func(ctx context.Context, in middleware.DeserializeInput, next middleware.DeserializeHandler) (out middleware.DeserializeOutput, meta middleware.Metadata, err error) {
++			out, meta, err = next.HandleDeserialize(ctx, in)
++			if response, ok := out.RawResponse.(*smithyhttp.Response); ok && response != nil {
++				result.value = response.Header.Get("x-kss-checksum-crc64ecma")
++			}
++			return
++		}), middleware.Before)
++	}
++}
++
++type ks3Digest struct {
++	hash.Hash64
++	count int64
++}
++
++func newKS3Digest() *ks3Digest { return &ks3Digest{Hash64: crc64.New(crc64.MakeTable(crc64.ECMA))} }
++func (d *ks3Digest) Write(p []byte) (int, error) {
++	n, e := d.Hash64.Write(p)
++	d.count += int64(n)
++	return n, e
++}
++func (d *ks3Digest) verify(expected string, size int64) error {
++	checksum, err := strconv.ParseUint(expected, 10, 64)
++	if err != nil {
++		return fmt.Errorf("KS3 content verification requires a valid CRC64 response header")
++	}
++	if size != d.count || checksum != d.Sum64() {
++		return fmt.Errorf("KS3 content verification failed: CRC64 or length mismatch")
++	}
++	return nil
++}
++
++var ks3CRCActive, ks3CRCMissing sync.Once
++
++// verifyUpload checks what was sent against the object's size and, when KS3
++// reports one, its CRC64. Without a CRC64 the parts' Content-MD5 is all there is.
++func (d *ks3Digest) verifyUpload(expected string, size *int64) error {
++	if size == nil || *size != d.count {
++		return fmt.Errorf("KS3 upload verification failed: sent %d bytes, object length differs", d.count)
++	}
++	if expected == "" {
++		ks3CRCMissing.Do(func() { fs.Logf(nil, "KS3 returned no CRC64 for an uploaded object: uploads are checked by size only") })
++		return nil
++	}
++	ks3CRCActive.Do(func() { fs.Logf(nil, "KS3 CRC64 upload verification is active") })
++	return d.verify(expected, *size)
++}
++
++type ks3CheckedReader struct {
++	io.ReadCloser
++	digest   *ks3Digest
++	expected string
++	size     int64
++	checked  bool
++	failure  error
++}
++
++func (r *ks3CheckedReader) Read(p []byte) (int, error) {
++	if r.failure != nil {
++		return 0, r.failure
++	}
++	n, err := r.ReadCloser.Read(p)
++	_, _ = r.digest.Write(p[:n])
++	if err == io.EOF || r.digest.count == r.size {
++		r.checked = true
++		r.failure = r.digest.verify(r.expected, r.size)
++		if r.failure != nil {
++			return n, r.failure
++		}
++	}
++	return n, err
++}
++func (r *ks3CheckedReader) Close() error {
++	err := r.ReadCloser.Close()
++	if r.failure != nil {
++		return r.failure
++	}
++	// Closing an intentionally partial read does not claim full-object verification.
++	if r.checked {
++		return r.digest.verify(r.expected, r.size)
++	}
++	return err
++}
++
++func ks3CompleteRead(contentRange *string, length *int64) bool {
++	if contentRange == nil {
++		return true
++	}
++	var start, end, total int64
++	n, err := fmt.Sscanf(*contentRange, "bytes %d-%d/%d", &start, &end, &total)
++	return err == nil && n == 3 && start == 0 && end+1 == total && length != nil && *length == total
++}
++
++// ks3BufferedPutSize bounds the single part uploads held in memory so that a
++// throttled PutObject can be sent again. Unbuffered VFS writes above the
++// streaming cutoff (100 KiB) are multipart, whose parts are already retried.
++const ks3BufferedPutSize = 1 << 20
++
++func (o *Object) ks3PutBuffered(ctx context.Context, req *s3.PutObjectInput, in io.Reader) (etag string, lastModified time.Time, versionID *string, err error) {
++	data, err := io.ReadAll(in)
++	if err != nil {
++		return "", lastModified, nil, err
++	}
++	var resp *s3.PutObjectOutput
++	err = o.fs.pacer.Call(func() (bool, error) {
++		req.Body = bytes.NewReader(data)
++		resp, err = o.fs.c.PutObject(ctx, req)
++		return o.fs.shouldRetry(ctx, err)
++	})
++	if err != nil {
++		return "", lastModified, nil, err
++	}
++	return *stringClone(deref(resp.ETag)), time.Now(), stringClonePointer(resp.VersionId), nil
++}
++
++func ks3AlreadyExists(err error) bool {
++	var apiErr smithy.APIError
++	return errors.As(err, &apiErr) && apiErr.ErrorCode() == "ObjectAlreadyExists"
++}
+diff --git a/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64_test.go b/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64_test.go
+new file mode 100644
+index 00000000..e530d90a
+--- /dev/null
++++ b/vendor/github.com/rclone/rclone/backend/s3/ks3_crc64_test.go
+@@ -0,0 +1,66 @@
++package s3
++
++import (
++	"bytes"
++	"github.com/stretchr/testify/require"
++	"io"
++	"strconv"
++	"strings"
++	"testing"
++)
++
++func TestKS3CRC64ContentVerification(t *testing.T) {
++	data := bytes.Repeat([]byte("fleet-ks3-validation-20261112\n"), 16384)
++	digest := newKS3Digest()
++	digest.Write(data)
++	require.Equal(t, uint64(615270568529972801), digest.Sum64())
++	require.NoError(t, digest.verify("615270568529972801", int64(len(data))))
++	for _, expected := range []string{"", "not-a-number", "0"} {
++		require.Error(t, digest.verify(expected, int64(len(data))))
++	}
++	require.Error(t, digest.verify("615270568529972801", 1))
++	for _, valid := range []bool{true, false} {
++		expected := strconv.FormatUint(digest.Sum64(), 10)
++		if !valid {
++			expected = "0"
++		}
++		r := &ks3CheckedReader{ReadCloser: io.NopCloser(bytes.NewReader(data)), digest: newKS3Digest(), expected: expected, size: int64(len(data))}
++		got, err := io.ReadAll(r)
++		if valid {
++			require.NoError(t, err)
++			require.Equal(t, data, got)
++			require.NoError(t, r.Close())
++		} else {
++			require.Error(t, err)
++			require.Error(t, r.Close())
++		}
++	}
++}
++func TestKS3UploadVerification(t *testing.T) {
++	digest := newKS3Digest()
++	digest.Write([]byte("fleet"))
++	size, short := int64(5), int64(4)
++	require.NoError(t, digest.verifyUpload("", &size))
++	require.NoError(t, digest.verifyUpload(strconv.FormatUint(digest.Sum64(), 10), &size))
++	require.Error(t, digest.verifyUpload("1", &size))
++	require.Error(t, digest.verifyUpload("", &short))
++	require.Error(t, digest.verifyUpload("", nil))
++}
++func TestKS3EndpointAndRangeSelection(t *testing.T) {
++	for _, tc := range []struct {
++		endpoint string
++		want     bool
++	}{{"https://ks3-cn-ningxia.ksyuncs.com", true}, {"https://ks3-cn-ningxia-internal.ksyuncs.com", true}, {"https://not-ks3.example.com", false}, {"https://ks3-cn-ningxia.ksyuncs.com.evil.test", false}} {
++		f := &Fs{opt: Options{Endpoint: tc.endpoint}}
++		require.Equal(t, tc.want, f.isKS3())
++	}
++	length := int64(10)
++	full := "bytes 0-9/10"
++	partial := "bytes 1-9/10"
++	require.True(t, ks3CompleteRead(nil, &length))
++	require.True(t, ks3CompleteRead(&full, &length))
++	require.False(t, ks3CompleteRead(&partial, &length))
++	r := &ks3CheckedReader{ReadCloser: io.NopCloser(strings.NewReader("short")), digest: newKS3Digest(), expected: "0", size: 10}
++	_, err := io.ReadAll(r)
++	require.Error(t, err)
++}
+diff --git a/vendor/github.com/rclone/rclone/backend/s3/ks3_retry_test.go b/vendor/github.com/rclone/rclone/backend/s3/ks3_retry_test.go
+new file mode 100644
+index 00000000..6814aeea
+--- /dev/null
++++ b/vendor/github.com/rclone/rclone/backend/s3/ks3_retry_test.go
+@@ -0,0 +1,89 @@
++package s3
++
++import (
++	"bytes"
++	"context"
++	"net/http"
++	"net/http/httptest"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/aws/aws-sdk-go-v2/service/s3"
++	"github.com/rclone/rclone/fs"
++	"github.com/rclone/rclone/fs/config/configmap"
++	"github.com/rclone/rclone/fs/object"
++	"github.com/stretchr/testify/require"
++)
++
++// KS3 answers throttled requests with an HTML page; lists and small uploads must be sent again.
++func TestKS3RetriesThrottledRequests(t *testing.T) {
++	var lists, puts atomic.Int32
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		n := &lists
++		if r.Method == http.MethodPut {
++			n = &puts
++		}
++		if n.Add(1) <= 3 {
++			w.Header().Set("Content-Type", "text/html")
++			w.WriteHeader(http.StatusTooManyRequests)
++			_, _ = w.Write([]byte("<html>\n<body>\n<center><h1>429 Too Many Requests</h1></center>\n<p>x\n</body>\n</html>\n"))
++			return
++		}
++		if r.Method == http.MethodPut || r.Method == http.MethodHead {
++			w.Header().Set("ETag", `"0123456789abcdef0123456789abcdef"`)
++			w.Header().Set("Content-Length", "5")
++			return
++		}
++		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><Name>bucket</Name><IsTruncated>false</IsTruncated></ListBucketResult>`))
++	}))
++	defer srv.Close()
++	ctx, ci := fs.AddConfig(context.Background())
++	ci.LowLevelRetries = 10
++	info, _ := fs.Find("s3")
++	f, err := NewFs(ctx, "ks3", "bucket/dir", fs.ConfigMap(info.Prefix, info.Options, "ks3", configmap.Simple{"provider": "Other", "endpoint": srv.URL, "access_key_id": "a", "secret_access_key": "b", "region": "cn", "no_check_bucket": "true", "force_path_style": "true"}))
++	require.NoError(t, err)
++	// The test server stands in for a ks3-*.ksyuncs.com endpoint.
++	f.(*Fs).opt.Endpoint = "https://ks3-cn-test.ksyuncs.com"
++	f.(*Fs).pacer.SetRetries(ci.LowLevelRetries)
++	lists.Store(0)
++	_, err = f.List(ctx, "")
++	require.NoError(t, err)
++	require.Equal(t, int32(4), lists.Load())
++	_, err = f.Put(ctx, bytes.NewReader([]byte("fleet")), object.NewStaticObjectInfo("small", time.Now(), 5, true, nil, nil))
++	require.NoError(t, err)
++	require.Equal(t, int32(4), puts.Load())
++}
++
++// KS3 refuses CopyObject onto an existing key; a rename over a file must still replace it.
++func TestKS3CopyOntoExistingObject(t *testing.T) {
++	var calls []string
++	exists := true
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		calls = append(calls, r.Method)
++		switch {
++		case r.Method == http.MethodHead:
++			w.WriteHeader(http.StatusNotFound)
++		case r.Method == http.MethodDelete:
++			exists = false
++			w.WriteHeader(http.StatusNoContent)
++		case r.Method == http.MethodPut && exists:
++			w.Header().Set("Content-Type", "application/xml")
++			w.WriteHeader(http.StatusBadRequest)
++			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>ObjectAlreadyExists</Code><Message>target object already exists</Message></Error>`))
++		default:
++			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><CopyObjectResult><ETag>"0123456789abcdef0123456789abcdef"</ETag></CopyObjectResult>`))
++		}
++	}))
++	defer srv.Close()
++	ctx := context.Background()
++	info, _ := fs.Find("s3")
++	f, err := NewFs(ctx, "ks3copy", "bucket/dir", fs.ConfigMap(info.Prefix, info.Options, "ks3copy", configmap.Simple{"provider": "Other", "endpoint": srv.URL, "access_key_id": "a", "secret_access_key": "b", "region": "cn", "no_check_bucket": "true", "force_path_style": "true"}))
++	require.NoError(t, err)
++	s3fs := f.(*Fs)
++	s3fs.opt.Endpoint = "https://ks3-cn-test.ksyuncs.com"
++	calls = nil
++	bucket, key, source := "bucket", "dir/x", "bucket/dir/x.partial"
++	require.NoError(t, s3fs.copy(ctx, &s3.CopyObjectInput{Bucket: &bucket, Key: &key, CopySource: &source}, bucket, key, bucket, "dir/x.partial", &Object{fs: s3fs, bytes: 5}))
++	require.Equal(t, []string{"PUT", "DELETE", "PUT"}, calls)
++}
+diff --git a/vendor/github.com/rclone/rclone/backend/s3/s3.go b/vendor/github.com/rclone/rclone/backend/s3/s3.go
+index 71967f12..c2d79c72 100644
+--- a/vendor/github.com/rclone/rclone/backend/s3/s3.go
++++ b/vendor/github.com/rclone/rclone/backend/s3/s3.go
+@@ -3956,6 +3956,11 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
+ 		srv:     srv,
+ 		srvRest: rest.NewClient(fshttp.NewClient(ctx)),
+ 	}
++	if f.isKS3() {
++		// KS3's front end throttles with an HTML 429 that the SDK does not
++		// retry, so the pacer does (10ms doubling to 2s between tries).
++		pc.SetRetries(max(ci.LowLevelRetries, 2))
++	}
+ 	if opt.ServerSideEncryption == "aws:kms" || opt.SSECustomerAlgorithm != "" {
+ 		// From: https://docs.aws.amazon.com/AmazonS3/latest/API/RESTCommonResponseHeaders.html
+ 		//
+@@ -5070,6 +5075,13 @@ func (f *Fs) copy(ctx context.Context, req *s3.CopyObjectInput, dstBucket, dstPa
+ 	}
+ 	return f.pacer.Call(func() (bool, error) {
+ 		_, err := f.c.CopyObject(ctx, req)
++		if f.isKS3() && ks3AlreadyExists(err) {
++			// KS3 does not copy onto an existing key, which is what renaming
++			// over a file is: remove the target and copy again.
++			if _, err = f.c.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: req.Bucket, Key: req.Key}); err == nil {
++				_, err = f.c.CopyObject(ctx, req)
++			}
++		}
+ 		return f.shouldRetry(ctx, err)
+ 	})
+ }
+@@ -5249,6 +5261,9 @@ func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object,
+ 
+ // Hashes returns the supported hash sets.
+ func (f *Fs) Hashes() hash.Set {
++	if f.isKS3() {
++		return hash.NewHashSet()
++	}
+ 	return hash.Set(hash.MD5)
+ }
+ 
+@@ -5942,7 +5957,7 @@ var matchMd5 = regexp.MustCompile(`^[0-9a-f]{32}$`)
+ 
+ // Set the MD5 from the etag
+ func (o *Object) setMD5FromEtag(etag string) {
+-	if o.fs.etagIsNotMD5 {
++	if o.fs.etagIsNotMD5 || o.fs.isKS3() {
+ 		o.md5 = ""
+ 		return
+ 	}
+@@ -5961,6 +5976,9 @@ func (o *Object) setMD5FromEtag(etag string) {
+ 
+ // Hash returns the Md5sum of an object returning a lowercase hex string
+ func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
++	if o.fs.isKS3() {
++		return "", hash.ErrUnsupported
++	}
+ 	if t != hash.MD5 {
+ 		return "", hash.ErrUnsupported
+ 	}
+@@ -6008,7 +6026,11 @@ func (f *Fs) headObject(ctx context.Context, req *s3.HeadObjectInput) (resp *s3.
+ 	}
+ 	err = f.pacer.Call(func() (bool, error) {
+ 		var err error
+-		resp, err = f.c.HeadObject(ctx, req)
++		if result, ok := ctx.Value(ks3CRCKey{}).(*ks3CRCResult); ok {
++			resp, err = f.c.HeadObject(ctx, req, s3.WithAPIOptions(captureKS3CRC64(result)))
++		} else {
++			resp, err = f.c.HeadObject(ctx, req)
++		}
+ 		return f.shouldRetry(ctx, err)
+ 	})
+ 	if err != nil {
+@@ -6301,6 +6323,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
+ 	fs.FixRangeOption(options, o.bytes)
+ 
+ 	var APIOptions []func(*middleware.Stack) error
++	ks3Result := &ks3CRCResult{}
++	if o.fs.isKS3() {
++		APIOptions = append(APIOptions, captureKS3CRC64(ks3Result))
++	}
+ 
+ 	// Set the SDK to always download compressed files as-is
+ 	APIOptions = append(APIOptions, o.fs.acceptEncoding()...)
+@@ -6368,6 +6394,10 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
+ 		})
+ 	}
+ 
++	// KS3 stores no CRC64 for some objects (seen on old ones); those are read unverified.
++	if ks3Result.value != "" && ks3CompleteRead(resp.ContentRange, resp.ContentLength) {
++		return &ks3CheckedReader{ReadCloser: resp.Body, digest: newKS3Digest(), expected: ks3Result.value, size: *resp.ContentLength}, nil
++	}
+ 	return resp.Body, nil
+ }
+ 
+@@ -6653,6 +6683,9 @@ func (o *Object) uploadMultipart(ctx context.Context, src fs.ObjectInfo, in io.R
+ 
+ // Upload a single part using PutObject
+ func (o *Object) uploadSinglepartPutObject(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (etag string, lastModified time.Time, versionID *string, err error) {
++	if o.fs.isKS3() && size >= 0 && size <= ks3BufferedPutSize {
++		return o.ks3PutBuffered(ctx, req, in)
++	}
+ 	req.Body = io.NopCloser(in)
+ 	var options = []func(*s3.Options){}
+ 	if o.fs.opt.UseUnsignedPayload.Value {
+@@ -6918,6 +6951,13 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
+ 		return errNotWithVersionAt
+ 	}
+ 	size := src.Size()
++	var ks3Digest *ks3Digest
++	ks3Result := &ks3CRCResult{}
++	if o.fs.isKS3() {
++		ks3Digest = newKS3Digest()
++		in = io.TeeReader(in, ks3Digest)
++		ctx = context.WithValue(ctx, ks3CRCKey{}, ks3Result)
++	}
+ 	multipart := size < 0 || size >= int64(o.fs.opt.UploadCutoff)
+ 
+ 	var wantETag string        // Multipart upload Etag to check
+@@ -6954,7 +6994,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
+ 	// so make up the object as best we can assuming it got
+ 	// uploaded properly. If size < 0 then we need to do the HEAD.
+ 	var head *s3.HeadObjectOutput
+-	if o.fs.opt.NoHead && size >= 0 {
++	if o.fs.opt.NoHead && size >= 0 && !o.fs.isKS3() {
+ 		head = new(s3.HeadObjectOutput)
+ 		//structs.SetFrom(head, &req)
+ 		setFrom_s3HeadObjectOutput_s3PutObjectInput(head, ui.req)
+@@ -6977,10 +7017,15 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
+ 			return err
+ 		}
+ 	}
++	if ks3Digest != nil {
++		if err := ks3Digest.verifyUpload(ks3Result.value, head.ContentLength); err != nil {
++			return err
++		}
++	}
+ 	o.setMetaData(head)
+ 
+ 	// Check multipart upload ETag if required
+-	if o.fs.opt.UseMultipartEtag.Value && !o.fs.etagIsNotMD5 && wantETag != "" && head.ETag != nil && *head.ETag != "" {
++	if o.fs.opt.UseMultipartEtag.Value && !o.fs.etagIsNotMD5 && !o.fs.isKS3() && wantETag != "" && head.ETag != nil && *head.ETag != "" {
+ 		gotETag := strings.Trim(strings.ToLower(*head.ETag), `"`)
+ 		if wantETag != gotETag {
+ 			return fmt.Errorf("multipart upload corrupted: Etag differ: expecting %s but got %s", wantETag, gotETag)

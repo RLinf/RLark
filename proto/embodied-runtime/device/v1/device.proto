@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package device.v1;
+
+option go_package = "github.com/rlinf/rlark/sdks/embodied-runtime-go/gen/device/v1;devicev1";
+
+// ---------------------------------------------------------------------------
+// DeviceService exposes on-demand device setup that cannot be delivered via
+// the kubelet Allocate call (which only does device mounts). It is hosted by
+// the device plugin's DeviceServer over a Unix socket. A pod's init
+// container runs the `devinit` CLI, which calls Setup; the service reads the
+// caller's PID from the Unix socket peer credentials (SO_PEERCRED) to target
+// that PID's network namespace. If the caller is in the host network
+// namespace (hostNetwork: true) the request is a no-op.
+//
+// Macvlan setup is the first — and currently only — service hosted here: a
+// macvlan is a network interface that must be created inside the target
+// netns, so it cannot be Allocate-mounted. The macvlan interfaces to create
+// are declared in the device plugin config (host_macvlans); the caller does
+// not specify them — it simply requests that the node's configured set be
+// attached to its own netns. As more on-demand device services are needed
+// they can be added to this service.
+// ---------------------------------------------------------------------------
+service DeviceService {
+  // Setup creates (or reuses) the configured device resources (currently
+  // macvlan interfaces) inside the caller's network namespace. Idempotent:
+  // a leftover resource from a previous container instance is reused.
+  rpc Setup(SetupRequest) returns (SetupResponse);
+}
+
+// SetupRequest is intentionally empty: the resource set is node-level config
+// (host_macvlans), not per-pod. The caller only signals "attach the node's
+// configured device setup to my netns".
+message SetupRequest {}
+
+// SetupResponse reports what happened.
+message SetupResponse {
+  // created lists the resource names (e.g. macvlan interface names) that
+  // were created (or reused) in the caller's network namespace.
+  repeated string created = 1;
+
+  // host_network is true when the caller shares the host's network
+  // namespace (hostNetwork: true), in which case all setup was skipped —
+  // attaching a macvlan to the host netns would disrupt the node, not
+  // isolate the pod.
+  bool host_network = 2;
+
+  // skipped lists the resource names that were skipped because the caller
+  // is in the host network namespace. Populated together with
+  // host_network=true; empty otherwise.
+  repeated string skipped = 3;
+}

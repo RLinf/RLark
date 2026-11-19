@@ -1,0 +1,95 @@
+# The site of 2026-11-12 16:10 as a declaration: six nodes, three sites. Applied to
+# the management workspace, it makes station-controller compute for every node
+# a configuration that contains everything its hand-written
+# station-wireguard-config entry contains (network/compute_test.go,
+# TestComputeCoversLiveSite, checks this against the six entries).
+#
+# The two cloud nodes cannot reach Station API until their tunnel is up. Until
+# they have enrolled once, or after one is reinstalled, add publicKey to their
+# entries (astribot/docs/architecture.md, Station, 网络).
+#
+# Only nodes that are more than a leaf are listed. A robot is a leaf and needs
+# an entry only for what the site cannot know: here, that its uplink is its
+# Orin. A new robot whose default route already leads out needs no entry.
+apiVersion: station.rlark.io/v1alpha1
+kind: SiteNetwork
+metadata:
+  name: default
+  namespace: station-system
+spec:
+  mode: Tunnel
+  pool: 10.254.240.0/24
+  mtu: 1380
+  interface: st-wg0
+  listenPort: 51820
+  keepaliveSeconds: 25
+  sites:
+  - name: office
+    clusters: [rlark-local-dev-gpu]
+    mesh: true
+  - name: lab
+    clusters: [rlark-robot-s1u-01]
+    reaches: [office]
+    # A robot's computer reaches the site through the robot's own router,
+    # which has this address on every robot, and dials from its own address
+    # in that network.
+    leafUplink:
+      gateway: 192.168.0.11
+  - name: ksyun
+    clusters: [rlark-ksyun-gpu]
+  nodes:
+  - clusterID: rlark-local-dev-gpu
+    nodeName: cailiang
+    role: Hub
+    address: 10.254.240.1
+    endpoints:
+    - address: 10.11.14.128:51820
+      scope: Site
+    advertise:
+    - cidr: 10.11.5.12/32      # NAS, for the cloud nodes
+      sites: [ksyun]
+  - clusterID: rlark-ksyun-gpu
+    nodeName: 10-0-2-57
+    role: Hub
+    address: 10.254.240.2
+    nodeAddress: 10.0.2.57
+    endpoints:
+    - address: 36.103.180.169:51820
+      scope: Public
+    advertise:
+    - cidr: 172.27.0.0/24      # this node's Pod network
+      sites: [office]
+  - clusterID: rlark-robot-s1u-01
+    nodeName: s1u-01-x86
+    role: Leaf
+    address: 10.254.240.3
+  - clusterID: rlark-ksyun-gpu
+    nodeName: 10-0-2-196
+    role: Hub
+    address: 10.254.240.4
+    nodeAddress: 10.0.2.196
+    interface: st-hub0
+    listenPort: 51821
+    endpoints:
+    - address: 36.103.180.169:51821
+      scope: Public
+    advertise:
+    - cidr: 172.27.1.0/24
+      sites: [office]
+  - clusterID: rlark-local-dev-gpu
+    nodeName: alexfu
+    role: Hub
+    address: 10.254.240.5
+    endpoints:
+    # Written out, as in the hand-written files. Leaving the address empty
+    # (use what the node reports) does not work while the node reaches Station
+    # API through the tunnel: it then reports its tunnel address.
+    - address: 10.11.13.192:51820
+      scope: Site
+  - clusterID: rlark-local-dev-gpu
+    nodeName: wendychen
+    role: Hub
+    address: 10.254.240.6
+    endpoints:
+    - address: 10.11.14.135:51820
+      scope: Site

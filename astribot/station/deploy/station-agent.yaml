@@ -1,0 +1,608 @@
+# Replace the images, endpoint, cluster ID and registry credentials.
+# Label network nodes station.rlark.io/network=enabled; other nodes run identity only.
+# A network node enrolls itself: the wireguard container publishes its public
+# key, the station-agent container registers it with Station API and stores the
+# computed configuration, and the wireguard container reconciles it. Nothing is
+# written per node. station-wireguard-config is optional and holds a static
+# <node-name>.json only for a node that cannot reach Station API without the
+# tunnel (astribot/docs/architecture.md, Station).
+# Each node keeps private.key and last-applied.json in /var/lib/station/wg.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: station-agent
+  namespace: station-system
+data:
+  api-url: https://REPLACE_STATION_API_ENDPOINT
+  cluster-id: REPLACE_REGISTERED_CLUSTER_ID
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: station-agent
+  namespace: station-system
+  annotations:
+    rlark.io/rollout: "{}"
+spec:
+  # RLark replaces the pods (the cluster agent's rollout): a machine that is
+  # off does not hold the others back, one machine goes first, then one in
+  # ten of the ready machines at a time.
+  updateStrategy:
+    type: OnDelete
+  selector:
+    matchLabels:
+      app: station-agent
+  template:
+    metadata:
+      labels:
+        app: station-agent
+    spec:
+      serviceAccountName: station-agent
+      automountServiceAccountToken: false
+      # The account of the site's registry, where the images are not public: a
+      # Secret of type kubernetes.io/dockerconfigjson in this namespace. A
+      # cluster without one pulls without an account.
+      imagePullSecrets:
+      - name: REPLACE_IMAGE_PULL_SECRET
+      # Under disk pressure a kubelet turns away every Pod that is not
+      # critical and deletes the images nothing runs: the node's way to its
+      # site must not be among them.
+      priorityClassName: system-node-critical
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: station-agent
+        image: REPLACE_RLARK_IMAGE
+        imagePullPolicy: IfNotPresent
+        command:
+        - /usr/local/bin/station-agent
+        args:
+        - --api-url=$(STATION_API_URL)
+        - --cluster-id=$(STATION_CLUSTER_ID)
+        - --token-file=/var/run/secrets/station/token
+        - --ca-file=$(STATION_API_CA_FILE)
+        - --interval=30s
+        - --request-timeout=10s
+        env:
+        - name: STATION_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: api-url
+        - name: STATION_CLUSTER_ID
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: cluster-id
+        - name: STATION_API_CA_FILE
+          value: /var/run/secrets/station-api-ca/ca.crt
+        ports:
+        - name: health
+          containerPort: 8081
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          periodSeconds: 20
+          timeoutSeconds: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          periodSeconds: 10
+          timeoutSeconds: 3
+        resources:
+          requests:
+            cpu: 10m
+            memory: 24Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: token
+          mountPath: /var/run/secrets/station
+          readOnly: true
+        - name: station-api-ca
+          mountPath: /var/run/secrets/station-api-ca
+          readOnly: true
+      volumes:
+      - name: token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              audience: station.rlark.io
+              expirationSeconds: 600
+      - name: station-api-ca
+        secret:
+          secretName: station-api-ca
+          items:
+          - key: ca.crt
+            path: ca.crt
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: station.rlark.io/network
+                operator: NotIn
+                values:
+                - enabled
+                - host
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: station-agent-network
+  namespace: station-system
+  annotations:
+    rlark.io/rollout: "{}"
+spec:
+  # RLark replaces the pods (the cluster agent's rollout): a machine that is
+  # off does not hold the others back, one machine goes first, then one in
+  # ten of the ready machines at a time.
+  updateStrategy:
+    type: OnDelete
+  selector:
+    matchLabels:
+      app: station-agent-network
+  template:
+    metadata:
+      labels:
+        app: station-agent-network
+    spec:
+      serviceAccountName: station-agent
+      automountServiceAccountToken: false
+      # The account of the site's registry, where the images are not public: a
+      # Secret of type kubernetes.io/dockerconfigjson in this namespace. A
+      # cluster without one pulls without an account.
+      imagePullSecrets:
+      - name: REPLACE_IMAGE_PULL_SECRET
+      # Under disk pressure a kubelet turns away every Pod that is not
+      # critical and deletes the images nothing runs: the node's way to its
+      # site must not be among them.
+      priorityClassName: system-node-critical
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: station-agent
+        image: REPLACE_RLARK_IMAGE
+        imagePullPolicy: IfNotPresent
+        command:
+        - /usr/local/bin/station-agent
+        args:
+        - --api-url=$(STATION_API_URL)
+        - --cluster-id=$(STATION_CLUSTER_ID)
+        - --token-file=/var/run/secrets/station/token
+        - --ca-file=$(STATION_API_CA_FILE)
+        - --interval=30s
+        - --request-timeout=10s
+        - --probe-address=:18082
+        - --wireguard-observation-file=/var/run/station-observation/wireguard.json
+        - --network-identity-file=/var/run/station-observation/identity.json
+        - --network-config-file=/var/run/station-network/config.json
+        env:
+        - name: STATION_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: api-url
+        - name: STATION_CLUSTER_ID
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: cluster-id
+        - name: STATION_API_CA_FILE
+          value: /var/run/secrets/station-api-ca/ca.crt
+        ports:
+        - name: health
+          containerPort: 18082
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          periodSeconds: 20
+          timeoutSeconds: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          periodSeconds: 10
+          timeoutSeconds: 3
+        resources:
+          requests:
+            cpu: 10m
+            memory: 24Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: token
+          mountPath: /var/run/secrets/station
+          readOnly: true
+        - name: station-api-ca
+          mountPath: /var/run/secrets/station-api-ca
+          readOnly: true
+        - name: wireguard-observation
+          mountPath: /var/run/station-observation
+          readOnly: true
+        - name: wireguard-computed
+          mountPath: /var/run/station-network
+      - name: wireguard
+        image: REPLACE_PRIVATE_WIREGUARD_IMAGE
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: STATION_GATEWAY_CONFIG
+          value: /config/$(NODE_NAME).json
+        - name: STATION_GATEWAY_OBSERVATION_FILE
+          value: /var/run/station-observation/wireguard.json
+        - name: STATION_GATEWAY_IDENTITY_FILE
+          value: /var/run/station-observation/identity.json
+        - name: STATION_GATEWAY_COMPUTED_CONFIG
+          value: /var/run/station-network/config.json
+        - name: STATION_GATEWAY_PRUNE_ROUTES
+          value: "true"
+        - name: STATION_GATEWAY_HOSTS_FILE
+          value: /host/etc/hosts
+        - name: STATION_GATEWAY_RESOLV_FILE
+          value: /host/etc/rlark/station/resolv.conf
+        - name: STATION_GATEWAY_MACHINE_RESOLV
+          value: /host/run/systemd/resolve/resolv.conf,/host/etc/resolv.conf
+        # Where a hub reports the machines it finds on its site's network (SiteNetwork, discovery).
+        - name: STATION_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: api-url
+        - name: STATION_API_CA_FILE
+          value: /var/run/secrets/station-api-ca/ca.crt
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_ADMIN
+        volumeMounts:
+        - name: station-api-ca
+          mountPath: /var/run/secrets/station-api-ca
+          readOnly: true
+        - name: wireguard-config
+          mountPath: /config
+          readOnly: true
+        - name: wireguard-key
+          mountPath: /var/lib/station/wg
+        - name: wireguard-observation
+          mountPath: /var/run/station-observation
+        - name: wireguard-computed
+          mountPath: /var/run/station-network
+          readOnly: true
+        - name: host-etc
+          mountPath: /host/etc
+        - name: host-resolve
+          mountPath: /host/run/systemd/resolve
+          readOnly: true
+        readinessProbe:
+          exec:
+            command:
+            - /station-gateway
+            - --check
+          periodSeconds: 10
+          failureThreshold: 1
+      volumes:
+      - name: token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              audience: station.rlark.io
+              expirationSeconds: 600
+      - name: station-api-ca
+        secret:
+          secretName: station-api-ca
+          items:
+          - key: ca.crt
+            path: ca.crt
+      - name: wireguard-config
+        configMap:
+          name: station-wireguard-config
+          optional: true
+      - name: wireguard-key
+        hostPath:
+          path: /var/lib/station/wg
+          type: DirectoryOrCreate
+      - name: wireguard-observation
+        emptyDir: {}
+      - name: wireguard-computed
+        emptyDir: {}
+      # The site's names (SiteNetwork, names) are kept in the node's hosts file.
+      # The directory and not the file: a hosts file that something on the
+      # node replaces by another of that name is still the one written to.
+      # The site's name servers go into /etc/rlark/station/resolv.conf, for
+      # the kubelet; without any, the machine's own, read from here.
+      - name: host-etc
+        hostPath:
+          path: /etc
+          type: Directory
+      - name: host-resolve
+        hostPath:
+          path: /run/systemd/resolve
+          type: DirectoryOrCreate
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: station.rlark.io/network
+                operator: In
+                values:
+                - enabled
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+---
+# A node whose station-gateway is a host service (installed by the node
+# bootstrap, started before the kubelet) is labelled
+# station.rlark.io/network=host and runs only the agent: it reads the public key
+# the host service publishes in /run/station-observation and stores the
+# computed configuration in /run/station-network, where the service reads it.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: station-agent-host
+  namespace: station-system
+  annotations:
+    rlark.io/rollout: "{}"
+spec:
+  # A machine counts once its pod has been ready for longer than a trial
+  # lasts: a version that machines take back does not get past the first of
+  # them. RLark replaces the pods (the cluster agent's rollout): a machine
+  # that is off does not hold the others back, one machine goes first, then
+  # one in ten of the ready machines at a time.
+  minReadySeconds: 150
+  updateStrategy:
+    type: OnDelete
+  selector:
+    matchLabels:
+      app: station-agent-host
+  template:
+    metadata:
+      labels:
+        app: station-agent-host
+    spec:
+      # Pod networking does not cross the NAT such a node sits behind.
+      hostNetwork: true
+      serviceAccountName: station-agent
+      automountServiceAccountToken: false
+      # The account of the site's registry, where the images are not public: a
+      # Secret of type kubernetes.io/dockerconfigjson in this namespace. A
+      # cluster without one pulls without an account.
+      imagePullSecrets:
+      - name: REPLACE_IMAGE_PULL_SECRET
+      # Under disk pressure a kubelet turns away every Pod that is not
+      # critical and deletes the images nothing runs: the node's way to its
+      # site must not be among them.
+      priorityClassName: system-node-critical
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: station-agent
+        image: REPLACE_RLARK_IMAGE
+        imagePullPolicy: IfNotPresent
+        command:
+        - /usr/local/bin/station-agent
+        args:
+        - --api-url=$(STATION_API_URL)
+        - --cluster-id=$(STATION_CLUSTER_ID)
+        - --token-file=/var/run/secrets/station/token
+        - --ca-file=$(STATION_API_CA_FILE)
+        - --interval=30s
+        - --request-timeout=10s
+        - --probe-address=:18082
+        - --wireguard-observation-file=/var/run/station-observation/wireguard.json
+        - --network-identity-file=/var/run/station-observation/identity.json
+        - --network-config-file=/var/run/station-network/config.json
+        env:
+        - name: STATION_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: api-url
+        - name: STATION_CLUSTER_ID
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: cluster-id
+        - name: STATION_API_CA_FILE
+          value: /var/run/secrets/station-api-ca/ca.crt
+        ports:
+        - name: health
+          containerPort: 18082
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          periodSeconds: 20
+          timeoutSeconds: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          periodSeconds: 10
+          timeoutSeconds: 3
+        resources:
+          requests:
+            cpu: 10m
+            memory: 24Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: token
+          mountPath: /var/run/secrets/station
+          readOnly: true
+        - name: station-api-ca
+          mountPath: /var/run/secrets/station-api-ca
+          readOnly: true
+        - name: wireguard-observation
+          mountPath: /var/run/station-observation
+          readOnly: true
+        - name: wireguard-computed
+          mountPath: /var/run/station-network
+      # Keeps the machine's own station-gateway (the service the installer put
+      # there) at this image's version: this DaemonSet's image is the version
+      # of every such node. The program is not replaced while the machine holds
+      # a file in /run/rlark/in-use (whatever knows the machine is in use keeps
+      # one there), and a version that does not stay up is taken back. The
+      # pod is not ready while a new program is on trial or after this version
+      # was rejected, so a rollout stops at the first machine that refuses a
+      # version; a machine that waits for its turn does not stop it.
+      - name: gateway-program
+        image: REPLACE_PRIVATE_WIREGUARD_IMAGE
+        imagePullPolicy: IfNotPresent
+        args:
+        - --keep-host-program=/host/opt/rlark/bin/station-gateway
+        - --hold-directory=/host/run/rlark/in-use
+        - --unit-drop-in-directory=/host/etc/systemd/system/rlark-station-gateway.service.d
+        - --observation-file=/var/run/station-observation/wireguard.json
+        # Also keeps on the machine where its service asks for the node's own
+        # document, with the node's key: a node whose pod is not running
+        # when its control plane moves learns the new address from there,
+        # and without it would not start a pod again.
+        - --station-api-directory=/host/etc/rlark/station
+        - --station-api-url=$(STATION_API_URL)
+        - --station-api-ca=/var/run/secrets/station-api-ca/ca.crt
+        env:
+        - name: STATION_API_URL
+          valueFrom:
+            configMapKeyRef:
+              name: station-agent
+              key: api-url
+        readinessProbe:
+          exec:
+            command:
+            - /station-gateway
+            - --keep-host-program=/host/opt/rlark/bin/station-gateway
+            - --host-program-settled
+          # One failed check is enough: the rollout must see a trial begin.
+          periodSeconds: 5
+          failureThreshold: 1
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: 5m
+            memory: 16Mi
+          limits:
+            cpu: 200m
+            memory: 96Mi
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          # The runtime's default AppArmor profile lets a container signal
+          # and inspect only its own processes; this one ends the machine's.
+          appArmorProfile:
+            type: Unconfined
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - KILL
+            - SYS_PTRACE
+        volumeMounts:
+        - name: host-programs
+          mountPath: /host/opt/rlark/bin
+        # The directory above in-use: whoever keeps files there may make and
+        # remove in-use itself, and a mount of it would go on showing the old one.
+        - name: host-in-use
+          mountPath: /host/run/rlark
+          readOnly: true
+        - name: host-unit-drop-ins
+          mountPath: /host/etc/systemd/system/rlark-station-gateway.service.d
+        - name: host-station
+          mountPath: /host/etc/rlark/station
+        - name: station-api-ca
+          mountPath: /var/run/secrets/station-api-ca
+          readOnly: true
+        - name: wireguard-observation
+          mountPath: /var/run/station-observation
+          readOnly: true
+      volumes:
+      - name: host-programs
+        hostPath:
+          path: /opt/rlark/bin
+          type: Directory
+      - name: host-in-use
+        hostPath:
+          path: /run/rlark
+          type: DirectoryOrCreate
+      - name: host-unit-drop-ins
+        hostPath:
+          path: /etc/systemd/system/rlark-station-gateway.service.d
+          type: DirectoryOrCreate
+      - name: host-station
+        hostPath:
+          path: /etc/rlark/station
+          type: Directory
+      - name: token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              audience: station.rlark.io
+              expirationSeconds: 600
+      - name: station-api-ca
+        secret:
+          secretName: station-api-ca
+          items:
+          - key: ca.crt
+            path: ca.crt
+      - name: wireguard-observation
+        hostPath:
+          path: /run/station-observation
+          type: Directory
+      - name: wireguard-computed
+        hostPath:
+          path: /run/station-network
+          type: Directory
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: station.rlark.io/network
+                operator: In
+                values:
+                - host
+      hostNetwork: true
+      # The gateway-program container ends the machine's service process.
+      hostPID: true
+      dnsPolicy: Default

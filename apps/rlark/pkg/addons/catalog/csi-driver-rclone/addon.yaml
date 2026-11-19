@@ -1,0 +1,101 @@
+name: csi-driver-rclone
+displayName: RClone CSI 驱动
+category: storage
+version: v0.2.1
+description: |
+  RClone CSI 驱动，支持通过 RClone 挂载远程存储（S3、GCS、Azure Blob 等）到 Pod。
+  包含 controller 与 node DaemonSet，提供动态 PV 配置能力。
+icon: hard-drive
+
+parameters:
+  - name: nodeUpdateStrategy
+    displayName: Node 更新策略
+    description: OnDelete 保留现有节点插件，需操作方逐个安排替换；新增节点仍自动创建插件。
+    type: enum
+    default: RollingUpdate
+    options: [RollingUpdate, OnDelete]
+  - name: nodeImagePullPolicy
+    displayName: Node 镜像拉取策略
+    description: IfNotPresent 可使用经核对预载的镜像；节点重建后需保证镜像来源可用。
+    type: enum
+    default: Always
+    options: [Always, IfNotPresent]
+  - name: nodeTpsLimit
+    displayName: Node 每秒请求上限
+    description: |
+      节点插件对远端的每秒请求数上限（rclone --tpslimit），一个节点上的所有挂载共用。
+      对象存储对列目录限流（HTTP 429）时设置；留空不限。修改后需替换节点插件 Pod 才生效。
+    type: string
+    default: ""
+    required: false
+  - name: rcloneImage
+    displayName: RClone 驱动镜像
+    description: CSI RClone 驱动容器镜像地址
+    type: string
+    default: rlinf/csi-rclone/csi-driver-rclone:v0.2.0
+    required: true
+
+  - name: csiProvisionerImage
+    displayName: CSI Provisioner 镜像
+    description: csi-provisioner 容器镜像地址
+    type: string
+    default: rlinf/csi-rclone/csi-provisioner:v6.2.0
+    required: true
+
+  - name: livenessProbeImage
+    displayName: Liveness Probe 镜像
+    description: livenessprobe 容器镜像地址
+    type: string
+    default: rlinf/csi-rclone/livenessprobe:v2.18.0
+    required: true
+
+  - name: nodeDriverRegistrarImage
+    displayName: Node Driver Registrar 镜像
+    description: csi-node-driver-registrar 容器镜像地址
+    type: string
+    default: rlinf/csi-rclone/csi-node-driver-registrar:v2.16.0
+    required: true
+
+  - name: driverName
+    displayName: CSI 驱动名称
+    description: CSI 驱动注册名称
+    type: string
+    default: rclone.csi.veloxpack.io
+    required: true
+
+  - name: nodeSelector
+    displayName: 节点选择器
+    description: |
+      Node DaemonSet 的节点选择器（label=value 格式）。建议先指定单个灰度节点，验证通过后再扩展标签范围。
+      示例: rlark.io/rclone-csi=enabled
+    type: string
+    default: ""
+    required: false
+
+  - name: controllerReplicas
+    displayName: Controller 副本数
+    description: Controller Deployment 副本数量
+    type: int
+    default: "1"
+    required: true
+
+  - name: controllerNodeSelector
+    displayName: Controller 节点选择器
+    description: Controller Deployment 的节点选择器（label=value 格式），为空时由调度器选择节点。
+    type: string
+    default: ""
+    required: false
+
+  - name: controllerLogLevel
+    displayName: Controller 日志级别
+    description: Controller 日志级别 (0-10)
+    type: string
+    default: "5"
+    required: true
+
+  - name: nodeLogLevel
+    displayName: Node 日志级别
+    description: Node DaemonSet 日志级别 (0-10)
+    type: string
+    default: "5"
+    required: true

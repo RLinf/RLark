@@ -1,0 +1,44 @@
+# What a release built from this tree brings besides the images built from it (rlarkctl release candidate): images
+# no build of the tree makes, by digest, and values of the catalog's Addons that are the same in every cluster
+# ({{images.x}} names an image of the release). A release states them for every cluster that has the Addon installed,
+# and the record of the release a site runs (rlark-system/rlark-release-current) carries them for a cluster the
+# Gateway makes. A value that differs by site (a registry's address, a CA, a node selector) is the site's, not here.
+images:
+  # The new cluster's acceptance Job (the Gateway's new cluster): a shell and glibc. mirror/ubuntu:22.04 of astribot/release/mirror.
+  cluster-check: registry.rlark.internal:5443/mirror/ubuntu@sha256:45e9ddc6895604674618a409ca9f73d301da8fdb75fe330e8e9a27b3b219e4ad
+  # registry-trust's images, by the registry's name in every cluster: every node has them from its installer
+  # (installer below), so they run before the node pulls anything.
+  registry-trust: registry.rlark.internal:5443/rlark/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+  registry-trust-kubectl: registry.rlark.internal:5443/rlark/kubectl@sha256:a179e6c6f0b87263426fe2a793412c422999d55ffb06d7bc069635468aba3324
+  # The site registry and its relay, as every live cluster runs them: a cluster pulls them through the very registry
+  # they make, so the node has them from its installer (installer below) and they stay each site's values (no
+  # release states site-registry's image and relayImage); a cluster the Gateway makes takes them from the record.
+  site-registry: registry.rlark.internal:5443/rlark/registry@sha256:e681a91fae320795d41e98897eff8f61c01359cfc1dde1ddd716d7d0be22b18e
+  site-registry-relay: registry.rlark.internal:5443/rlark/agent@sha256:073476a2f62ac55df00d76d8bb8fd4dc10df6ef1229b905f2a65dbacd079b71f
+  # NVIDIA's container toolkit v1.17.8-ubuntu20.04 and device plugin v0.17.4 (amd64 only).
+  nvidia-container-toolkit: registry.rlark.internal:5443/mirror/container-toolkit@sha256:a4d9d439fa05929a2a489f7b6b557a03e035f85e6f31f8ff674fd1cd7579a6fa
+  nvidia-device-plugin: registry.rlark.internal:5443/mirror/k8s-device-plugin@sha256:ad155f1089b64673c75b2f39258f0791cbad6d3011419726ec605196981e1c32
+  # csi-driver-rclone's images as every live cluster runs them (KS3's rclone v0.2.0-ks3.3): a cluster the Gateway makes
+  # had none and pulled the catalog's defaults from Docker Hub, which a cloud in China does not reach (Baidu, 11-18).
+  csi-rclone: registry.rlark.internal:5443/csi-rclone/csi-driver-rclone@sha256:4909777afbfaa6df954861fe757a929a35f1fc73a477b5f771349b9d2d988d70
+  csi-provisioner: registry.rlark.internal:5443/csi-rclone/csi-provisioner@sha256:da2f5c41881009b963c121d3605c68ad9127490f2c209a849b4eb26074b0038b
+  csi-livenessprobe: registry.rlark.internal:5443/csi-rclone/livenessprobe@sha256:7fe80915b3cb9fb1d09dbd300a0682cafa8ab93947cd3ddc3e15a8250621bf24
+  csi-node-driver-registrar: registry.rlark.internal:5443/csi-rclone/csi-node-driver-registrar@sha256:aeecba5b171b50558bab359fdb8e28b9da185f666cef35cd87ac9784e51956c5
+# The images every node has from its installer, by these names (rlarkctl release archive, Dockerfile.installer): what
+# runs before the node can pull from the site's registry, or makes that registry.
+installer: [site-registry, site-registry-relay, registry-trust, registry-trust-kubectl]
+addons:
+  registry-trust:
+    values:
+      image: "{{images.registry-trust}}"
+      kubectlImage: "{{images.registry-trust-kubectl}}"
+  nvidia-gpu:
+    values:
+      toolkitImage: "{{images.nvidia-container-toolkit}}"
+      devicePluginImage: "{{images.nvidia-device-plugin}}"
+  csi-driver-rclone:
+    values:
+      rcloneImage: "{{images.csi-rclone}}"
+      csiProvisionerImage: "{{images.csi-provisioner}}"
+      livenessProbeImage: "{{images.csi-livenessprobe}}"
+      nodeDriverRegistrarImage: "{{images.csi-node-driver-registrar}}"

@@ -1,0 +1,156 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: stationauditevents.station.rlark.io
+spec:
+  group: station.rlark.io
+  names:
+    kind: StationAuditEvent
+    listKind: StationAuditEventList
+    plural: stationauditevents
+    singular: stationauditevent
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.operation.name
+      name: Operation
+      type: string
+    - jsonPath: .spec.outcome
+      name: Outcome
+      type: string
+    - jsonPath: .spec.actor
+      name: Actor
+      type: string
+    - jsonPath: .spec.occurredAt
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          StationAuditEvent is an immutable record of a security-sensitive Station operation.
+          It is stored separately from operation state and created idempotently by station-controller.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              action:
+                description: 'Delete is of a retired Station: Operation then names
+                  the Station itself.'
+                enum:
+                - Rebind
+                - Delete
+                type: string
+              actor:
+                description: Actor is resolved from the authenticated API identity.
+                maxLength: 256
+                minLength: 1
+                type: string
+              clusterID:
+                maxLength: 128
+                minLength: 1
+                type: string
+              observedStationUID:
+                description: ObservedStationUID records a same-name replacement seen
+                  while rejecting an operation.
+                maxLength: 128
+                type: string
+              occurredAt:
+                format: date-time
+                type: string
+              operation:
+                properties:
+                  name:
+                    minLength: 1
+                    type: string
+                  uid:
+                    description: UID prevents a same-name replacement from being adopted.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+              operationID:
+                maxLength: 128
+                minLength: 1
+                type: string
+              outcome:
+                enum:
+                - Applied
+                - Rejected
+                type: string
+              previousBindingVersion:
+                format: int64
+                type: integer
+              previousNodeUID:
+                maxLength: 128
+                type: string
+              reason:
+                description: Reason is bounded operator context and must never contain
+                  credentials or key material.
+                maxLength: 1024
+                minLength: 1
+                type: string
+              resultBindingVersion:
+                format: int64
+                type: integer
+              resultReason:
+                maxLength: 128
+                type: string
+              station:
+                properties:
+                  name:
+                    minLength: 1
+                    type: string
+                  uid:
+                    description: UID prevents a same-name replacement from being adopted.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+              targetNodeUID:
+                maxLength: 128
+                type: string
+            required:
+            - action
+            - actor
+            - clusterID
+            - occurredAt
+            - operation
+            - operationID
+            - outcome
+            - reason
+            - resultReason
+            - station
+            type: object
+            x-kubernetes-validations:
+            - message: audit event spec is immutable
+              rule: self == oldSelf
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

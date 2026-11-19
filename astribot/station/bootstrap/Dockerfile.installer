@@ -1,0 +1,60 @@
+# The installer of this tree, with what a release's installer carries that is not this tree's: kubeadm, kubelet and
+# kubectl, containerd, the CNI plugins, the image archives and the manifests. That release's installer is BASE, the
+# artifact that holds its bundle (rlark/staging-artifact, one .bundle.tar at its root); this tree gives
+# station-bootstrap, station-gateway and the scripts, and REGISTRY_CA (base64 of a PEM file, a public certificate)
+# the site registry's CA a machine trusts first, written as build.sh writes it; the build context installer-images
+# holds <os>-<arch>/installer.tar, the tree's pinned installer images of each platform by their names (rlarkctl
+# release archive), which go into the bundle's images/ as they are: a node imports its platform's. The files are
+# exactly what build.sh lays down from the same contents, so the installer of a commit for a site is built where the
+# commit's other images are (astribot/release/run.sh, on the office's management machine, for the live environment;
+# Kubernetes' own version changes by Dockerfile.base, which builds a new BASE). Its tag is BASE's Kubernetes part and SUFFIX: install-v1.33.13-<SUFFIX>.
+#
+#   --target image     rlark/node-bootstrap, the image an operator's typed command runs and the environment's upgrade
+#                      bundle of BASE's Kubernetes version (hack/upgrade-cluster.sh IMAGE)
+#   --target artifact  rlark/staging-artifact, <tag>.bundle.tar at its root: what Station API serves and a machine
+#                      joined over SSH is sent; the same bytes from the same tree, BASE, CA and SUFFIX
+#
+# Built from the repository's root:  --build-arg BASE=<registry>/rlark/staging-artifact@sha256:... --build-arg SUFFIX=<commit>-<site>
+#   --build-arg REGISTRY_CA=$(base64 -w0 <ca.crt>) --build-context installer-images=<directory>
+ARG BASE
+# Debian's Go image (GNU tar: the bundle is written byte for byte the same), the registry's mirror of golang:1.26.
+ARG GO_IMAGE=registry.rlark.internal:5443/mirror/golang@sha256:6327cb290853a5d13091c436b88259b4f35ff70e49b1f8d9e5d1dd1757e9c6ba
+
+FROM ${BASE} AS base
+
+FROM ${GO_IMAGE} AS build
+# Go modules through goproxy.cn, which the build site reaches (proxy.golang.org it does not).
+ARG GOPROXY=https://goproxy.cn,direct
+ARG SUFFIX
+ARG REGISTRY_CA
+WORKDIR /src
+COPY api/ ./api/
+COPY astribot/station/ ./astribot/station/
+COPY astribot/station-gateway/ ./astribot/station-gateway/
+RUN cd astribot/station-gateway && GOWORK=off CGO_ENABLED=0 go build -trimpath -o /out/station-gateway . && \
+    cd ../station && GOWORK=off CGO_ENABLED=0 go build -trimpath -o /out/station-bootstrap ./bootstrap
+COPY --from=base / /base/
+COPY --from=installer-images / /installer-images/
+RUN set -e; test -n "$SUFFIX"; test -n "$(ls /installer-images/*/installer.tar)"; \
+    mkdir /bundle && tar -C /bundle -xf /base/*.bundle.tar && rm -f /bundle/station-bootstrap; \
+    cp -r /installer-images/. /bundle/images/; \
+    install -m 755 /out/station-gateway /bundle/bin/station-gateway; \
+    for script in astribot/station/bootstrap/*.sh; do [ "${script##*/}" = build.sh ] || install -m 755 "$script" /bundle/; done; \
+    if [ -n "$REGISTRY_CA" ]; then \
+      certs=/bundle/certs.d/registry.rlark.internal:5443; mkdir -p "$certs"; \
+      printf '%s\n' "$(echo "$REGISTRY_CA" | base64 -d)" > "$certs/ca.crt"; \
+      printf '%s\n' 'server = "https://registry.rlark.internal:5443"' '' '[host."https://registry.rlark.internal:5443"]' '  capabilities = ["pull", "resolve"]' '  ca = "ca.crt"' > "$certs/hosts.toml"; \
+    fi; \
+    TAG="$(cut -d- -f1-2 /bundle/tag)-${SUFFIX}"; echo "${TAG}" > /bundle/tag; \
+    install -m 755 /out/station-bootstrap /station-bootstrap; \
+    mkdir /artifact && cp -a /bundle /artifact/files && install -m 755 /out/station-bootstrap /artifact/files/station-bootstrap; \
+    tar -C /artifact/files --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf "/artifact/${TAG}.bundle.tar" . && \
+    rm -rf /artifact/files
+
+FROM scratch AS artifact
+COPY --from=build /artifact/ /
+
+FROM scratch AS image
+COPY --from=build /bundle /bundle
+COPY --from=build /station-bootstrap /station-bootstrap
+ENTRYPOINT ["/station-bootstrap"]

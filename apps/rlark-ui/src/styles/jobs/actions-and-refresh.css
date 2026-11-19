@@ -1,0 +1,186 @@
+.admin-job-actions {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.admin-job-actions .icon-button {
+  width: 32px;
+  height: 32px;
+}
+
+.admin-job-actions .icon-button.danger,
+.job-detail-actions .secondary-button.danger {
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.24);
+  background: rgba(254, 242, 242, 0.88);
+}
+
+.admin-job-actions .icon-button.danger:hover,
+.job-detail-actions .secondary-button.danger:hover {
+  border-color: rgba(220, 38, 38, 0.44);
+  background: #fee2e2;
+}
+
+.job-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 520px;
+}
+
+.job-detail-actions .secondary-button {
+  min-height: 32px;
+  height: 32px;
+  padding: 0 10px;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.job-detail-actions .secondary-button.primary-action {
+  border-color: rgba(37, 134, 90, 0.28);
+  background: rgba(37, 134, 90, 0.08);
+  color: #25865a;
+}
+
+.job-detail-actions .secondary-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.job-action-loading {
+  animation: job-action-spin 0.8s linear infinite;
+}
+
+@keyframes job-action-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.refreshable-region {
+  position: relative;
+}
+
+.refreshable-region > :not(.refreshable-region-overlay) {
+  transition:
+    opacity 0.16s ease,
+    filter 0.16s ease;
+}
+
+.refreshable-region.is-refreshing {
+  cursor: progress;
+}
+
+.refreshable-region.is-refreshing > :not(.refreshable-region-overlay) {
+  opacity: 0.42;
+  filter: saturate(0.45);
+  pointer-events: none;
+  user-select: none;
+}
+
+.refreshable-region.page-refresh-region > .section-heading,
+.refreshable-region.page-refresh-region > .admin-dashboard-hero,
+.refreshable-region > .refresh-region-toolbar {
+  position: relative;
+  z-index: 21;
+}
+
+.refreshable-region.is-refreshing.page-refresh-region > .section-heading,
+.refreshable-region.is-refreshing.page-refresh-region > .admin-dashboard-hero,
+.refreshable-region.is-refreshing > .refresh-region-toolbar {
+  opacity: 1;
+  filter: none;
+  pointer-events: auto;
+  user-select: auto;
+}
+
+.refreshable-region-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.2);
+  cursor: progress;
+}
+
+.refreshable-region-spinner {
+  color: var(--blue);
+  filter: drop-shadow(0 2px 5px rgba(80, 70, 210, 0.2));
+  animation: job-action-spin 0.8s linear infinite;
+}
+
+.theme-dark .refreshable-region-overlay {
+  background: rgba(14, 20, 31, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refreshable-region > :not(.refreshable-region-overlay) {
+    transition: none;
+  }
+
+  .refreshable-region-spinner {
+    animation: none;
+  }
+}
+
+.job-detail-action-error {
+  max-width: 520px;
+  color: #d64d68 !important;
+  font-size: 10px !important;
+  font-weight: 650 !important;
+  text-align: right;
+}
+
+.theme-dark .admin-job-actions .icon-button.danger,
+.theme-dark .job-detail-actions .secondary-button.danger {
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.3);
+  background: rgba(127, 29, 29, 0.24);
+}
+
+.theme-dark .job-detail-actions .secondary-button.primary-action {
+  border-color: rgba(74, 222, 128, 0.28);
+  background: rgba(22, 101, 52, 0.2);
+  color: #86efac;
+}
+
+@media (max-width: 620px) {
+  .metric-grid,
+  .cluster-overview-grid,
+  .cluster-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .theme-control {
+    display: none;
+  }
+
+  .overview-china-heading {
+    flex-direction: column;
+  }
+
+  .overview-china-legend {
+    justify-content: flex-start;
+  }
+
+  .overview-china-map {
+    min-height: 320px;
+  }
+
+  .overview-china-map > svg {
+    inset: 8px 2px 5px;
+    width: calc(100% - 4px);
+  }
+
+  .overview-china-aside {
+    display: flex;
+  }
+
+  .overview-city-summary {
+    grid-template-columns: 1fr;
+  }
+}

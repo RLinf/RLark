@@ -1,0 +1,92 @@
+name: embodied-runtime-device-plugin
+displayName: 具身运行时设备插件
+category: device-plugin
+version: v0.1.0
+description: |
+  部署具身运行时设备插件 (Embodied Runtime Device Plugin)。
+  支持按节点配置不同的设备参数（robot IP、网卡、相机等）。
+icon: cpu
+
+parameters:
+  - name: deviceCount
+    displayName: 设备数量
+    description: 每节点设备数量
+    type: string
+    default: "1"
+    required: true
+
+  - name: robots
+    displayName: 机器人配置
+    description: |
+      全局机器人配置（YAML），所有节点共用。格式示例：
+      - ip: 192.168.1.100
+        name: franka-robot
+    type: text
+    default: ""
+    required: false
+
+  - name: macvlans
+    displayName: MacVlan 配置
+    description: |
+      全局 MacVlan 配置（YAML），所有节点共用。格式示例：
+      - interface: eth1
+        name: mac0
+    type: text
+    default: ""
+    required: false
+
+  - name: nodeOverrides
+    displayName: 节点级覆盖配置
+    description: |
+      按节点名覆盖全局配置（YAML），key 为节点名，value 为需覆盖的字段。示例：
+        hz-wwxq-nuc:
+          robots:
+            - ip: 192.168.1.200
+              name: franka-robot-2
+    type: text
+    default: ""
+    required: false
+
+  - name: image
+    displayName: 设备插件镜像
+    description: device-plugin 容器镜像地址
+    type: string
+    default: rlinf/embodied-runtime:v0.1.0-b4b4d6f8
+    required: true
+
+  - name: cameraImage
+    displayName: 相机镜像
+    description: camera controller pod 镜像地址
+    type: string
+    default: rlinf/camera-base:v0.1.0-946787a0
+    required: true
+
+  - name: rosImage
+    displayName: ROS 镜像
+    description: ROS controller pod 镜像地址
+    type: string
+    default: rlinf/serl_franka_controllers:v0.1.0-libfranka-0.19.0-frankaros-0.10.2
+    required: true
+
+  - name: rendererImage
+    displayName: 配置渲染镜像
+    description: 节点级配置渲染 initContainer 使用的 yq 镜像地址（仅 nodeOverrides 非空时启用）
+    type: string
+    default: yq:4.53.2
+    required: false
+
+  - name: robotTolerationKey
+    displayName: 机器人节点 Toleration Key
+    description: DaemonSet 调度到机器人节点的 toleration key
+    type: string
+    default: "rlinf.io/robot"
+    required: true
+
+  - name: nodeSelector
+    displayName: 节点选择器
+    description: |
+      节点选择器（label=value 格式），留空则调度到所有带 toleration 的节点。
+      示例: kubernetes.io/hostname=node-name
+    type: string
+    default: ""
+    required: false

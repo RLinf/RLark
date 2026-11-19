@@ -1,0 +1,87 @@
+{{- $name := include "embodied-runtime.devicePluginName" . -}}
+{{- $sa := include "embodied-runtime.serviceAccountName" . -}}
+{{- $namespace := .Values.namespace -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sa }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "embodied-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/component: device-plugin
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "embodied-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/component: device-plugin
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete", "deletecollection"]
+  {{- if and (include "embodied-runtime.webhookEnabled" .) .Values.webhook.caSecret.name }}
+  # Webhook CA Secret persistence: granted only when a CA Secret is configured.
+  # In-memory CA mode (no caSecret.name) touches no secrets, so no rule is
+  # emitted. The device plugin only Get/Create/Update the single Secret
+  # (no list/watch/patch). resourceNames is intentionally omitted: it cannot
+  # reliably scope create (the object does not exist yet), and the Secret lives
+  # in the device plugin's own namespace, which the SA already manages pods in.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "update"]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "embodied-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/component: device-plugin
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $namespace }}
+roleRef:
+  kind: Role
+  name: {{ $name }}
+  apiGroup: rbac.authorization.k8s.io
+{{- if include "embodied-runtime.webhookEnabled" . }}
+---
+# Cluster-scoped permission to read and patch the MutatingWebhookConfiguration
+# this chart created (its caBundle is auto-managed by the device plugin). The
+# configuration name is restricted via a resourceNames filter so the SA cannot
+# touch other webhooks.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "embodied-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/component: device-plugin
+rules:
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations"]
+    resourceNames: ["{{ include "embodied-runtime.webhookConfigName" . }}"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "embodied-runtime.labels" . | nindent 4 }}
+    app.kubernetes.io/component: device-plugin
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ $name }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

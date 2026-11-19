@@ -1,0 +1,90 @@
+# Apply only to a member cluster explicitly authorized for node operations.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: station-node-operator
+  namespace: station-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: station-node-operator
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "update", "patch", "delete"]
+# A node whose kubelet no longer reports is emptied by deleting its pods.
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list", "delete"]
+# A machine's join is done when the Addons of its NodeClass have a ready pod on its node.
+- apiGroups: ["apps"]
+  resources: ["daemonsets"]
+  verbs: ["list"]
+- apiGroups: [""]
+  resources: ["pods/eviction"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: station-node-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: station-node-operator
+subjects:
+- kind: ServiceAccount
+  name: station-node-operator
+  namespace: station-system
+---
+# A removed node that still reports is reset by a pod on it, with the RLark
+# node agent's image and pull accounts.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-node-reset
+  namespace: rlark-system
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-node-reset
+  namespace: rlark-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-node-reset
+subjects:
+- kind: ServiceAccount
+  name: station-node-operator
+  namespace: station-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-node-wireguard-config
+  namespace: station-system
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["station-wireguard-config"]
+  verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-node-wireguard-config
+  namespace: station-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-node-wireguard-config
+subjects:
+- kind: ServiceAccount
+  name: station-node-operator
+  namespace: station-system

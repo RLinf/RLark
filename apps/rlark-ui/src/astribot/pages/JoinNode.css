@@ -1,0 +1,169 @@
+/* Adding a node: the create-cluster page's heading and step cards, the
+   storage form's fields (.storage-create-form), the job form's choice
+   buttons (.role-template.selectable). Only what those leave open is here. */
+.join-node-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.join-node-page .storage-create-form {
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+}
+
+.theme-dark .join-node-page .storage-create-form {
+  background: transparent;
+}
+
+.join-node-page form,
+.join-node-page .cluster-enrollment-card {
+  display: grid;
+  gap: 16px;
+}
+
+.join-node-page .cluster-enrollment-card-head {
+  margin-bottom: 6px;
+}
+
+.join-node-page .storage-create-form .join-ssh-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.join-node-wide {
+  grid-column: 1 / -1;
+}
+
+.join-node-methods button {
+  flex: 1 1 180px;
+  justify-content: flex-start;
+}
+
+.join-node-methods button small {
+  margin-left: auto;
+}
+
+.join-node-advanced {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.join-node-advanced summary {
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.join-node-advanced[open] summary {
+  margin-bottom: 14px;
+}
+
+.join-node-page .cluster-enrollment-notes {
+  margin-top: 0;
+}
+
+.join-node-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.join-node-actions .primary-button {
+  height: 42px;
+  min-width: 150px;
+  justify-content: center;
+}
+
+.join-node-page .cert-error {
+  margin-top: 0;
+}
+
+.join-missing {
+  color: var(--red);
+}
+
+.join-node-result {
+  display: grid;
+  gap: 14px;
+}
+
+.join-node-result .cert-yaml-block pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.join-node-admitted {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.join-class-access {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.join-class-access-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  font-size: 12px;
+}
+
+.join-machines-panel {
+  overflow: hidden;
+}
+
+.join-machines-scroll {
+  overflow-x: auto;
+}
+
+.join-machines-panel tr.is-disabled td {
+  color: var(--muted);
+}
+
+.join-machines-empty {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 12px;
+}
+
+@media (max-width: 620px) {
+  .join-node-heading {
+    flex-direction: column;
+  }
+
+  .join-node-page .storage-create-form .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .join-node-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .join-node-actions .primary-button {
+    width: 100%;
+  }
+}
+
+/* The cluster's SSH joins under the form: a row each, the chosen one opened on its stages. */
+.join-ssh-records {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.join-ssh-records .provision-progress {
+  padding: 4px 12px 14px;
+}

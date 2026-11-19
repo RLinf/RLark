@@ -1,0 +1,10 @@
+{
+ "s1u": [
+  "head",
+  "wrist_left",
+  "wrist_right"
+ ],
+ "s1u_observer": [
+  "head"
+ ]
+}

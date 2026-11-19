@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-runtime
+  namespace: rlark-system
+  labels:
+    app: nvidia-runtime
+spec:
+  # Each node's Pod installs and then idles: a node that cannot run it does not hold back the others.
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 100%
+  selector:
+    matchLabels:
+      app: nvidia-runtime
+  template:
+    metadata:
+      labels:
+        app: nvidia-runtime
+    spec:
+      hostPID: true
+      priorityClassName: system-node-critical
+      nodeSelector:
+        {{ index (splitList "=" .Values.nodeSelector) 0 }}: {{ index (splitList "=" .Values.nodeSelector) 1 | printf "%q" }}
+      tolerations:
+        - operator: Exists
+      terminationGracePeriodSeconds: 1
+      initContainers:
+        - name: install
+          image: {{ .Values.toolkitImage }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              # The runtime is the one this node's kubelet is configured with, read from the host's kubelet files.
+              endpoint=$(sed -n 's/.*--container-runtime-endpoint=\([^ "]*\).*/\1/p' /host/var/lib/kubelet/kubeadm-flags.env 2>/dev/null | head -n 1)
+              [ -n "$endpoint" ] || endpoint=$(sed -n 's/^containerRuntimeEndpoint: *//p' /host/var/lib/kubelet/config.yaml 2>/dev/null | tr -d "\"'")
+              runtime=$(basename "$(dirname "${endpoint:-unix:///run/containerd/containerd.sock}")")
+              config=/host/etc/$runtime/config.toml
+              stamp=$(date -u +%Y%m%dT%H%M%SZ)
+              cp -p "$config" "$config.nvidia-gpu.$stamp"
+              # The toolkit into the host's /usr/local/nvidia (mounted at the same path, so the runtime's
+              # configuration names host paths), nvidia the runtime's default; the host's own driver. A container
+              # gets the GPUs the device plugin gave it and no other: an image's NVIDIA_VISIBLE_DEVICES (all, in
+              # every CUDA image) is not taken from an unprivileged container, the plugin's list comes as mounts.
+              ROOT=/usr/local/nvidia RUNTIME=containerd RUNTIME_CONFIG="$config" RUNTIME_RESTART_MODE=none NO_DAEMON=true \
+                CONTAINERD_SET_AS_DEFAULT=true NVIDIA_DRIVER_ROOT=/ DRIVER_ROOT_CTR_PATH=/host TOOLKIT_PID_FILE=/run/nvidia/toolkit.pid \
+                ACCEPT_NVIDIA_VISIBLE_DEVICES_ENVVAR_WHEN_UNPRIVILEGED=false ACCEPT_NVIDIA_VISIBLE_DEVICES_AS_VOLUME_MOUNTS=true \
+                /work/nvidia-toolkit
+              if cmp -s "$config" "$config.nvidia-gpu.$stamp"; then
+                rm "$config.nvidia-gpu.$stamp"
+                echo "$runtime already runs the NVIDIA runtime by default"
+              else
+                nsenter -t 1 -m -u -i -n -p -- systemctl restart "$runtime" ||
+                  { cp -p "$config.nvidia-gpu.$stamp" "$config"; echo "cannot restart $runtime; its config is restored"; exit 1; }
+                echo "$runtime restarted with the NVIDIA runtime by default; was ${config#/host}.nvidia-gpu.$stamp"
+              fi
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: host
+              mountPath: /host
+            - name: toolkit
+              mountPath: /usr/local/nvidia
+            - name: run
+              mountPath: /run/nvidia
+      containers:
+        - name: idle
+          image: {{ .Values.toolkitImage }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, -c, "while :; do sleep 3600; done"]
+          resources:
+            requests:
+              cpu: 1m
+              memory: 8Mi
+      volumes:
+        - name: host
+          hostPath:
+            path: /
+        - name: toolkit
+          hostPath:
+            path: /usr/local/nvidia
+            type: DirectoryOrCreate
+        - name: run
+          emptyDir: {}

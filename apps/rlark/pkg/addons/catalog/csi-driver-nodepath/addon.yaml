@@ -1,0 +1,49 @@
+name: csi-driver-nodepath
+displayName: 节点目录 CSI 驱动
+category: storage
+version: v0.1.1
+description: |
+  RLark 节点目录型存储（如金山云 KPFS）的 CSI 驱动 nodepath.csi.rlark.io。
+  它不负责挂载 KPFS：KPFS 由云厂商的客户端挂在节点上。驱动只做三件事：检查存储目录
+  确实落在节点上挂好的文件系统上（类型相符），把它 bind mount 进 Pod（不经 FUSE），
+  并由节点插件探测每台节点有哪些存储、写节点标签 storage.rlark.io/<存储 id>，节点上
+  的挂载变了时在 Pod 和节点上记事件。存储对象分发的 StorageClass 以它为 provisioner。
+icon: hard-drive
+
+parameters:
+  - name: image
+    displayName: RLark 镜像
+    description: 含 /usr/local/bin/csi-nodepath 的 RLark 镜像（建议写 digest）
+    type: string
+    default: ""
+    required: true
+  - name: csiProvisionerImage
+    displayName: CSI Provisioner 镜像
+    description: csi-provisioner 容器镜像地址
+    type: string
+    default: rlinf/csi-rclone/csi-provisioner:v6.2.0
+    required: true
+  - name: livenessProbeImage
+    displayName: Liveness Probe 镜像
+    description: livenessprobe 容器镜像地址
+    type: string
+    default: rlinf/csi-rclone/livenessprobe:v2.18.0
+    required: true
+  - name: nodeDriverRegistrarImage
+    displayName: Node Driver Registrar 镜像
+    description: csi-node-driver-registrar 容器镜像地址
+    type: string
+    default: rlinf/csi-rclone/csi-node-driver-registrar:v2.16.0
+    required: true
+  - name: nodeImagePullPolicy
+    displayName: 镜像拉取策略
+    type: enum
+    default: IfNotPresent
+    options: [Always, IfNotPresent]
+  - name: nodeSelector
+    displayName: 节点选择器
+    description: |
+      Node DaemonSet 的节点选择器（label=value）。留空表示所有节点；节点上没有存储目录时，挂载该存储的 Pod 报 FailedMount。
+    type: string
+    default: ""
+    required: false

@@ -1,0 +1,1869 @@
+import { StorageMountOptions } from "../astribot/components/StorageMountOptions";
+import { useEffect, useRef, useState } from "react";
+
+type ImageUsage = {
+  image: string;
+  useCount: number;
+  lastUsedAt: string;
+};
+
+import { Check, ChevronDown, Plus, Trash2, X } from "lucide-react";
+import {
+  storageClasses as mockStorageClasses,
+  type Cluster,
+  clusters,
+  type Job,
+  type JobType,
+} from "../data";
+import type { Copy } from "../i18n";
+import type { RoleResource } from "../types";
+import type { JobTag } from "../data";
+import {
+  ROLE_TEMPLATES,
+  automaticNetworkDomain,
+  generateJobCRD,
+  generateJobResourceName,
+  isValidJobDisplayName,
+  isValidRoleName,
+  JOB_DISPLAY_NAME_MAX_LENGTH,
+  ROLE_NAME_MAX_LENGTH,
+  parseNodeSelectorStr,
+} from "../utils/job";
+import { toYaml } from "../utils/yaml";
+import { describeVolumeSource } from "../utils/crd";
+import { useNodeLabels } from "../utils/nodes";
+import { imageReferenceHasWhitespace } from "../utils/imageReference";
+import { RoleNameInput } from "../components/create";
+import { RegistryImagePicker } from "../astribot/components/RegistryImagePicker";
+import { CodeEditorField } from "../components/CodeEditor";
+import { TagEditor } from "../components/TagEditor";
+import { ResourcePlacementPicker } from "../components/ResourcePlacementPicker";
+import {
+  availableResource,
+  reclaimableResourcesForTasks,
+  type ReclaimableResources,
+} from "../utils/resourceAvailability";
+import {
+  groupSSHUserKeys,
+  partitionSelectableSSHPublicKeys,
+  splitSSHPublicKeys,
+  type SSHUserKey,
+} from "../utils/sshKeys";
+
+function ClusterSelect({
+  clusters,
+  value,
+  zh,
+  onChange,
+}: {
+  clusters: Cluster[];
+  value: string;
+  zh: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = clusters.find(
+    (cluster) => cluster.id === value,
+  );
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, []);
+
+  const typeLabel = (cluster: Cluster) =>
+    cluster.type === "Embodied"
+      ? zh
+        ? "具身设备集群"
+        : "Embodied"
+      : zh
+        ? "云算力集群"
+        : "Cloud compute";
+  const statusLabel = (cluster: Cluster) => {
+    const labels: Record<string, { zh: string; en: string }> = {
+      Online: { zh: "运行正常", en: "Online" },
+      Offline: { zh: "离线", en: "Offline" },
+      Downgraded: { zh: "服务降级", en: "Downgraded" },
+      Cordoned: { zh: "停用调度", en: "Cordoned" },
+      Draining: { zh: "排空中", en: "Draining" },
+      Delisted: { zh: "已下架", en: "Delisted" },
+    };
+    const label = labels[cluster.phase] ?? {
+      zh: cluster.phase,
+      en: cluster.phase,
+    };
+    return zh ? label.zh : label.en;
+  };
+
+  const optionContent = (cluster: Cluster) => (
+    <>
+      <strong>
+        {cluster.name}
+        {cluster.name !== cluster.id && <span className="real-name"> · {cluster.id}</span>}
+      </strong>
+      <span className="worker-cluster-type">{typeLabel(cluster)}</span>
+      <span className={`worker-cluster-state ${cluster.phase.toLowerCase()}`}>
+        <i aria-hidden="true" />
+        {statusLabel(cluster)}
+      </span>
+    </>
+  );
+
+  return (
+    <div
+      className="worker-cluster-select"
+      ref={rootRef}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && open) {
+          event.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className="worker-cluster-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {selected ? (
+          optionContent(selected)
+        ) : (
+          <span className="worker-cluster-placeholder">
+            {zh ? "请选择集群" : "Select a cluster"}
+          </span>
+        )}
+        <ChevronDown size={15} className={open ? "open" : undefined} />
+      </button>
+      {open && (
+        <div className="worker-cluster-options" role="listbox">
+          {clusters.map((cluster) => {
+            const active = cluster.id === value;
+            return (
+              <button
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={active ? "active" : undefined}
+                key={cluster.id}
+                onClick={() => {
+                  onChange(cluster.id);
+                  setOpen(false);
+                }}
+              >
+                {optionContent(cluster)}
+                {active && <Check size={15} className="worker-cluster-check" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 角色以 id 作为唯一标识，name 为显示名称（允许留空），
+// 避免多个未命名角色共用同一标识导致编辑联动。
+type RoleEntry = { id: string; name: string };
+let roleSeq = 0;
+
+export function CreateJobModal({
+  onClose,
+  onSuccess,
+  copy: c,
+  cloneJob,
+  editJob,
+  restartAfterSave = false,
+}: {
+  onClose: () => void;
+  onSuccess: (message: string, jobName: string) => void;
+  copy: Copy;
+  cloneJob?: Job | null;
+  editJob?: Job | null;
+  restartAfterSave?: boolean;
+}) {
+  const zh = c.nav.overview === "总览";
+  const isEdit = !!editJob;
+  const sourceJob = editJob ?? cloneJob;
+  const [type, setType] = useState<JobType>(sourceJob?.type ?? "RL");
+  const [step, setStep] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [errorNonce, setErrorNonce] = useState(0);
+  const errorBannerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (error && errorBannerRef.current) {
+      errorBannerRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+  }, [error, errorNonce]);
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !submitting) onClose();
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [onClose, submitting]);
+
+  const [roles, setRoles] = useState<RoleEntry[]>(() =>
+    (sourceJob?.defaultRoles ?? ROLE_TEMPLATES[type]).map((name) => ({
+      id: name,
+      name,
+    })),
+  );
+  const [jobName, setJobName] = useState(
+    sourceJob
+      ? editJob
+        ? sourceJob.displayName
+        : sourceJob.displayName + "-copy"
+      : "",
+  );
+  const [jobResourceName] = useState(() =>
+    editJob ? editJob.name : generateJobResourceName(),
+  );
+  const [headerRole, setHeaderRole] = useState(
+    sourceJob?.headerRole ?? roles[0]?.id ?? "",
+  );
+  const selectedHeader = roles.some((entry) => entry.id === headerRole)
+    ? headerRole
+    : (roles[0]?.id ?? "");
+  const jobNameInvalid =
+    jobName.trim().length > 0 && !isValidJobDisplayName(jobName.trim());
+
+  const [runScript, setRunScript] = useState(
+    sourceJob?.command ??
+      "python train.py --config /mnt/config/train.yaml --dataset /mnt/dataset --output /mnt/checkpoints",
+  );
+  const [tensorBoardDir, setTensorBoardDir] = useState(
+    sourceJob?.tensorBoardDir ?? "",
+  );
+  const [sshPublicKeys, setSSHPublicKeys] = useState(() =>
+    splitSSHPublicKeys(sourceJob?.sshPublicKey),
+  );
+  const sshPublicKey = sshPublicKeys.join("\n");
+  const [tags, setTags] = useState<JobTag[]>(sourceJob?.tags ?? []);
+  const [allJobTags, setAllJobTags] = useState<
+    Array<{ key: string; values: string[] }>
+  >([]);
+  const [sshKeys, setSShKeys] = useState<SSHUserKey[]>([]);
+  const selectableSSHKeys = groupSSHUserKeys(sshKeys);
+  const [sshKeysLoaded, setSShKeysLoaded] = useState(false);
+  const [droppedSSHKeyCount, setDroppedSSHKeyCount] = useState(0);
+  const [domains, setDomains] = useState<{ name: string; cidr: string }[]>([]);
+  const [reclaimableResources, setReclaimableResources] =
+    useState<ReclaimableResources>({});
+  const {
+    clusterNames,
+    nodes: allNodes,
+    loading: nodesLoading,
+  } = useNodeLabels();
+  const [availableClusters, setAvailableClusters] = useState<Cluster[]>(
+    clusters.slice(0, 4),
+  );
+  const [storageClasses, setStorageClasses] = useState<
+    { id: string; name: string; description: string; bucket: string }[]
+  >([]);
+  const [storageClassLoading, setStorageClassLoading] = useState(false);
+  const [storageClassFetched, setStorageClassFetched] = useState(false);
+  const [clustersLoaded, setClustersLoaded] = useState(false);
+  const [recentImages, setRecentImages] = useState<ImageUsage[]>([]);
+  const lastFetchedStorageClusterRef = useRef<string>("");
+  const inferenceDoneRef = useRef(false);
+
+  useEffect(() => {
+    imagesApi
+      .list<ImageUsage>()
+      .then(setRecentImages)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    jobsApi
+      .listTags()
+      .then(setAllJobTags)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    domainsApi
+      .list()
+      .then((items) =>
+        setDomains(
+          items.map((d) => ({
+            name: d.metadata?.name ?? "",
+            cidr: d.spec?.cidr ?? "",
+          })),
+        ),
+      )
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!editJob || !restartAfterSave) return;
+    tasksApi
+      .list({ labelSelector: `rlinf.io/job=${editJob.name}` })
+      .then((items) =>
+        setReclaimableResources(reclaimableResourcesForTasks(items)),
+      )
+      .catch(() => setReclaimableResources({}));
+  }, [editJob, restartAfterSave]);
+
+  useEffect(() => {
+    sshKeysApi
+      .list()
+      .then((data) => {
+        setSShKeys(data);
+        setSShKeysLoaded(true);
+      })
+      .catch(() => setSShKeysLoaded(true));
+  }, []);
+
+  // A cloned or edited Job may still carry public keys whose owner record was
+  // deleted from SSH key management. Those keys have no option in the selection
+  // list, so the user can neither see nor deselect them. Drop them from the
+  // draft once the registry is known and tell the user what was removed.
+  useEffect(() => {
+    if (!sshKeysLoaded) return;
+    const { known, orphaned } = partitionSelectableSSHPublicKeys(
+      sshPublicKeys,
+      sshKeys,
+    );
+    if (orphaned.length === 0) return;
+    setDroppedSSHKeyCount((current) => current + orphaned.length);
+    setSSHPublicKeys(known);
+    // sshPublicKeys is intentionally omitted: pruning reacts to the registry,
+    // not to the user's own selection changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sshKeysLoaded, sshKeys]);
+
+  useEffect(() => {
+    clustersApi
+      .list<Partial<Cluster>>()
+      .then((data) => {
+        const list: Cluster[] = data.map((c) => ({
+          id: c.id ?? c.name ?? "",
+          name: c.name ?? c.id ?? "",
+          type: c.type === "Embodied" ? "Embodied" : "Cloud",
+          region: c.region ?? "",
+          location: c.location ?? "",
+          phase: c.phase ?? "Online",
+          cloudNodes: c.cloudNodes ?? 0,
+          embodiedNodes: c.embodiedNodes ?? 0,
+          robots: c.robots ?? 0,
+          gpuModels: c.gpuModels ?? [],
+          robotModels: c.robotModels ?? [],
+          cpuUsage: c.cpuUsage ?? 0,
+          gpuUsage: c.gpuUsage ?? 0,
+          robotUsage: c.robotUsage ?? 0,
+          runningJobs: c.runningJobs ?? 0,
+          description: c.description ?? "",
+        }));
+        const schedulable = list.filter(
+          (cluster) =>
+            cluster.phase === "Online" || cluster.phase === "Downgraded",
+        );
+        const realList = schedulable.length > 0 ? schedulable : [];
+        setAvailableClusters(realList);
+        setClustersLoaded(list.length > 0);
+        if (realList.length > 0) {
+          setRoleResources((prev) =>
+            Object.fromEntries(
+              Object.entries(prev).map(([role, rr]) => {
+                const current = rr.cluster;
+                const match = realList.find((c) => c.id === current);
+                return [
+                  role,
+                  { ...rr, cluster: match ? match.id : realList[0].id },
+                ];
+              }),
+            ),
+          );
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const fetchStorageClasses = async (cluster?: string) => {
+    if (storageClassLoading) return;
+    const clusterKey = cluster ?? "";
+    if (
+      storageClassFetched &&
+      lastFetchedStorageClusterRef.current === clusterKey
+    )
+      return;
+    lastFetchedStorageClusterRef.current = clusterKey;
+    setStorageClassLoading(true);
+    setStorageClassFetched(false);
+    try {
+      const data = await storageClassesApi.list<{
+        storageClassName: string;
+        name: string;
+        description?: string;
+        bucket?: string;
+      }>(cluster);
+      // A Job's volume names the storage; RLark resolves the StorageClass.
+      const storageClassList = Object.values(data).map((sc) => ({
+        id: sc.name,
+        name: sc.name,
+        description: sc.description || "",
+        bucket: sc.bucket || "",
+      }));
+      setStorageClasses(storageClassList);
+    } catch (e) {
+      console.warn("Failed to fetch storage classes:", e);
+      setStorageClasses(
+        mockStorageClasses.map(({ id, name, description, bucket }) => ({
+          id,
+          name,
+          description,
+          bucket,
+        })),
+      );
+    } finally {
+      setStorageClassLoading(false);
+      setStorageClassFetched(true);
+    }
+  };
+
+  const cloneRR: Record<string, RoleResource> = {};
+  if (sourceJob) {
+    sourceJob.resources.forEach((res) => {
+      cloneRR[res.role] = {
+        role: res.role,
+        cluster: res.cluster,
+        nodeSelector: res.nodeSelector,
+        replicas: res.replicas,
+        cpu: res.cpu,
+        memory: res.memory,
+        gpu: res.gpu,
+        devices: res.devices?.map((d) => ({ ...d })) ?? [],
+        image: res.image,
+        prepareScript: res.prepareScript ?? "",
+        envs: res.env.map((e) => ({ ...e })),
+        mounts: res.mounts.map((m) => ({
+          type: m.type ?? "host",
+          objectStorage: m.objectStorage ?? "",
+          mountPath: m.mountPath ?? "",
+          hostPath: m.hostPath ?? m.objectStorage ?? "",
+          profile: m.profile ?? "",
+          readOnly: m.readOnly ?? false,
+          ...(m.rawVolume ? { rawVolume: m.rawVolume } : {}),
+        })),
+      };
+    });
+  }
+  const defaultRoleResources: Record<string, RoleResource> = {};
+  if (!sourceJob) {
+    roles.forEach((entry, index) => {
+      defaultRoleResources[entry.id] = {
+        role: entry.name,
+        cluster: clusterNames[0] ?? "",
+        nodeSelector: "",
+        replicas: 0,
+        cpu: "",
+        memory: "",
+        gpu: index === 0 ? "4" : "0",
+        devices: [],
+        image: "",
+        prepareScript: "",
+        envs: [],
+        mounts: [],
+      };
+    });
+  }
+  const [roleResources, setRoleResources] = useState<
+    Record<string, RoleResource>
+  >(sourceJob ? cloneRR : defaultRoleResources);
+  const [placementModes, setPlacementModes] = useState<
+    Record<string, "model" | "manual">
+  >(() =>
+    sourceJob
+      ? Object.fromEntries(
+          sourceJob.resources
+            .filter(
+              (resource) =>
+                Object.keys(parseNodeSelectorStr(resource.nodeSelector))
+                  .length === 0,
+            )
+            .map((resource) => [resource.role, "model" as const]),
+        )
+      : {},
+  );
+  const [activeRoleTab, setActiveRoleTab] = useState<string>(
+    roles[0]?.id ?? "",
+  );
+  const roleConfigTopRef = useRef<HTMLDivElement>(null);
+
+  const selectRole = (role: string, scrollToTop = false) => {
+    setActiveRoleTab(role);
+    if (scrollToTop) {
+      window.requestAnimationFrame(() => {
+        const modalBody =
+          roleConfigTopRef.current?.closest<HTMLElement>(".modal-body");
+        if (modalBody) modalBody.scrollTop = 0;
+      });
+    }
+  };
+
+  // ray head 只能是单 pod 任务：replicas 为 1（未配置时按 1 处理）。
+  const roleReplicas = (role: string) => {
+    const rr = roleResources[role];
+    if (!rr) return 1;
+    const value = Number(rr.replicas);
+    return Number.isFinite(value) && value > 0 ? value : 1;
+  };
+  const canBeHeader = (role: string) => roleReplicas(role) === 1;
+  const selectHeaderRole = (role: string) => {
+    if (!canBeHeader(role)) return;
+    setHeaderRole(role);
+  };
+  // 修改副本数可能让已选 Header 失效。此时回退到第一个单 Pod 角色，
+  // 避免校验失败后被弹回没有 Header 选择控件的步骤而无法修正。
+  const effectiveHeader = canBeHeader(selectedHeader)
+    ? selectedHeader
+    : (roles.find((entry) => canBeHeader(entry.id))?.id ?? selectedHeader);
+
+  useEffect(() => {
+    if (availableClusters.length === 0) return;
+    setRoleResources((prev) => {
+      let changed = false;
+      const next = Object.fromEntries(
+        Object.entries(prev).map(([role, resource]) => {
+          const matchedCluster = availableClusters.find(
+            (cluster) => cluster.id === resource.cluster,
+          );
+          const nextCluster = matchedCluster?.id ?? availableClusters[0].id;
+          if (nextCluster !== resource.cluster) changed = true;
+          return [role, { ...resource, cluster: nextCluster }];
+        }),
+      );
+      return changed ? next : prev;
+    });
+  }, [availableClusters]);
+
+  useEffect(() => {
+    if (clusterNames.length === 0) return;
+    setRoleResources((prev) => {
+      let changed = false;
+      const next: Record<string, RoleResource> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if (!v.cluster && clusterNames[0]) {
+          next[k] = { ...v, cluster: clusterNames[0] };
+          changed = true;
+        } else {
+          next[k] = v;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [clusterNames]);
+
+  useEffect(() => {
+    if (inferenceDoneRef.current || allNodes.length === 0 || !clustersLoaded)
+      return;
+    inferenceDoneRef.current = true;
+
+    setRoleResources((prev) => {
+      let changed = false;
+      const next = Object.fromEntries(
+        Object.entries(prev).map(([role, resource]) => {
+          const selectorMap = parseNodeSelectorStr(resource.nodeSelector);
+          if (Object.keys(selectorMap).length === 0) return [role, resource];
+
+          const matched = allNodes.filter((n) => {
+            const labels = n.metadata.labels ?? {};
+            return Object.entries(selectorMap).every(([k, v]) => {
+              const values = v.split(",");
+              return labels[k] !== undefined && values.includes(labels[k]);
+            });
+          });
+
+          const nsList = Array.from(
+            new Set(
+              matched
+                .map((n) => n.metadata.namespace)
+                .filter((v): v is string => !!v),
+            ),
+          );
+          if (nsList.length === 0) return [role, resource];
+
+          const inferred = nsList[0];
+          if (inferred !== resource.cluster) {
+            changed = true;
+            return [role, { ...resource, cluster: inferred }];
+          }
+          return [role, resource];
+        }),
+      );
+      return changed ? next : prev;
+    });
+  }, [allNodes, clustersLoaded]);
+
+  useEffect(() => {
+    if (!activeRoleTab) return;
+    const rr = roleResources[activeRoleTab];
+    if (!rr) return;
+    const hasStorageMount = rr.mounts.some((m) => m.type === "storage");
+    if (hasStorageMount && rr.cluster) {
+      fetchStorageClasses(rr.cluster);
+    }
+  }, [activeRoleTab, roleResources, availableClusters]);
+
+  const onTypeChange = (next: JobType) => {
+    setType(next);
+    // 复制、编辑或编辑后重启时，角色及其资源来自源任务，是用户已经确认过的配置。
+    // 此时任务类型只是一个标签，切换它不得改写角色列表：否则每切换一次都会把新
+    // 类型的默认角色追加进来，重复累积已有角色。
+    if (sourceJob) return;
+    const templateEntries: RoleEntry[] = ROLE_TEMPLATES[next].map((name) => ({
+      id: name,
+      name,
+    }));
+    setRoles(templateEntries);
+    setHeaderRole(templateEntries[0]?.id ?? "");
+    setActiveRoleTab(templateEntries[0]?.id ?? "");
+    const newRR: Record<string, RoleResource> = {};
+    templateEntries.forEach((entry, index) => {
+      newRR[entry.id] = roleResources[entry.id] ?? {
+        role: entry.name,
+        cluster: clusterNames[0] ?? "",
+        nodeSelector: "",
+        replicas: 0,
+        cpu: "",
+        memory: "",
+        gpu: index === 0 ? "4" : "0",
+        devices: [],
+        image: "",
+        prepareScript: "",
+        envs: [],
+        mounts: [],
+      };
+    });
+    setRoleResources(newRR);
+  };
+
+  const addRole = () => {
+    roleSeq += 1;
+    const id = `role-${roleSeq}`;
+    setRoles((prev) => [...prev, { id, name: "" }]);
+    setRoleResources((prev) => ({
+      ...prev,
+      [id]: {
+        role: "",
+        cluster: clusterNames[0] ?? "",
+        nodeSelector: "",
+        replicas: 0,
+        cpu: "",
+        memory: "",
+        gpu: "0",
+        devices: [],
+        image: "",
+        prepareScript: "",
+        envs: [],
+        mounts: [],
+      },
+    }));
+  };
+  const removeRole = (id: string) => {
+    if (roles.length === 0) return;
+    setRoles((prev) => prev.filter((entry) => entry.id !== id));
+    setRoleResources((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    if (headerRole === id) setHeaderRole(roles[0]?.id ?? "");
+  };
+  // 角色名随输入即时提交；合法性（空/超长/格式/重复）统一由下一步校验拦截，
+  // 此处不做静默拒绝，避免粘贴或快速点击下一步时丢失修改。
+  const renameRole = (id: string, newName: string) => {
+    setRoles((prev) =>
+      prev.map((entry) =>
+        entry.id === id ? { ...entry, name: newName } : entry,
+      ),
+    );
+    setRoleResources((prev) => {
+      const rr = prev[id];
+      if (!rr) return prev;
+      return {
+        ...prev,
+        [id]: {
+          ...rr,
+          role: newName.trim(),
+          envs: rr.envs.map((e) =>
+            e.key === "RLARK_TASK_ROLE" ? { ...e, value: newName.trim() } : e,
+          ),
+        },
+      };
+    });
+  };
+
+  const updateRR = (role: string, field: keyof RoleResource, v: any) => {
+    setRoleResources((prev) => ({
+      ...prev,
+      [role]: { ...prev[role], [field]: v },
+    }));
+  };
+  const updateRREnv = (
+    role: string,
+    i: number,
+    field: "key" | "value",
+    v: string,
+  ) => {
+    setRoleResources((prev) => {
+      const rr = prev[role];
+      const next = [...rr.envs];
+      next[i] = { ...next[i], [field]: v };
+      return { ...prev, [role]: { ...rr, envs: next } };
+    });
+  };
+  const addRREnv = (role: string) => {
+    setRoleResources((prev) => ({
+      ...prev,
+      [role]: {
+        ...prev[role],
+        envs: [...prev[role].envs, { key: "", value: "" }],
+      },
+    }));
+  };
+  const removeRREnv = (role: string, i: number) => {
+    setRoleResources((prev) => ({
+      ...prev,
+      [role]: {
+        ...prev[role],
+        envs: prev[role].envs.filter((_, idx) => idx !== i),
+      },
+    }));
+  };
+  const updateRRMount = (
+    role: string,
+    i: number,
+    field: "objectStorage" | "mountPath" | "type" | "hostPath" | "profile" | "readOnly",
+    v: string | boolean,
+  ) => {
+    setRoleResources((prev) => {
+      const rr = prev[role];
+      const next = [...rr.mounts];
+      next[i] = { ...next[i], [field]: v };
+      return { ...prev, [role]: { ...rr, mounts: next } };
+    });
+  };
+  const addRRMount = (role: string) => {
+    setRoleResources((prev) => {
+      const rr = prev[role];
+      const newMounts = [
+        ...rr.mounts,
+        {
+          type: "host" as const,
+          objectStorage: "",
+          mountPath: "",
+          hostPath: "",
+          profile: "",
+          readOnly: false,
+        },
+      ];
+      return { ...prev, [role]: { ...rr, mounts: newMounts } };
+    });
+  };
+  const removeRRMount = (role: string, i: number) => {
+    setRoleResources((prev) => {
+      const rr = prev[role];
+      const newMounts = rr.mounts.filter((_, idx) => idx !== i);
+      return { ...prev, [role]: { ...rr, mounts: newMounts } };
+    });
+  };
+
+  const automaticDomain = automaticNetworkDomain(domains);
+  const crd = generateJobCRD({
+    name: jobResourceName,
+    displayName: jobName.trim(),
+    type,
+    headerRole:
+      roles.find((entry) => entry.id === effectiveHeader)?.name.trim() ?? "",
+    roles: roles.map((entry) => entry.name.trim()),
+    roleResources: Object.fromEntries(
+      roles
+        .filter((entry) => entry.name.trim())
+        .map((entry) => [entry.name.trim(), roleResources[entry.id]]),
+    ),
+    runScript,
+    domain: automaticDomain,
+    tensorBoardDir,
+    sshPublicKey,
+    tags,
+  });
+  const yaml = toYaml(crd);
+  const steps = zh
+    ? ["角色和资源", "Worker 配置", "公共配置", "YAML 预览"]
+    : ["Roles & Resources", "Worker Config", "Common Config", "YAML Preview"];
+
+  const validateStep = (targetStep: number) => {
+    if (targetStep === 1) {
+      const trimmedName = jobName.trim();
+      if (!trimmedName) return zh ? "请输入任务名称。" : "Enter a job name.";
+      if (trimmedName.length > JOB_DISPLAY_NAME_MAX_LENGTH)
+        return zh
+          ? `任务名称不能超过 ${JOB_DISPLAY_NAME_MAX_LENGTH} 个字符。`
+          : `Job name cannot exceed ${JOB_DISPLAY_NAME_MAX_LENGTH} characters.`;
+      if (!isValidJobDisplayName(trimmedName))
+        return zh
+          ? "名称格式不正确，仅支持中英文、数字以及-_."
+          : "Invalid name format. Only Chinese/English letters, digits, -, _ and . are allowed.";
+      if (roles.length === 0)
+        return zh ? "至少添加一个角色。" : "Add at least one role.";
+      const names = roles.map((entry) => entry.name.trim());
+      const normalizedRoles = names.map((name) => name.toLowerCase());
+      if (normalizedRoles.some((name) => !name))
+        return zh ? "角色名称不能为空。" : "Role names cannot be empty.";
+      if (names.some((name) => name.length > ROLE_NAME_MAX_LENGTH))
+        return zh
+          ? `角色名称不能超过 ${ROLE_NAME_MAX_LENGTH} 个字符。`
+          : `Role names cannot exceed ${ROLE_NAME_MAX_LENGTH} characters.`;
+      if (names.some((name) => !isValidRoleName(name)))
+        return zh
+          ? "名称格式不正确，仅支持中英文、数字以及-_."
+          : "Invalid name format. Only Chinese/English letters, digits, -, _ and . are allowed.";
+      if (new Set(normalizedRoles).size !== normalizedRoles.length)
+        return zh ? "角色名称不能重复。" : "Role names must be unique.";
+      if (
+        !effectiveHeader ||
+        !roles.some((entry) => entry.id === effectiveHeader)
+      )
+        return zh ? "请选择 Header 角色。" : "Select a header role.";
+    }
+
+    if (targetStep === 2) {
+      for (const entry of roles) {
+        const resource = roleResources[entry.id];
+        const role = entry.name || (zh ? "未命名角色" : "Unnamed role");
+        if (!resource?.cluster)
+          return zh
+            ? `请为 ${role} 选择集群。`
+            : `Select a cluster for ${role}.`;
+        if (!resource.image.trim())
+          return zh ? `请为 ${role} 输入镜像。` : `Enter an image for ${role}.`;
+        if (imageReferenceHasWhitespace(resource.image))
+          return zh
+            ? `${role} 的镜像地址不能包含空格或其他空白字符。`
+            : `The image reference for ${role} cannot contain spaces or other whitespace.`;
+        if (
+          !Number.isFinite(Number(resource.replicas)) ||
+          resource.replicas < 1
+        )
+          return zh
+            ? `${role} 当前没有匹配到可用节点，请调整集群或节点选择条件。`
+            : `${role} has no matched nodes. Adjust its cluster or node selector.`;
+        const selector = parseNodeSelectorStr(resource.nodeSelector);
+        const selectedNames = (selector["kubernetes.io/hostname"] ?? "")
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean);
+        const selectedNodes = allNodes.filter(
+          (node) =>
+            node.metadata.namespace === resource.cluster &&
+            selectedNames.includes(node.metadata.name),
+        );
+        const resourceRequest =
+          resource.gpu && resource.gpu !== "0"
+            ? { key: "nvidia.com/gpu", amount: Number(resource.gpu) }
+            : resource.devices[0]
+              ? {
+                  key: resource.devices[0].name,
+                  amount: Number(resource.devices[0].quantity),
+                }
+              : null;
+        if (resourceRequest && selectedNodes.length > 0) {
+          const freeByNode = selectedNodes.map((node) => {
+            const allocatable = Number(
+              node.status?.allocatable?.[resourceRequest.key] ?? 0,
+            );
+            const used = node.status?.used?.[resourceRequest.key];
+            const nodeKey = `${node.metadata.namespace ?? ""}/${node.metadata.name}`;
+            return availableResource(
+              String(allocatable),
+              used,
+              reclaimableResources[nodeKey]?.[resourceRequest.key],
+            );
+          });
+          const available = freeByNode.reduce((sum, value) => sum + value, 0);
+          const requested = resource.replicas * resourceRequest.amount;
+          if (requested > available)
+            return zh
+              ? `${role} 申请 ${requested} 个资源，但所选资源池当前仅可用 ${available} 个。`
+              : `${role} requests ${requested} resources, but only ${available} are free.`;
+          if (freeByNode.every((free) => free < resourceRequest.amount))
+            return zh
+              ? `${role} 每个 Worker 申请 ${resourceRequest.amount} 个资源，但没有单个节点能够满足。`
+              : `No node can satisfy ${role}'s per-worker request of ${resourceRequest.amount}.`;
+        }
+        for (const mount of resource.mounts) {
+          // opaque 挂载按原始卷定义原样提交，表单不校验其来源字段。
+          if (mount.type === "opaque") continue;
+          if (!mount.mountPath.trim())
+            return zh
+              ? `${role} 的挂载目录不能为空。`
+              : `${role} has a mount without a target path.`;
+          if (mount.type === "host" && !mount.hostPath.trim())
+            return zh
+              ? `${role} 的主机目录不能为空。`
+              : `${role} has an empty host path.`;
+          if (mount.type === "storage" && !mount.objectStorage.trim())
+            return zh
+              ? `${role} 需要选择对象存储。`
+              : `${role} needs an object storage class.`;
+        }
+      }
+      if (effectiveHeader && !canBeHeader(effectiveHeader))
+        return zh
+          ? `Header 角色 ${effectiveHeader} 只能有一个 Pod（副本数需为 1），请将其副本数改为 1 或改选其他单 Pod 角色作为 Header。`
+          : `The header role ${effectiveHeader} must have exactly one pod (replicas must be 1). Set its replicas to 1 or choose another single-pod role as the header.`;
+    }
+
+    if (targetStep === 3 && !runScript.trim())
+      return zh ? "请输入运行命令。" : "Enter a run command.";
+    return "";
+  };
+
+  const goToStep = (nextStep: number) => {
+    if (nextStep <= step) {
+      setError("");
+      setStep(nextStep);
+      return;
+    }
+    for (let currentStep = 1; currentStep < nextStep; currentStep += 1) {
+      const message = validateStep(currentStep);
+      if (message) {
+        setError(message);
+        setErrorNonce((n) => n + 1);
+        setStep(currentStep);
+        return;
+      }
+    }
+    setError("");
+    setStep(nextStep);
+  };
+
+  const handleSubmit = async () => {
+    for (let currentStep = 1; currentStep <= 3; currentStep += 1) {
+      const message = validateStep(currentStep);
+      if (message) {
+        setError(message);
+        setErrorNonce((n) => n + 1);
+        setStep(currentStep);
+        return;
+      }
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      let requestBody =
+        isEdit && restartAfterSave
+          ? {
+              ...crd,
+              metadata: {
+                ...crd.metadata,
+                annotations: {
+                  ...crd.metadata?.annotations,
+                  "rlark.io/restarted-at": new Date().toISOString(),
+                },
+              },
+              spec: { ...crd.spec, suspended: false },
+            }
+          : crd;
+      if (isEdit) {
+        const current = await jobsApi.get(editJob!.name);
+        requestBody = {
+          ...requestBody,
+          metadata: {
+            ...current.metadata,
+            ...requestBody.metadata,
+            name: editJob!.name,
+            annotations: {
+              ...current.metadata?.annotations,
+              ...requestBody.metadata?.annotations,
+            },
+          },
+        } as typeof requestBody;
+      }
+      const savedJob = isEdit
+        ? await jobsApi.replace(editJob!.name, requestBody)
+        : await jobsApi.create(requestBody);
+      onSuccess(
+        isEdit
+          ? restartAfterSave
+            ? zh
+              ? "任务已保存并提交重启"
+              : "Job saved and restart submitted"
+            : zh
+              ? "任务修改成功"
+              : "Job updated successfully"
+          : zh
+            ? "任务提交成功"
+            : "Job submitted successfully",
+        savedJob.metadata?.name ?? (isEdit ? editJob!.name : jobResourceName),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setErrorNonce((n) => n + 1);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    // 表单内容无法恢复，遮罩点击不关闭弹层；关闭入口为右上角按钮、取消按钮和 Esc。
+    <div className="modal-backdrop">
+      <div className="modal create-job-modal" role="dialog" aria-modal="true">
+        <div className="modal-head">
+          <div>
+            <span className="eyebrow">
+              {isEdit
+                ? restartAfterSave
+                  ? zh
+                    ? "编辑后重启"
+                    : "EDIT & RESTART"
+                  : zh
+                    ? "编辑任务"
+                    : "EDIT JOB"
+                : "NEW JOB"}
+            </span>
+            <h2>
+              {isEdit
+                ? restartAfterSave
+                  ? zh
+                    ? "编辑并重启任务"
+                    : "Edit and restart job"
+                  : zh
+                    ? "编辑任务"
+                    : "Edit Job"
+                : c.jobs.createTitle}
+            </h2>
+          </div>
+          <button
+            className="icon-button"
+            onClick={onClose}
+            aria-label={zh ? "关闭创建任务" : "Close job creator"}
+            disabled={submitting}
+          >
+            ×
+          </button>
+        </div>
+        <div className="create-stepper">
+          {steps.map((label, index) => (
+            <button
+              key={label}
+              className={step >= index + 1 ? "active" : ""}
+              onClick={() => goToStep(index + 1)}
+            >
+              <span>{index + 1}</span>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="modal-body create-job-body">
+          {error && (
+            <div
+              className="form-error-banner"
+              ref={errorBannerRef}
+              role="alert"
+            >
+              {error}
+            </div>
+          )}
+          {step === 1 && (
+            <>
+              <div className="form-row">
+                <label>
+                  {zh ? "任务名称" : "Job Name"}
+                  <input
+                    value={jobName}
+                    maxLength={JOB_DISPLAY_NAME_MAX_LENGTH}
+                    className={jobNameInvalid ? "input-invalid" : undefined}
+                    placeholder={
+                      zh
+                        ? "请输入名称,支持1-64字符,中英文、数字以及-_."
+                        : "Enter a name (1-64 chars; Chinese/English, digits, -, _ and .)"
+                    }
+                    onChange={(e) => setJobName(e.target.value)}
+                  />
+                  <small className="field-error job-name-field-error">
+                    {jobNameInvalid
+                      ? zh
+                        ? "名称格式不正确，仅支持中英文、数字以及-_."
+                        : "Invalid name format. Only Chinese/English letters, digits, -, _ and . are allowed."
+                      : ""}
+                  </small>
+                </label>
+                <label>
+                  {zh ? "任务类型" : "Job Type"}
+                  <select
+                    value={type}
+                    onChange={(e) => onTypeChange(e.target.value as JobType)}
+                  >
+                    <option value="RL">{c.jobType.RL}</option>
+                    <option value="DataCollection">
+                      {c.jobType.DataCollection}
+                    </option>
+                    <option value="Evaluation">{c.jobType.Evaluation}</option>
+                    <option value="Custom">{c.jobType.Custom}</option>
+                  </select>
+                </label>
+              </div>
+              <div className="form-section">
+                <div className="form-section-head">
+                  <strong>{zh ? "角色列表" : "Roles"}</strong>
+                  <small>
+                    {zh
+                      ? "点击选择 Header 角色（仅限单 Pod 的角色），可编辑角色名称、增删角色。"
+                      : "Click to select header role (only single-pod roles are allowed). Roles can be renamed, added, or removed."}
+                  </small>
+                </div>
+                <div className="role-edit-list">
+                  {roles.map((entry) => {
+                    const headerAllowed = canBeHeader(entry.id);
+                    const isHeader = effectiveHeader === entry.id;
+                    return (
+                      <div
+                        key={entry.id}
+                        className={`role-edit-row ${isHeader ? "active" : ""} ${
+                          !headerAllowed ? "disabled" : ""
+                        }`}
+                        onClick={() => selectHeaderRole(entry.id)}
+                        title={
+                          !headerAllowed
+                            ? zh
+                              ? "Header 角色只能有一个 Pod，请将该角色副本数设为 1。"
+                              : "The header role must have exactly one pod. Set its replicas to 1."
+                            : undefined
+                        }
+                      >
+                        <Check size={14} />
+                        <RoleNameInput
+                          id={entry.id}
+                          value={entry.name}
+                          zh={zh}
+                          onRename={renameRole}
+                        />
+                        <small>
+                          {isHeader
+                            ? "Header"
+                            : !headerAllowed
+                              ? zh
+                                ? "Worker（多 Pod）"
+                                : "Worker (multi-pod)"
+                              : "Worker"}
+                        </small>
+                        <button
+                          className="icon-button danger"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeRole(entry.id);
+                          }}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  className="secondary-button"
+                  style={{ marginTop: 8 }}
+                  onClick={addRole}
+                >
+                  <Plus size={14} />
+                  {zh ? "添加角色" : "Add Role"}
+                </button>
+              </div>
+            </>
+          )}
+          {step === 2 &&
+            (roles.length === 0 ? (
+              <div className="empty-state-hint">
+                {zh
+                  ? "请先在「角色和资源」步骤中添加角色。"
+                  : 'Please add roles in the "Roles & Resources" step first.'}
+              </div>
+            ) : (
+              <>
+                <div className="role-config-tabs" ref={roleConfigTopRef}>
+                  {roles.map((entry) => (
+                    <button
+                      key={entry.id}
+                      className={activeRoleTab === entry.id ? "active" : ""}
+                      onClick={() => selectRole(entry.id, true)}
+                    >
+                      {entry.name}
+                      {effectiveHeader === entry.id && (
+                        <span
+                          className="role-chip"
+                          style={{ marginLeft: 6, fontSize: 10 }}
+                        >
+                          Header
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                {(() => {
+                  const role = activeRoleTab || (roles[0]?.id ?? "");
+                  if (!role) return null;
+                  const rr = roleResources[role];
+                  if (!rr) return null;
+                  const roleName =
+                    roles.find((entry) => entry.id === role)?.name ?? "";
+                  const imageHasWhitespace = imageReferenceHasWhitespace(
+                    rr.image,
+                  );
+                  const imageErrorId = `image-error-${role.replace(
+                    /[^a-zA-Z0-9_-]/g,
+                    "-",
+                  )}`;
+                  return (
+                    <div className="role-resource-card" key={role}>
+                      <div className="form-section-head">
+                        <strong>{roleName}</strong>
+                        {effectiveHeader === role && (
+                          <span
+                            className="role-chip"
+                            style={{
+                              background: "#f3eefe",
+                              color: "var(--blue)",
+                            }}
+                          >
+                            Header
+                          </span>
+                        )}
+                      </div>
+                      <section className="worker-config-section worker-placement-section">
+                        <header className="worker-config-section-head">
+                          <span className="worker-config-section-index">1</span>
+                          <div>
+                            <strong>
+                              {zh ? "部署位置与资源" : "Placement & resources"}
+                            </strong>
+                            <small>
+                              {zh
+                                ? "选择设备规格和单 Worker 用量，再设置调度方式"
+                                : "Choose a device specification and per-Worker request, then set scheduling"}
+                            </small>
+                          </div>
+                        </header>
+                        <div className="worker-cluster-field">
+                          <span>{zh ? "目标集群" : "Target cluster"}</span>
+                          <ClusterSelect
+                            clusters={availableClusters}
+                            value={rr.cluster}
+                            zh={zh}
+                            onChange={(newCluster) => {
+                              updateRR(role, "cluster", newCluster);
+                              if (rr.mounts.some((m) => m.type === "storage")) {
+                                fetchStorageClasses(newCluster);
+                              }
+                            }}
+                          />
+                        </div>
+                        <ResourcePlacementPicker
+                          zh={zh}
+                          cluster={rr.cluster}
+                          nodes={allNodes}
+                          loading={nodesLoading}
+                          reclaimableResources={reclaimableResources}
+                          nodeSelector={rr.nodeSelector}
+                          placementMode={placementModes[role]}
+                          replicas={rr.replicas}
+                          gpu={rr.gpu}
+                          devices={rr.devices ?? []}
+                          onChange={(placement) =>
+                            setRoleResources((previous) => ({
+                              ...previous,
+                              [role]: { ...previous[role], ...placement },
+                            }))
+                          }
+                          onPlacementModeChange={(placementMode) =>
+                            setPlacementModes((previous) => ({
+                              ...previous,
+                              [role]: placementMode,
+                            }))
+                          }
+                        />
+                      </section>
+                      <section className="worker-config-section worker-runtime-section">
+                        <header className="worker-config-section-head">
+                          <span className="worker-config-section-index">2</span>
+                          <div>
+                            <strong>
+                              {zh ? "容器运行配置" : "Container runtime"}
+                            </strong>
+                            <small>
+                              {zh
+                                ? "配置镜像、启动前脚本、环境变量和存储挂载"
+                                : "Configure image, prepare script, environment and storage"}
+                            </small>
+                          </div>
+                        </header>
+                        <div className="form-section" style={{ marginTop: 12 }}>
+                          <div className="form-section-head">
+                            <small>{zh ? "镜像" : "Image"}</small>
+                          </div>
+                          <RegistryImagePicker
+                            zh={zh}
+                            value={rr.image}
+                            onChange={(image) => updateRR(role, "image", image)}
+                            disabled={false}
+                            recentImages={recentImages.map((item) => ({
+                              ...item,
+                              lastUsedAt: new Date(item.lastUsedAt),
+                            }))}
+                          />
+                          {imageHasWhitespace && (
+                            <small
+                              className="field-validation-error"
+                              id={imageErrorId}
+                              role="alert"
+                            >
+                              {zh
+                                ? "镜像地址不能包含空格或其他空白字符。"
+                                : "Image references cannot contain spaces or other whitespace."}
+                            </small>
+                          )}
+                        </div>
+                        <div className="form-section" style={{ marginTop: 12 }}>
+                          <div className="form-section-head">
+                            <small>
+                              {zh
+                                ? "准备脚本 (Ray 启动前)"
+                                : "Prepare Script (before Ray starts)"}
+                            </small>
+                          </div>
+                          <CodeEditorField
+                            value={rr.prepareScript}
+                            onChange={(e) =>
+                              updateRR(role, "prepareScript", e.target.value)
+                            }
+                            minHeight={92}
+                            label={`${role}/prepare.sh`}
+                            placeholder={
+                              zh
+                                ? "pip install ray[default] or other setup commands"
+                                : "pip install ray[default] or other setup commands"
+                            }
+                          />
+                        </div>
+                        <div className="form-section" style={{ marginTop: 12 }}>
+                          <div className="form-section-head">
+                            <small>
+                              {zh ? "环境变量" : "Environment Variables"}
+                            </small>
+                            <button
+                              className="secondary-button"
+                              onClick={() => addRREnv(role)}
+                            >
+                              <Plus size={14} />
+                              {zh ? "添加" : "Add"}
+                            </button>
+                          </div>
+                          {rr.envs.map((env, index) => (
+                            <div className="env-row" key={index}>
+                              <input
+                                value={env.key}
+                                onChange={(e) =>
+                                  updateRREnv(
+                                    role,
+                                    index,
+                                    "key",
+                                    e.target.value,
+                                  )
+                                }
+                                placeholder="KEY"
+                              />
+                              <input
+                                value={env.value}
+                                onChange={(e) =>
+                                  updateRREnv(
+                                    role,
+                                    index,
+                                    "value",
+                                    e.target.value,
+                                  )
+                                }
+                                placeholder="value"
+                              />
+                              <button
+                                className="icon-button danger"
+                                onClick={() => removeRREnv(role, index)}
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="form-section" style={{ marginTop: 12 }}>
+                          <div className="form-section-head">
+                            <small>{zh ? "存储挂载" : "Volume Mounts"}</small>
+                            <button
+                              className="secondary-button"
+                              onClick={() => addRRMount(role)}
+                            >
+                              <Plus size={14} />
+                              {zh ? "添加" : "Add"}
+                            </button>
+                          </div>
+                          {rr.mounts.map((mount, index) =>
+                            mount.type === "opaque" ? (
+                              // 表单无法编辑的卷（emptyDir、configMap 等）只读展示，
+                              // 提交时按原始定义原样写回。
+                              <div className="mount-row" key={index}>
+                                <div className="mount-type-toggle">
+                                  <button
+                                    type="button"
+                                    className="active"
+                                    disabled
+                                  >
+                                    {zh ? "其他卷类型" : "Other volume"}
+                                  </button>
+                                </div>
+                                <label className="mount-field-box">
+                                  <span>{zh ? "卷定义" : "Volume source"}</span>
+                                  <input
+                                    value={describeVolumeSource(
+                                      mount.rawVolume,
+                                    )}
+                                    readOnly
+                                  />
+                                </label>
+                                <label className="mount-field-box">
+                                  <span>
+                                    {zh ? "挂载到 Worker" : "Mount in worker"}
+                                  </span>
+                                  <input value={mount.mountPath} readOnly />
+                                </label>
+                                <button
+                                  className="icon-button danger"
+                                  onClick={() => removeRRMount(role, index)}
+                                  title={zh ? "删除" : "Delete"}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="mount-row" key={index}>
+                                <div
+                                  className="mount-type-toggle"
+                                  onClick={() => {
+                                    const next =
+                                      mount.type === "storage"
+                                        ? "host"
+                                        : "storage";
+                                    updateRRMount(role, index, "type", next);
+                                    if (next === "storage") {
+                                      fetchStorageClasses(rr.cluster);
+                                    }
+                                  }}
+                                >
+                                  <button
+                                    type="button"
+                                    className={
+                                      mount.type === "host" ? "active" : ""
+                                    }
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      updateRRMount(
+                                        role,
+                                        index,
+                                        "type",
+                                        "host",
+                                      );
+                                    }}
+                                  >
+                                    {zh ? "主机目录" : "Host directory"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={
+                                      mount.type === "storage" ? "active" : ""
+                                    }
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      updateRRMount(
+                                        role,
+                                        index,
+                                        "type",
+                                        "storage",
+                                      );
+                                      fetchStorageClasses(rr.cluster);
+                                    }}
+                                  >
+                                    {zh ? "对象存储" : "Object storage"}
+                                  </button>
+                                </div>
+                                <label className="mount-field-box">
+                                  <span>
+                                    {mount.type === "storage"
+                                      ? zh
+                                        ? "对象存储"
+                                        : "Object storage"
+                                      : zh
+                                        ? "主机目录"
+                                        : "Host directory"}
+                                  </span>
+                                  {mount.type === "storage" ? (
+                                    <select
+                                      value={mount.objectStorage}
+                                      onChange={(e) =>
+                                        updateRRMount(
+                                          role,
+                                          index,
+                                          "objectStorage",
+                                          e.target.value,
+                                        )
+                                      }
+                                    >
+                                      <option value="">
+                                        {storageClassFetched &&
+                                        storageClasses.length === 0
+                                          ? zh
+                                            ? "无可用存储类"
+                                            : "No storage classes"
+                                          : zh
+                                            ? "选择存储类"
+                                            : "Select storage class"}
+                                      </option>
+                                      {storageClasses.map((sc) => (
+                                        <option key={sc.id} value={sc.id}>
+                                          {sc.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <input
+                                      value={mount.hostPath}
+                                      onChange={(e) =>
+                                        updateRRMount(
+                                          role,
+                                          index,
+                                          "hostPath",
+                                          e.target.value,
+                                        )
+                                      }
+                                      placeholder="/host/path"
+                                    />
+                                  )}
+                                </label>
+                                <label className="mount-field-box">
+                                  <span>
+                                    {zh ? "挂载到 Worker" : "Mount in worker"}
+                                  </span>
+                                  <input
+                                    value={mount.mountPath}
+                                    onChange={(e) =>
+                                      updateRRMount(
+                                        role,
+                                        index,
+                                        "mountPath",
+                                        e.target.value,
+                                      )
+                                    }
+                                    placeholder="/mnt/data"
+                                  />
+                                </label>
+                                {mount.type === "storage" && (
+                                  <StorageMountOptions
+                                    zh={zh}
+                                    profile={mount.profile}
+                                    readOnly={mount.readOnly}
+                                    onProfile={(value) =>
+                                      updateRRMount(role, index, "profile", value)
+                                    }
+                                    onReadOnly={(value) =>
+                                      updateRRMount(role, index, "readOnly", value)
+                                    }
+                                  />
+                                )}
+                                <button
+                                  className="icon-button danger"
+                                  onClick={() => removeRRMount(role, index)}
+                                  title={zh ? "删除" : "Delete"}
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            ),
+                          )}
+                        </div>
+                      </section>
+                    </div>
+                  );
+                })()}
+              </>
+            ))}
+          {step === 3 && (
+            <>
+              <div className="form-section">
+                <div className="form-section-head">
+                  <strong>{zh ? "选择 Head 节点" : "Select Head"}</strong>
+                  <small>
+                    {zh
+                      ? "系统会从用户指定的 Header 角色里选择第一个 Worker 作为 Header。"
+                      : "The first worker of the header role becomes the job header."}
+                  </small>
+                </div>
+                <div className="role-template selectable">
+                  {roles.map((entry) => {
+                    const headerAllowed = canBeHeader(entry.id);
+                    const isHeader = effectiveHeader === entry.id;
+                    return (
+                      <button
+                        key={entry.id}
+                        className={isHeader ? "active" : ""}
+                        disabled={!headerAllowed}
+                        title={
+                          !headerAllowed
+                            ? zh
+                              ? "Header 角色只能有一个 Pod，请将该角色副本数设为 1。"
+                              : "The header role must have exactly one pod. Set its replicas to 1."
+                            : undefined
+                        }
+                        onClick={() => selectHeaderRole(entry.id)}
+                      >
+                        <Check size={13} />
+                        {entry.name}
+                        <small>
+                          {isHeader
+                            ? "Header"
+                            : !headerAllowed
+                              ? zh
+                                ? "Worker（多 Pod）"
+                                : "Worker (multi-pod)"
+                              : "Worker"}
+                        </small>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="form-section">
+                <div className="form-section-head">
+                  <small>{zh ? "跨集群网络" : "Cross-cluster Network"}</small>
+                </div>
+                <div
+                  className="field-hint network-domain-summary"
+                  role="status"
+                  title={automaticDomain || undefined}
+                >
+                  {automaticDomain
+                    ? zh
+                      ? `系统已配置网络域，任务将默认启用跨集群网络（${automaticDomain}）。`
+                      : `A network domain is configured. Cross-cluster networking will be enabled automatically (${automaticDomain}).`
+                    : zh
+                      ? "系统尚未配置网络域，任务不会启用跨集群网络。"
+                      : "No network domain is configured. Cross-cluster networking will not be enabled."}
+                </div>
+              </div>
+              <div className="form-section">
+                <div className="form-section-head">
+                  <small>
+                    {zh
+                      ? "SSH 公钥注入 (可选)"
+                      : "SSH Public Key Injection (optional)"}
+                  </small>
+                </div>
+                <div className="ssh-key-select-list">
+                  {selectableSSHKeys.map(({ publicKey, owners }) => {
+                    const selected = sshPublicKeys.includes(publicKey);
+                    const ownerLabel = owners
+                      .map(({ user }) => user)
+                      .join(", ");
+                    const label = `${ownerLabel} (${publicKey.slice(0, 40)}...)`;
+
+                    return (
+                      <label
+                        className={`ssh-key-select-option${selected ? " selected" : ""}`}
+                        key={publicKey}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() =>
+                            setSSHPublicKeys((current) =>
+                              selected
+                                ? current.filter((key) => key !== publicKey)
+                                : [...current, publicKey],
+                            )
+                          }
+                        />
+                        <span title={publicKey}>{label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {sshKeysLoaded && sshKeys.length === 0 && (
+                  <small className="field-hint">
+                    {zh
+                      ? "未找到 SSH 公钥，请先在 SSH 公钥管理页面添加。"
+                      : "No SSH keys found. Add keys in the SSH Key Management page first."}
+                  </small>
+                )}
+                {droppedSSHKeyCount > 0 && (
+                  <small className="field-hint field-hint-warning">
+                    {zh
+                      ? `已移除 ${droppedSSHKeyCount} 个公钥：其用户记录已从 SSH 公钥管理中删除，不会注入到新任务。`
+                      : `Removed ${droppedSSHKeyCount} public key(s): their owner records were deleted from SSH key management and will not be injected into the new job.`}
+                  </small>
+                )}
+                {sshPublicKey && (
+                  <small className="field-hint">
+                    {zh
+                      ? "选中的公钥将以换行分隔注入到所有角色 Pod 的 authorized_keys 中。"
+                      : "Selected public keys will be newline-separated and injected into all role pods' authorized_keys."}
+                  </small>
+                )}
+              </div>
+              <div className="form-section">
+                <div className="form-section-head">
+                  <small>
+                    {zh
+                      ? "运行脚本 (Ray 集群就绪后, 仅 Head 节点)"
+                      : "Run Script (after Ray cluster ready, head only)"}
+                  </small>
+                </div>
+                <CodeEditorField
+                  value={runScript}
+                  onChange={(e) => setRunScript(e.target.value)}
+                  minHeight={112}
+                  label="run.sh"
+                  placeholder="python train.py --config /mnt/config/train.yaml"
+                />
+              </div>
+              <div className="form-section">
+                <div className="form-section-head">
+                  <small>
+                    {zh
+                      ? "TensorBoard 日志目录 (可选)"
+                      : "TensorBoard Log Directory (optional)"}
+                  </small>
+                </div>
+                <input
+                  value={tensorBoardDir}
+                  onChange={(e) => setTensorBoardDir(e.target.value)}
+                  placeholder="/data/tensorboard/train"
+                />
+              </div>
+              <div className="form-section">
+                <div className="form-section-head">
+                  <small>{zh ? "标签 (可选)" : "Tags (optional)"}</small>
+                </div>
+                <TagEditor
+                  tags={tags}
+                  onChange={setTags}
+                  suggestions={allJobTags}
+                  zh={zh}
+                />
+              </div>
+            </>
+          )}
+          {step === 4 && (
+            <div className="yaml-preview">
+              <div>
+                <strong>{zh ? "任务 YAML 预览" : "Job YAML Preview"}</strong>
+                <small>
+                  {zh
+                    ? "提交前可检查最终资源定义。"
+                    : "Review the final resource definition before submitting."}
+                </small>
+              </div>
+              {error && (
+                <div className="cert-error" style={{ marginBottom: 12 }}>
+                  {error}
+                </div>
+              )}
+              <pre>{yaml}</pre>
+            </div>
+          )}
+          <div className="step-actions">
+            {step > 1 && (
+              <button
+                className="secondary-button"
+                onClick={() => goToStep(step - 1)}
+              >
+                {zh ? "上一步" : "Previous"}
+              </button>
+            )}
+            {step < 4 ? (
+              (() => {
+                const currentRole = activeRoleTab || (roles[0]?.id ?? "");
+                const isLastRole = currentRole === roles[roles.length - 1]?.id;
+                const showNextRole =
+                  step === 2 && roles.length > 1 && !isLastRole;
+                return (
+                  <button
+                    className="primary-button"
+                    onClick={() => {
+                      if (showNextRole) {
+                        const idx = roles.findIndex(
+                          (entry) => entry.id === currentRole,
+                        );
+                        selectRole(roles[idx + 1]?.id ?? "", true);
+                        setError("");
+                      } else {
+                        goToStep(step + 1);
+                      }
+                    }}
+                  >
+                    {showNextRole
+                      ? zh
+                        ? "下一个角色"
+                        : "Next Role"
+                      : zh
+                        ? "下一步"
+                        : "Next"}
+                  </button>
+                );
+              })()
+            ) : (
+              <button
+                className="primary-button"
+                disabled={submitting || roles.length === 0}
+                onClick={handleSubmit}
+              >
+                {submitting
+                  ? zh
+                    ? "提交中…"
+                    : "Submitting…"
+                  : zh
+                    ? isEdit
+                      ? restartAfterSave
+                        ? "保存并重启"
+                        : "保存修改"
+                      : "提交任务"
+                    : isEdit
+                      ? restartAfterSave
+                        ? "Save & Restart"
+                        : "Save Changes"
+                      : "Submit Job"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+import {
+  clustersApi,
+  domainsApi,
+  imagesApi,
+  jobsApi,
+  sshKeysApi,
+  storageClassesApi,
+  tasksApi,
+} from "../backend";

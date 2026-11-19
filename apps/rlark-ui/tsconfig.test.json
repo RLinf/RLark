@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "rootDir": "src",
+    "outDir": "dist/test",
+    "sourceMap": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true
+  },
+  "include": [
+    "src/api.ts",
+    "src/backend.ts",
+    "src/utils/clipboard.ts",
+    "src/utils/crd.ts",
+    "src/utils/imageReference.ts",
+    "src/utils/job.ts",
+    "src/utils/jobPhase.ts",
+    "src/utils/nodeBatchMetadata.ts",
+    "src/utils/nodeResources.ts",
+    "src/utils/nodeVisibility.ts",
+    "src/utils/resourceAvailability.ts",
+    "src/utils/route.ts",
+    "src/utils/sshKeys.ts",
+    "src/utils/terminalKeyboard.ts",
+    "src/utils/workerEvents.ts",
+    "src/mockBackend.ts",
+    "src/astribot/api.ts",
+    "src/astribot/lib",
+    "src/astribot/components/NodeName.tsx",
+    "src/astribot/components/ClusterName.tsx",
+    "src/astribot/components/NodeLinks.tsx",
+    "src/astribot/components/NodeNetworkAddresses.tsx"
+  ]
+}

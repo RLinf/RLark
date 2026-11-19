@@ -1,0 +1,54 @@
+/* Foundation: tokens, reset, application shell, and shared primitives. */
+@import "./styles/foundation/shell.css";
+
+/* Early page foundations. */
+@import "./styles/overview.css";
+@import "./styles/clusters/overview.css";
+@import "./styles/shared/content.css";
+
+/* Job detail layers. */
+@import "./styles/jobs/detail-foundation.css";
+@import "./styles/jobs/detail-runtime.css";
+@import "./styles/jobs/detail-console.css";
+
+/* Job creation and list layers. */
+@import "./styles/jobs/create.css";
+@import "./styles/jobs/code-editor-and-list.css";
+
+/* Cluster, table, and node foundations. */
+@import "./styles/clusters/node-legacy.css";
+@import "./styles/shared/table-actions-and-controls.css";
+@import "./styles/nodes/insight.css";
+@import "./styles/nodes/admin-insight.css";
+
+/* Administrative and interaction layers. */
+@import "./styles/admin/domain-and-responsive.css";
+@import "./styles/admin/settings-and-certificates.css";
+@import "./styles/jobs/actions-and-refresh.css";
+@import "./styles/nodes/files-and-selector.css";
+@import "./styles/nodes/resource-browser.css";
+
+/* Cluster and node management layers. */
+@import "./styles/clusters/management.css";
+@import "./styles/nodes/category-table.css";
+
+/* Storage layers. */
+@import "./styles/storage/index.css";
+@import "./styles/storage/create-dialog.css";
+
+/* Late page overrides. Keep these after storage to preserve the cascade. */
+@import "./styles/nodes/detail-panel-overrides.css";
+@import "./styles/admin/dashboard.css";
+@import "./styles/auth/admin-login.css";
+@import "./styles/components/dag-editor.css";
+
+/* Resource-level responsive overrides. */
+@import "./styles/overrides/resource-responsive.css";
+
+/* Addon page styles precede the final global responsive overrides. */
+@import "./styles/addons.css";
+@import "./styles/overrides/global-responsive.css";
+
+/* Final component and job editing layers. */
+@import "./styles/components/tag-and-filter.css";
+@import "./styles/jobs/tags-and-editing.css";

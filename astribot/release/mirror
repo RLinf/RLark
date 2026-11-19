@@ -1,0 +1,26 @@
+# The images RLark's Dockerfiles start from or carry, and the local build's BuildKit, copied by digest into the office
+# registry's mirror/… (run.sh, skopeo copy --preserve-digests), where a build names them: mirror/<repository>:<tag>,
+# then the public image by the digest of its linux/amd64 image (the one the Dockerfiles pin), copied as it is. What
+# the registry has of an image is not copied again.
+mirror/golang:1.26-alpine                    docker.io/library/golang@sha256:f496f8c537ed506626ee1a6913afb32c45068a48697163c088f604cc775a0c38
+mirror/golang:1.26                           docker.io/library/golang@sha256:6327cb290853a5d13091c436b88259b4f35ff70e49b1f8d9e5d1dd1757e9c6ba
+mirror/ubuntu:22.04                          docker.io/library/ubuntu@sha256:45e9ddc6895604674618a409ca9f73d301da8fdb75fe330e8e9a27b3b219e4ad
+mirror/node:22.20.0-bookworm-slim            docker.io/library/node@sha256:c385ec44d77c785e2364ac0c9b150809a0fdc17fde3dbf061e3dad07242c6a85
+mirror/nginx:1.29.1                          docker.io/library/nginx@sha256:17ae566734b63632e543c907ba74757e0c1a25d812ab9f10a07a6bed98dd199c
+mirror/distroless-static:debian12-nonroot    gcr.io/distroless/static-debian12@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d
+mirror/ros:noetic-ros-core                   docker.io/library/ros@sha256:4c1435fd85be3edde3820f0d132ab30a6b030209dce4fa3ac428a2aa5a763caf
+mirror/mediamtx:1.21.3                       docker.io/bluenviron/mediamtx@sha256:a620222875948ed1a9c7706d8089a82a09bb33726e3b2cfbfddbc8959aee95dd
+mirror/buildkit:v0.24.0                      docker.io/moby/buildkit@sha256:8c2ce26a3722e0cf4514fad4cfcd0e0f0f16214219ca7b73f3e1fcef74640ac4
+# The images the installer's base of Kubernetes v1.36.6 carries (astribot/station/bootstrap/Dockerfile.base, IMAGES):
+# kubeadm config images list --kubernetes-version v1.36.6, and calico.yaml v3.32.3's (quay.io/calico/…, the same
+# digests on Docker Hub, which the management machine reaches).
+mirror/kube-apiserver:v1.36.6                registry.k8s.io/kube-apiserver@sha256:a4380dcb4ed588759253c66e7ab6139a1283828ff87ecfb4318e5d8f098a3fa6
+mirror/kube-controller-manager:v1.36.6       registry.k8s.io/kube-controller-manager@sha256:f0a4898d39ee4ae58f3f7ce15e3d7d431d505a2af9ecbb1217be9698275bed81
+mirror/kube-scheduler:v1.36.6                registry.k8s.io/kube-scheduler@sha256:30a89560ce9fc2212fac2bcc2265781cbb3a3346c0f9278e25df6b305d03f3b3
+mirror/kube-proxy:v1.36.6                    registry.k8s.io/kube-proxy@sha256:a374c2428aefede5238862bb8d3e3a6e26ee7d9cad1d54d2d846e9f64e92624c
+mirror/pause:3.10.2                          registry.k8s.io/pause@sha256:412c4a7219cb8a299a37337f3d87810c5340095322e15594a1637785adad0f17
+mirror/etcd:3.6.8-0                          registry.k8s.io/etcd@sha256:aa2b41e3f99c9a337b82f687875a63c5119e6d39bc43fc76b6c40a96f55cf391
+mirror/coredns:v1.14.2                       registry.k8s.io/coredns/coredns@sha256:fd5079792b93909db3adefa91e41c3995455013394f0197c7346786ae19079fc
+mirror/calico-node:v3.32.3                   docker.io/calico/node@sha256:1c19a35b07b5b9bdaa8f1e86fd7eb0aae0898b4af2152a67f55f66418d7c590f
+mirror/calico-cni:v3.32.3                    docker.io/calico/cni@sha256:41bdf6ecb52f4cc80a581d28b956bfc8b48d929cfb416290dcb62156d6911d08
+mirror/calico-kube-controllers:v3.32.3       docker.io/calico/kube-controllers@sha256:dc43a461dcd159611c301cae4476881ade485df579615f2f1b3ce7eb868a32c8

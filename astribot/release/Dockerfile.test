@@ -1,0 +1,30 @@
+# RLark's tests, as a build (run.sh): a tree whose tests fail has no images. Go (vet and the tests of every module) and
+# the console's (npm test). The robots' Addon's are run in its own image (astribot/s1u/Dockerfile --target test).
+# GOFLAGS bounds how many packages build and test at once (-p): the management machine is a desktop short of memory.
+ARG GO_IMAGE=golang:1.26
+ARG NODE_IMAGE=node:22.20.0-bookworm-slim
+FROM ${GO_IMAGE} AS go
+ARG GOPROXY
+ARG GOFLAGS
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    { for module in api apps/rlark apps/embodied-runtime sdks/execution-go test/e2e; do \
+        (cd $module && go vet ./... && go test ./...) || exit 1; \
+      done; \
+      # Station's two modules are not in go.work: each is built by itself.
+      for module in astribot/station astribot/station-gateway; do \
+        (cd $module && GOWORK=off go vet ./... && GOWORK=off go test ./...) || exit 1; \
+      done; } > /go-tests.log 2>&1 || { cat /go-tests.log; exit 1; }
+
+FROM ${NODE_IMAGE} AS console
+ARG NPM_REGISTRY=https://registry.npmjs.org/
+WORKDIR /src
+COPY apps/rlark-ui/package.json apps/rlark-ui/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund --registry=${NPM_REGISTRY}
+COPY apps/rlark-ui/ ./
+RUN npm test > /console-tests.log 2>&1 || { cat /console-tests.log; exit 1; }
+
+FROM scratch
+COPY --from=go /go-tests.log /
+COPY --from=console /console-tests.log /

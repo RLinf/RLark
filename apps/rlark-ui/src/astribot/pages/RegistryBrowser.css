@@ -1,0 +1,422 @@
+.registry-browser-panel {
+  margin-top: 16px;
+}
+
+.registry-browser-heading h3,
+.registry-browser-panel h3 {
+  color: var(--ink);
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.registry-browser-heading p {
+  margin: 0;
+}
+
+.registry-browser-panel .page-toolbar {
+  margin: 16px 0;
+}
+
+.registry-browser-panel .table-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.registry-browser-panel .table-panel table {
+  width: 100%;
+  min-width: 480px;
+}
+
+.registry-tag-previews {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.registry-tag-chip {
+  display: inline-block;
+  max-width: 280px;
+  padding: 2px 7px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--app-bg, #f4f6f9);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.registry-tag-chip.is-alias {
+  border-color: transparent;
+  background: var(--blue-bg, #efe9fd);
+  color: var(--blue);
+}
+
+.registry-tag-preview-error {
+  color: var(--danger, #c2414b);
+}
+
+
+
+
+
+
+
+
+.registry-command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.registry-command code {
+  overflow-wrap: anywhere;
+}
+
+.registry-command > span {
+  flex-shrink: 0;
+}
+
+/* Compact credential strip on the registry detail page */
+.storage-detail-info-grid.registry-info-strip {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.storage-detail-info-grid.registry-info-strip > div {
+  min-height: 0;
+  padding: 10px 14px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.storage-detail-info-grid.registry-info-strip strong {
+  margin-top: 2px;
+}
+
+.theme-dark .storage-detail-info-grid.registry-info-strip > div {
+  background: transparent;
+}
+
+}
+
+/* Image table */
+.registry-toolbar .page-toolbar {
+  margin: 16px 0 10px;
+}
+
+.registry-namespaces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.registry-namespace-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.registry-namespace-chip em {
+  color: var(--muted);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.registry-namespace-chip[aria-pressed="true"] {
+  border-color: transparent;
+  background: var(--blue-bg, #efe9fd);
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.registry-browser-panel .table-panel .registry-table {
+  min-width: 880px;
+}
+
+.registry-table td {
+  vertical-align: middle;
+}
+
+.registry-table tbody tr.selected td {
+  background: var(--hover, #f5f0fe);
+}
+
+.registry-group-row td {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  background: var(--app-bg, #f4f6f9);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.registry-repo {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.registry-repo strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.registry-repo small {
+  color: var(--muted);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.registry-latest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.registry-more {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.registry-when {
+  display: grid;
+  gap: 1px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.registry-when small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.registry-fresh {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  vertical-align: middle;
+}
+
+.registry-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.registry-platform {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.registry-table .row-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.registry-table .table-action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.registry-pager {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Repository drawer */
+.addon-drawer.registry-drawer {
+  width: 600px;
+}
+
+.registry-drawer-header {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.registry-drawer-header > div {
+  min-width: 0;
+}
+
+.registry-drawer-header h3 {
+  margin: 6px 0;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.registry-drawer-ref {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.registry-drawer-ref code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.registry-drawer-body {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.registry-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.registry-facts > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 1px solid var(--line);
+}
+
+.registry-facts > div:last-child {
+  border-right: 0;
+}
+
+.registry-facts span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.registry-facts strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.registry-facts small {
+  font-size: 11px;
+}
+
+.registry-section-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.registry-section-title small {
+  font-weight: 500;
+}
+
+.registry-version {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.registry-version.is-latest {
+  border-color: var(--blue);
+}
+
+.registry-version-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.registry-version-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.registry-version-meta strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.registry-version-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.registry-digest {
+  min-width: 0;
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.registry-source-note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .addon-drawer.registry-drawer {
+    width: 100vw;
+    max-width: 100vw;
+  }
+
+  .registry-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .registry-facts > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .registry-facts > div:last-child {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--line);
+  }
+}

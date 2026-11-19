@@ -1,0 +1,93 @@
+apiVersion: rlinf.io/v1alpha1
+kind: Workflow
+metadata:
+  name: embodied-training-workflow
+spec:
+  jobTemplates:
+    - name: bootstrap-cluster
+      spec:
+        tasks:
+          - name: ray-head
+            head: true
+            agentType: Kubernetes
+            role: Actor
+            nodeSelector:
+              kubernetes.io/hostname: edge-node-1
+            tensorBoardDir: /data/tensorboard/ray-head
+            kubernetes:
+              workload:
+                kind: StatefulSet
+                replicas: 1
+                template:
+                  metadata:
+                    labels:
+                      app: ray-head
+                  spec:
+                    containers:
+                      - name: ray-head
+                        image: registry.example.com/ray/head:latest
+                        command:
+                          - ray
+                          - start
+                          - --head
+    - name: run-training
+      dependencies:
+        - bootstrap-cluster
+      spec:
+        tasks:
+          - name: rollout-workers
+            agentType: Kubernetes
+            role: Rollout
+            nodeSelector:
+              kubernetes.io/hostname: edge-node-1
+            tensorBoardDir: /data/tensorboard/rollout
+            kubernetes:
+              workload:
+                kind: CloneSet
+                replicas: 4
+                template:
+                  metadata:
+                    labels:
+                      app: rollout-workers
+                      role: rollout
+                  spec:
+                    containers:
+                      - name: rollout
+                        image: registry.example.com/rl/rollout:latest
+                        command:
+                          - python
+                          - /workspace/run_rollout.py
+                        args:
+                          - --head=$(HEAD_NODE)
+                          - --episodes=1000
+                        env:
+                          - name: HEAD_NODE
+                            value: ray-head-0
+                          - name: TENSORBOARD_DIR
+                            value: /data/tensorboard/rollout
+          - name: env-fleet
+            agentType: Raw
+            role: Env
+            nodeSelector:
+              rlinf.io/node-group: simulator
+            tensorBoardDir: /opt/rlinf/tensorboard/env
+            raw:
+              artifact: https://example.com/artifacts/env-fleet.tar.gz
+              entrypoint:
+                - bash
+                - /opt/env-fleet/start.sh
+              environment:
+                - name: HEAD_NODE
+                  value: ray-head-0
+                - name: SCENE_SET
+                  value: warehouse_v2,office_v1
+status:
+  phase: Running
+  jobs:
+    - name: bootstrap-cluster
+      phase: Succeeded
+      message: ray head and bootstrap actor are ready
+    - name: run-training
+      phase: Running
+      message: rollout and env tasks are starting
+  startTime: "2025-06-09T10:00:00Z"

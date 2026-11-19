@@ -1,0 +1,166 @@
+syntax = "proto3";
+
+package rlark.execution.common.v1;
+
+option go_package = "github.com/rlinf/rlark/sdks/execution-go/gen/common/v1;commonv1";
+
+message ProtocolVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+enum ProtocolCapability {
+  PROTOCOL_CAPABILITY_UNSPECIFIED = 0;
+  PROTOCOL_CAPABILITY_WORKLOAD_INVENTORY = 1;
+  PROTOCOL_CAPABILITY_RUNTIME_CANDIDATE_INVENTORY = 2;
+  PROTOCOL_CAPABILITY_OWNED_FIELD_PROJECTION = 3;
+  PROTOCOL_CAPABILITY_CLAIMED_WORKLOAD_RECOVERY = 4;
+  PROTOCOL_CAPABILITY_INCARNATION_ADOPTION = 5;
+  PROTOCOL_CAPABILITY_RECONCILE_PROFILES = 6;
+}
+
+message TypeReference {
+  string group = 1;
+  string version = 2;
+  string kind = 3;
+}
+
+message TypedValue {
+  TypeReference type = 1;
+  bytes value = 2;
+  string content_type = 3;
+}
+
+message LogicalTaskId {
+  string namespace = 1;
+  string name = 2;
+}
+
+message TaskIdentity {
+  LogicalTaskId logical_id = 1;
+  string object_uid = 2;
+  int64 generation = 3;
+}
+
+message ObjectLocator {
+  TypeReference type = 1;
+  string path = 2;
+}
+
+message RuntimeUnit {
+  string name = 1;
+  string kind = 2;
+  string role = 3;
+  ObjectLocator locator = 4;
+}
+
+message ObjectReference {
+  string runtime_id = 1;
+  string id = 2;
+  string namespace = 3;
+  string name = 4;
+  string uid = 5;
+  LogicalTaskId logical_task_id = 6;
+}
+
+message RuntimeObject {
+  ObjectReference reference = 1;
+  TypedValue manifest = 2;
+}
+
+message ObjectSnapshot {
+  string revision = 1;
+  repeated RuntimeObject objects = 2;
+}
+
+enum IdentityScope {
+  IDENTITY_SCOPE_UNSPECIFIED = 0;
+  IDENTITY_SCOPE_TASK_INCARNATION = 1;
+  IDENTITY_SCOPE_LOGICAL_TASK = 2;
+  IDENTITY_SCOPE_RUNTIME_INSTANCE = 3;
+  IDENTITY_SCOPE_SHARED_RESOURCE = 4;
+  IDENTITY_SCOPE_EXTERNAL = 5;
+}
+
+message ResourceOwnership {
+  IdentityScope scope = 1;
+  string owner_key = 2;
+  IncarnationOwnershipPolicy incarnation_policy = 3;
+}
+
+enum IncarnationOwnershipPolicy {
+  INCARNATION_OWNERSHIP_POLICY_UNSPECIFIED = 0;
+  INCARNATION_OWNERSHIP_POLICY_ALLOW_ADOPTION = 1;
+}
+
+message OwnedFieldProjection {
+  repeated string paths = 1;
+}
+
+message RuntimeObjectCandidate {
+  TypeReference type = 1;
+  string namespace = 2;
+  string name = 3;
+  map<string, string> labels = 4;
+  ResourceOwnership ownership = 5;
+  ResourceLifecycle lifecycle = 6;
+}
+
+enum ResourceLifecycle {
+  RESOURCE_LIFECYCLE_UNSPECIFIED = 0;
+  RESOURCE_LIFECYCLE_RETAIN = 1;
+  RESOURCE_LIFECYCLE_DELETE_ON_TASK_CLEANUP = 2;
+  RESOURCE_LIFECYCLE_RUNTIME_MANAGED = 3;
+  RESOURCE_LIFECYCLE_EXTERNAL = 4;
+}
+
+enum UpdateMode {
+  UPDATE_MODE_UNSPECIFIED = 0;
+  UPDATE_MODE_APPLY_IN_PLACE = 1;
+  UPDATE_MODE_REPLACE = 2;
+  UPDATE_MODE_DELETE_AND_CREATE = 3;
+  UPDATE_MODE_UNSUPPORTED = 4;
+}
+
+message DesiredRuntimeObject {
+  string logical_name = 1;
+  string role = 2;
+  TypeReference type = 3;
+  TypedValue manifest = 4;
+  ResourceOwnership ownership = 5;
+  ResourceLifecycle lifecycle = 6;
+  repeated string depends_on = 7;
+  UpdateMode update_mode = 8;
+  OwnedFieldProjection owned_fields = 9;
+  TypeReference reconcile_profile = 10;
+  repeated RuntimeUnit units = 11;
+}
+
+message RuntimeInstance {
+  string runtime_id = 1;
+  string id = 2;
+  string uid = 3;
+  ObjectReference parent = 4;
+  TaskIdentity task = 5;
+  string name = 6;
+  string role = 7;
+  optional int32 index = 8;
+  optional int32 rank = 9;
+  string phase = 10;
+  string reason = 11;
+  string message = 12;
+  repeated InstanceCondition conditions = 13;
+}
+
+message InstanceCondition {
+  string source = 1;
+  string scope = 2;
+  string subject = 3;
+  string reason = 4;
+  string message = 5;
+}
+
+message InstanceSnapshot {
+  string revision = 1;
+  repeated RuntimeInstance instances = 2;
+}

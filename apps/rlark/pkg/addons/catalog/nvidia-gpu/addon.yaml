@@ -1,0 +1,32 @@
+name: nvidia-gpu
+displayName: NVIDIA GPU
+category: device-plugin
+version: v0.1.0
+description: |
+  让带 NVIDIA 卡的节点能跑 GPU 工作负载，节点只需自带驱动：按节点标签（nodeSelector）自动下发到每台 GPU 节点，不在节点上手工装任何东西。
+  运行时：NVIDIA Container Toolkit 装到宿主 /usr/local/nvidia/toolkit，并写进节点 kubelet 所用运行时（containerd、containerd-fleet 等，按 /var/lib/kubelet 的配置找）的配置，nvidia 设为默认运行时；配置变了才重启一次该运行时（已在跑的容器不受影响，原文件带时间备份在旁边），没变不重启。驱动用宿主机自带的（驱动根 /）。
+  设备插件：NVIDIA device plugin，向 kubelet 报 nvidia.com/gpu；它的 Pod 用 RuntimeClass nvidia，运行时装好前起不来、装好后自己起来。节点没有驱动时它的容器起不来（Pod 状态里写着 NVIDIA 运行时的报错），该节点的其他 Pod 照常运行：不要 GPU 的容器经 nvidia 运行时原样交给 runc。
+  工作负载照常写 resources.limits["nvidia.com/gpu"]，不用指定 runtimeClassName。容器只看到设备插件分给它的卡：镜像自带的 NVIDIA_VISIBLE_DEVICES（CUDA 镜像都是 all）对非特权容器不生效，分配以卷挂载交给运行时（NVIDIA 推荐的做法）。镜像按 digest 引用，从站点仓库拉。
+icon: cpu
+
+parameters:
+  - name: nodeSelector
+    displayName: 节点选择
+    description: GPU 节点的标签 label=value（入网时由节点的准入记录或 RLark 的节点对象打上）
+    type: string
+    default: rlark.io/accelerator=nvidia
+    required: true
+
+  - name: toolkitImage
+    displayName: Container Toolkit 镜像
+    description: nvcr.io/nvidia/k8s/container-toolkit 的站点仓库副本，按 digest 引用，例如 registry.rlark.internal:5443/mirror/container-toolkit@sha256:d90dd628…（v1.17.8-ubuntu20.04）
+    type: string
+    default: ""
+    required: true
+
+  - name: devicePluginImage
+    displayName: 设备插件镜像
+    description: nvcr.io/nvidia/k8s-device-plugin 的站点仓库副本，按 digest 引用，例如 registry.rlark.internal:5443/mirror/k8s-device-plugin@sha256:3c54348f…（v0.17.4）
+    type: string
+    default: ""
+    required: true

@@ -1,0 +1,463 @@
+/* Stations page: only Station-specific rules. Layout, table, toolbar, status
+   pills, overview cards and the drawer shell come from the shared styles. */
+
+.stations-overview-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.storage-overview-card.red > span {
+  color: #cf3f61;
+  background: #ffe9ee;
+}
+
+.stations-toolbar {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.stations-toolbar .page-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.stations-cluster-filter select {
+  max-width: 260px;
+}
+
+.stations-table td {
+  white-space: nowrap;
+}
+
+.stations-table tbody tr.selected {
+  background: color-mix(in srgb, var(--blue) 7%, transparent);
+}
+
+.stations-name {
+  display: grid;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stations-name small {
+  font-size: 11px;
+}
+
+.stations-node {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.stations-state {
+  display: grid;
+  min-height: 160px;
+  place-items: center;
+  font-size: 14px;
+}
+
+.stations-more {
+  display: flex;
+  margin: 12px auto 0;
+}
+
+.station-network {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.station-network-verified { color: #168a61; }
+.station-network-failed { color: #cf3f61; }
+.station-network-unknown { color: #8e97a6; }
+
+/* Drawer */
+.addon-drawer.station-drawer {
+  width: 540px;
+}
+
+.station-drawer-header {
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.station-drawer-header h3 {
+  margin: 6px 0 8px;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.station-drawer-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.station-drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.station-drawer-section {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.station-drawer-section .node-detail-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.node-detail-grid.station-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.station-detail-grid > div {
+  min-width: 0;
+}
+
+.station-detail-grid strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.station-detail-wide {
+  grid-column: 1 / -1;
+}
+
+.station-copy-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.station-copy-value code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.station-copy-value .icon-button {
+  flex: none;
+  width: 26px;
+  height: 26px;
+}
+
+.station-conflict-banner {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid #f5c2cf;
+  border-radius: 14px;
+  background: #fff5f7;
+  color: #a3304d;
+}
+
+.station-conflict-banner p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.station-conditions {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.station-conditions li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.station-conditions li:last-child {
+  border-bottom: 0;
+}
+
+.station-conditions li > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.station-conditions small {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.station-condition-side {
+  justify-items: end;
+  text-align: right;
+}
+
+.station-condition-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9a9ab0;
+}
+
+.station-condition-dot.is-true { background: var(--green); }
+.station-condition-dot.is-false { background: var(--red); }
+
+.station-rebind-start {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stations-rebind-form {
+  display: grid;
+  gap: 12px;
+}
+
+.station-evidence {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.station-evidence th,
+.station-evidence td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.station-evidence th {
+  color: #8e97a6;
+  font-weight: 600;
+}
+
+.station-field {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.station-field select,
+.station-field input,
+.station-field textarea {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-weight: 400;
+}
+
+.station-operation-history {
+  flex: none;
+}
+
+.station-operation-history-panel {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.station-operation-history-heading,
+.station-operation-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.station-operation-history-list {
+  display: grid;
+  margin-top: 8px;
+}
+
+.station-operation-history-row {
+  width: 100%;
+  min-height: 48px;
+  padding: 7px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.station-operation-history-row > span:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.station-operation-history-row > span:first-child > * {
+  overflow-wrap: anywhere;
+}
+
+.station-operation-drawer {
+  width: min(560px, 100vw);
+}
+
+.station-join-progress {
+  display: grid;
+  gap: 9px;
+}
+
+.station-join-condition {
+  display: grid;
+  gap: 3px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.stations-operation-overlay {
+  z-index: 1242;
+}
+
+.station-operation-drawer {
+  z-index: 1243;
+}
+
+.station-field textarea {
+  resize: vertical;
+}
+
+.station-operation-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.theme-dark .storage-overview-card.red > span {
+  color: #ff8fa8;
+  background: rgba(207, 63, 97, 0.16);
+}
+
+.theme-dark .station-conflict-banner {
+  border-color: rgba(207, 63, 97, 0.4);
+  background: rgba(207, 63, 97, 0.12);
+  color: #ff9fb4;
+}
+
+.theme-dark .station-network-verified { color: #4fd3a0; }
+.theme-dark .station-network-failed { color: #ff8fa8; }
+
+@media (max-width: 1100px) {
+  .stations-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+
+  .station-operation-history-row {
+    align-items: flex-start;
+  }
+
+  .stations-overview-grid,
+  .node-detail-grid.station-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .addon-drawer.station-drawer {
+    width: 100vw;
+    max-width: 100vw;
+  }
+
+  .stations-cluster-filter,
+  .stations-cluster-filter select {
+    width: 100%;
+    max-width: none;
+  }
+}
+
+/* The admission records under the table. */
+.station-admissions {
+  margin-top: 16px;
+}
+
+.station-admissions .station-operation-history-heading {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+}
+
+.station-admission-ssh {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+/* The node's SSH join, where it stands: opens the join on the page that adds a node. */
+.station-admission-join {
+  display: block;
+  margin-top: 4px;
+}
+
+.station-admission-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.stations-power-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stations-power-batch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.remove-node-steps {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 12px;
+  padding-left: 20px;
+}
+
+.remove-node-steps svg {
+  vertical-align: -2px;
+}
+
+/* Where a join stands, and what RLark put right of the machine's earlier attempt by itself. */
+.station-admission-step,
+.station-admission-healed {
+  display: block;
+  max-width: 36em;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.station-admission-healed {
+  color: var(--success, var(--text-muted));
+}
+
+.station-retired-delete {
+  margin-left: 8px;
+}

@@ -1,0 +1,1223 @@
+# 本分叉在官方 apps/rlark/docs/api/swagger.yaml 之上加的接口与字段。
+# 官方文件不动；apps/rlark/pkg/gateway/astribot_swagger_test.go 把本文件逐键叠到官方文件上
+# （同名的映射递归合并，其余以本文件为准），再跑官方的路由与引用检查。
+# 证书吊销接口 POST /api/v1/certificates/revoke 要求管理员，并要求 Server 持久化吊销记录。
+paths:
+  /api/v1/certificates/revoke:
+    post:
+      summary: Persist certificate revocation (administrator only)
+      description: Requires a compatible Server. An ambiguous failure may be retried with the same identity; existing sessions are not terminated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cert_type, serial_number, subject_key_id]
+              properties:
+                cert_type: {type: string, enum: [x509, ssh]}
+                serial_number: {type: string, description: Canonical decimal serial}
+                subject_key_id: {type: string, description: Lowercase hexadecimal for X.509; SSH key ID for SSH}
+                reason: {type: string}
+      responses:
+        '200':
+          description: Server confirmed durable storage
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  persisted: {type: boolean, enum: [true]}
+        '400': {description: Invalid certificate identity}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role required}
+        '502': {description: Server failed or did not confirm persistence; outcome may be unknown}
+        '503': {description: Server connection not configured}
+  /api/v1/image-registries/{id}/password:
+    get:
+      tags: [Image]
+      summary: Reveal a registry password (administrator only)
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Password; response is not cacheable
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [password]
+                properties:
+                  password: {type: string, format: password}
+        '400': {description: Invalid registry ID}
+        '403': {description: Administrator role required}
+        '404': {description: Registry not found}
+  /api/v1/node-networks/{name}:
+    get:
+      tags: [Station]
+      summary: Get the verified node network summary (preview)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Current, stale or unreported WireGuard observation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [state]
+                properties:
+                  state: {type: string, enum: [current, stale, unreported]}
+                  interface: {type: string}
+                  addresses: {type: array, items: {type: string}}
+                  reportedAt: {type: string, format: date-time}
+        '400': {description: Missing cluster ID}
+        '404': {description: Cluster or node not visible}
+        '409': {description: Ambiguous cluster namespace}
+        '503': {description: Verified observation unavailable}
+  /api/v1/site-nodes:
+    get:
+      tags: [Station]
+      summary: List the site nodes of a cluster (read-only), optionally those carrying a label
+      parameters:
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+        - {name: label, in: query, required: false, schema: {type: string}, description: key=value}
+      responses:
+        '200':
+          description: Site nodes in sequence order, each shaped as in GET /api/v1/site-nodes/{name}
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {type: object}}
+        '400': {description: Missing cluster ID}
+        '404': {description: Cluster not found}
+        '409': {description: Ambiguous cluster namespace}
+        '502': {description: Management API request failed}
+        '503': {description: Station API unavailable}
+  /api/v1/site-nodes/{name}:
+    get:
+      tags: [Station]
+      summary: Look up one site node by Node name (read-only; identity, network address, robot)
+      description: >-
+        The interface for consumers that place work on machines, such as a Fleet Run. A caller keeps
+        the cluster ID and Node name and reads the rest here. site_node_id is stable across reinstalls;
+        binding_version increases when an administrator rebinds the identity to a reinstalled machine;
+        network.address is the one address every other member reaches the node at. The answer says
+        nothing about what runs on the machine.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The site node bound to this Node name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cluster_id, node_name, site_node_id, sequence, binding_version, phase, online]
+                properties:
+                  cluster_id: {type: string}
+                  node_name: {type: string}
+                  site_node_id: {type: string}
+                  sequence: {type: integer}
+                  binding_version: {type: integer}
+                  phase: {type: string, enum: [Bound, Offline, Conflict, Retired]}
+                  online: {type: boolean, description: Heartbeat only; the agent reported within 90 s}
+                  tunnel: {type: string, enum: [verified, failed, unknown], description: Whether the node reaches every peer that is itself online}
+                  rlark_node: {type: string, enum: [ready, not-ready, unknown]}
+                  last_seen_time: {type: string, format: date-time}
+                  boot_time: {type: string, format: date-time}
+                  reboots: {type: integer, description: Boot-time changes seen since the identity was created}
+                  labels: {type: object, additionalProperties: {type: string}}
+                  robot_id: {type: string}
+                  workstation_id: {type: string}
+                  network:
+                    type: object
+                    description: Absent until the node has enrolled under its current binding
+                    properties:
+                      state: {type: string, enum: [Pending, Enrolled, Rejected]}
+                      site: {type: string}
+                      role: {type: string, enum: [Leaf, Hub]}
+                      address: {type: string}
+                      tunnel_address: {type: string}
+                      link_summary: {type: string, description: 'For a leaf, what the hubs it dials see of it, in one line; empty while every link is connected'}
+                      public_key: {type: string, description: 'The WireGuard public key the node enrolled with; the private key never leaves the machine'}
+                      links:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            hub: {type: string, description: 'The hub the leaf dials, <clusterID>/<nodeName>'}
+                            state: {type: string, enum: [Connected, Unanswered, Silent, Unknown]}
+                            since: {type: string, format: date-time}
+                            latest_handshake: {type: string, format: date-time}
+        '400': {description: Missing cluster ID}
+        '404': {description: Cluster or site node not found}
+        '409': {description: Ambiguous cluster namespace or node binding}
+        '502': {description: Management API request failed}
+        '503': {description: Station API unavailable}
+  /api/v1/cluster-provisions:
+    get:
+      tags: [Clusters]
+      summary: List the clusters made from a machine, each with its stages (administrator only)
+      responses:
+        '200': {description: The ClusterProvisions, content: {application/json: {schema: {type: object, properties: {data: {type: array, items: {type: object}}}}}}}
+    post:
+      tags: [Clusters]
+      summary: Make a new site's cluster from its first machine (administrator only)
+      description: >-
+        The Gateway logs in to the machine with the account given, and in stages makes it the new site's first
+        hub and the cluster's control plane, installs the cluster agent, Station and the Addons at the release
+        the site is at, and runs a check Job. Each stage's read-back and, where it stopped, the reason are in the
+        ClusterProvision's status. The password is used for this making only and kept nowhere.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [site, address, user, password]
+              properties:
+                site: {type: string, description: The new site's name}
+                cluster: {type: string, description: "The cluster's name, rlark-...; empty, rlark-<site>-gpu"}
+                address: {type: string, description: "The machine's address; its WireGuard endpoint is this address, UDP 51820"}
+                port: {type: integer, description: SSH port, default 22}
+                user: {type: string}
+                password: {type: string, format: password}
+      responses:
+        '201': {description: Started; the ClusterProvision, content: {application/json: {schema: {type: object, properties: {data: {type: object}}}}}}
+        '400': {description: Invalid request}
+        '409': {description: The site or the cluster exists}
+        '503': {description: No SiteNetwork, or no release record to make the cluster at}
+  /api/v1/cluster-provisions/{name}:
+    get:
+      tags: [Clusters]
+      summary: One cluster's making, stage by stage (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: The ClusterProvision, content: {application/json: {schema: {type: object, properties: {data: {type: object}}}}}}
+        '404': {description: Not found}
+  /api/v1/cluster-provisions/{name}/retry:
+    post:
+      tags: [Clusters]
+      summary: Go on from the stage a making stopped at (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password: {type: string, format: password, description: Required when the stage logs in to the machine (every stage up to station)}
+                user: {type: string, description: "The account to log in to the machine with from now on, when the one given first was refused"}
+      responses:
+        '202': {description: Going on}
+        '400': {description: The stage logs in to the machine and no password was given}
+        '409': {description: The making runs, or has finished}
+  /api/v1/cluster-provisions/{name}/clear:
+    post:
+      tags: [Clusters]
+      summary: Take away a making that stopped, or what the making of a deleted cluster left (administrator only)
+      description: >-
+        Puts the machine back (the installer's control-plane undo, the tunnel), deletes the Cluster a making that did
+        not finish listed and the credentials the management plane reaches it with, takes the making's site, name and
+        nodes out of the SiteNetwork, and deletes the record; the site, the cluster's name and the machine can then be
+        used again. Answers what it did, a line a step.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password: {type: string, format: password, description: "The machine's SSH password, when the making reached the machine"}
+                user: {type: string, description: The account to log in to the machine with}
+                machine_gone: {type: boolean, description: "The machine is not there to be put back: only RLark's records go"}
+      responses:
+        '200': {description: Cleared, content: {application/json: {schema: {type: object, properties: {steps: {type: array, items: {type: string}}}}}}}
+        '400': {description: The making reached the machine and neither its password nor machine_gone was given}
+        '409': {description: "The making runs, or its cluster is made and listed (delete the cluster first)"}
+        '502': {description: "A step failed; steps holds what was done before it"}
+  /api/v1/station/node-admissions:
+    get:
+      tags: [Station]
+      summary: List the node admissions of a cluster (administrator only); never the codes
+      parameters:
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Admissions, newest code first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/NodeAdmission'}}
+        '400': {description: Missing cluster ID}
+        '404': {description: Cluster not found}
+        '502': {description: Management API request failed}
+    post:
+      tags: [Station]
+      summary: Admit a machine as a node and give out its one-time join code (administrator only)
+      description: >-
+        The answer carries the code and the one line to run as root on the machine, once; the
+        management plane keeps only the code's SHA-256. A node that has an admission keeps it as what
+        declares its tunnel address: a new code for it replaces what the admission declares, labels
+        included, and opens it again. Who gave the code out and when is recorded on the admission. Where the
+        cluster's API is nobody gives: when the machine redeems the code, Station API answers it the server of the
+        cluster's kube-public/cluster-info, where every node of the cluster reaches the API. A cluster that refuses
+        Station API what the machine joins with (cluster-info, a join token) leaves the code unredeemed, and the
+        machine is told which Role of astribot/station/deploy/member-rbac.yaml the cluster lacks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cluster_id, node_name]
+              additionalProperties: false
+              properties:
+                cluster_id: {type: string}
+                node_name: {type: string, description: The Node name the machine joins as}
+                site: {type: string, description: "The site the machine stands in, when it is not its cluster's"}
+                address: {type: string, description: Pins the tunnel address; empty lets station-controller allocate one}
+                uplink: {type: string, description: "The gateway of a machine whose default route does not lead out, where its site declares no leafUplink"}
+                node_class: {type: string, description: "The NodeClass of the machine; the node follows it, and it says what lets the machine out to its site"}
+                taints: {type: array, maxItems: 8, items: {type: string, description: "key[=value]:Effect"}}
+                labels: {type: object, maxProperties: 32, additionalProperties: {type: string}}
+                ttl_seconds: {type: integer, minimum: 600, maximum: 604800, description: Default 7200}
+      responses:
+        '200': {description: A new code for an existing admission, content: {application/json: {schema: {$ref: '#/components/schemas/IssuedNodeAdmission'}}}}
+        '201': {description: Admitted, content: {application/json: {schema: {$ref: '#/components/schemas/IssuedNodeAdmission'}}}}
+        '400': {description: Invalid request or unknown site}
+        '404': {description: Cluster not found}
+        '409': {description: The admission changed meanwhile}
+        '502': {description: Management API or Station API request failed}
+  /api/v1/station/node-admissions/{name}/reissue:
+    post:
+      tags: [Station]
+      summary: Give out a new code for what an admission declares (administrator only); the earlier code stops working
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                ttl_seconds: {type: integer, minimum: 600, maximum: 604800, description: Default 7200}
+      responses:
+        '200': {description: The new code, content: {application/json: {schema: {$ref: '#/components/schemas/IssuedNodeAdmission'}}}}
+        '400': {description: Invalid request}
+        '404': {description: Cluster or admission not found}
+        '409': {description: The admission changed meanwhile}
+        '502': {description: Management API or Station API request failed}
+  /api/v1/station/node-admissions/{name}/revoke:
+    post:
+      tags: [Station]
+      summary: Withdraw an admission's code before a machine redeems it (administrator only); its expiry becomes now
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The code no longer works
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  admission: {$ref: '#/components/schemas/NodeAdmission'}
+        '404': {description: Cluster or admission not found}
+        '409': {description: A machine has redeemed the code}
+        '502': {description: Management API request failed}
+  /api/v1/station/node-joins:
+    post:
+      tags: [Station]
+      summary: Join a machine by logging in to it with SSH, in stages (administrator only); the password is used by this join only
+      description: >-
+        The Gateway logs in to the machine at once with the account given (password, also as keyboard-interactive
+        answers), checks the account may use sudo with the same password, reads the node name from the machine's host
+        name unless one is given, and records the join as a NodeJoin (<cluster>.<node>, label rlark.io/cluster). It
+        then runs the stages in the background from that login and writes each one's state, message and readback
+        into status.stages: precheck (the machine, and whether it reaches Station API at the address the code's line
+        will use), bundle (the installer, unless the machine holds the one of Station API's sha256, and its tunnel
+        key), declare (the machine as a hub of its site by that key), tunnel (until Station API answers through the
+        machine's own tunnel; the peers' reports say how far its key has gone), install (a code, and its line run with
+        sudo as the unit rlark-join, followed to its end; its lines are the stage's message), node-ready, station
+        (NetworkEnrollment Enrolled, admission Joined) and gpu. The three tunnel stages are Skipped for a machine that
+        reaches Station API. The password is kept nowhere: not on any object, Secret, log or event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cluster_id, address, user, password]
+              additionalProperties: false
+              properties:
+                cluster_id: {type: string}
+                address: {type: string, description: The machine's IP address or host name}
+                port: {type: integer, minimum: 1, maximum: 65535, description: Default 22}
+                user: {type: string, maxLength: 64}
+                password: {type: string, format: password, maxLength: 4096, description: The login password; sudo is given the same}
+                node_name: {type: string, description: "Default: the machine's host name, in lower case"}
+                tunnel_endpoint: {type: string, description: "The IPv4 ip:port other sites dial for the machine's tunnel, when it joins through one; default the address at port 51820"}
+      responses:
+        '201': {description: "The join is recorded and runs (data: the NodeJoin)"}
+        '400': {description: "Invalid request; reason NodeName (the host name is no node name)"}
+        '403': {description: "reason NoSudo or SudoPasswordRejected: the account may not use sudo with its password"}
+        '404': {description: Cluster not found}
+        '409': {description: "A join of the node is left (retry or clear it), or another runs on the machine"}
+        '422': {description: "reason LoginRejected: the machine did not accept the user with this password"}
+        '502': {description: "reason Unreachable: no SSH login at the address"}
+    get:
+      tags: [Station]
+      summary: List a cluster's SSH joins, running ones first, then the newest (administrator only)
+      description: A join that succeeded is listed for 7 days; one that stopped until it is retried to its end or cleared.
+      parameters:
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: "items: the NodeJoins"}
+        '400': {description: cluster_id is required}
+  /api/v1/station/node-joins/{name}:
+    get:
+      tags: [Station]
+      summary: Read one SSH join (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: "data: the NodeJoin"}
+        '404': {description: No such join}
+  /api/v1/station/node-joins/{name}/retry:
+    post:
+      tags: [Station]
+      summary: Go on from the stage a join stopped at (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                password: {type: string, format: password, description: "Required when the stage logs in to the machine (precheck, bundle, declare, tunnel, install)"}
+                user: {type: string, description: "The account to log in to the machine with from now on"}
+                machine_gone: {type: boolean, description: Not used by a retry}
+      responses:
+        '202': {description: Going on}
+        '400': {description: The stage logs in to the machine and no password was given}
+        '409': {description: The join runs, or has finished}
+  /api/v1/station/node-joins/{name}/clear:
+    post:
+      tags: [Station]
+      summary: Take away a join that is not running, with what it left (administrator only)
+      description: >-
+        Before its code's line ran: the tunnel it started on the machine (with the password; the key and the installer
+        stay) and its declaration of the machine as a hub. After: the node's name is removed as a removal by name does
+        (a NodeOperation Remove). Then the record goes. Answers what it did, a line a step.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                password: {type: string, format: password}
+                user: {type: string}
+                machine_gone: {type: boolean, description: The machine is not there to be put back}
+      responses:
+        '200': {description: "steps: what was done"}
+        '409': {description: The join runs}
+        '502': {description: "A step failed; steps: what was done before it"}
+  /api/v1/station/machines:
+    get:
+      tags: [Station]
+      summary: List the machines RLark knows of, nodes or not (administrator only); nothing of any account
+      description: >-
+        A machine comes into the list by being seen on its site's network by a hub of a site that declares
+        discovery (source Discovery). The list is what an administrator admits machines from.
+      parameters:
+        - {name: site, in: query, required: false, schema: {type: string}}
+        - {name: phase, in: query, required: false, schema: {type: string, enum: [Discovered, Admitted, Joined]}}
+      responses:
+        '200':
+          description: Machines, newest sighting first, and the labels of their classes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: {type: string}
+                        site: {type: string}
+                        node_class: {type: string}
+                        source: {type: string, enum: [Discovery, Registration]}
+                        phase: {type: string, enum: [Discovered, Admitted, Joined]}
+                        problem: {type: string, description: "What is wrong with the machine, as CredentialRejected; absent when nothing is"}
+                        message: {type: string}
+                        serial: {type: string}
+                        address: {type: string}
+                        mac: {type: string}
+                        last_seen: {type: string, format: date-time}
+                        cluster_id: {type: string}
+                        node_name: {type: string}
+                        admissible: {type: boolean, description: Whether the machine can be admitted now}
+                        requested_by: {type: string}
+                        requested_at: {type: string, format: date-time}
+                  classes:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        labels: {type: object, additionalProperties: {type: string}}
+        '502': {description: Management API request failed}
+  /api/v1/station/machines/admit:
+    post:
+      tags: [Station]
+      summary: Admit machines of the list as nodes of a cluster (administrator only)
+      description: >-
+        Writes the decision on each Machine with who made it and when. station-controller gives each machine
+        the next name of its class, a NodeAdmission and the NodeOperation that joins it over SSH; nobody types
+        anything at the machine. Each machine is answered for by itself.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cluster_id, machines]
+              additionalProperties: false
+              properties:
+                cluster_id: {type: string}
+                machines: {type: array, minItems: 1, maxItems: 500, items: {type: string}}
+                labels: {type: object, additionalProperties: {type: string}, description: "Replace, for these machines, the values of labels their class declares"}
+      responses:
+        '200':
+          description: What became of each machine
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  machines:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: {type: string}
+                        admitted: {type: boolean}
+                        error: {type: string}
+        '400': {description: Invalid request}
+        '404': {description: Cluster not found}
+        '502': {description: Management API request failed}
+  /api/v1/station/node-classes/{name}/access:
+    get:
+      tags: [Station]
+      summary: Which passwords of a NodeClass have been entered (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}, description: The NodeClass}
+      description: >-
+        The passwords every machine of a class has are values of job secrets the class names
+        (access.entry.password, access.node.password, access.node.sudoPassword). The answer says for each
+        which secret and key it is, whether a value is there, and for the node's passwords who entered them
+        and when. No value is ever answered.
+      responses:
+        '200':
+          description: The passwords of the class
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NodeClassAccess'}
+        '404': {description: NodeClass not found}
+        '409': {description: The NodeClass declares no access}
+        '502': {description: Management API request failed}
+    put:
+      tags: [Station]
+      summary: Enter the node's passwords of a NodeClass (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}, description: The NodeClass}
+      description: >-
+        Writes the password of the computers of the class and, where sudo asks for another, that one, as the
+        values the class names in a job secret that exists; the secret's other values stay. The machines of
+        the class are then looked at anew. Who entered them is recorded on the NodeClass and in the audit log.
+        Until the node's password has been entered nobody logs in to the machines of the class and none can
+        be admitted (Machine problem AccessUnconfigured).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [node_password]
+              additionalProperties: false
+              properties:
+                node_password: {type: string, maxLength: 256, writeOnly: true}
+                sudo_password: {type: string, maxLength: 256, writeOnly: true, description: "Only where sudo asks for another password than node_password"}
+      responses:
+        '200':
+          description: The passwords of the class, as GET answers them
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NodeClassAccess'}
+        '400': {description: Invalid request}
+        '404': {description: NodeClass not found}
+        '409': {description: The NodeClass declares no access, or the secret it names does not exist}
+        '502': {description: Management API request failed}
+  /api/v1/secrets:
+    get:
+      tags: [Secrets]
+      summary: List job secrets without their values (administrator only)
+      responses:
+        '200': {description: "Name, description, clusters and keys of every job secret"}
+    post:
+      tags: [Secrets]
+      summary: Create a job secret and deliver it to the Job namespace of the selected clusters (administrator only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, clusters, data]
+              properties:
+                name: {type: string, description: "Name of the delivered Kubernetes Secret; a Job refers to it by this name"}
+                description: {type: string}
+                clusters: {type: array, items: {type: string}}
+                data: {type: object, additionalProperties: {type: string}}
+      responses:
+        '201': {description: "Declared; each cluster's agent applies it"}
+        '400': {description: "Invalid or reserved name, no cluster, no data"}
+        '409': {description: "A secret of this name exists"}
+  /api/v1/secrets/{name}:
+    put:
+      tags: [Secrets]
+      summary: Replace the clusters and all values of a job secret (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: "Replaced"}
+        '404': {description: "Secret not found"}
+    delete:
+      tags: [Secrets]
+      summary: Delete a job secret from the management plane and its clusters (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: "Deleted"}
+        '404': {description: "Secret not found"}
+  /api/v1/service-accounts:
+    get:
+      tags: [Service accounts]
+      summary: List service accounts (administrator only); tokens are never returned
+      responses:
+        '200': {description: "Name, role, tenants and delivery of every service account"}
+    post:
+      tags: [Service accounts]
+      summary: Create a service account and return its token once (administrator only)
+      description: >-
+        A service account is how a program calls this API. Its token is sent as a Bearer token, does not expire,
+        and stops working when it is rotated or the account is deleted. With deliver, the token is kept as a job
+        secret (keys token and service-account) on the given clusters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                description: {type: string}
+                role: {type: string, enum: [user, operator, admin], default: user}
+                tenant_ids: {type: array, items: {type: string}}
+                deliver:
+                  type: object
+                  properties:
+                    clusters: {type: array, items: {type: string}}
+                    secret_name: {type: string}
+      responses:
+        '201': {description: "Created; the response carries the token"}
+        '400': {description: "Invalid name, role or delivery"}
+        '409': {description: "A service account of this name exists"}
+  /api/v1/service-accounts/{name}/token:
+    post:
+      tags: [Service accounts]
+      summary: Replace a service account's token; the previous one stops working at once (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: "The new token"}
+        '404': {description: "Service account not found"}
+  /api/v1/service-accounts/{name}:
+    delete:
+      tags: [Service accounts]
+      summary: Delete a service account, revoking its token and removing its delivered secret (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: "Deleted"}
+        '404': {description: "Service account not found"}
+  /api/v1/station/stations:
+    get:
+      tags: [Station]
+      summary: List registered Station identities (administrator only)
+      parameters:
+        - {name: cluster_id, in: query, required: false, schema: {type: string}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 200}}
+        - {name: continue, in: query, required: false, schema: {type: string}}
+      responses:
+        '200':
+          description: Namespaced Station records from the current management API
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {type: object}}
+                  continue: {type: string}
+        '400': {description: Invalid list limit}
+        '403': {description: Administrator role required}
+        '502': {description: Management Kubernetes API unavailable}
+  /api/v1/station/stations/{name}:
+    get:
+      tags: [Station]
+      summary: Get a Station by name and registered Cluster (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Station record}
+        '400': {description: Cluster ID required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster or Station not found}
+        '409': {description: Cluster namespace mapping is ambiguous}
+        '502': {description: Management Kubernetes API unavailable}
+    delete:
+      tags: [Station]
+      summary: Ask for a retired Station to be deleted (administrator only)
+      description: >-
+        Only a retired Station is deleted, and only once nothing stands on it: another Station stands for its node's
+        name, or its cluster has no Node of that name. station-controller deletes it, with the observation stored for
+        its node and leaving an audit event, or writes on it why not (annotation station.rlark.io/delete-refused).
+        A Station that is gone already answers 200: the request can be made again.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: The Station is gone}
+        '202': {description: Asked; station-controller deletes it or says why not}
+        '400': {description: Cluster ID required}
+        '404': {description: Cluster not found}
+        '409': {description: The Station is not retired}
+        '502': {description: Management Kubernetes API unavailable}
+  /api/v1/station/rebinds:
+    post:
+      tags: [Station]
+      summary: Create an administrator-approved Station rebind operation
+      description: Requires an admin JWT and a strict JSON body no larger than 16 KiB. Unknown fields are rejected. The Gateway resolves the namespace from the registered Cluster, verifies the Station object UID and expected binding version, and creates an idempotent StationRebind resource. The controller independently verifies the target Node against the member Kubernetes API and refuses a Node UID already owned by another Station before changing the binding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cluster_id, request_id, station_name, station_uid, expected_binding_version, target_node_name, target_node_uid, reason]
+              properties:
+                cluster_id: {type: string, maxLength: 128}
+                request_id: {type: string, minLength: 1, maxLength: 128}
+                station_name: {type: string, maxLength: 253}
+                station_uid: {type: string, maxLength: 128}
+                expected_binding_version: {type: integer, format: int64, minimum: 1}
+                target_node_name: {type: string, maxLength: 253}
+                target_node_uid: {type: string, maxLength: 128}
+                target_system_uuid: {type: string, maxLength: 128}
+                reason: {type: string, minLength: 1, maxLength: 1024}
+      responses:
+        '202': {description: Operation created or an identical prior request returned}
+        '400': {description: Invalid request}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster or Station not found}
+        '409': {description: Request ID conflict, Station UID mismatch, or binding version changed}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API unavailable}
+  /api/v1/station/rebinds/{name}:
+    get:
+      tags: [Station]
+      summary: Get a Station rebind operation (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Current asynchronous operation state}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster or operation not found}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API unavailable}
+  /api/v1/station/node-operations:
+    post:
+      tags: [Station]
+      summary: Remove a node (administrator only)
+      description: Requires a registered Cluster and an installed NodeOperation CRD/controller. Only Remove is asked for here; the Joins in the list are station-controller's, for the machines an administrator admits (POST /api/v1/station/machines/admit), and a machine joined by SSH runs its code's line (POST /api/v1/station/node-joins). Remove takes only the node name and its UID and logs in nowhere. A robot (a Node with rlark.io/power-state) is first powered off its own way, its wanted power set to off so that its driver stops before its motors; one a Run or a session uses (rlark.io/in-use) stops the removal, and one whose node no longer reports is not powered off (the operation says so in its station.rlark.io/power-off annotation). It drains with PDBs (a node whose kubelet no longer reports has its pods deleted), requires UID-owned or observation-verified WireGuard config, disables the network DaemonSet, retires the node's Station and takes the machine's key off its admission (it leaves the tunnel and its name is free), resets a node whose kubelet still reports from a pod on that node (kubeadm reset; a node that no longer reports is reset when its machine joins again), and deletes the Node; unowned legacy config, and a node the SiteNetwork declares with a key, block before drain.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cluster_id, request_id, action, node_name, node_uid]
+              additionalProperties: false
+              properties:
+                cluster_id: {type: string, maxLength: 128}
+                request_id: {type: string, maxLength: 128}
+                action: {type: string, enum: [Remove]}
+                node_name: {type: string, maxLength: 253}
+                node_uid: {type: string, maxLength: 128}
+      responses:
+        '202': {description: Operation accepted or identical request returned; inspect its status before retrying}
+        '400': {description: Invalid or unsupported request}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster not found}
+        '409': {description: Request ID conflict}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API unavailable}
+    get:
+      tags: [Station]
+      summary: List node lifecycle operations for a registered Cluster (administrator only)
+      parameters:
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 100}}
+        - {name: continue, in: query, required: false, schema: {type: string}}
+      responses:
+        '200': {description: Current operation status without credential references}
+        '400': {description: Cluster ID required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster not found}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API unavailable}
+  /api/v1/station/node-operations/{name}:
+    get:
+      tags: [Station]
+      summary: Get a node lifecycle operation (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Current operation status without credential references}
+        '400': {description: Cluster ID required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster or operation not found}
+        '409': {description: Operation cluster binding mismatch}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API unavailable}
+  /api/v1/station/observations:
+    get:
+      tags: [Station]
+      summary: List Station observations for a registered Cluster (administrator only)
+      parameters:
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 200}}
+        - {name: continue, in: query, required: false, schema: {type: string}}
+      responses:
+        '200': {description: Latest verified observations from the mapped member namespace}
+        '400': {description: Cluster ID required or invalid limit}
+        '401': {description: Authentication required}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster not found}
+        '502': {description: Management Kubernetes API failure}
+        '503': {description: Station API unavailable}
+  /api/v1/image-registries/{id}/repositories:
+    get:
+      tags: [Image]
+      summary: List a registry's repositories (administrator only)
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: last, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: A page of repository names and an optional next cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {type: string}}
+                  next: {type: string}
+        '400': {description: Invalid parameter}
+        '403': {description: Administrator role required}
+        '404': {description: Registry not found}
+        '502': {description: Registry unavailable, unsupported, or not allowlisted}
+
+  /api/v1/image-registries/{id}/tags:
+    get:
+      tags: [Image]
+      summary: List registry repository tags (administrator only)
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: repository, in: query, required: true, schema: {type: string}}
+        - {name: last, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: A page of tags and an optional next cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {type: string}}
+                  next: {type: string}
+        '400': {description: Invalid parameter}
+        '403': {description: Administrator role required}
+        '404': {description: Registry not found}
+        '502': {description: Registry unavailable, unsupported, or not allowlisted}
+
+  /api/v1/image-registries/{id}/tag-details:
+    get:
+      tags: [Image]
+      summary: List tags with image build time, size and platforms (administrator only)
+      description: >-
+        Reads one tag page, then each tag's manifest and image config. Metadata is
+        cached in Gateway memory by manifest digest; tags are resolved on every call.
+        A tag whose metadata cannot be read (unsupported media type, redirect,
+        oversized document or digest mismatch) is returned with error "unavailable"
+        and without metadata.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: repository, in: query, required: true, schema: {type: string}}
+        - {name: last, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: A page of tag details in registry order and an optional next cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [tag]
+                      properties:
+                        tag: {type: string}
+                        digest:
+                          type: string
+                          description: Manifest digest the tag currently points to
+                        created:
+                          type: string
+                          format: date-time
+                          description: Image config created time; linux/amd64 for multi-platform images
+                        size:
+                          type: integer
+                          format: int64
+                          description: Config plus compressed layer bytes
+                        platforms:
+                          type: array
+                          items: {type: string}
+                          description: "Platforms as os/architecture or os/architecture/variant"
+                        error: {type: string, enum: [unavailable]}
+                  next: {type: string}
+        '400': {description: Invalid parameter}
+        '403': {description: Administrator role required}
+        '404': {description: Registry not found}
+        '502': {description: Registry unavailable, unsupported, not allowlisted, or request canceled}
+
+  /api/v1/image-registries/{id}/manifest:
+    get:
+      tags: [Image]
+      summary: Read the manifest digest for a tag (administrator only)
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: repository, in: query, required: true, schema: {type: string}}
+        - {name: tag, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Manifest digest
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  digest: {type: string}
+        '400': {description: Invalid parameter}
+        '403': {description: Administrator role required}
+        '404': {description: Registry not found}
+        '502': {description: Registry unavailable, unsupported, or not allowlisted}
+
+  /api/v1/clusters/{cluster_id}/node-agents:
+    put:
+      tags: [Cluster]
+      summary: Declare a cluster's node Agents
+      description: >-
+        Administrator-only. Replaces the Cluster's spec.nodeAgents. While enabled, the cluster Agent keeps one
+        node Agent DaemonSet (rlark-agent-node) on the Kubernetes Nodes matching nodeSelector, so a Node that
+        joins later gets its node Agent without further action; enabled false makes it delete that DaemonSet.
+      operationId: setClusterNodeAgents
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClusterNodeAgents'
+            example: {enabled: true}
+      responses:
+        '200':
+          description: Declaration stored; the response is the updated cluster
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, success]
+                properties:
+                  data: {$ref: '#/components/schemas/ClusterInfo'}
+                  success: {type: boolean}
+        '400': {description: enabled missing, empty nodeSelector, or an invalid label key or value}
+        '404': {description: Cluster not found}
+
+  /api/v1/clusters/{cluster_id}/display-name:
+    put:
+      tags: [Cluster]
+      summary: Set or clear a cluster's display name (administrator only; audited with its actor)
+      description: >-
+        Sets the Cluster's spec.displayName, trimmed; an empty name clears it and the cluster is shown by its ID.
+        The name is unique among the Clusters' display names and IDs. The cluster ID (metadata.name) never changes.
+      operationId: setClusterDisplayName
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [displayName]
+              properties:
+                displayName: {type: string, maxLength: 64, description: 'Letters, digits, Chinese characters, ".", "_" and "-"; empty clears it.'}
+            example: {displayName: 金山云宁夏}
+      responses:
+        '200':
+          description: Display name stored; the response is the updated cluster
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, success]
+                properties:
+                  data: {$ref: '#/components/schemas/ClusterInfo'}
+                  success: {type: boolean}
+        '400': {description: displayName longer than 64 characters or with a character outside the class}
+        '404': {description: Cluster not found}
+        '409': {description: 'Another cluster already uses the name as its display name or ID ("display name already used by <id>")'}
+
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/robot-power:
+    put:
+      tags: [Node]
+      summary: Set the power a robot is wanted to have (administrator or operator; audited with its actor)
+      description: >-
+        Writes the Node's label rlark.io/robot-power (the state and the time it was set) and the annotation
+        rlark.io/robot-power-set (desired, by, at). The robot's model Addon converges on the label. This is the
+        only way the label changes: the Node's PATCH and PUT refuse a body that would change it.
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [desired]
+              properties:
+                desired: {type: string, enum: [off, powered, ready]}
+      responses:
+        '200':
+          description: The Node with its new label
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '400': {description: desired is not off, powered or ready}
+        '404': {description: Not Found}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/robot-claim:
+    put:
+      tags: [Node]
+      summary: Claim a robot for a Run, or renew the claim (any caller; audited with its actor)
+      description: >-
+        Writes the Node's label rlark.io/robot-claim (the holder) and the annotation rlark.io/robot-claim-set
+        (holder, job, by, grantedAt, until). A free robot is granted; the same holder applying again from the same
+        caller renews (until moves forward, grantedAt stays). A claim lasts until it is released or the sweeper ends
+        it, its lease over, on the management plane only (every 10 s; a minute after the Gateway starts, and after
+        its upstream comes back, nothing is ended, so that after an outage longer than a lease the holders renew
+        first); until then nobody else is granted the robot. This is the only way the label changes: the Node's PATCH and PUT refuse a body that
+        would change it.
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - name: renew
+          in: query
+          schema: {type: boolean}
+          description: >-
+            Only renew: the robot must carry this holder's claim from the same caller (its lease over or not, while
+            the sweeper has not ended it), whose grantedAt stays; otherwise 409 and nothing is granted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [holder]
+              properties:
+                holder: {type: string, maxLength: 40, description: "A label value: letters, digits, _ - ."}
+                job: {type: string}
+                leaseSeconds: {type: integer, minimum: 5, maximum: 600, default: 60}
+      responses:
+        '200': {description: "The claim: holder, job, by, grantedAt, until"}
+        '400': {description: holder or leaseSeconds is invalid, or renew is not a boolean}
+        '404': {description: Not Found}
+        '409': {description: "ROBOT_CLAIM_BUSY: held by another, or with renew not this claim; details.current is the robot's claim (null: none)"}
+    delete:
+      tags: [Node]
+      summary: Release a robot's claim (its holder; or forced, administrator or operator with a reason)
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - {name: holder, in: query, schema: {type: string}}
+        - {name: force, in: query, schema: {type: boolean}}
+        - {name: reason, in: query, schema: {type: string}}
+      responses:
+        '200': {description: "The claim released (holder, job, by, grantedAt, until), or {} when the robot had none"}
+        '400': {description: A forced release without a reason}
+        '403': {description: A forced release by neither administrator nor operator}
+        '404': {description: Not Found}
+        '409': {description: "ROBOT_CLAIM_BUSY: held by another; details.current is its claim"}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/display-name:
+    put:
+      tags: [Node]
+      summary: Set or clear a Node's display name (administrator only; audited with its actor)
+      description: >-
+        Sets the Node's spec.displayName, trimmed; an empty name takes it away and the Node is shown by its name.
+        The name is unique among all Nodes' display names and names in every namespace. metadata.name, the
+        Kubernetes Node name that Jobs, Stations and SiteNetwork key on, never changes. This is the only way
+        spec.displayName changes: the Node's PATCH and PUT refuse a body that would change it.
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [displayName]
+              properties:
+                displayName: {type: string, maxLength: 64, description: 'Letters, digits, Chinese characters, ".", "_" and "-"; empty clears it.'}
+      responses:
+        '200':
+          description: The Node with its new display name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '400': {description: displayName longer than 64 characters or with a character outside the class}
+        '404': {description: Not Found}
+        '409': {description: 'Another Node already uses the name as its display name or name ("display name already used by <namespace>/<name>")'}
+
+components:
+  schemas:
+    NodeClassPassword:
+      type: object
+      required: [secret, key, configured]
+      properties:
+        secret: {type: string, description: The job secret the class names}
+        key: {type: string}
+        configured: {type: boolean, description: Whether a value is there}
+        set_by: {type: string}
+        set_at: {type: string, format: date-time}
+    NodeClassAccess:
+      type: object
+      required: [entry, node]
+      properties:
+        entry: {$ref: '#/components/schemas/NodeClassPassword'}
+        node: {$ref: '#/components/schemas/NodeClassPassword'}
+        sudo: {$ref: '#/components/schemas/NodeClassPassword'}
+    NodeAdmission:
+      type: object
+      required: [cluster_id, node_name, state, expires_at]
+      properties:
+        cluster_id: {type: string}
+        node_name: {type: string}
+        state: {type: string, enum: [Pending, Redeemed, Joined, Expired], description: 'Pending: the code is open; Redeemed: a machine took it and is joining; Expired: also a code withdrawn before it was used'}
+        reason: {type: string, description: "station-controller's reason, when it holds the node back; for a machine joined by SSH, where its installer stopped"}
+        site: {type: string}
+        address: {type: string, description: The pinned tunnel address}
+        uplink: {type: string}
+        labels: {type: object, additionalProperties: {type: string}}
+        taints: {type: array, items: {type: string}}
+        expires_at: {type: string, format: date-time}
+        issued_by: {type: string, description: The authenticated identity that gave out the current code}
+        issued_at: {type: string, format: date-time}
+        redeemed_at: {type: string, format: date-time}
+        public_key: {type: string, description: The WireGuard public key of the machine that redeemed the code}
+        tunnel_address: {type: string, description: The tunnel address station-controller gave the machine}
+        ssh_login: {type: string, description: "user@host:port, for a machine joined by SSH from the console"}
+        ssh_host_key: {type: string, description: The SHA256 fingerprint of the host key such a machine showed when it was logged in to}
+    IssuedNodeAdmission:
+      type: object
+      required: [admission, code, command]
+      properties:
+        admission: {$ref: '#/components/schemas/NodeAdmission'}
+        code: {type: string, description: The one-time code; answered here only}
+        command: {type: string, description: The one line to run as root on the machine}
+    ClusterNodeAgents:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: {type: boolean, description: Keep (true) or remove (false) the node Agent DaemonSet.}
+        nodeSelector:
+          type: object
+          additionalProperties: {type: string}
+          minProperties: 1
+          description: Kubernetes Node labels that select the Nodes running a node Agent. Defaults to rlark.io/enabled=true.
+    ClusterInfo:
+      properties:
+        id: {type: string, description: Stable Cluster resource name used in API paths and references.}
+        name: {type: string, description: Trimmed spec.displayName or the Cluster resource name when unset.}
+        displayName: {type: string, description: Trimmed spec.displayName; absent when unset.}
+        nodeAgents:
+          $ref: '#/components/schemas/ClusterNodeAgents'
+    NodeSpec:
+      properties:
+        displayName:
+          type: string
+          maxLength: 64
+          description: The operator's name; metadata.name stays the Kubernetes Node name. Set with PUT .../nodes/{name}/display-name.

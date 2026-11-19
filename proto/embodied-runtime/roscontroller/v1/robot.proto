@@ -1,0 +1,345 @@
+syntax = "proto3";
+
+package ros.controller.v1;
+
+option go_package = "github.com/rlinf/rlark/sdks/embodied-runtime-go/gen/roscontroller/v1;roscontrollerv1";
+
+// ---------------------------------------------------------------------------
+// RobotController manages robot nodes on the host.
+//
+// This service is exposed over a Unix socket. The device plugin calls it
+// to control the lifecycle and mode of robot nodes (e.g. Franka) that run
+// on the host network.
+//
+// The service is implemented by two independent controller packages that
+// register on separate Unix sockets:
+//   - pkg/roscontroller (ROS 1): starts a per-robot roscore; fills
+//     ros_master_uri in responses.
+//   - pkg/ros2controller (ROS 2): no master; assigns a per-robot
+//     ROS_DOMAIN_ID for DDS isolation; fills ros_domain_id in responses.
+// Both implementations honour the same RPC contract so a single client
+// library and CLI can target either by pointing at the right socket.
+// ---------------------------------------------------------------------------
+service RobotController {
+  // StartRobot launches a robot node with the specified mode.
+  rpc StartRobot(StartRobotRequest) returns (StartRobotResponse);
+
+  // StopRobot stops a running robot node.
+  rpc StopRobot(StopRobotRequest) returns (StopRobotResponse);
+
+  // GetRobotStatus returns the current status of a robot node.
+  rpc GetRobotStatus(GetRobotStatusRequest) returns (GetRobotStatusResponse);
+
+  // SwitchMode changes the control mode of a running robot node.
+  rpc SwitchMode(SwitchModeRequest) returns (SwitchModeResponse);
+
+  // ListRobots returns all managed robots and their status.
+  rpc ListRobots(ListRobotsRequest) returns (ListRobotsResponse);
+
+  // ListModes returns the supported control modes for a given robot.
+  // Different robots may support different mode sets (e.g. Franka has
+  // "impedance" and "joint", while other robots may add "position",
+  // "velocity", "torque", etc.).
+  rpc ListModes(ListModesRequest) returns (ListModesResponse);
+
+  // GetRobotLogs returns recent log output from a robot's launch process.
+  // Logs are buffered in memory with a fixed capacity; tail=N returns the
+  // last N lines, tail=0 returns all buffered lines.
+  rpc GetRobotLogs(GetRobotLogsRequest) returns (GetRobotLogsResponse);
+
+  // ListPackages returns ROS packages available on the server, filtered by
+  // the allowed launch packages whitelist configured in ros-controller.
+  rpc ListPackages(ListPackagesRequest) returns (ListPackagesResponse);
+
+  // GetPackageInfo returns metadata about a ROS package.
+  rpc GetPackageInfo(GetPackageInfoRequest) returns (GetPackageInfoResponse);
+
+  // GetPackageLaunchFiles lists launch files in a ROS package.
+  rpc GetPackageLaunchFiles(GetPackageLaunchFilesRequest) returns (GetPackageLaunchFilesResponse);
+
+  // GetLaunchFileArgs returns the arguments supported by a launch file.
+  rpc GetLaunchFileArgs(GetLaunchFileArgsRequest) returns (GetLaunchFileArgsResponse);
+
+  // ResetRobot stops the robot process, restarts the ROS middleware (roscore
+  // for ROS 1; the launch process for ROS 2 — there is no master to restart),
+  // and resets the robot state back to STOPPED. Useful for recovering from
+  // error states.
+  rpc ResetRobot(ResetRobotRequest) returns (ResetRobotResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+// RobotState represents the current lifecycle state of a robot node.
+enum RobotState {
+  ROBOT_STATE_UNSPECIFIED = 0;
+  ROBOT_STATE_STARTING = 1;
+  ROBOT_STATE_RUNNING = 2;
+  ROBOT_STATE_STOPPING = 3;
+  ROBOT_STATE_STOPPED = 4;
+  ROBOT_STATE_ERROR = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
+
+message StartRobotRequest {
+  // Unique identifier for the robot (e.g. "franka-0").
+  string robot_id = 1;
+
+  // Initial control mode (e.g. "impedance", "joint").
+  // If mode_config is set, this is just a label for the mode.
+  string mode = 2;
+
+  // Optional custom mode configuration. When set, the mode is launched
+  // with this inline config instead of looking up a preset by name.
+  ModeConfig mode_config = 3;
+}
+
+message StartRobotResponse {
+  string robot_id = 1;
+  RobotState state = 2;
+  ModeInfo current_mode = 3;
+  string ros_master_uri = 4;
+
+  // Robot-level parameters that can be referenced via arg_from.
+  map<string, string> params = 5;
+
+  // ROS_DOMAIN_ID for DDS isolation (ROS 2 only; 0 for ROS 1).
+  int32 ros_domain_id = 6;
+}
+
+message StopRobotRequest {
+  string robot_id = 1;
+}
+
+message StopRobotResponse {
+  string robot_id = 1;
+}
+
+message GetRobotStatusRequest {
+  string robot_id = 1;
+}
+
+message GetRobotStatusResponse {
+  string robot_id = 1;
+  string mode = 2;
+  RobotState state = 3;
+  ModeInfo current_mode = 4;
+  string ros_master_uri = 5;
+
+  // Robot-level parameters that can be referenced via arg_from.
+  map<string, string> params = 6;
+
+  // ROS_DOMAIN_ID for DDS isolation (ROS 2 only; 0 for ROS 1).
+  int32 ros_domain_id = 7;
+}
+
+message SwitchModeRequest {
+  string robot_id = 1;
+
+  // Target control mode (e.g. "impedance", "joint").
+  // If mode_config is set, this is just a label for the mode.
+  string mode = 2;
+
+  // Optional custom mode configuration. When set, the mode is launched
+  // with this inline config instead of looking up a preset by name.
+  ModeConfig mode_config = 3;
+}
+
+message SwitchModeResponse {
+  string robot_id = 1;
+  string mode = 2;
+  RobotState state = 3;
+  ModeInfo current_mode = 4;
+  string ros_master_uri = 5;
+
+  // Robot-level parameters that can be referenced via arg_from.
+  map<string, string> params = 6;
+
+  // ROS_DOMAIN_ID for DDS isolation (ROS 2 only; 0 for ROS 1).
+  int32 ros_domain_id = 7;
+}
+
+message ListRobotsRequest {}
+
+message ListRobotsResponse {
+  repeated RobotInfo robots = 1;
+}
+
+message RobotInfo {
+  string robot_id = 1;
+  string mode = 2;
+  RobotState state = 3;
+  ModeInfo current_mode = 4;
+  string ros_master_uri = 5;
+
+  // Robot-level parameters that can be referenced via arg_from.
+  map<string, string> params = 6;
+
+  // ROS_DOMAIN_ID for DDS isolation (ROS 2 only; 0 for ROS 1).
+  int32 ros_domain_id = 7;
+}
+
+message ListModesRequest {
+  string robot_id = 1;
+}
+
+message ModeInfo {
+  // Mode name, e.g. "impedance", "joint".
+  string name = 1;
+
+  // ROS package containing the launch file.
+  string package = 2;
+
+  // Launch file name. ROS 1 uses ".launch" (XML); ROS 2 uses ".launch.py",
+  // ".launch.xml", or ".launch.yaml".
+  string launch_file = 3;
+
+  // Default key=value arguments passed to the launcher (roslaunch / ros2
+  // launch both use the "key:=value" syntax).
+  map<string, string> args = 4;
+
+  // Additional environment variables for the launch process.
+  map<string, string> env = 5;
+
+  // Maps launch arg names → robot param names.
+  map<string, string> arg_from = 6;
+
+  // When true, merge all robot params with identity mapping.
+  bool passthrough_robot_args = 7;
+}
+
+// ModeConfig defines an ad-hoc custom mode configuration. It mirrors the
+// YAML ModeConfig struct and can be passed inline in StartRobot or
+// SwitchMode requests to bypass preset modes.
+message ModeConfig {
+  // ROS package containing the launch file.
+  string package = 1;
+
+  // Launch file name. ROS 1 uses ".launch" (XML); ROS 2 uses ".launch.py",
+  // ".launch.xml", or ".launch.yaml".
+  string launch_file = 2;
+
+  // Key=value arguments passed to the launcher (roslaunch / ros2 launch
+  // both use the "key:=value" syntax).
+  map<string, string> args = 3;
+
+  // When true, merge all robot params with identity mapping (param name = arg name).
+  // Mutually exclusive with arg_from.
+  bool passthrough_robot_args = 4;
+
+  // Maps launch arg names → robot param names.
+  // Mutually exclusive with passthrough_robot_args.
+  map<string, string> arg_from = 5;
+
+  // Additional environment variables for the launch process.
+  map<string, string> env = 6;
+}
+
+message ListModesResponse {
+  string robot_id = 1;
+
+  // Available control modes for this robot with full configuration details.
+  repeated ModeInfo modes = 2;
+}
+
+message GetRobotLogsRequest {
+  // Unique identifier for the robot (e.g. "franka-0").
+  string robot_id = 1;
+
+  // Number of recent lines to return. 0 = all buffered lines.
+  int32 tail = 2;
+}
+
+message GetRobotLogsResponse {
+  string robot_id = 1;
+
+  // Recent log lines from the robot's roslaunch process.
+  // Empty if the robot has never been started or logs have been cleared.
+  repeated string lines = 2;
+}
+
+message ListPackagesRequest {}
+
+message ListPackagesResponse {
+  // ROS package names available on the server, filtered by the
+  // allowed launch packages whitelist.
+  repeated string packages = 1;
+}
+
+message GetPackageInfoRequest {
+  // ROS package name, e.g. "franka_ros".
+  string name = 1;
+}
+
+message PackageInfo {
+  // Package name.
+  string name = 1;
+  // Version string from package.xml.
+  string version = 2;
+  // Description from package.xml.
+  string description = 3;
+  // Maintainer name and email from package.xml.
+  string maintainer = 4;
+  // Whether this package is in the allowed launch packages whitelist.
+  bool allowed = 5;
+}
+
+message GetPackageInfoResponse {
+  PackageInfo info = 1;
+}
+
+message GetPackageLaunchFilesRequest {
+  // ROS package name, e.g. "franka_ros".
+  string name = 1;
+}
+
+message GetPackageLaunchFilesResponse {
+  // Package name.
+  string name = 1;
+  // Launch file names (e.g. "impedance.launch", "joint.launch.py").
+  repeated string launch_files = 2;
+}
+
+message GetLaunchFileArgsRequest {
+  // ROS package name, e.g. "franka_ros".
+  string package = 1;
+  // Launch file name, e.g. "impedance.launch".
+  string launch_file = 2;
+}
+
+message LaunchArg {
+  // Argument name.
+  string name = 1;
+  // Whether the argument is required (no default value).
+  bool required = 2;
+  // Default value, if any.
+  string default = 3;
+  // Description from the arg tag or comment, if available.
+  string description = 4;
+}
+
+message GetLaunchFileArgsResponse {
+  // Package name.
+  string package = 1;
+  // Launch file name.
+  string launch_file = 2;
+  // Supported arguments.
+  repeated LaunchArg args = 3;
+}
+
+message ResetRobotRequest {
+  string robot_id = 1;
+}
+
+message ResetRobotResponse {
+  string robot_id = 1;
+  RobotState state = 2;
+  string ros_master_uri = 3;
+
+  // ROS_DOMAIN_ID for DDS isolation (ROS 2 only; 0 for ROS 1).
+  int32 ros_domain_id = 4;
+}

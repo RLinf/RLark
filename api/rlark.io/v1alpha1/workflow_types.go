@@ -1,0 +1,73 @@
+package v1alpha1
+
+import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+// +kubebuilder:validation:Enum=Pending;Running;Stopping;Stopped;Succeeded;Failed
+type WorkflowPhase string
+
+const (
+	WorkflowPhasePending   WorkflowPhase = "Pending"
+	WorkflowPhaseRunning   WorkflowPhase = "Running"
+	WorkflowPhaseStopping  WorkflowPhase = "Stopping"
+	WorkflowPhaseStopped   WorkflowPhase = "Stopped"
+	WorkflowPhaseSucceeded WorkflowPhase = "Succeeded"
+	WorkflowPhaseFailed    WorkflowPhase = "Failed"
+)
+
+type WorkflowJobTemplate struct {
+	Name string `json:"name,omitempty"`
+	// Dependencies 是同一 Workflow 内其它 Job 模板的名字，依赖关系只存在于
+	// Job 之间，不存在于 Job 内部的 Task 模板之间。
+	Dependencies []string `json:"dependencies,omitempty"`
+	Spec         JobSpec  `json:"spec,omitempty"`
+}
+
+type WorkflowSpec struct {
+	JobTemplates []WorkflowJobTemplate `json:"jobTemplates,omitempty"`
+	Suspended    bool                  `json:"suspended,omitempty"`
+}
+
+type WorkflowJobStatus struct {
+	Name    string   `json:"name,omitempty"`
+	Phase   JobPhase `json:"phase,omitempty"`
+	Message string   `json:"message,omitempty"`
+}
+
+func (s *WorkflowJobStatus) GetPhase() string    { return string(s.Phase) }
+func (s *WorkflowJobStatus) SetPhase(p string)   { s.Phase = JobPhase(p) }
+func (s *WorkflowJobStatus) SetMessage(m string) { s.Message = m }
+
+type WorkflowStatus struct {
+	Phase WorkflowPhase `json:"phase,omitempty"`
+	// ObservedGeneration 是 Workflow 控制器最近一次完成调谐时所观测到的
+	// metadata.generation。它是控制器契约而非 API Server 保证：消费者在读取
+	// phase / conditions 之前，应比较本字段与 metadata.generation 以识别过期状态。
+	ObservedGeneration int64               `json:"observedGeneration,omitempty"`
+	Jobs               []WorkflowJobStatus `json:"jobs,omitempty"`
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	StartTime  *metav1.Time       `json:"startTime,omitempty"`
+	EndTime    *metav1.Time       `json:"endTime,omitempty"`
+}
+
+// +genclient
+// +genclient:nonNamespaced
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:path=workflows,scope=Cluster,shortName=rlwf
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+type Workflow struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              WorkflowSpec   `json:"spec,omitempty"`
+	Status            WorkflowStatus `json:"status,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+type WorkflowList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []Workflow `json:"items"`
+}

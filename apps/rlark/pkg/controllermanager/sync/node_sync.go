@@ -1,0 +1,58 @@
+package sync
+
+import (
+	"github.com/rlinf/rlark/apps/rlark/pkg/persistence"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	controllerconfig "sigs.k8s.io/controller-runtime/pkg/controller"
+
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/db"
+)
+
+// newNodeSyncHandler creates a new sync handler for Node resources.
+func newNodeSyncHandler() Handler {
+	return &genericSyncHandler{
+		tableName:    "nodes",
+		resourceType: "nodes.rlinf.io",
+		isNamespaced: true, // Node is namespace-scoped
+		wrapBaseModel: func(base db.BaseResourceModel) db.ResourceModel {
+			return &db.NodeModel{BaseResourceModel: base}
+		},
+		wrapLatestBaseModel: func(base db.BaseResourceModel) db.ResourceModel {
+			return &db.LatestNodeModel{BaseResourceModel: base}
+		},
+	}
+}
+
+// NodeReconciler reconciles Node resources.
+type NodeReconciler struct {
+	maxConcurrentReconciles int
+	*genericReconciler[*rlarkv1alpha1.Node]
+}
+
+// +kubebuilder:rbac:groups=rlinf.io,resources=nodes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rlinf.io,resources=nodes/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=rlinf.io,resources=nodes/finalizers,verbs=update
+
+// NewNodeReconciler creates a new NodeReconciler.
+func NewNodeReconciler(maxConcurrentReconciles int, client client.Client, backend persistence.Backend) *NodeReconciler {
+	return &NodeReconciler{
+		maxConcurrentReconciles: maxConcurrentReconciles,
+		genericReconciler: &genericReconciler[*rlarkv1alpha1.Node]{
+			client:  client,
+			backend: backend,
+			handler: newNodeSyncHandler(),
+			newObj:  func() *rlarkv1alpha1.Node { return &rlarkv1alpha1.Node{} },
+		},
+	}
+}
+
+// SetupWithManager registers the controller with the manager.
+func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&rlarkv1alpha1.Node{}).
+		WithOptions(controllerconfig.Options{MaxConcurrentReconciles: r.maxConcurrentReconciles}).
+		Named("node-sync").
+		Complete(r)
+}

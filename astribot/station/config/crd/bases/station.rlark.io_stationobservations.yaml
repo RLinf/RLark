@@ -1,0 +1,225 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: stationobservations.station.rlark.io
+spec:
+  group: station.rlark.io
+  names:
+    kind: StationObservation
+    listKind: StationObservationList
+    plural: stationobservations
+    shortNames:
+    - stnobs
+    singular: stationobservation
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.nodeUID
+      name: Node UID
+      type: string
+    - jsonPath: .status.reportedAt
+      name: Reported
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          StationObservation holds the latest server-validated observation per node.
+          Its name is the verified Node name in the namespace mapped to the cluster.
+          station-api owns status; agents never write this object directly.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              StationObservationSpec is intentionally empty. The API creates the object
+              before writing the validated snapshot through the status subresource.
+            type: object
+          status:
+            properties:
+              agent:
+                description: Agent is the station-agent that sent this report.
+                properties:
+                  digest:
+                    description: Digest is the sha256 of the program's file.
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                required:
+                - digest
+                type: object
+              bootTime:
+                format: date-time
+                type: string
+              gateway:
+                description: |-
+                  Gateway is the station-gateway of the node, as that program states it
+                  with every good pass. A node without it runs a gateway that is not
+                  reconciling.
+                properties:
+                  digest:
+                    description: Digest is the sha256 of the program's file.
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                  documentLevel:
+                    description: |-
+                      DocumentLevel is the newest configuration document the program
+                      understands; it understands every one before it.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - digest
+                - documentLevel
+                type: object
+              nodeUID:
+                maxLength: 128
+                minLength: 1
+                type: string
+              pressures:
+                description: |-
+                  Pressures are the DiskPressure, MemoryPressure and PIDPressure
+                  conditions that are True on the member Node, read by station-api when
+                  it verified the report. The list is written with every report, so an
+                  empty one says the Node is under none and a missing one that the report
+                  was stored by a station-api from before the field.
+                items:
+                  enum:
+                  - DiskPressure
+                  - MemoryPressure
+                  - PIDPressure
+                  type: string
+                maxItems: 3
+                type: array
+                x-kubernetes-list-type: set
+              probes:
+                items:
+                  properties:
+                    ok:
+                      type: boolean
+                    rttMs:
+                      format: int64
+                      maximum: 600000
+                      minimum: 0
+                      type: integer
+                    target:
+                      description: Target is a configured probe label or host:port,
+                        bounded by API policy.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    via:
+                      description: Via identifies the observed route label.
+                      maxLength: 256
+                      type: string
+                  required:
+                  - ok
+                  - target
+                  type: object
+                maxItems: 256
+                type: array
+              reportedAt:
+                description: ReportedAt is server receipt time, never a client-provided
+                  timestamp.
+                format: date-time
+                type: string
+              roles:
+                items:
+                  maxLength: 64
+                  type: string
+                maxItems: 32
+                type: array
+                x-kubernetes-list-type: set
+              systemUUID:
+                description: SystemUUID is evidence only and must not be used to authorize
+                  a binding.
+                type: string
+              wireguard:
+                properties:
+                  addresses:
+                    items:
+                      maxLength: 64
+                      type: string
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: set
+                  interface:
+                    description: Interface is the observed interface name, not a desired
+                      configuration.
+                    maxLength: 15
+                    minLength: 1
+                    type: string
+                  peers:
+                    description: |-
+                      Peers are the node's WireGuard peers that are enrolled members, as the
+                      node's kernel counts them. A Hub's entry for a Leaf is the only account
+                      of a Leaf that has dropped off.
+                    items:
+                      properties:
+                        latestHandshake:
+                          format: date-time
+                          type: string
+                        name:
+                          description: |-
+                            Name is the peer's member id, "<clusterID>/<nodeName>". station-api
+                            assigns it from the public key the node reported: it is that of the
+                            Enrolled NetworkEnrollment with this key.
+                          maxLength: 128
+                          minLength: 1
+                          type: string
+                        receivedBytes:
+                          format: int64
+                          minimum: 0
+                          type: integer
+                        sentBytes:
+                          format: int64
+                          minimum: 0
+                          type: integer
+                      required:
+                      - name
+                      type: object
+                    maxItems: 1024
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  publicKey:
+                    description: PublicKey is the public key of the observed interface;
+                      private keys are never reported.
+                    maxLength: 64
+                    type: string
+                required:
+                - interface
+                type: object
+            required:
+            - agent
+            - nodeUID
+            - reportedAt
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,171 @@
+# What the release command may do in a member cluster, as the ServiceAccount rlark-system/rlark-release whose
+# credential is the cluster's in the management plane (rlark-release-member-credentials/release-<cluster>,
+# release.IssueMemberCredential): the cluster agent's and Station's Deployments and DaemonSets it changes, the Pods and
+# Nodes it reads them back by, and the member definitions of a release's tree (crds-rbac), which it can write only
+# holding what they grant (escalate, bind). Every release writes this file again into every member cluster, so a
+# release that needs more states it here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rlark-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: station-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rlark-release
+  namespace: rlark-system
+---
+# Its token, kept as long as the Secret is (the management plane holds it in the cluster's credential).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rlark-release-token
+  namespace: rlark-system
+  annotations:
+    kubernetes.io/service-account.name: rlark-release
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rlark-release
+rules:
+- apiGroups: [""]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["namespaces", "serviceaccounts"]
+  verbs: ["get", "list", "create", "update", "patch"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterroles", "clusterrolebindings", "roles", "rolebindings"]
+  verbs: ["get", "list", "create", "update", "patch", "escalate", "bind"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rlark-release
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: rlark-release
+subjects:
+- kind: ServiceAccount
+  name: rlark-release
+  namespace: rlark-system
+---
+# The cluster agent and the node agents (rlark-system), and its own token, which this file states.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rlark-release
+  namespace: rlark-system
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "daemonsets"]
+  verbs: ["get", "list", "update"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["rlark-release-token"]
+  verbs: ["get", "update", "patch"]
+# A short-lived token of the cluster's reader, which rlarkctl release kubectl runs kubectl with.
+- apiGroups: [""]
+  resources: ["serviceaccounts/token"]
+  resourceNames: ["rlark-reader"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rlark-release
+  namespace: rlark-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rlark-release
+subjects:
+- kind: ServiceAccount
+  name: rlark-release
+  namespace: rlark-system
+---
+# Station's DaemonSets, and Station API and its controller where the cluster runs them (station-system).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rlark-release
+  namespace: station-system
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "update"]
+- apiGroups: ["apps"]
+  resources: ["daemonsets"]
+  verbs: ["get", "list", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rlark-release
+  namespace: station-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rlark-release
+subjects:
+- kind: ServiceAccount
+  name: rlark-release
+  namespace: rlark-system
+---
+# The cluster's reader, rlark-system/rlark-reader: what runs in the cluster, read and nothing written, for whoever
+# looks at the site (rlarkctl release kubectl). Kubernetes' own view (every namespace's workloads, their logs and
+# events, no Secret) and the cluster's nodes and storage. It has no lasting token: each use is given one for an hour.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rlark-reader
+  namespace: rlark-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rlark-reader-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+- kind: ServiceAccount
+  name: rlark-reader
+  namespace: rlark-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rlark-reader
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "persistentvolumes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses", "csidrivers", "csinodes", "volumeattachments"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["nodes", "pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rlark-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: rlark-reader
+subjects:
+- kind: ServiceAccount
+  name: rlark-reader
+  namespace: rlark-system
