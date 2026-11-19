@@ -36,7 +36,7 @@ images:
   csi-node-driver-registrar: registry.rlark.internal:5443/csi-rclone/csi-node-driver-registrar@sha256:aeecba5b171b50558bab359fdb8e28b9da185f666cef35cd87ac9784e51956c5
   csi-provisioner: registry.rlark.internal:5443/csi-rclone/csi-provisioner@sha256:da2f5c41881009b963c121d3605c68ad9127490f2c209a849b4eb26074b0038b
   csi-rclone: registry.rlark.internal:5443/csi-rclone/csi-driver-rclone@sha256:4909777afbfaa6df954861fe757a929a35f1fc73a477b5f771349b9d2d988d70
-  fleet-robot: registry.rlark.internal:5443/fleet/robot@sha256:4c14eecf51b72e28c1430c71f3576a93d44c49615d7f07f777e7420d0381eae2
+  fleet-robot: registry.rlark.internal:5443/fleet/robot@sha256:f21d13018b9f2100f3ba4149b95a2980c24c43ec65dd0ae3f92a8b4a559e29b2
   installer-live: registry.rlark.internal:5443/rlark/staging-artifact@sha256:ac57d27ea8b55d610c1640b69a5d25db21b763721acc8fa4ab729b7d1afea74d
   node-agent: registry.rlark.internal:5443/rlark/agent@sha256:228ecff9b67e92dd70c54d7635faebef1ae8e044b9a0a3ba3d54e1dbd1b1f46c
   nvidia-container-toolkit: registry.rlark.internal:5443/mirror/container-toolkit@sha256:a4d9d439fa05929a2a489f7b6b557a03e035f85e6f31f8ff674fd1cd7579a6fa
@@ -56,7 +56,7 @@ images:
   station-controller: registry.rlark.internal:5443/rlark/station-controller@sha256:984fbb0d652eab1350d898e604e6abfed2b98e91e1749a556abe0d4ea8cb5be5
   station-wireguard: registry.rlark.internal:5443/rlark/station-wireguard@sha256:4bf8aa15b420663c92cde1a05b297d1de394bf65006824e3a896343ec15f7fc2
   tools: registry.rlark.internal:5443/rlark/agent@sha256:18794643fc1884fc58890eaca06cd65803d88210f6eb47d1afab912d07659b75
-name: ci-43da850-996f942
+name: ci-577c405-996f942
 source:
   fleet: 996f94272da90b9892cf772c83e8b0d09e0be8fa
-  rlark: 43da850205e34ab04ac6cd92497d15cb55cff1ae
+  rlark: 577c405361362edff65b74e89987a3bda9144a41
