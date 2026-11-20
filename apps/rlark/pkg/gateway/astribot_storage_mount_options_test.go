@@ -51,10 +51,10 @@ func TestStorageMountProfiles(t *testing.T) {
 
 func TestStorageMountPolicyRenderBackendAndRoundTrip(t *testing.T) {
 	options := []string{"s3-chunk-size=64Mi", "s3-upload-concurrency=2", "low-level-retries=30"}
-	s, err := normalizeStorageClass(CreateStorageClassRequest{Name: "archive", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://s3.example.com", Bucket: "bucket", AccessKeySecret: "secret", MountProfile: "archive", MountOptions: &options})
+	s, err := normalizeStorageClass(CreateStorageClassRequest{Name: "archive", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://s3.example.com", Bucket: "bucket", AccessKeySecret: "secret", astribotStorageClassRequest: astribotStorageClassRequest{MountProfile: "archive", MountOptions: &options}})
 	require.NoError(t, err)
 	require.Equal(t, "off", s.VFSCacheMode)
-	declaration, err := buildStorageClassReplicationSecret("default", "sc-0123456789abcdef", s)
+	declaration, err := buildAstribotStorageReplicationSecret("default", "sc-0123456789abcdef", s)
 	require.NoError(t, err)
 	_, decoded, err := storageClassFromSecret(declaration)
 	require.NoError(t, err)
@@ -68,10 +68,10 @@ func TestStorageMountPolicyRenderBackendAndRoundTrip(t *testing.T) {
 func TestStorageClassRemoteNameIsStable(t *testing.T) {
 	archive, err := normalizeStorageClass(CreateStorageClassRequest{
 		Name: "archive", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://s3.example.com",
-		Bucket: "bucket", AccessKeySecret: "archive-secret", MountProfile: "archive",
+		Bucket: "bucket", AccessKeySecret: "archive-secret", astribotStorageClassRequest: astribotStorageClassRequest{MountProfile: "archive"},
 	})
 	require.NoError(t, err)
-	secret, err := buildStorageClassReplicationSecret("default", "sc-archive", archive)
+	secret, err := buildAstribotStorageReplicationSecret("default", "sc-archive", archive)
 	require.NoError(t, err)
 	manifest := parseStorageClassObjects(t, secret)
 	config := nestedString(t, manifest[0].Object, "stringData", "configData")

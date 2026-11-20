@@ -271,7 +271,7 @@ func (g *Gateway) addClusterToSiteStorage(ctx context.Context, cluster string) (
 				}
 				stored.ClusterMountEndpoints[cluster] = stored.Endpoint
 			}
-			if _, err := g.updateStorageClassByName(ctx, stored.Name, stored); err != nil {
+			if err := g.updateStorageClassByName(ctx, stored.Name, stored); err != nil {
 				return "", fmt.Errorf("give storage %s to %s: %w", stored.Name, cluster, err)
 			}
 			added = append(added, stored.Name)

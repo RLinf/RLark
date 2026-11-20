@@ -41,7 +41,7 @@ func TestBuildStorageClassReplicationSecret(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, replication.Config.Targets.Namespaces)
 	assert.Equal(t, []string{"rlark-cluster-a", "rlark-cluster-b"}, replication.Config.Targets.Namespaces.Include)
-	require.Len(t, replication.Objects, 2)
+	require.Len(t, replication.Objects, 1)
 
 	delivery := replication.Objects[0]
 	assert.Equal(t, "sc-0123456789abcdef-delivery", delivery.GetName())
@@ -53,13 +53,19 @@ func TestBuildStorageClassReplicationSecret(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, deliveryDefinition.Config.Security.AllowClusterScoped)
-	// One Secret and StorageClass per mount profile, the storage's own first.
-	require.Len(t, deliveryDefinition.Objects, 6)
-	storageSecret, storageClass := deliveryDefinition.Objects[0], deliveryDefinition.Objects[1]
-	assert.Equal(t, "default", storageClass.GetAnnotations()[annoStorageProfile])
-	assert.Equal(t, "sc-0123456789abcdef-read", deliveryDefinition.Objects[3].GetName())
-	assert.Equal(t, "sc-0123456789abcdef-archive", deliveryDefinition.Objects[5].GetName())
-	assert.Equal(t, "sc-0123456789abcdef-archive-secret", deliveryDefinition.Objects[4].GetName())
+	require.Len(t, deliveryDefinition.Objects, 2)
+
+	var storageSecret, storageClass *unstructured.Unstructured
+	for _, object := range deliveryDefinition.Objects {
+		switch object.GetKind() {
+		case "Secret":
+			storageSecret = object
+		case "StorageClass":
+			storageClass = object
+		}
+	}
+	require.NotNil(t, storageSecret)
+	require.NotNil(t, storageClass)
 	assert.Equal(t, "sc-0123456789abcdef-secret", storageSecret.GetName())
 	assert.Equal(t, "kube-system", storageSecret.GetNamespace())
 	assert.Equal(t, "sc-0123456789abcdef", storageClass.GetName())

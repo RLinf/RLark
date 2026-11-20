@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"regexp"
 	"slices"
@@ -14,60 +13,42 @@ import (
 	"strings"
 	"text/template"
 	"time"
-	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/rlinf/rlark/apps/rlark/astribot/storageref"
 	"github.com/rlinf/rlark/apps/rlark/pkg/distribution"
 	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 	v1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/yaml"
 )
 
 // StorageClassData 定义StorageClass的响应数据结构.
 type StorageClassData struct {
-	Name                    string            `json:"name"`
-	StorageClassName        string            `json:"storageClassName"`
-	Clusters                []string          `json:"clusters"`
-	Description             string            `json:"description"`
-	Type                    string            `json:"type"`
-	Bucket                  string            `json:"bucket"`
-	Provider                string            `json:"provider"`
-	Endpoint                string            `json:"endpoint"`
-	MountEndpoint           string            `json:"mount_endpoint,omitempty"`
-	ClusterMountEndpoints   map[string]string `json:"cluster_mount_endpoints,omitempty"`
-	Prefix                  string            `json:"prefix,omitempty"`
-	VFSCacheMode            string            `json:"vfs_cache_mode,omitempty"`
-	MountProfile            string            `json:"mount_profile,omitempty"`
-	MountOptions            []string          `json:"mount_options"`
-	EffectiveMountOptions   []string          `json:"effective_mount_options"`
-	EffectiveBackendOptions map[string]string `json:"effective_backend_options,omitempty"`
-	Region                  string            `json:"region"`
-	PathStyle               bool              `json:"pathStyle"`
-	AccessKeyId             string            `json:"accessKeyId"`
-	Host                    string            `json:"host,omitempty"`
-	Share                   string            `json:"share,omitempty"`
-	SubPath                 string            `json:"subPath,omitempty"`
-	Username                string            `json:"username,omitempty"`
-	Domain                  string            `json:"domain,omitempty"`
-	Path                    string            `json:"path,omitempty"`
-	FSType                  string            `json:"fs_type,omitempty"`
-	// Profiles maps each mount profile a volume can choose to the
-	// StorageClass it gets; the storage's own profile keeps storageClassName.
-	Profiles       map[string]string `json:"profiles,omitempty"`
-	DefaultProfile string            `json:"default_profile"`
-	TenantID       string            `json:"tenantID"`
-	CreatedBy      string            `json:"createdBy,omitempty"`
-	CreatedAt      string            `json:"createdAt"`
+	Name             string   `json:"name"`
+	StorageClassName string   `json:"storageClassName"`
+	Clusters         []string `json:"clusters"`
+	Description      string   `json:"description"`
+	Bucket           string   `json:"bucket"`
+	Provider         string   `json:"provider"`
+	Endpoint         string   `json:"endpoint"`
+	Region           string   `json:"region"`
+	PathStyle        bool     `json:"pathStyle"`
+	AccessKeyId      string   `json:"accessKeyId"`
+	TenantID         string   `json:"tenantID"`
+	CreatedBy        string   `json:"createdBy,omitempty"`
+	CreatedAt        string   `json:"createdAt"`
+	astribotStorageClassData
 }
 
 // Provider 定义存储提供商信息.
@@ -101,33 +82,14 @@ func (g *Gateway) listStorageClass(c *gin.Context) {
 				continue
 			}
 		}
-		entry := &StorageClassData{
-			Name: stored.Name, StorageClassName: id, Clusters: clusters, Description: stored.Description, Type: stored.Type,
-			Bucket: stored.Bucket, Provider: stored.Provider, Endpoint: stored.Endpoint, MountEndpoint: stored.MountEndpoint, Prefix: stored.Prefix, VFSCacheMode: effectiveVFSCacheMode(stored.VFSCacheMode), Region: stored.Region, PathStyle: stored.PathStyle,
-			Host: stored.Host, Share: stored.Share, SubPath: stored.SubPath, Username: stored.Username, Domain: stored.Domain,
-			TenantID: tenant.IDOf(&secrets[i]), CreatedBy: secrets[i].Annotations[tenant.CreatedByAnnotation], CreatedAt: secrets[i].CreationTimestamp.UTC().Format(time.RFC3339),
+		data[stored.Name] = &StorageClassData{
+			Name: stored.Name, StorageClassName: id, Clusters: clusters, Description: stored.Description, Bucket: stored.Bucket,
+			Provider: stored.Provider, Endpoint: stored.Endpoint, Region: stored.Region, PathStyle: stored.PathStyle,
+			AccessKeyId: maskStorageAccessKeyID(stored.AccessKeyID), TenantID: tenant.IDOf(&secrets[i]), CreatedBy: secrets[i].Annotations[tenant.CreatedByAnnotation], CreatedAt: secrets[i].CreationTimestamp.UTC().Format(time.RFC3339),
 		}
-		entry.Path, entry.FSType, entry.ClusterMountEndpoints = stored.Path, stored.FSType, stored.ClusterMountEndpoints
-		view, err := storageView(id, stored)
-		if err != nil {
-			respondError(c, http.StatusInternalServerError, CodeInternalError, "invalid storage mount policy")
+		if !describeAstribotStorage(c, data[stored.Name], id, stored) {
 			return
 		}
-		entry.Profiles, entry.DefaultProfile = view.StorageClasses, view.DefaultProfile
-		if stored.Type == storageTypeS3 {
-			entry.AccessKeyId = maskStorageAccessKeyID(stored.AccessKeyID)
-			entry.MountProfile = stored.MountProfile
-			if entry.MountProfile == "" {
-				entry.MountProfile = "default"
-			}
-			entry.MountOptions = append([]string{}, stored.MountOptions...)
-			entry.EffectiveMountOptions, entry.EffectiveBackendOptions, _, err = resolveS3MountOptions(stored.MountProfile, stored.VFSCacheMode, stored.MountOptions)
-			if err != nil {
-				respondError(c, http.StatusInternalServerError, CodeInternalError, "invalid storage mount policy")
-				return
-			}
-		}
-		data[stored.Name] = entry
 	}
 	c.JSON(http.StatusOK, gin.H{"data": data, "success": true})
 }
@@ -193,8 +155,7 @@ const (
 	storageClassValidationTimeout = 10 * time.Second
 	storageClassNamespacePrefix   = "rlark-"
 	storageClassReplicationLabel  = "rlark.io/storageclass-replication"
-
-	storageClassDeliveryLabel = "rlark.io/storageclass-delivery"
+	storageClassDeliveryLabel     = "rlark.io/storageclass-delivery"
 
 	CodeStorageClassRequiredFields = "STORAGE_CLASS_REQUIRED_FIELDS"
 )
@@ -206,35 +167,14 @@ type storedStorageClass struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	Clusters    []string `json:"clusters"`
-	// Type is "s3" or "smb". Records written before SMB support omit it and
-	// are read back as "s3"; all new fields are optional to stay on v1.
-	Type          string `json:"type,omitempty"`
-	Provider      string `json:"provider"`
-	Endpoint      string `json:"endpoint"`
-	MountEndpoint string `json:"mount_endpoint,omitempty"`
-	// ClusterMountEndpoints gives a cluster its own mount endpoint, for
-	// example a cloud's internal address for the clusters in that cloud.
-	ClusterMountEndpoints map[string]string `json:"cluster_mount_endpoints,omitempty"`
-	Prefix                string            `json:"prefix,omitempty"`
-	VFSCacheMode          string            `json:"vfs_cache_mode,omitempty"`
-	MountProfile          string            `json:"mount_profile,omitempty"`
-	MountOptions          []string          `json:"mount_options,omitempty"`
-	AccessKeyID           string            `json:"access_key_id"`
-	AccessKey             string            `json:"access_key_secret"`
-	Bucket                string            `json:"bucket"`
-	Region                string            `json:"region"`
-	PathStyle             bool              `json:"path_style"`
-	Host                  string            `json:"host,omitempty"`
-	Share                 string            `json:"share,omitempty"`
-	SubPath               string            `json:"sub_path,omitempty"`
-	Username              string            `json:"username,omitempty"`
-	Password              string            `json:"password,omitempty"`
-	Domain                string            `json:"domain,omitempty"`
-	// Path and FSType describe a host-path storage: the directory the nodes
-	// that have the storage have mounted, and the type of the file system it
-	// must be on. Which nodes have it the driver's node plugin finds out.
-	Path   string `json:"path,omitempty"`
-	FSType string `json:"fs_type,omitempty"`
+	Provider    string   `json:"provider"`
+	Endpoint    string   `json:"endpoint"`
+	AccessKeyID string   `json:"access_key_id"`
+	AccessKey   string   `json:"access_key_secret"`
+	Bucket      string   `json:"bucket"`
+	Region      string   `json:"region"`
+	PathStyle   bool     `json:"path_style"`
+	astribotStoredStorageClass
 }
 
 func newStorageClassID() string {
@@ -254,10 +194,8 @@ func parseStorageClassID(name string) (string, bool) {
 }
 
 // CreateStorageClassRequest defines the payload for creating a rclone-backed
-// StorageClass across one or more clusters. Type selects the rclone remote:
-// "s3" (default) for S3-compatible object storage or "smb" for an SMB/CIFS
-// share. The remote config is stored in a per-class Secret referenced by the
-// StorageClass.
+// StorageClass across one or more clusters. The S3-compatible remote config is
+// stored in a per-class Secret referenced by the StorageClass.
 type CreateStorageClassRequest struct {
 	Name        string `json:"name"`
 	Namespace   string `json:"namespace"`
@@ -265,36 +203,14 @@ type CreateStorageClassRequest struct {
 
 	Clusters []string `json:"clusters"`
 
-	Provider      string `json:"provider"`
-	Endpoint      string `json:"endpoint"`
-	MountEndpoint string `json:"mount_endpoint"`
-	// ClusterMountEndpoints replaces the stored per-cluster endpoints when
-	// given; omitted on update keeps them.
-	ClusterMountEndpoints *map[string]string `json:"cluster_mount_endpoints"`
-	Prefix                string             `json:"prefix"`
-	VFSCacheMode          string             `json:"vfs_cache_mode"`
-	MountProfile          string             `json:"mount_profile"`
-	MountOptions          *[]string          `json:"mount_options"`
-	// CredentialsFrom names an existing S3 storage whose provider, endpoint,
-	// region and access key a new storage uses, so that several mounts of one
-	// bucket (read, archive) are declared without entering the key again.
-	CredentialsFrom string `json:"credentials_from"`
+	Provider        string `json:"provider"`
+	Endpoint        string `json:"endpoint"`
 	AccessKeyId     string `json:"access_key_id"`
 	AccessKeySecret string `json:"access_key_secret"`
 	Bucket          string `json:"bucket"`
 	Region          string `json:"region"`
 	PathStyle       bool   `json:"path_style"`
-
-	Type     string `json:"type"`
-	Host     string `json:"host"`
-	Share    string `json:"share"`
-	SubPath  string `json:"sub_path"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Domain   string `json:"domain"`
-
-	Path   string `json:"path"`
-	FSType string `json:"fs_type"`
+	astribotStorageClassRequest
 }
 
 // ssSecretTemplate is the rclone remote config rendered into the StorageClass
@@ -323,19 +239,8 @@ func (g *Gateway) createStorageClass(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 		return
 	}
-	if req.CredentialsFrom != "" {
-		secret, err := getStorageClassSecretByName(c.Request.Context(), g.rawClient, g.managementNamespace(), req.CredentialsFrom)
-		if err != nil {
-			respondKubeError(c, fmt.Sprintf("get storage class %q: %v", req.CredentialsFrom, err), err)
-			return
-		}
-		_, source, err := storageClassFromSecret(secret)
-		if err != nil {
-			respondKubeError(c, fmt.Sprintf("decode storage class replication: %v", err), err)
-			return
-		}
-		req.Provider, req.Endpoint, req.Region, req.PathStyle = source.Provider, source.Endpoint, source.Region, source.PathStyle
-		req.AccessKeyId, req.AccessKeySecret = source.AccessKeyID, source.AccessKey
+	if !g.borrowStorageCredentials(c, &req) {
+		return
 	}
 	stored, err := normalizeStorageClass(req)
 	if err != nil {
@@ -346,16 +251,12 @@ func (g *Gateway) createStorageClass(c *gin.Context) {
 		respondStorageClassCredentialValidationError(c, err)
 		return
 	}
-	if _, err := getStorageClassSecretByName(c.Request.Context(), g.rawClient, g.managementNamespace(), stored.Name); err == nil {
-		respondError(c, http.StatusConflict, CodeResourceAlreadyExists, fmt.Sprintf("storage %q already exists", stored.Name))
-		return
-	} else if !errors.IsNotFound(err) {
-		respondKubeError(c, fmt.Sprintf("get storage class replication: %v", err), err)
+	if !g.storageNameFree(c, stored.Name) {
 		return
 	}
 	for range storageClassCreateAttempts {
 		id := newStorageClassID()
-		secret, err := buildStorageClassReplicationSecret(g.managementNamespace(), id, stored)
+		secret, err := buildAstribotStorageReplicationSecret(g.managementNamespace(), id, stored)
 		if err != nil {
 			respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 			return
@@ -368,8 +269,7 @@ func (g *Gateway) createStorageClass(c *gin.Context) {
 			respondKubeError(c, fmt.Sprintf("create storage class replication: %v", err), err)
 			return
 		}
-		if err := g.syncStorageEndpointSecrets(c.Request.Context(), id, &stored, secret); err != nil {
-			respondKubeError(c, err.Error(), err)
+		if !g.storageDeclarationWritten(c, secret, &stored) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"success": true})
@@ -378,10 +278,8 @@ func (g *Gateway) createStorageClass(c *gin.Context) {
 	respondError(c, http.StatusInternalServerError, CodeInternalError, "failed to allocate storage class id")
 }
 
-// updateStorageClass updates the declaration selected by name while keeping
-// its stable id, so its StorageClasses keep their names. A different name in
-// the body renames the storage: volumes then name it by the new name, and
-// Pods that already run keep their mounts.
+// updateStorageClass updates the Replication declaration selected by the legacy
+// name route while retaining its stable internal identity.
 func (g *Gateway) updateStorageClass(c *gin.Context) {
 	name := c.Param("name")
 	var req CreateStorageClassRequest
@@ -392,60 +290,9 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 	if req.Name == "" {
 		req.Name = name
 	}
-	secret, err := getStorageClassSecretByName(c.Request.Context(), g.rawClient, g.managementNamespace(), name)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			respondError(c, http.StatusNotFound, CodeResourceNotFound, "storage class not found")
-			return
-		}
-		respondKubeError(c, fmt.Sprintf("get storage class replication: %v", err), err)
+	identity, ok := g.prepareStorageUpdate(c, name, &req)
+	if !ok {
 		return
-	}
-	_, existing, err := storageClassFromSecret(secret)
-	if err != nil {
-		respondKubeError(c, fmt.Sprintf("decode storage class replication: %v", err), err)
-		return
-	}
-	if existing.Type != normalizeStorageType(req.Type) {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "storage class type cannot be changed")
-		return
-	}
-	if strings.TrimSpace(req.Name) != name {
-		if _, err := getStorageClassSecretByName(c.Request.Context(), g.rawClient, g.managementNamespace(), strings.TrimSpace(req.Name)); err == nil {
-			respondError(c, http.StatusConflict, CodeResourceAlreadyExists, fmt.Sprintf("storage %q already exists", strings.TrimSpace(req.Name)))
-			return
-		} else if !errors.IsNotFound(err) {
-			respondKubeError(c, fmt.Sprintf("get storage class replication: %v", err), err)
-			return
-		}
-	}
-	switch existing.Type {
-	case storageTypeSMB:
-		// An empty password on update keeps the stored one.
-		if req.Password == "" {
-			req.Password = existing.Password
-		}
-	case storageTypeS3:
-		if req.AccessKeyId == "" || isMaskedStorageAccessKeyID(req.AccessKeyId) {
-			req.AccessKeyId = existing.AccessKeyID
-		}
-		if req.AccessKeySecret == "" {
-			req.AccessKeySecret = existing.AccessKey
-		}
-		if req.MountOptions == nil {
-			options := append([]string{}, existing.MountOptions...)
-			req.MountOptions = &options
-		}
-		if req.VFSCacheMode == "" && (req.MountProfile == "" || req.MountProfile == existing.MountProfile) {
-			req.VFSCacheMode = effectiveVFSCacheMode(existing.VFSCacheMode)
-		}
-		if req.MountProfile == "" {
-			req.MountProfile = existing.MountProfile
-		}
-		if req.ClusterMountEndpoints == nil {
-			endpoints := maps.Clone(existing.ClusterMountEndpoints)
-			req.ClusterMountEndpoints = &endpoints
-		}
 	}
 	stored, err := normalizeStorageClass(req)
 	if err != nil {
@@ -456,8 +303,7 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 		respondStorageClassCredentialValidationError(c, err)
 		return
 	}
-	id, err := g.updateStorageClassByName(c.Request.Context(), name, stored)
-	if err != nil {
+	if err := g.updateStorageClassByName(c.Request.Context(), name, stored); err != nil {
 		if errors.IsNotFound(err) {
 			respondError(c, http.StatusNotFound, CodeResourceNotFound, "storage class not found")
 			return
@@ -466,9 +312,7 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 		return
 	}
 	g.invalidateStorageClients(name)
-	g.invalidateStorageClients(stored.Name)
-	if err := g.syncStorageEndpointSecrets(c.Request.Context(), id, &stored, secret); err != nil {
-		respondKubeError(c, err.Error(), err)
+	if !g.storageDeclarationWritten(c, identity, &stored, name, stored.Name) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -495,10 +339,7 @@ func (g *Gateway) deleteStorageClass(c *gin.Context) {
 		respondKubeError(c, fmt.Sprintf("delete storage class replication: %v", err), err)
 		return
 	}
-	g.invalidateStorageClients(name)
-	id, _, _ := storageClassFromSecret(secret)
-	if err := g.syncStorageEndpointSecrets(c.Request.Context(), id, nil, secret); err != nil {
-		respondKubeError(c, err.Error(), err)
+	if !g.storageDeclarationWritten(c, secret, nil, name) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
@@ -517,21 +358,8 @@ func requiredStorageClassFields(req CreateStorageClassRequest) []string {
 	if strings.TrimSpace(req.Name) == "" {
 		fields = append(fields, "name")
 	}
-	if normalizeStorageType(req.Type) == storageTypeHostPath {
-		if strings.TrimSpace(req.Path) == "" {
-			fields = append(fields, "path")
-		}
-		return fields
-	}
-	if normalizeStorageType(req.Type) == storageTypeSMB {
-		for _, field := range []struct{ name, value string }{
-			{"host", req.Host}, {"share", req.Share}, {"username", req.Username}, {"password", req.Password},
-		} {
-			if strings.TrimSpace(field.value) == "" {
-				fields = append(fields, field.name)
-			}
-		}
-		return fields
+	if normalizeStorageType(req.Type) != storageTypeS3 {
+		return append(fields, requiredAstribotStorageFields(req)...)
 	}
 	if strings.TrimSpace(req.Bucket) == "" {
 		fields = append(fields, "bucket")
@@ -552,13 +380,8 @@ func respondStorageClassValidationError(c *gin.Context, err error) {
 }
 
 var validateStorageClassCredentials = func(ctx context.Context, stored storedStorageClass) error {
-	if stored.Type == storageTypeHostPath {
-		// The directory lives on the nodes; a Pod that cannot mount it reports
-		// FailedMount on its node.
-		return nil
-	}
-	if stored.Type == storageTypeSMB {
-		return validateSMBReachable(ctx, stored.Host)
+	if stored.Type != storageTypeS3 {
+		return validateAstribotStorage(ctx, stored)
 	}
 	config := storage.DefaultConfig()
 	config.Provider = stored.Provider
@@ -582,18 +405,13 @@ var validateStorageClassCredentials = func(ctx context.Context, stored storedSto
 
 func respondStorageClassCredentialValidationError(c *gin.Context, err error) {
 	log.FromContext(c.Request.Context()).Error(err, "storage credential validation failed")
-	message := "storage credentials cannot access the configured bucket"
-	if strings.Contains(err.Error(), "connect smb server") {
-		message = "smb server is not reachable on port " + smbDialPort
-	}
-	respondError(c, http.StatusBadRequest, CodeInvalidRequest, message)
+	respondError(c, http.StatusBadRequest, CodeInvalidRequest, storageCredentialErrorMessage(err))
 }
 
 func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, error) {
 	name := strings.TrimSpace(req.Name)
-	storageType := normalizeStorageType(req.Type)
-	if storageType != storageTypeS3 && storageType != storageTypeSMB && storageType != storageTypeHostPath {
-		return storedStorageClass{}, fmt.Errorf("unsupported storage type %q", req.Type)
+	if err := checkStorageType(req.Type); err != nil {
+		return storedStorageClass{}, err
 	}
 	if fields := requiredStorageClassFields(req); len(fields) != 0 {
 		return storedStorageClass{}, &storageClassValidationError{fields: fields}
@@ -614,27 +432,8 @@ func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, e
 	}
 	sort.Strings(clusters)
 	clusters = slices.Compact(clusters)
-	if storageType != storageTypeHostPath && (strings.TrimSpace(req.Path) != "" || strings.TrimSpace(req.FSType) != "") {
-		return storedStorageClass{}, fmt.Errorf("path and fs_type are only supported for host-path storage")
-	}
-	if storageType != storageTypeS3 && req.ClusterMountEndpoints != nil && len(*req.ClusterMountEndpoints) != 0 {
-		return storedStorageClass{}, fmt.Errorf("cluster_mount_endpoints is only supported for S3 storage")
-	}
-	if storageType == storageTypeHostPath {
-		return normalizeHostPathStorage(req, name, clusters)
-	}
-	if storageType == storageTypeSMB {
-		if strings.TrimSpace(req.MountEndpoint) != "" {
-			return storedStorageClass{}, fmt.Errorf("mount_endpoint is only supported for S3 storage")
-		}
-		if strings.TrimSpace(req.Prefix) != "" || strings.TrimSpace(req.VFSCacheMode) != "" || req.MountProfile != "" || req.MountOptions != nil {
-			return storedStorageClass{}, fmt.Errorf("prefix and vfs_cache_mode are only supported for S3 storage")
-		}
-		stored := storedStorageClass{Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters}
-		if err := normalizeSMBFields(req, &stored); err != nil {
-			return storedStorageClass{}, err
-		}
-		return stored, nil
+	if stored, ours, err := normalizeAstribotStorage(req, name, clusters); ours || err != nil {
+		return stored, err
 	}
 	// Provider 必须来自已知目录: rclone 对未知 provider 只记录告警并回退到通用
 	// 配置, 错误取值在数据面只表现为挂载后的 I/O 错误. 这里同时把历史客户端提交
@@ -649,64 +448,90 @@ func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, e
 	if err != nil {
 		return storedStorageClass{}, err
 	}
-	mountEndpoint := strings.TrimSpace(req.MountEndpoint)
-	if mountEndpoint != "" {
-		mountEndpoint, err = storage.NormalizeEndpoint(provider.Value, mountEndpoint, req.Region)
-		if err != nil {
-			return storedStorageClass{}, fmt.Errorf("mount_endpoint: %w", err)
-		}
-	}
-	prefix := strings.Trim(strings.TrimSpace(req.Prefix), "/")
-	if strings.Contains(prefix, "\\") || strings.Contains(prefix, "//") || strings.IndexFunc(prefix, unicode.IsControl) >= 0 {
-		return storedStorageClass{}, fmt.Errorf("prefix must be a slash-separated object path")
-	}
-	for _, segment := range strings.Split(prefix, "/") {
-		if segment == "." || segment == ".." {
-			return storedStorageClass{}, fmt.Errorf("prefix must not contain dot segments")
-		}
-	}
-	profile := strings.TrimSpace(req.MountProfile)
-	if profile == "" {
-		profile = "default"
-	}
-	var overrides []string
-	if req.MountOptions != nil {
-		overrides = append([]string{}, (*req.MountOptions)...)
-	}
-	_, _, cacheMode, err := resolveS3MountOptions(profile, strings.TrimSpace(req.VFSCacheMode), overrides)
-	if err != nil {
-		return storedStorageClass{}, err
-	}
-	// A volume may choose any profile, so the storage's mount options must
-	// combine with each of them.
-	for _, other := range storageref.Profiles(storageTypeS3) {
-		if other == profile {
-			continue
-		}
-		if _, _, _, err := resolveS3MountOptions(other, "", overrides); err != nil {
-			return storedStorageClass{}, fmt.Errorf("mount_options with profile %s: %w", other, err)
-		}
-	}
-	var clusterEndpoints map[string]string
-	if req.ClusterMountEndpoints != nil && len(*req.ClusterMountEndpoints) != 0 {
-		clusterEndpoints = make(map[string]string, len(*req.ClusterMountEndpoints))
-		for cluster, endpoint := range *req.ClusterMountEndpoints {
-			if !slices.Contains(clusters, cluster) {
-				return storedStorageClass{}, fmt.Errorf("cluster_mount_endpoints names cluster %q, which is not one of the storage's clusters", cluster)
-			}
-			normalized, err := storage.NormalizeEndpoint(provider.Value, strings.TrimSpace(endpoint), req.Region)
-			if err != nil || strings.TrimSpace(endpoint) == "" {
-				return storedStorageClass{}, fmt.Errorf("cluster_mount_endpoints[%s]: endpoint must be an http or https URL", cluster)
-			}
-			clusterEndpoints[cluster] = normalized
-		}
-	}
-
-	return storedStorageClass{
-		Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters, Type: storageTypeS3,
-		Provider: provider.Value, Endpoint: endpoint, MountEndpoint: mountEndpoint, ClusterMountEndpoints: clusterEndpoints, Prefix: prefix, VFSCacheMode: cacheMode, MountProfile: profile, MountOptions: overrides, AccessKeyID: req.AccessKeyId, AccessKey: req.AccessKeySecret,
+	return normalizeS3StorageMount(req, storedStorageClass{
+		Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters,
+		Provider: provider.Value, Endpoint: endpoint, AccessKeyID: req.AccessKeyId, AccessKey: req.AccessKeySecret,
 		Bucket: req.Bucket, Region: strings.TrimSpace(req.Region),
 		PathStyle: storage.EffectivePathStyle(provider.Value, req.PathStyle),
+	})
+}
+
+func buildStorageClassReplicationSecret(namespace, id string, stored storedStorageClass) (*v1.Secret, error) {
+	req := CreateStorageClassRequest{
+		Name: stored.Name, Namespace: metav1.NamespaceSystem, Description: stored.Description, Clusters: stored.Clusters,
+		Provider: stored.Provider, Endpoint: stored.Endpoint, AccessKeyId: stored.AccessKeyID, AccessKeySecret: stored.AccessKey,
+		Bucket: stored.Bucket, Region: stored.Region, PathStyle: stored.PathStyle,
+	}
+	var config strings.Builder
+	if err := ssSecretTmpl.Execute(&config, req); err != nil {
+		return nil, fmt.Errorf("render secret config: %w", err)
+	}
+	secretName := id + "-secret"
+	storageSecret := v1.Secret{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: req.Namespace, Labels: map[string]string{"controller": "rlark"}},
+		StringData: map[string]string{"remote": "s3", "remotePath": req.Bucket, "configData": config.String()},
+	}
+	annotations := map[string]string{annoStorageClassDescription: req.Description}
+	if problems := validation.IsValidLabelValue(req.Name); len(problems) == 0 {
+		annotations[annoStorageClassName] = req.Name
+	}
+	storageClass := storagev1.StorageClass{
+		TypeMeta: metav1.TypeMeta{APIVersion: "storage.k8s.io/v1", Kind: "StorageClass"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: id, Labels: map[string]string{"controller": "rlark"}, Annotations: annotations,
+		},
+		Provisioner: "rclone.csi.veloxpack.io", ReclaimPolicy: ptr.To(v1.PersistentVolumeReclaimRetain),
+		VolumeBindingMode: ptr.To(storagev1.VolumeBindingImmediate), AllowVolumeExpansion: ptr.To(true),
+		Parameters: map[string]string{
+			"remote": "s3", "remotePath": req.Bucket,
+			"csi.storage.k8s.io/node-publish-secret-name":      secretName,
+			"csi.storage.k8s.io/node-publish-secret-namespace": req.Namespace,
+		},
+		MountOptions: []string{"vfs-cache-mode=writes", "dir-cache-time=5m", "attr-timeout=1m", "poll-interval=5s", "vfs-write-back=1s", "vfs-cache-max-age=10m", "buffer-size=64M", "transfers=8", "checkers=16", "fast-list"},
+	}
+	storageManifests, err := yaml.Marshal([]any{storageSecret, storageClass})
+	if err != nil {
+		return nil, fmt.Errorf("marshal storage class manifests: %w", err)
+	}
+	deliveryConfig := distribution.Config{Apply: distribution.ApplyPolicy{Mode: "ServerSideApply", ConflictPolicy: "Fail", DeletionPolicy: "Delete"}}
+	deliveryConfig.Security.AllowClusterScoped = true
+	deliveryConfigYAML, err := yaml.Marshal(deliveryConfig)
+	if err != nil {
+		return nil, fmt.Errorf("marshal delivery config: %w", err)
+	}
+	delivery := v1.Secret{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   storageClassDeliveryName(id),
+			Labels: map[string]string{storageClassDeliveryLabel: "true"},
+		},
+		Type: distribution.DeliverySecretType,
+		Data: map[string][]byte{"config": deliveryConfigYAML, "manifests": storageManifests},
+	}
+	deliveryManifest, err := yaml.Marshal([]v1.Secret{delivery})
+	if err != nil {
+		return nil, fmt.Errorf("marshal delivery secret manifest: %w", err)
+	}
+	replicationConfig := distribution.Config{Apply: distribution.ApplyPolicy{Mode: "ServerSideApply", ConflictPolicy: "Fail", DeletionPolicy: "Delete"}}
+	replicationConfig.Targets.Namespaces = &distribution.GlobSelector{Exclude: []string{"rlark-system"}}
+	replicationConfig.Targets.Namespaces.Include = append(replicationConfig.Targets.Namespaces.Include, req.Clusters...)
+	replicationConfigYAML, err := yaml.Marshal(replicationConfig)
+	if err != nil {
+		return nil, fmt.Errorf("marshal replication config: %w", err)
+	}
+	storedJSON, err := json.Marshal(stored)
+	if err != nil {
+		return nil, fmt.Errorf("marshal storage class: %w", err)
+	}
+	return &v1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      storageClassReplicationName(id),
+			Namespace: namespace,
+			Labels:    map[string]string{storageClassReplicationLabel: "true"},
+		},
+		Type: distribution.ReplicationSecretType,
+		Data: map[string][]byte{"storageclass": storedJSON, "config": replicationConfigYAML, "manifests": deliveryManifest},
 	}, nil
 }
 
@@ -722,8 +547,7 @@ func storageClassFromSecret(secret *v1.Secret) (string, storedStorageClass, erro
 	if stored.Version != storageClassVersion {
 		return "", storedStorageClass{}, fmt.Errorf("unsupported storage class version %q", stored.Version)
 	}
-	stored.Type = normalizeStorageType(stored.Type)
-	if stored.Type != storageTypeS3 {
+	if stored.Type = normalizeStorageType(stored.Type); stored.Type != storageTypeS3 {
 		return id, stored, nil
 	}
 	// 读取历史记录时把 provider 的展示名改写为 canonical 取值, 并按该 provider
@@ -762,18 +586,17 @@ func getStorageClassSecretByName(ctx context.Context, rawClient kubernetes.Inter
 	return nil, errors.NewNotFound(v1.Resource("secrets"), name)
 }
 
-func (g *Gateway) updateStorageClassByName(ctx context.Context, name string, stored storedStorageClass) (string, error) {
-	var id string
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+func (g *Gateway) updateStorageClassByName(ctx context.Context, name string, stored storedStorageClass) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		secret, err := getStorageClassSecretByName(ctx, g.rawClient, g.managementNamespace(), name)
 		if err != nil {
 			return err
 		}
-		id, _, err = storageClassFromSecret(secret)
+		id, _, err := storageClassFromSecret(secret)
 		if err != nil {
 			return errors.NewNotFound(v1.Resource("secrets"), secret.Name)
 		}
-		rebuilt, err := buildStorageClassReplicationSecret(secret.Namespace, id, stored)
+		rebuilt, err := buildAstribotStorageReplicationSecret(secret.Namespace, id, stored)
 		if err != nil {
 			return err
 		}
@@ -781,7 +604,6 @@ func (g *Gateway) updateStorageClassByName(ctx context.Context, name string, sto
 		_, err = g.rawClient.CoreV1().Secrets(secret.Namespace).Update(ctx, secret, metav1.UpdateOptions{})
 		return err
 	})
-	return id, err
 }
 
 // --- Storage class file operation handlers ---
@@ -791,8 +613,11 @@ func (g *Gateway) updateStorageClassByName(ctx context.Context, name string, sto
 func (g *Gateway) invalidateStorageClients(name string) {
 	g.storageClientsMu.Lock()
 	defer g.storageClientsMu.Unlock()
-	// getStorageClient caches by storage class name.
-	delete(g.storageClients, name)
+	for cacheKey := range g.storageClients {
+		if strings.HasSuffix(cacheKey, "/"+name) {
+			delete(g.storageClients, cacheKey)
+		}
+	}
 }
 
 func (g *Gateway) getStorageClient(ctx context.Context, name string) (*storage.Client, error) {

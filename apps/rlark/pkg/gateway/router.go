@@ -125,7 +125,7 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		certificates.GET("/agent", g.handleListAgentCerts)
 		certificates.GET("/agent/:cluster_id", g.handleGetAgentCert)
 		certificates.POST("/agent", g.handleSignAgentCert)
-		certificates.POST("/revoke", g.handleRevokeCertificate)
+		certificates.POST("/revoke", g.handleRevokeCertificateViaServer)
 	}
 
 	sshUserKeys := api.Group("/ssh-user-keys")
