@@ -101,18 +101,7 @@ export function stagesView(defs: { name: string; zh: string; en: string }[], rec
   });
 }
 
-export interface ProvisionView {
-  phase: string;
-  stages: StageView[];
-  canRetry: boolean;
-  retryNeedsPassword: boolean;
-  // A making that does not run can be taken away: one that stopped, or what the making of a deleted cluster left.
-  canClear: boolean;
-  // It reached the machine (the installer was sent): clearing puts the machine back too, with its password.
-  clearReachesMachine: boolean;
-}
-
-export function provisionView(p: ClusterProvision, lang: Lang): ProvisionView {
+export function provisionView(p: ClusterProvision, lang: Lang) {
   const stages = stagesView(provisionStages, p.status?.stages, lang);
   const phase = p.status?.phase ?? "Running";
   return {
@@ -120,7 +109,9 @@ export function provisionView(p: ClusterProvision, lang: Lang): ProvisionView {
     stages,
     canRetry: phase === "Failed",
     retryNeedsPassword: phase === "Failed" && stageNeedsPassword(p.status?.stage ?? ""),
+    // A making that does not run can be taken away: one that stopped, or what the making of a deleted cluster left.
     canClear: phase !== "Running",
+    // It reached the machine (the installer was sent): clearing puts the machine back too, with its password.
     clearReachesMachine: stages.find((s) => s.name === "bundle")?.state !== "Pending",
   };
 }

@@ -18,13 +18,11 @@ test("Station APIs encode Cluster IDs, names, and pagination parameters", async 
   };
   const controller = new AbortController();
   await stationsApi.list({ cluster_id: "cluster/a", limit: "200", continue: "token +/=" }, controller.signal);
-  await stationsApi.get("station/a", "cluster/a", controller.signal);
   await stationsApi.listNodeOperations("cluster/a", controller.signal);
   await stationsApi.getNodeOperation("node-op/a", "cluster/a", controller.signal);
   assert.equal(calls[0].input, "/api/v1/station/stations?cluster_id=cluster%2Fa&limit=200&continue=token+%2B%2F%3D");
-  assert.equal(calls[1].input, "/api/v1/station/stations/station%2Fa?cluster_id=cluster%2Fa");
-  assert.equal(calls[2].input, "/api/v1/station/node-operations?cluster_id=cluster%2Fa&limit=100");
-  assert.equal(calls[3].input, "/api/v1/station/node-operations/node-op%2Fa?cluster_id=cluster%2Fa");
+  assert.equal(calls[1].input, "/api/v1/station/node-operations?cluster_id=cluster%2Fa&limit=100");
+  assert.equal(calls[2].input, "/api/v1/station/node-operations/node-op%2Fa?cluster_id=cluster%2Fa");
   assert.ok(calls.filter((call) => call.init.signal).every((call) => call.init.signal === controller.signal));
 });
 

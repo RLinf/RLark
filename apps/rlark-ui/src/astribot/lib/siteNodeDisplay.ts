@@ -1,30 +1,13 @@
-// GET /api/v1/site-nodes?cluster_id=: one machine's identity, heartbeat and
-// site-network membership, joined by the Gateway.
+// GET /api/v1/site-nodes?cluster_id=: what the console reads of one machine's heartbeat, labels and site-network
+// membership, joined by the Gateway.
 import type { SiteNodeLink } from "./nodeNetwork.js";
 
 export interface SiteNode {
   cluster_id: string;
   node_name: string;
-  node_uid: string;
-  phase: string;
   online: boolean;
-  tunnel: "verified" | "failed" | "unknown";
-  rlark_node: string;
-  last_seen_time?: string;
-  boot_time?: string;
-  reboots: number;
   labels?: Record<string, string>;
-  robot_id?: string;
-  network?: {
-    state: string;
-    site?: string;
-    role?: string;
-    address?: string;
-    tunnel_address?: string;
-    public_key?: string;
-    links?: SiteNodeLink[];
-    link_summary?: string;
-  };
+  network?: { public_key?: string; links?: SiteNodeLink[]; link_summary?: string };
 }
 
 // Expired is also a code withdrawn before it was used.
@@ -36,15 +19,10 @@ export interface NodeAdmission {
   node_name: string;
   state: NodeAdmissionState;
   reason?: string;
-  site?: string;
-  address?: string;
-  uplink?: string;
   labels?: Record<string, string>;
-  taints?: string[];
   expires_at: string;
   issued_by?: string;
   issued_at?: string;
-  redeemed_at?: string;
   public_key?: string;
   tunnel_address?: string;
   // A machine joined by SSH from the console: user@host:port, and the host
@@ -53,8 +31,6 @@ export interface NodeAdmission {
   ssh_host_key?: string;
   // What RLark found of the machine's earlier attempt or node and put right by itself.
   self_healed?: string;
-  // When the machine got its token to join its cluster.
-  join_token_at?: string;
   // Redeemed longer ago than a join takes, and no node yet: reason says where it stopped.
   stuck?: boolean;
   // Where the node's SSH join stands (its NodeJoin), when it was joined so.
@@ -146,19 +122,15 @@ export interface Machine {
   name: string;
   site: string;
   node_class: string;
-  source: "Discovery" | "Registration";
   phase: "Discovered" | "Admitted" | "Joined";
   problem?: string;
   message?: string;
   serial?: string;
   address?: string;
-  mac?: string;
   last_seen?: string;
   cluster_id?: string;
   node_name?: string;
   admissible: boolean;
-  requested_by?: string;
-  requested_at?: string;
 }
 
 // One password every machine of a NodeClass has: the value of a secret kept
@@ -168,13 +140,11 @@ export interface NodeClassPassword {
   key: string;
   configured: boolean;
   set_by?: string;
-  set_at?: string;
 }
 
 export interface NodeClassAccess {
   entry: NodeClassPassword;
   node: NodeClassPassword;
-  sudo?: NodeClassPassword;
 }
 
 export interface MachineList {

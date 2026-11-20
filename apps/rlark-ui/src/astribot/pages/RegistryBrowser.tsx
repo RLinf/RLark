@@ -1,8 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronRight, X } from "lucide-react";
 import type { ImageRegistryItem } from "../../backend";
-import { registryBrowseApi, type RegistryTagDetailPage } from "../api";
-import { ApiError } from "../../api";
+import { registryBrowseApi, registryError, type RegistryTagDetailPage } from "../api";
 import { CopyButton } from "../components/CopyButton";
 import { PageToolbar, RefreshOverlay } from "../../components/shared";
 import type { Copy } from "../../i18n";
@@ -22,22 +21,6 @@ import "./RegistryBrowser.css";
 type Page = { items: string[]; next: string };
 type DetailPreview = { page: RegistryTagDetailPage } | { error: unknown };
 type SortMode = "time" | "name";
-
-function registryError(error: unknown, zh: boolean): string {
-  if (error instanceof ApiError && error.status === 403) {
-    return zh
-      ? "没有权限浏览仓库，请使用管理员账号。"
-      : "Administrator access is required to browse the registry.";
-  }
-  if (error instanceof ApiError && error.status === 502) {
-    return zh
-      ? "无法读取仓库，请检查 Gateway 白名单、网络、证书和仓库认证。"
-      : "Cannot read the registry. Check the Gateway allowlist, network, certificate and registry credentials.";
-  }
-  return zh
-    ? "读取失败，请检查连接后重试。"
-    : "The request failed. Check connectivity and retry.";
-}
 
 function TagChips({ tags, max }: { tags: string[]; max: number }) {
   const [main, ...aliases] = tags;
@@ -318,26 +301,24 @@ export function RegistryBrowser({
             </p>
           </div>
         </div>
-        <div className="registry-toolbar">
-          <PageToolbar
-            placeholder={zh ? "搜索镜像或标签..." : "Search images or tags..."}
-            value={query}
-            onChange={setQuery}
-            count={rows.length}
-            copy={copy}
-            refreshing={loading}
-            onRefresh={() => {
-              setRepository("");
-              setRefresh(refresh + 1);
-            }}
-            filterValue={sort}
-            onFilterChange={(value) => setSort(value as SortMode)}
-            filterOptions={[
-              { value: "time", label: zh ? "最近更新优先" : "Recently updated" },
-              { value: "name", label: zh ? "按名称" : "By name" },
-            ]}
-          />
-        </div>
+        <PageToolbar
+          placeholder={zh ? "搜索镜像或标签..." : "Search images or tags..."}
+          value={query}
+          onChange={setQuery}
+          count={rows.length}
+          copy={copy}
+          refreshing={loading}
+          onRefresh={() => {
+            setRepository("");
+            setRefresh(refresh + 1);
+          }}
+          filterValue={sort}
+          onFilterChange={(value) => setSort(value as SortMode)}
+          filterOptions={[
+            { value: "time", label: zh ? "最近更新优先" : "Recently updated" },
+            { value: "name", label: zh ? "按名称" : "By name" },
+          ]}
+        />
         {namespaces.length > 1 && (
           <div className="registry-namespaces" role="group" aria-label={zh ? "命名空间" : "Namespaces"}>
             {[["", page?.items.length ?? 0] as [string, number], ...namespaces].map(([value, count], index) => (

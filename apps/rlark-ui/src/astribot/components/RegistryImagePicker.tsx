@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactElement } from "react";
-import { ApiError } from "../../api";
 import { imageRegistriesApi, type ImageRegistryItem } from "../../backend";
-import { registryBrowseApi } from "../api";
+import { registryBrowseApi, registryError } from "../api";
 import { formatRelativeTime } from "../lib/stationDisplay";
 
 type ImageUsage = {
@@ -19,17 +18,6 @@ type Props = {
 };
 
 type Page = { items: string[]; next: string };
-
-function registryError(error: unknown, zh: boolean): string {
-  if (error instanceof ApiError && error.status === 403) {
-    return zh
-      ? "浏览镜像仓库需要管理员权限，请手动输入镜像地址。"
-      : "Registry browsing requires administrator access. Enter an image reference manually.";
-  }
-  return zh
-    ? "加载失败，请检查 Gateway 允许列表、HTTPS 信任、仓库配置和网络后重试。"
-    : "Loading failed. Check the Gateway allowlist, HTTPS trust, registry configuration and network, then retry.";
-}
 
 export function RegistryImagePicker({
   zh,
@@ -53,43 +41,22 @@ export function RegistryImagePicker({
     item.image.toLowerCase().includes(value.trim().toLowerCase()),
   );
 
+  // What the open browser shows: the registries, then a registry's repositories or a repository's tags.
   useEffect(() => {
-    if (!browserOpen || registryId) return;
+    if (!browserOpen) return;
     const controller = new AbortController();
-    setLoading(true);
-    setError("");
-    imageRegistriesApi
-      .list(controller.signal)
-      .then((items) => {
-        if (!controller.signal.aborted) setRegistries(items);
-      })
-      .catch((cause: unknown) => {
-        if (!controller.signal.aborted) setError(registryError(cause, zh));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-  }, [browserOpen, registryId, zh, retry]);
-
-  useEffect(() => {
-    if (!browserOpen || !registryId) return;
-    const controller = new AbortController();
+    const { signal } = controller;
     const cursor = cursors[cursors.length - 1];
     setPage(null);
     setLoading(true);
     setError("");
-    const request = repository
-      ? registryBrowseApi.tags(
-          registryId,
-          repository,
-          cursor,
-          controller.signal,
-        )
-      : registryBrowseApi.repositories(registryId, cursor, controller.signal);
-    request
-      .then((result) => {
-        if (!controller.signal.aborted) setPage(result);
+    const read: Promise<() => void> = !registryId
+      ? imageRegistriesApi.list(signal).then((items) => () => setRegistries(items))
+      : (repository ? registryBrowseApi.tags(registryId, repository, cursor, signal) : registryBrowseApi.repositories(registryId, cursor, signal))
+          .then((result) => () => setPage(result));
+    read
+      .then((show) => {
+        if (!controller.signal.aborted) show();
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) setError(registryError(cause, zh));

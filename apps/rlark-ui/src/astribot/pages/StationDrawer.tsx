@@ -4,7 +4,7 @@ import type { StationItem } from "../api";
 import type { ClusterSummary } from "../../types";
 import { formatChinaDateTime } from "../../utils/time.js";
 import { CopyButton } from "../components/CopyButton";
-import { NodeName } from "../components/NodeName";
+import { NodeName, type NodeRef } from "../components/NodeName";
 import {
   isRobotNode,
   robotMaintenanceLabel,
@@ -19,7 +19,6 @@ import {
 } from "../lib/siteNodeDisplay";
 import { formatRelativeTime, stationPhase, stationPhaseLabel, stationStatusClass, stationUptime } from "../lib/stationDisplay";
 
-type NodeRef = { metadata: { name: string }; spec?: { displayName?: string } };
 function CopyValue({ value, zh }: { value?: string; zh: boolean }) {
   if (!value) return <strong>—</strong>;
   return (

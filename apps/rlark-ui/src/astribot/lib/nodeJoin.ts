@@ -1,5 +1,5 @@
 import type { INodeJoin } from "../../generated/rlark/rlinf.io/v1alpha1/NodeJoin.js";
-import { stagesView, type Lang, type StageView } from "./clusterProvision.js";
+import { stagesView, type Lang } from "./clusterProvision.js";
 
 export type NodeJoin = INodeJoin;
 
@@ -26,18 +26,7 @@ export function joinStageLabel(stage: string, lang: Lang): string {
   return joinStages.find((s) => s.name === stage)?.[lang] ?? stage;
 }
 
-export interface NodeJoinView {
-  phase: string;
-  stages: StageView[];
-  canRetry: boolean;
-  retryNeedsPassword: boolean;
-  // A join that does not run can be cleared.
-  canClear: boolean;
-  // It started the machine's own tunnel and its code's line has not run: clearing logs in to take the tunnel away.
-  clearReachesMachine: boolean;
-}
-
-export function nodeJoinView(j: NodeJoin, lang: Lang): NodeJoinView {
+export function nodeJoinView(j: NodeJoin, lang: Lang) {
   const stages = stagesView(joinStages, j.status?.stages, lang);
   const phase = j.status?.phase ?? "Running";
   const state = (name: string) => stages.find((s) => s.name === name)?.state ?? "Pending";
@@ -46,7 +35,9 @@ export function nodeJoinView(j: NodeJoin, lang: Lang): NodeJoinView {
     stages,
     canRetry: phase === "Failed",
     retryNeedsPassword: phase === "Failed" && joinStageNeedsPassword(j.status?.stage ?? ""),
+    // A join that does not run can be cleared.
     canClear: phase !== "Running",
+    // It started the machine's own tunnel and its code's line has not run: clearing logs in to take the tunnel away.
     clearReachesMachine: !["Pending", "Skipped"].includes(state("tunnel")) && state("install") === "Pending",
   };
 }
