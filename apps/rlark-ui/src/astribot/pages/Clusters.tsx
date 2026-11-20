@@ -66,6 +66,7 @@ import {
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
 import { NodeLinks } from "../components/NodeLinks";
 import { RobotNodeControls } from "../components/RobotControls";
+import { NodeCameras } from "../components/NodeCameras";
 import { useNodeNetworks } from "../components/useNodeNetworks";
 import { nodeNetworkKey } from "../lib/nodeNetwork";
 import { formatChinaDateTime } from "../../utils/time";
@@ -947,6 +948,7 @@ export function NodeDetailReal({
           </div>
         </header>
         <RobotNodeControls node={node} zh={zh} />
+        <NodeCameras node={node.metadata.name} namespace={node.metadata.namespace ?? ""} labels={node.metadata.labels} published={node.metadata.annotations?.["rlark.io/cameras"]} zh={zh} />
 
         {node.status?.reason && (
           <div className="node-health-message">
