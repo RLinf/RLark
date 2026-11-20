@@ -29,7 +29,7 @@ func TestTheClustersCredentialsAreInBeforeItsAgent(t *testing.T) {
 	if err != nil || secret.Type != corev1.SecretTypeDockerConfigJson || string(secret.Data[corev1.DockerConfigJsonKey]) != credentials[0].DockerConfigJSON || secret.Labels[common.ImageRegistryCredentialLabel] != "" {
 		t.Fatalf("secret %+v, %v", secret, err)
 	}
-	cfg := &types.DeployConfig{Plane: types.PlaneData, Kubernetes: &types.KubernetesEnv{ImagePullCredentials: credentials}}
+	cfg := &types.DeployConfig{Plane: types.PlaneData, Kubernetes: &types.KubernetesEnv{AstribotKubernetesEnv: types.AstribotKubernetesEnv{ImagePullCredentials: credentials}}}
 	for _, c := range component.ComponentsForPlane(cfg) {
 		if c.Name != constants.ComponentAgent {
 			continue

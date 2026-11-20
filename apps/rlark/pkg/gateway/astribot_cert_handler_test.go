@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
@@ -148,5 +149,26 @@ func TestSignAgentCertificateDoesNotReturnCredentialsWhenPersistenceFails(t *tes
 	}
 	if strings.Contains(rec.Body.String(), "test-private-key") || strings.Contains(rec.Body.String(), "test-certificate") {
 		t.Fatal("returned credentials on persistence failure")
+	}
+}
+
+// Revoking a certificate is for an administrator, and a request without the certificate's identity is refused.
+func TestRevokeRouteRequiresAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	g := &Gateway{config: Config{JWTTokenTTL: time.Hour}, jwtSigningKey: []byte("01234567890123456789012345678901"), rawClient: fake.NewSimpleClientset()}
+	router := gin.New()
+	g.RegisterRoutes(router)
+	for role, want := range map[string]int{"user": http.StatusForbidden, "admin": http.StatusBadRequest} {
+		token, _, err := g.issueJWT(role, role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/certificates/revoke", nil)
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != want {
+			t.Fatalf("%s: status = %d, want %d, body = %s", role, response.Code, want, response.Body.String())
+		}
 	}
 }

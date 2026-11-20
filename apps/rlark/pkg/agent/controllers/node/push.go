@@ -18,7 +18,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
-	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
 // Constants used by the package.
@@ -34,20 +33,8 @@ const (
 	nodeLegacyModel         = "rlark.io/model"
 )
 
-// A robot's identity (rlark.io/robot-model, -body, -id) is declared on its
-// management Node like the node's category, and so are what people ask of a
-// node through the management plane: its rollout wave and a restart.
 func isManagementOwnedNodeLabel(key string) bool {
-	if key == nodeCategoryLabel || strings.HasPrefix(key, nodeCategoryLabelPrefix) || strings.HasPrefix(key, nodeRobotLabelPrefix) ||
-		key == nodeRolloutWaveLabel || key == nodeRestartRequestLabel || key == nodeAcceleratorLabel {
-		return true
-	}
-	for _, entry := range siteOwnedLabels {
-		if key == entry || (strings.HasSuffix(entry, "/") || strings.HasSuffix(entry, "-")) && strings.HasPrefix(key, entry) {
-			return true
-		}
-	}
-	return false
+	return key == nodeCategoryLabel || strings.HasPrefix(key, nodeCategoryLabelPrefix) || isSiteOwnedNodeLabel(key)
 }
 
 func isManagementOwnedNodeAnnotation(key string) bool {
@@ -55,8 +42,7 @@ func isManagementOwnedNodeAnnotation(key string) bool {
 	case nodeCityAnnotation, nodeGPUModelAnnotation, nodeDeviceAnnotation, nodeLegacyModel:
 		return true
 	default:
-		// What the management plane says of a robot beside its labels (who set its desired power).
-		return strings.HasPrefix(key, nodeRobotLabelPrefix)
+		return isSiteOwnedNodeAnnotation(key)
 	}
 }
 
@@ -342,25 +328,16 @@ func (r *pushNodeReconciler) updateManagementNode(ctx context.Context, logger lo
 		return reconcile.Result{RequeueAfter: HeartbeatInterval}, nil
 	}
 
-	// A merge patch of only the fields the report owns: a full Update from an
-	// agent built against an older NodeSpec would drop the fields it does not
-	// know, such as the spec.displayName an administrator set.
-	reported := client.MergeFrom(mgmtNode.DeepCopy())
+	report := beginNodeReport(&mgmtNode)
 	mgmtNode.Spec.AgentType = desiredNode.Spec.AgentType
 	mgmtNode.Spec.Unschedulable = desiredNode.Spec.Unschedulable
-	// The gateway writes the tenant onto every object it stores; the node has
-	// no such label, and the report must not take it off the management Node.
-	tenantID := mgmtNode.Labels[tenant.IDLabel]
 	mgmtNode.Labels = mergeManagementMetadata(
 		mgmtNode.Labels,
 		desiredNode.Labels,
 		isManagementOwnedNodeLabel,
 	)
-	if _, reported := mgmtNode.Labels[tenant.IDLabel]; !reported && tenantID != "" {
-		mgmtNode.Labels[tenant.IDLabel] = tenantID
-	}
 	mgmtNode.Annotations = mergeManagementAnnotations(mgmtNode.Annotations, desiredNode.Annotations)
-	if err := r.c.ManagementClient.Patch(ctx, &mgmtNode, reported); err != nil {
+	if err := report.patch(ctx, r.c.ManagementClient, &mgmtNode); err != nil {
 		logger.Error(err, "failed to update management Node spec")
 		return reconcile.Result{RequeueAfter: HeartbeatInterval}, err
 	}

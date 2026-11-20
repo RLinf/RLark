@@ -157,7 +157,6 @@ func TestRegisteredRoutePermissions(t *testing.T) {
 		admin  int
 	}{
 		{name: "shared system config read", method: http.MethodGet, path: "/api/v1/system-config", user: http.StatusOK, admin: http.StatusOK},
-		{name: "certificate revoke", method: http.MethodPost, path: "/api/v1/certificates/revoke", user: http.StatusForbidden, admin: http.StatusBadRequest},
 		{name: "admin system config write", method: http.MethodPut, path: "/api/v1/system-config", user: http.StatusForbidden, admin: http.StatusBadRequest},
 		{name: "shared ssh keys", method: http.MethodGet, path: "/api/v1/ssh-user-keys", user: http.StatusOK, admin: http.StatusOK},
 		{name: "shared storage provider catalog", method: http.MethodGet, path: "/api/v1/storage/storageclass/provider", user: http.StatusOK, admin: http.StatusOK},

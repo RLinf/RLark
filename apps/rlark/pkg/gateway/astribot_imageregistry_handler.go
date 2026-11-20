@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/gin-gonic/gin"
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
@@ -70,4 +71,22 @@ func (g *Gateway) imagePullSecretsOf(ctx context.Context, clusterID string) ([]a
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// withStationSecret is the registry's pull Secret also where Station's own Pods are: its DaemonSets name it
+// (station-agent.yaml).
+func withStationSecret(dockerSecret corev1.Secret) []corev1.Secret {
+	stationSecret := *dockerSecret.DeepCopy()
+	stationSecret.Namespace = "station-system"
+	return []corev1.Secret{dockerSecret, stationSecret}
+}
+
+// givenOr is the account an update names, else the stored one. An update leaves out the username and the password
+// (updateImageRegistryRequest) to keep them, so a change of the registry's name or of the clusters it goes to needs
+// nobody to know the account.
+func givenOr(given *string, stored string) string {
+	if given != nil {
+		return *given
+	}
+	return stored
 }

@@ -226,9 +226,6 @@ func (e *Engine) apply(ctx context.Context, declaration *corev1.Secret, desired 
 		targetResource = resource.Namespace(object.GetNamespace())
 	}
 	existing, err := targetResource.Get(ctx, object.GetName(), metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		existing = nil
-	}
 	if err == nil {
 		owner := existing.GetAnnotations()[e.Mode.OwnershipPrefix+"definition-uid"]
 		if owner != string(declaration.UID) && !desired.config.Apply.AdoptExisting {
@@ -242,19 +239,9 @@ func (e *Engine) apply(ctx context.Context, declaration *corev1.Secret, desired 
 		return InventoryItem{}, err
 	}
 	force := desired.config.Apply.ConflictPolicy == "Force"
-	applied, err := targetResource.Patch(ctx, object.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{
-		FieldManager: e.Mode.FieldManagerPrefix + shortHash(string(declaration.UID)), Force: &force,
-	})
-	if apierrors.IsInvalid(err) && existing != nil && object.GetKind() == "StorageClass" {
-		// A StorageClass cannot be changed in place (parameters, reclaim policy).
-		// It is only read when a volume is provisioned, so replacing it leaves
-		// existing volumes as they are.
-		if err = targetResource.Delete(ctx, object.GetName(), metav1.DeleteOptions{}); err == nil {
-			applied, err = targetResource.Patch(ctx, object.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{
-				FieldManager: e.Mode.FieldManagerPrefix + shortHash(string(declaration.UID)), Force: &force,
-			})
-		}
-	}
+	options := metav1.PatchOptions{FieldManager: e.Mode.FieldManagerPrefix + shortHash(string(declaration.UID)), Force: &force}
+	applied, err := targetResource.Patch(ctx, object.GetName(), types.ApplyPatchType, data, options)
+	applied, err = replaceStorageClass(ctx, targetResource, existing, object, data, options, applied, err)
 	if err != nil {
 		return InventoryItem{}, err
 	}
@@ -314,17 +301,8 @@ func (e *Engine) deleteOwned(ctx context.Context, declaration *corev1.Secret, it
 	if err != nil {
 		return err
 	}
-	// An item recorded in a namespace that has since been replaced (the cluster was rebuilt under the same
-	// id, or the namespace was deleted and created again) went away with that namespace: the object now
-	// under its name belongs to the new namespace and is not this item.
-	if item.Namespace != "" && item.NamespaceUID != "" {
-		namespace, err := e.TargetClient.Resource(schema.GroupVersionResource{Version: "v1", Resource: "namespaces"}).Get(ctx, item.Namespace, metav1.GetOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return err
-		}
-		if err == nil && namespace.GetUID() != item.NamespaceUID {
-			return nil
-		}
+	if replaced, err := e.namespaceReplaced(ctx, item); err != nil || replaced {
+		return err
 	}
 	if existing.GetUID() != item.UID || existing.GetAnnotations()[e.Mode.OwnershipPrefix+"definition-uid"] != string(declaration.UID) {
 		return fmt.Errorf("ownership lost for %s/%s", item.Namespace, item.Name)

@@ -90,6 +90,18 @@ func InstanceFailureMessage(snapshot agentruntime.InstanceSnapshot) (string, boo
 	return "", false
 }
 
+// HasFailedScheduling reports whether any instance has a scheduling failure condition.
+func HasFailedScheduling(snapshot agentruntime.InstanceSnapshot) bool {
+	for _, instance := range snapshot.Instances {
+		for _, condition := range instance.Conditions {
+			if condition.Scope == "instance" && condition.Reason == "FailedScheduling" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func desiredReplicas(value *int32) int32 {
 	if value == nil {
 		return 1

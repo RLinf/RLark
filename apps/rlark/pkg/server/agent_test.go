@@ -45,16 +45,6 @@ func TestRegisterAgentGrantsDeliverySecretAndStatusPermissions(t *testing.T) {
 	role, err = client.RbacV1().Roles(namespace).Get(ctx, apis.RLarkAgentServiceAccountName, metav1.GetOptions{})
 	require.NoError(t, err)
 	assert.True(t, ruleAllows(role.Rules, "", "secrets", "patch"))
-
-	// The agent reads its own Cluster (spec.nodeAgents) and no other.
-	readerName := apis.RLarkAgentServiceAccountName + "-cluster-cluster-a"
-	reader, err := client.RbacV1().ClusterRoles().Get(ctx, readerName, metav1.GetOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, []rbacv1.PolicyRule{{APIGroups: []string{"rlinf.io"}, Resources: []string{"clusters"}, ResourceNames: []string{clusterID}, Verbs: []string{"get", "list", "watch"}}}, reader.Rules)
-	binding, err := client.RbacV1().ClusterRoleBindings().Get(ctx, readerName, metav1.GetOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, []rbacv1.Subject{{Kind: "ServiceAccount", Name: apis.RLarkAgentServiceAccountName, Namespace: namespace}}, binding.Subjects)
-	assert.Equal(t, readerName, binding.RoleRef.Name)
 }
 
 func TestAgentConnectionMigratesLegacyCluster(t *testing.T) {

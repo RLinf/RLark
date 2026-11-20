@@ -72,7 +72,6 @@ func TestControllerConcurrencyFlags(t *testing.T) {
 		"--addon-pull-controller-workers=2",
 		"--task-deployment-push-controller-workers=3",
 		"--task-statefulset-push-controller-workers=4",
-		"--task-daemonset-push-controller-workers=7",
 		"--node-push-controller-workers=5",
 		"--pod-push-controller-workers=6",
 	}); err != nil {
@@ -80,7 +79,7 @@ func TestControllerConcurrencyFlags(t *testing.T) {
 	}
 	want := ControllerConcurrencyConfig{
 		TaskPull: 1, AddonPull: 2, TaskDeployment: 3,
-		TaskStatefulSet: 4, TaskDaemonSet: 7, NodePush: 5, PodPush: 6,
+		TaskStatefulSet: 4, NodePush: 5, PodPush: 6,
 	}
 	if config.ControllerConcurrency != want {
 		t.Fatalf("controller concurrency = %+v, want %+v", config.ControllerConcurrency, want)

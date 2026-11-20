@@ -86,10 +86,7 @@ func (s *Server) runBroadcaster(ctx context.Context) error {
 		return fmt.Errorf("create leader elector: %w", err)
 	}
 
-	// A lease lost to a stalled management API is taken again while the server runs.
-	for ctx.Err() == nil {
-		le.Run(ctx)
-	}
+	keepLeading(ctx, le)
 	return nil
 }
 

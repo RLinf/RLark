@@ -5,16 +5,13 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// hasManagementTaskAnnotation is a predicate that only lets through K8s objects
-// carrying the rlark management-task annotation. It restricts the Pod watch to
-// rlark task pods so non-rlark pods in the cluster don't trigger (potentially
-// costly) reconciliation or ReplicaSet lookups.
 // podStartFailures are the Pod Event reasons that keep a Pod from starting
 // without changing it.
 var podStartFailures = map[string]bool{"FailedMount": true, "FailedAttachVolume": true, "FailedScheduling": true}
@@ -41,4 +38,14 @@ func enqueueEventPodWorkload(localClient client.Client, wantKind string) handler
 		}
 		return podOwnerRequests(ctx, localClient, &pod, wantKind)
 	})
+}
+
+// watchPodStartFailures: a Pod that cannot mount a volume or be scheduled changes neither itself nor its workload:
+// only an Event says so. The Event re-observes the Task, whose message then names it.
+func watchPodStartFailures(blder *builder.Builder, localClient client.Client, kind string) *builder.Builder {
+	return blder.Watches(
+		&corev1.Event{},
+		enqueueEventPodWorkload(localClient, kind),
+		builder.WithPredicates(isPodStartFailure()),
+	)
 }

@@ -15,7 +15,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
-	"github.com/rlinf/rlark/apps/rlark/astribot/storageref"
 	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
@@ -141,22 +140,13 @@ func (r *Reconciler) dispatchTasksWithTemplates(
 	}
 	statusMap := buildTaskStatusMap(job)
 	changed := false
-	var storageErr error
-	referencesStorage := false
+	var storage storageWait
 
 	for i, t := range job.Spec.Tasks {
 		ts := statusMap[t.Name]
-		referencesStorage = referencesStorage || (t.Workload.Template != nil && storageref.HasReferences(&t.Workload.Template.Spec))
 
 		task, err := r.reconcileTaskInNamespace(ctx, job, t, namespaces[i], logger)
-		var unavailable *storageUnavailableError
-		if stderrors.As(err, &unavailable) {
-			// The Task waits: one that runs keeps running, one that does not
-			// exist is not created until its storage is available.
-			logger.Info("Task waits for storage", "task", t.Name, "reason", unavailable.message)
-			if storageErr == nil {
-				storageErr = err
-			}
+		if storage.waits(err, t.Name, logger) {
 			continue
 		}
 		if err != nil {
@@ -166,14 +156,8 @@ func (r *Reconciler) dispatchTasksWithTemplates(
 			changed = true
 		}
 	}
-	if referencesStorage && setStorageCondition(job, storageErr) {
-		changed = true
-	}
-	if storageErr != nil {
-		return changed, controller.ErrRequeueWaiting
-	}
 
-	return changed, nil
+	return storage.result(job, changed)
 }
 
 func (r *Reconciler) reconcileTask(
@@ -399,8 +383,6 @@ func (r *Reconciler) reconcileWithStateMachine(
 	}
 	dispatchChanged, err := r.dispatchTasks(ctx, job, logger)
 	if stderrors.Is(err, controller.ErrRequeueWaiting) {
-		// The Job waits for a storage: what it recorded (its StorageAvailable
-		// condition) is saved before the retry.
 		return changed || dispatchChanged, err
 	}
 	if err != nil {

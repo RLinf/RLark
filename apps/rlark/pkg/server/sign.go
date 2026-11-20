@@ -2,12 +2,8 @@ package server
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
-	"math/big"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -216,27 +212,9 @@ func (s *Server) handleRevokeCertificate(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
-	if (req.CertType != "x509" && req.CertType != "ssh") || req.SerialNumber == "" || req.SubjectKeyID == "" || len(req.SubjectKeyID) > 512 || len(req.Reason) > 1024 || strings.TrimSpace(req.SubjectKeyID) != req.SubjectKeyID {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid certificate identity"})
+	if invalid := invalidRevocation(req); invalid != "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": invalid})
 		return
-	}
-	if req.CertType == "ssh" {
-		serial, err := strconv.ParseUint(req.SerialNumber, 10, 64)
-		if err != nil || strconv.FormatUint(serial, 10) != req.SerialNumber {
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid certificate serial"})
-			return
-		}
-	} else {
-		serial, ok := new(big.Int).SetString(req.SerialNumber, 10)
-		if !ok || serial.Sign() <= 0 || serial.BitLen() > 160 || serial.String() != req.SerialNumber {
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid certificate serial"})
-			return
-		}
-		decoded, err := hex.DecodeString(req.SubjectKeyID)
-		if err != nil || len(decoded) == 0 || hex.EncodeToString(decoded) != req.SubjectKeyID {
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid certificate subject key ID"})
-			return
-		}
 	}
 	if s.rcStore != nil {
 		model := &db.RevokedCertificateModel{

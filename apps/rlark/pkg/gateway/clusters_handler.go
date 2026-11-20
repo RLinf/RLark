@@ -21,12 +21,9 @@ import (
 
 // ClusterInfo defines the aggregate information returned by the cluster APIs.
 type ClusterInfo struct {
-	ID             string `json:"id"`
-	AgentNamespace string `json:"agentNamespace"`
-	// Name is what the cluster is shown as: its display name, else its ID.
-	Name string `json:"name"`
-	// DisplayName is spec.displayName as the administrator set it; absent when unset.
-	DisplayName            string                     `json:"displayName,omitempty"`
+	ID                     string                     `json:"id"`
+	AgentNamespace         string                     `json:"agentNamespace"`
+	Name                   string                     `json:"name"`
 	Type                   string                     `json:"type"`
 	Region                 string                     `json:"region"`
 	Location               string                     `json:"location"`
@@ -45,8 +42,7 @@ type ClusterInfo struct {
 	RunningJobs            int                        `json:"runningJobs"`
 	Description            string                     `json:"description"`
 	AgentNamespaceConflict bool                       `json:"agentNamespaceConflict,omitempty"`
-	// NodeAgents is the declared node Agents of the cluster (spec.nodeAgents); absent when never declared.
-	NodeAgents *rlarkv1alpha1.ClusterNodeAgents `json:"nodeAgents,omitempty"`
+	AstribotClusterInfo
 }
 
 // ClusterDetail holds details.
@@ -104,14 +100,10 @@ func buildClusterInfo(cluster rlarkv1alpha1.Cluster, nodes []rlarkv1alpha1.Node)
 		Name:                   cluster.Name,
 		Phase:                  cluster.Status.Phase,
 		AgentNamespaceConflict: clusterAgentNamespaceConflict(cluster),
-		NodeAgents:             cluster.Spec.NodeAgents,
 		GPUModels:              []string{},
 		RobotModels:            []string{},
 	}
-	if displayName := strings.TrimSpace(cluster.Spec.DisplayName); displayName != "" {
-		info.Name = displayName
-		info.DisplayName = displayName
-	}
+	setAstribotClusterInfo(&info, cluster)
 	gpuModels := make(map[string]struct{})
 	robotModels := make(map[string]struct{})
 	runningJobs := make(map[string]struct{})

@@ -5,7 +5,6 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
@@ -29,17 +28,12 @@ func (a *Agent) runTunnel(ctx context.Context, role string) error {
 	if role != "" {
 		header.Set(apis.RemoteDialerRoleHeader, role)
 	}
-	// The tunnel says whether the agent is ready, and the Server keeps the
-	// heartbeat of a ready agent only. The agent connects before it is ready
-	// (the Server makes the agent's namespace and permissions when it
-	// connects, and the first watches need them), and connects anew whenever
-	// its readiness changes.
-	connect := func() (bool, error) {
-		ready, changed := a.readiness.state()
-		header.Set(apis.RemoteDialerReadyHeader, strconv.FormatBool(ready))
+	connect := func() error {
+		startedAt := time.Now()
+		ready, changed := a.ready.announce(header)
 		ws, _, err := a.serverClient.DialWebsocket(ctx, header)
 		if err != nil {
-			return false, err
+			return err
 		}
 		defer func() { _ = ws.Close() }()
 
@@ -48,33 +42,18 @@ func (a *Agent) runTunnel(ctx context.Context, role string) error {
 
 		session := remotedialer.NewClientSessionWithDialer(auth, ws, netDialer)
 		defer session.Close()
-		// A session waits for the Server's next stream and does not look at its context meanwhile: when
-		// the agent's readiness changes, or the agent stops, it is closed, which ends the wait.
-		go func() {
-			select {
-			case <-changed:
-			case <-sessCtx.Done():
-			}
-			session.Close()
-		}()
+		go closeWhenChanged(session, changed, sessCtx)
 
 		_, err = session.Serve(sessCtx)
 		stage, duration := session.Diagnostics()
 		logger.Info("tunnel session ended", "role", role, "ready", ready, "duration", duration, "stage", stage)
-		select {
-		case <-changed:
-			return true, nil
-		default:
-			return false, err
-		}
+		_ = startedAt
+		return changedOr(changed, err)
 	}
+	connect = reconnectOnChange(ctx, connect)
 
 	for {
-		readinessChanged, err := connect()
-		if readinessChanged && ctx.Err() == nil {
-			continue
-		}
-		if err != nil {
+		if err := connect(); err != nil {
 			logger.Error(err, "tunnel connection error")
 		}
 		select {

@@ -67,17 +67,19 @@ type KubernetesEnv struct {
 	// ImagePullPolicy is the pull policy applied to all control/data plane
 	// component containers. One of Always, IfNotPresent, Never. Defaults to
 	// Always when empty.
-	ImagePullPolicy  string   `json:"imagePullPolicy,omitempty" yaml:"image-pull-policy,omitempty"`
-	ImagePullSecrets []string `json:"imagePullSecrets,omitempty" yaml:"image-pull-secrets,omitempty"`
-	// ImagePullCredentials are the image registry credentials RLark gives the cluster with its agent's certificate
-	// (the Gateway's answer, image_pull_secrets): put in before the agent, whose own image is pulled with them, and
-	// kept by the agent from then on.
-	ImagePullCredentials []ImagePullCredential `json:"imagePullCredentials,omitempty" yaml:"image-pull-credentials,omitempty"`
-	Replicas             int32                 `json:"replicas,omitempty" yaml:"replicas,omitempty"`
-	Storage              *StorageConfig        `json:"storage,omitempty" yaml:"storage,omitempty"`
-	KCP                  *ComponentConfig      `json:"kcp,omitempty" yaml:"kcp,omitempty"`
-	Etcd                 *EtcdConfig           `json:"etcd,omitempty" yaml:"etcd,omitempty"`
-	Postgresql           *ComponentConfig      `json:"postgresql,omitempty" yaml:"postgresql,omitempty"`
+	ImagePullPolicy  string           `json:"imagePullPolicy,omitempty" yaml:"image-pull-policy,omitempty"`
+	ImagePullSecrets []string         `json:"imagePullSecrets,omitempty" yaml:"image-pull-secrets,omitempty"`
+	Replicas         int32            `json:"replicas,omitempty" yaml:"replicas,omitempty"`
+	Storage          *StorageConfig   `json:"storage,omitempty" yaml:"storage,omitempty"`
+	KCP              *ComponentConfig `json:"kcp,omitempty" yaml:"kcp,omitempty"`
+	Etcd             *EtcdConfig      `json:"etcd,omitempty" yaml:"etcd,omitempty"`
+	Postgresql       *ComponentConfig `json:"postgresql,omitempty" yaml:"postgresql,omitempty"`
+	// ContainerdSocket is the host path to the containerd socket used by the
+	// node-agent for image pre-pull progress monitoring. Defaults to
+	// /run/containerd/containerd.sock when empty. Set this for non-standard
+	// runtimes such as k3s (/run/k3s/containerd/containerd.sock).
+	ContainerdSocket      string `json:"-" yaml:"-"`
+	AstribotKubernetesEnv `json:",inline" yaml:",inline"`
 }
 
 // ComponentConfig holds configuration options.

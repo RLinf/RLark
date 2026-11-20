@@ -156,21 +156,17 @@ func TestMergeManagementNodeMetadata(t *testing.T) {
 		"rlark.io/gpu-model":    "NVIDIA 4090",
 		"rlark.io/device-model": "Unitree G1",
 		"other.example/note":    "management-only",
-		// Who set the robot's desired power: the management plane's word, which no cluster reports.
-		"rlark.io/robot-power-set": `{"desired":"off","by":"alice"}`,
 	}
 	discoveredAnnotations := map[string]string{
-		"rlark.io/agent-note":      "reported",
-		"rlark.io/city":            "stale-local-value",
-		"rlark.io/robot-power-set": "not the cluster's to say",
+		"rlark.io/agent-note": "reported",
+		"rlark.io/city":       "stale-local-value",
 	}
 	wantAnnotations := map[string]string{
-		"rlark.io/city":            "深圳市",
-		"rlark.io/gpu-model":       "NVIDIA 4090",
-		"rlark.io/device-model":    "Unitree G1",
-		"rlark.io/agent-note":      "reported",
-		"other.example/note":       "management-only",
-		"rlark.io/robot-power-set": `{"desired":"off","by":"alice"}`,
+		"rlark.io/city":         "深圳市",
+		"rlark.io/gpu-model":    "NVIDIA 4090",
+		"rlark.io/device-model": "Unitree G1",
+		"rlark.io/agent-note":   "reported",
+		"other.example/note":    "management-only",
 	}
 	if got := mergeManagementAnnotations(managementAnnotations, discoveredAnnotations); !reflect.DeepEqual(got, wantAnnotations) {
 		t.Fatalf("merged annotations = %#v, want %#v", got, wantAnnotations)

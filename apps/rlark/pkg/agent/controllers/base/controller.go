@@ -112,6 +112,10 @@ func workloadForKind(kind string) client.Object {
 	}
 }
 
+// hasManagementTaskAnnotation is a predicate that only lets through K8s objects
+// carrying the rlark management-task annotation. It restricts the Pod watch to
+// rlark task pods so non-rlark pods in the cluster don't trigger (potentially
+// costly) reconciliation or ReplicaSet lookups.
 func hasManagementTaskAnnotation() predicate.Predicate {
 	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		return obj.GetAnnotations()[managementTaskNameAnnotation] != ""
@@ -209,14 +213,7 @@ func (c *Controller) SetupPushController(mgr any) error {
 					enqueueOwningWorkload(localClient, kind),
 					builder.WithPredicates(hasManagementTaskAnnotation()),
 				)
-				// A Pod that cannot mount a volume or be scheduled changes
-				// neither itself nor its workload: only an Event says so. The
-				// Event re-observes the Task, whose message then names it.
-				blder = blder.Watches(
-					&corev1.Event{},
-					enqueueEventPodWorkload(localClient, kind),
-					builder.WithPredicates(isPodStartFailure()),
-				)
+				blder = watchPodStartFailures(blder, localClient, kind)
 			}
 
 			if err := blder.Complete(reconciler); err != nil {

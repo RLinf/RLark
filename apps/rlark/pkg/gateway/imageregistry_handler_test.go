@@ -64,10 +64,7 @@ func TestBuildImageRegistryReplicationSecret(t *testing.T) {
 				"manifests": decodeManifestData(t, deliveryData["manifests"]),
 			})
 			require.NoError(t, err)
-			// The cluster's agent and Station's Pods each have the credential where they run.
 			require.Len(t, deliveryDefinition.Objects, 2)
-			assert.Equal(t, "station-system", deliveryDefinition.Objects[1].GetNamespace())
-			assert.Equal(t, "ir-0123456789abcdef", deliveryDefinition.Objects[1].GetName())
 			dockerSecret := deliveryDefinition.Objects[0]
 			assert.Equal(t, "ir-0123456789abcdef", dockerSecret.GetName())
 			assert.Equal(t, "rlark-system", dockerSecret.GetNamespace())
@@ -130,12 +127,6 @@ func TestImageRegistryHandlers(t *testing.T) {
 	assert.Regexp(t, `^ir-[0-9a-f]{16}$`, item.ID)
 	assert.Equal(t, []string{"cluster-a", "cluster-b"}, item.ClusterSelection.Clusters)
 	assert.NotContains(t, created.Body.String(), "secret")
-	passwordResponse := performJSONRequest(t, router, http.MethodGet, "/api/v1/image-registries/"+item.ID+"/password", nil)
-	assert.Equal(t, http.StatusOK, passwordResponse.Code)
-	assert.Equal(t, "no-store", passwordResponse.Header().Get("Cache-Control"))
-	assert.JSONEq(t, `{"password":"secret"}`, passwordResponse.Body.String())
-	missing := performJSONRequest(t, router, http.MethodGet, "/api/v1/image-registries/ir-0000000000000000/password", nil)
-	assert.Equal(t, http.StatusNotFound, missing.Code)
 
 	secret, err := gateway.rawClient.CoreV1().Secrets("management").Get(context.Background(), imageRegistryReplicationName(item.ID), metav1.GetOptions{})
 	require.NoError(t, err)
@@ -158,18 +149,6 @@ func TestImageRegistryHandlers(t *testing.T) {
 	require.NoError(t, json.Unmarshal(secret.Data[common.ImageRegistryCredentialDataKey], &stored))
 	assert.Equal(t, "secret", stored.Password)
 	assert.Equal(t, "Renamed Harbor", stored.Name)
-
-	// The account left out stays: a new registry name and clusters, with nobody knowing the account.
-	moved := performJSONRequest(t, router, http.MethodPut, "/api/v1/image-registries/"+item.ID, map[string]any{
-		"name": "Harbor by name", "registry": "registry.rlark.internal:5443",
-		"clusterSelection": map[string]any{"mode": "Selected", "clusters": []string{"ksyun-gpu"}},
-	})
-	assert.Equal(t, http.StatusOK, moved.Code)
-	secret, err = gateway.rawClient.CoreV1().Secrets("management").Get(context.Background(), imageRegistryReplicationName(item.ID), metav1.GetOptions{})
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(secret.Data[common.ImageRegistryCredentialDataKey], &stored))
-	assert.Equal(t, storedImageRegistryCredential{Version: imageRegistryCredentialVersion, Name: "Harbor by name", Registry: "registry.rlark.internal:5443",
-		Username: "new-robot", Password: "secret", ClusterSelection: clusterSelection{Mode: clusterSelectionSelected, Clusters: []string{"ksyun-gpu"}}}, stored)
 
 	badPassword := performJSONRequest(t, router, http.MethodPut, "/api/v1/image-registries/"+item.ID, map[string]any{
 		"name": "Harbor", "registry": "harbor.example.com", "username": "robot", "password": "",

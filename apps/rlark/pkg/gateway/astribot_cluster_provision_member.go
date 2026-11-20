@@ -132,7 +132,8 @@ func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvis
 		Cert:                &rlarkadmtypes.CertConfig{CACert: string(caPEM), AgentCert: certPEM, AgentKey: keyPEM},
 		Kubernetes: &rlarkadmtypes.KubernetesEnv{
 			AgentImage: rel.Images["cluster-agent"], Image: rel.Images["tools"],
-			ImagePullPolicy: "IfNotPresent", ImagePullCredentials: credentials,
+			ImagePullPolicy:       "IfNotPresent",
+			AstribotKubernetesEnv: rlarkadmtypes.AstribotKubernetesEnv{ImagePullCredentials: credentials},
 		},
 	})
 	if err != nil {

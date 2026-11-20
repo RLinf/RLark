@@ -964,24 +964,8 @@ func (g *Gateway) handleKubeUpdate(resource string) gin.HandlerFunc {
 			}
 		}
 
-		if resource == "nodes" {
-			existing, getErr := a.get(ctx, namespace, name, metav1.GetOptions{})
-			if getErr != nil {
-				respondKubeError(c, getErr.Error(), getErr)
-				return
-			}
-			if value, _ := robotPowerIn(bodyBytes); value != any(existing).(metav1.Object).GetLabels()[robotPowerLabel] {
-				respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotPowerRefused)
-				return
-			}
-			if value, _ := robotLabelIn(bodyBytes, robotClaimLabel); value != any(existing).(metav1.Object).GetLabels()[robotClaimLabel] {
-				respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotClaimRefused)
-				return
-			}
-			if value, _ := displayNameIn(bodyBytes); value != existing.(*rlarkiov1alpha1.Node).Spec.DisplayName {
-				respondError(c, http.StatusBadRequest, CodeInvalidRequest, nodeDisplayNameRefused)
-				return
-			}
+		if resource == "nodes" && !nodeUpdateAllowed(c, a, namespace, name, bodyBytes) {
+			return
 		}
 		if !enforceSpecQuotas(c, resource, bodyBytes) {
 			return
@@ -1036,24 +1020,8 @@ func (g *Gateway) handleKubePatch(resource string) gin.HandlerFunc {
 			}
 		}
 
-		if _, named := robotPowerIn(bodyBytes); resource == "nodes" && named {
-			respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotPowerRefused)
+		if resource == "nodes" && !nodePatchAllowed(c, a, namespace, name, bodyBytes) {
 			return
-		}
-		if _, named := robotLabelIn(bodyBytes, robotClaimLabel); resource == "nodes" && named {
-			respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotClaimRefused)
-			return
-		}
-		if value, named := displayNameIn(bodyBytes); resource == "nodes" && named {
-			existing, getErr := a.get(ctx, namespace, name, metav1.GetOptions{})
-			if getErr != nil {
-				respondKubeError(c, getErr.Error(), getErr)
-				return
-			}
-			if value != existing.(*rlarkiov1alpha1.Node).Spec.DisplayName {
-				respondError(c, http.StatusBadRequest, CodeInvalidRequest, nodeDisplayNameRefused)
-				return
-			}
 		}
 		if !enforceSpecQuotas(c, resource, bodyBytes) {
 			return

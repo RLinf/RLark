@@ -340,40 +340,9 @@ func (p *Provider) ListInstances(ctx context.Context, query agentruntime.Instanc
 		if err != nil {
 			return agentruntime.InstanceSnapshot{}, err
 		}
-		// A DaemonSet Pod's node readiness tells an instance that is down from one
-		// whose node is: a per-node Task does not wait for nodes that are switched
-		// off. A node that no longer exists counts as not ready. Other carriers'
-		// Pods are rescheduled off such nodes, so their nodes are not read.
-		// The node's in-use annotation travels with it: an instance that updates
-		// only when idle waits for it without holding the Task back.
-		notReady := map[string]bool{}
-		inUse := map[string]string{}
-		_, perNode := object.(*appsv1.DaemonSet)
-		for i := range pods {
-			name := pods[i].Spec.NodeName
-			if _, seen := notReady[name]; seen || name == "" || !perNode {
-				continue
-			}
-			var node corev1.Node
-			if err := p.client.Get(ctx, types.NamespacedName{Name: name}, &node); err != nil {
-				if !apierrors.IsNotFound(err) {
-					return agentruntime.InstanceSnapshot{}, fault.Wrap(fault.Internal, "get instance node", err)
-				}
-				notReady[name] = true
-				continue
-			}
-			objectsForRevision = append(objectsForRevision, &node)
-			if value, reported := node.Annotations[rlarkv1alpha1.NodeInUseAnnotation]; !reported {
-				inUse[name] = "not reported"
-			} else if value != "" {
-				inUse[name] = value
-			}
-			notReady[name] = true
-			for _, condition := range node.Status.Conditions {
-				if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
-					notReady[name] = false
-				}
-			}
+		nodes, err := p.instanceNodes(ctx, object, pods, &objectsForRevision)
+		if err != nil {
+			return agentruntime.InstanceSnapshot{}, err
 		}
 		for i := range pods {
 			pod := &pods[i]
@@ -381,7 +350,7 @@ func (p *Provider) ListInstances(ctx context.Context, query agentruntime.Instanc
 			for j := range events[pod.Name] {
 				objectsForRevision = append(objectsForRevision, &events[pod.Name][j])
 			}
-			instances = append(instances, podInstance(p.id, query.Task, parent, pod, events[pod.Name], notReady[pod.Spec.NodeName], inUse[pod.Spec.NodeName]))
+			instances = append(instances, podInstance(p.id, query.Task, parent, pod, events[pod.Name], nodes[pod.Spec.NodeName]))
 		}
 	}
 	// 4. Return deterministic instances and a revision derived from all observed
@@ -797,37 +766,7 @@ func applyWorkload(current, desired client.Object, task agentruntime.TaskIdentit
 	// the API server when the declarative manifest leaves them unspecified. This
 	// avoids the common permanent update loop without pretending to reproduce the
 	// complete, version-dependent Kubernetes defaulting implementation.
-	//
-	// What the platform adds is not a reason to replace running Pods: the image
-	// of its containers (the cluster Agent's --image), and, while the Task is
-	// the one the workload was written for and all its Pods are ready, the
-	// image registry credentials the Agent gives by image name (a credential
-	// that comes to match, or is deleted). With those as the workload has them,
-	// a template that is otherwise as desired is left as it is. Pods that are
-	// replaced anyway, because the Task changed, take the platform's current
-	// ones, as every new Pod does; so does a workload with a Pod that is not
-	// ready, which may be waiting for the very credential.
-	currentTemplate, desiredTemplate := workloadTemplatePointer(current), workloadTemplatePointer(desired)
-	asRunning := desiredTemplate.DeepCopy()
-	keepPlatformImages(currentTemplate, asRunning)
-	allReady := false
-	switch existing := current.(type) {
-	case *appsv1.Deployment:
-		allReady = existing.Status.ReadyReplicas == existing.Status.Replicas
-	case *appsv1.DaemonSet:
-		allReady = existing.Status.NumberReady == existing.Status.DesiredNumberScheduled
-	case *appsv1.StatefulSet:
-		allReady = existing.Status.ReadyReplicas == existing.Status.Replicas
-	}
-	if canonicalGeneration && allReady {
-		asRunning.Spec.ImagePullSecrets = currentTemplate.Spec.ImagePullSecrets
-	}
-	preserveObservedPodDefaults(currentTemplate, asRunning)
-	if reflect.DeepEqual(currentTemplate, asRunning) {
-		*desiredTemplate = *asRunning
-	} else {
-		preserveObservedPodDefaults(currentTemplate, desiredTemplate)
-	}
+	keepPlatformAdditions(current, desired, canonicalGeneration)
 	annotationsBeforeMerge := maps.Clone(current.GetAnnotations())
 	specChanged := false
 	// TODO(execution): Replace the conservative common-default normalization and
@@ -846,11 +785,8 @@ func applyWorkload(current, desired client.Object, task agentruntime.TaskIdentit
 	case *appsv1.DaemonSet:
 		want := desired.(*appsv1.DaemonSet)
 		kubernetesobjects.MergeWorkloadAnnotations(existing, compatTask)
-		// How the DaemonSet is rolled is the Task's (its carrier's rollout
-		// policy), so a change to it is applied like a template change.
-		existing.Annotations[rlarkv1alpha1.RolloutAnnotation] = want.Annotations[rlarkv1alpha1.RolloutAnnotation]
-		specChanged = !reflect.DeepEqual(existing.Spec.UpdateStrategy, want.Spec.UpdateStrategy) || !reflect.DeepEqual(existing.Spec.Template, want.Spec.Template)
-		existing.Spec.UpdateStrategy, existing.Spec.Template = want.Spec.UpdateStrategy, want.Spec.Template
+		specChanged = takeRollout(existing, want) || !reflect.DeepEqual(existing.Spec.Template, want.Spec.Template)
+		existing.Spec.Template = want.Spec.Template
 	case *appsv1.StatefulSet:
 		want := desired.(*appsv1.StatefulSet)
 		kubernetesobjects.MergeWorkloadAnnotations(existing, compatTask)
@@ -1392,21 +1328,10 @@ func (p *Provider) podEvents(ctx context.Context, namespace string, pods []corev
 	return result, nil
 }
 
-func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, parent agentruntime.ObjectRef, pod *corev1.Pod, events []corev1.Event, nodeNotReady bool, nodeInUse string) agentruntime.Instance {
+func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, parent agentruntime.ObjectRef, pod *corev1.Pod, events []corev1.Event, node instanceNode) agentruntime.Instance {
 	conditions := make([]agentruntime.InstanceCondition, 0)
 	if pod.Spec.NodeName != "" {
 		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "node", Subject: pod.Spec.NodeName})
-	}
-	if nodeNotReady {
-		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "node", Subject: pod.Spec.NodeName, Reason: "NotReady"})
-	}
-	if nodeInUse != "" {
-		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "node", Subject: pod.Spec.NodeName, Reason: "InUse", Message: nodeInUse})
-	}
-	// The DaemonSet controller labels each Pod with the template generation it
-	// was made from, which tells an updated instance from an old one.
-	if generation, found := pod.Labels["pod-template-generation"]; found {
-		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "revision", Subject: pod.Name, Message: generation})
 	}
 	for _, status := range pod.Status.ContainerStatuses {
 		if waiting := status.State.Waiting; waiting != nil {
@@ -1419,18 +1344,7 @@ func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, pare
 	for _, event := range events {
 		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "instance", Subject: pod.Name, Reason: event.Reason, Message: event.Message})
 	}
-	// Readiness and the containers' images are what a per-node Task reports for
-	// each instance. Like the node and the revision above, they travel as
-	// conditions, so the runtime-neutral Instance and its transport need no
-	// Kubernetes fields.
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
-			conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "instance", Subject: pod.Name, Reason: "Ready"})
-		}
-	}
-	for _, container := range pod.Spec.Containers {
-		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "image", Subject: container.Name, Message: container.Image})
-	}
+	conditions = append(conditions, perNodeConditions(pod, node)...)
 	sort.SliceStable(conditions, func(i, j int) bool {
 		left, right := conditions[i], conditions[j]
 		return left.Scope+"/"+left.Subject+"/"+left.Reason+"/"+left.Message < right.Scope+"/"+right.Subject+"/"+right.Reason+"/"+right.Message

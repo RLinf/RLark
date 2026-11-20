@@ -13,7 +13,6 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/selection"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -27,34 +26,7 @@ func (r *Reconciler) resolveTaskNamespace(ctx context.Context, t *rlarkv1alpha1.
 		return "default", nil
 	}
 	if t.Placement.PerNode {
-		// A per-node Task is one DaemonSet in one cluster, so it goes to the
-		// cluster its class of nodes is in. Every matching Node counts, whatever
-		// its phase or its cluster's state: a node that is offline or cordoned is
-		// still in the class, and its going away must not move the Task.
-		selector := labels.NewSelector()
-		for key, value := range t.Placement.NodeSelector {
-			requirement, err := labels.NewRequirement(key, selection.In, strings.Split(value, ","))
-			if err != nil {
-				return "", fmt.Errorf("nodeSelector of per-node Task template %q: %w", t.Name, err)
-			}
-			selector = selector.Add(*requirement)
-		}
-		var nodeList rlarkv1alpha1.NodeList
-		if err := r.List(ctx, &nodeList, &client.ListOptions{LabelSelector: selector}); err != nil {
-			return "", fmt.Errorf("list Nodes matching selector for Task template %q: %w", t.Name, err)
-		}
-		namespaces := map[string]struct{}{}
-		for _, node := range nodeList.Items {
-			namespaces[node.Namespace] = struct{}{}
-		}
-		switch len(namespaces) {
-		case 0:
-			return "", fmt.Errorf("no Nodes match selector for per-node Task template %q", t.Name)
-		case 1:
-			return nodeList.Items[0].Namespace, nil
-		default:
-			return "", fmt.Errorf("selector of per-node Task template %q matches Nodes of %d clusters; a per-node Task runs in one cluster, so narrow its nodeSelector to one", t.Name, len(namespaces))
-		}
+		return r.resolvePerNodeNamespace(ctx, t)
 	}
 
 	simpleSelector := make(map[string]string)
@@ -174,27 +146,17 @@ func setNetworkEnvironment(spec *rlarkv1alpha1.TaskSpec, domain string) {
 	})
 }
 
-// setSSHEnvironment gives the Task the Job's key and an sshd port. The port is
-// 2222 unless the Task's own SSH environment names one: Tasks whose pods share
-// a node's network (a robot's device layer and its station) cannot all listen
-// on the same port, so their template says which.
 func setSSHEnvironment(spec *rlarkv1alpha1.TaskSpec, publicKey string) {
-	port := int32(2222)
-	index := -1
-	for i := range spec.Environments {
-		if spec.Environments[i].Type == taskapi.EnvironmentTypeSSH && spec.Environments[i].Version == taskapi.EnvironmentVersionSSHV1 {
-			index = i
-			var declared taskapi.SSHEnvironmentParametersV1
-			if err := json.Unmarshal(spec.Environments[i].Parameters.Raw, &declared); err == nil && declared.Port >= 1 && declared.Port <= 65535 {
-				port = declared.Port
-			}
-		}
-	}
-	parameters, _ := json.Marshal(taskapi.SSHEnvironmentParametersV1{AuthorizedKeys: []string{publicKey}, Port: port})
-	environment := rlarkv1alpha1.TaskEnvironment{Type: taskapi.EnvironmentTypeSSH, Version: taskapi.EnvironmentVersionSSHV1, Parameters: apiextensionsv1.JSON{Raw: parameters}}
-	if index >= 0 {
-		spec.Environments[index] = environment
+	if setDeclaredSSHEnvironment(spec, publicKey) {
 		return
+	}
+	parameters, _ := json.Marshal(taskapi.SSHEnvironmentParametersV1{AuthorizedKeys: []string{publicKey}, Port: 2222})
+	environment := rlarkv1alpha1.TaskEnvironment{Type: taskapi.EnvironmentTypeSSH, Version: taskapi.EnvironmentVersionSSHV1, Parameters: apiextensionsv1.JSON{Raw: parameters}}
+	for i := range spec.Environments {
+		if spec.Environments[i].Type == environment.Type && spec.Environments[i].Version == environment.Version {
+			spec.Environments[i] = environment
+			return
+		}
 	}
 	spec.Environments = append(spec.Environments, environment)
 }
@@ -215,20 +177,15 @@ func setRayExecution(spec *rlarkv1alpha1.TaskSpec, job *rlarkv1alpha1.Job, templ
 		}
 		parameters = decoded
 	}
-	parameters.Role = ""
+	parameters.Role = taskapi.RayRoleWorker
 	parameters.HeadTaskName = findHeadTaskName(job)
 	parameters.TotalNodes = int32(totalNodeCount(job.Spec.Tasks))
 	parameters.NodeRankStart = int32(rankStartForTask(job, template.Name))
-	// A Job without a head forms no Ray cluster: its Tasks have no Ray role and
-	// only run their own scripts, rather than waiting as workers for a head
-	// that never comes.
-	switch {
-	case template.Head:
+	if template.Head {
 		parameters.Role = taskapi.RayRoleHead
 		parameters.HeadTaskName = ""
-	case parameters.HeadTaskName != "":
-		parameters.Role = taskapi.RayRoleWorker
 	}
+	clearRoleWithoutHead(&parameters)
 	raw, _ := json.Marshal(parameters)
 	workload.Kind = taskapi.WorkloadTypeRay
 	workload.Version = taskapi.WorkloadVersionRayV1
@@ -259,16 +216,15 @@ func buildRayAnnotations(job *rlarkv1alpha1.Job, t rlarkv1alpha1.JobTaskTemplate
 	if restartedAt := job.Annotations[RestartedAtAnnotation]; restartedAt != "" {
 		annotations[RestartedAtAnnotation] = restartedAt
 	}
-	headTaskName := findHeadTaskName(job)
-	switch {
-	case t.Head:
+	if t.Head {
 		annotations[rlarkv1alpha1.RayRoleAnnotation] = rlarkv1alpha1.RayRoleHead
-	case headTaskName != "":
+	} else {
 		annotations[rlarkv1alpha1.RayRoleAnnotation] = rlarkv1alpha1.RayRoleWorker
 	}
-	if headTaskName != "" {
+	if headTaskName := findHeadTaskName(job); headTaskName != "" {
 		annotations[rlarkv1alpha1.RayHeadTaskNameAnnotation] = headTaskName
 	}
+	dropRoleWithoutHead(annotations)
 	return annotations
 }
 
@@ -293,11 +249,9 @@ func findHeadTaskName(job *rlarkv1alpha1.Job) string {
 }
 
 // taskReplicas 返回任务模板的副本数（pod 数量），未显式设置时默认为 1。
-// 按节点放置的 Task 计 0：它的实例数随节点类别的成员变化，Ray 头节点不能等待
-// 一个会变的数，按节点的实例也没有稳定的 rank。
 func taskReplicas(t rlarkv1alpha1.JobTaskTemplate) int32 {
 	if t.Placement.PerNode {
-		return 0
+		return perNodeReplicas
 	}
 	if t.Workload.Carrier.Type != taskapi.CarrierTypeKubernetesDeployment && t.Workload.Carrier.Type != taskapi.CarrierTypeKubernetesStatefulSet {
 		return 1
@@ -342,25 +296,8 @@ func validateTaskTemplates(job *rlarkv1alpha1.Job) error {
 		if strings.TrimSpace(template.Workload.Carrier.Version) == "" {
 			return fmt.Errorf("%s.workload.carrier.version must not be empty", path)
 		}
-
-		perNode := template.Placement.PerNode
-		daemonSet := template.Workload.Carrier.Type == taskapi.CarrierTypeKubernetesDaemonSet
-		switch {
-		case perNode && len(template.Placement.NodeSelector) == 0:
-			return fmt.Errorf("%s.placement.perNode requires placement.nodeSelector to name the class of nodes", path)
-		case perNode && template.Head:
-			// The head is the one instance the Job's other Tasks reach; a
-			// per-node Task has one instance per node.
-			return fmt.Errorf("%s.head must be false for a per-node Task", path)
-		case perNode && template.Runtime.Kind == rlarkv1alpha1.RuntimeKindKubernetes && (!daemonSet || template.Workload.Carrier.Version != taskapi.CarrierVersionKubernetesV1):
-			return fmt.Errorf("%s.workload.carrier must be %s %s for a per-node Task", path, taskapi.CarrierTypeKubernetesDaemonSet, taskapi.CarrierVersionKubernetesV1)
-		case daemonSet && !perNode:
-			return fmt.Errorf("%s.workload.carrier %s requires placement.perNode", path, taskapi.CarrierTypeKubernetesDaemonSet)
-		}
-		if daemonSet {
-			if _, err := taskapi.DecodeKubernetesDaemonSetCarrierParameters(template.Workload.Carrier.Parameters); err != nil {
-				return fmt.Errorf("%s.workload.carrier.parameters: %w", path, err)
-			}
+		if err := validatePerNodeTemplate(template, path); err != nil {
+			return err
 		}
 
 		if template.Workload.Template == nil {

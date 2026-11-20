@@ -8,6 +8,7 @@ const (
 	ComponentControllerManager = "rlark-controller-manager"
 	ComponentServer            = "rlark-server"
 	ComponentAgent             = "rlark-agent"
+	ComponentAgentNode         = "rlark-agent-node"
 	ComponentPostgresql        = "postgresql"
 	ComponentKCP               = "kcp"
 	ComponentEtcd              = "etcd"
@@ -34,6 +35,7 @@ const (
 	CertDir           = "/etc/rlark/certs"
 	KCPDataDir        = "/.kcp"
 	KCPEtcdDataDir    = "/.kcp/etcd-server"
+	KCPKubeconfigPath = "/etc/kcp/admin.kubeconfig"
 	PostgresqlDataDir = "/var/lib/postgresql/data"
 	PostgresqlInitDir = "/docker-entrypoint-initdb.d"
 )

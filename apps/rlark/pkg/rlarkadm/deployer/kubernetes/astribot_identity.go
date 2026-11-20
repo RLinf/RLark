@@ -24,7 +24,11 @@ import (
 // credential into the Secret its Pods mount. kcp's administrator credential (admin) is used for this
 // only: kcp writes it anew at every start, so a component given it would be turned away after kcp's
 // first restart.
-func issueKCPIdentities(ctx context.Context, restConfig *rest.Config, clientset *kubernetes.Clientset, podName string, admin []byte) error {
+func issueKCPIdentities(ctx context.Context, kubeconfig string, clientset *kubernetes.Clientset, podName string, admin []byte) error {
+	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return fmt.Errorf("build kubeconfig: %w", err)
+	}
 	adminConfig, err := clientcmd.Load(admin)
 	if err != nil {
 		return fmt.Errorf("kcp admin kubeconfig: %w", err)
@@ -93,4 +97,14 @@ func forwardKCP(restConfig *rest.Config, clientset *kubernetes.Clientset, podNam
 		return 0, nil, err
 	}
 	return int(ports[0].Local), stop, nil
+}
+
+// deleteKCPIdentities removes the Secrets issueKCPIdentities wrote.
+func deleteKCPIdentities(ctx context.Context, clientset *kubernetes.Clientset) error {
+	for _, c := range identity.RLark() {
+		if err := deleteSecret(ctx, clientset, identity.RLarkSecretName(c)); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -55,4 +56,22 @@ func TestHeartbeatOnlyForAReadyAgent(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, leases.Items, "an agent that said %q has a heartbeat", said)
 	}
+}
+
+// The agent reads its own Cluster (spec.nodeAgents) and no other.
+func TestRegisterAgentGrantsItsOwnCluster(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	server := &Server{kubeClient: client, rlarkClient: clientset.NewSimpleClientset()}
+	require.NoError(t, server.registerAgent(ctx, "cluster-a"))
+
+	namespace := apis.RLarkAgentNamespacePrefix + "cluster-a"
+	readerName := apis.RLarkAgentServiceAccountName + "-cluster-cluster-a"
+	reader, err := client.RbacV1().ClusterRoles().Get(ctx, readerName, metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []rbacv1.PolicyRule{{APIGroups: []string{"rlinf.io"}, Resources: []string{"clusters"}, ResourceNames: []string{namespace}, Verbs: []string{"get", "list", "watch"}}}, reader.Rules)
+	binding, err := client.RbacV1().ClusterRoleBindings().Get(ctx, readerName, metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []rbacv1.Subject{{Kind: "ServiceAccount", Name: apis.RLarkAgentServiceAccountName, Namespace: namespace}}, binding.Subjects)
+	assert.Equal(t, readerName, binding.RoleRef.Name)
 }

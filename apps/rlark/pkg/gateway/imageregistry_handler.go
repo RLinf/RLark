@@ -77,8 +77,6 @@ type createImageRegistryRequest struct {
 	ClusterSelection clusterSelection `json:"clusterSelection"`
 }
 
-// updateImageRegistryRequest: an account left out (username, password) stays as it is stored, so a change of the
-// registry's name or of the clusters it goes to needs nobody to know the account.
 type updateImageRegistryRequest struct {
 	Name             string           `json:"name"`
 	Registry         string           `json:"registry"`
@@ -192,10 +190,7 @@ func buildImageRegistryReplicationSecret(namespace, id string, credential stored
 		Type: corev1.SecretTypeDockerConfigJson,
 		Data: map[string][]byte{corev1.DockerConfigJsonKey: dockerConfigJSON},
 	}
-	// The same credential where Station's own Pods are: its DaemonSets name it (station-agent.yaml).
-	stationSecret := *dockerSecret.DeepCopy()
-	stationSecret.Namespace = "station-system"
-	dockerManifest, err := yaml.Marshal([]corev1.Secret{dockerSecret, stationSecret})
+	dockerManifest, err := yaml.Marshal(withStationSecret(dockerSecret))
 	if err != nil {
 		return nil, fmt.Errorf("marshal docker secret manifest: %w", err)
 	}
@@ -416,7 +411,11 @@ func (g *Gateway) handleUpdateImageRegistry(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 		return
 	}
-	if _, err := normalizeImageRegistryCredential(req.Name, req.Registry, "kept", "kept", selection); err != nil {
+	password := "placeholder"
+	if req.Password != nil {
+		password = *req.Password
+	}
+	if _, err := normalizeImageRegistryCredential(req.Name, req.Registry, "kept", password, selection); err != nil {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())
 		return
 	}
@@ -431,14 +430,11 @@ func (g *Gateway) handleUpdateImageRegistry(c *gin.Context) {
 		if err := json.Unmarshal(secret.Data[common.ImageRegistryCredentialDataKey], &old); err != nil {
 			return fmt.Errorf("decode stored credential: %w", err)
 		}
-		username, password := old.Username, old.Password
-		if req.Username != nil {
-			username = *req.Username
-		}
+		password := old.Password
 		if req.Password != nil {
 			password = *req.Password
 		}
-		credential, err := normalizeImageRegistryCredential(req.Name, req.Registry, username, password, req.ClusterSelection)
+		credential, err := normalizeImageRegistryCredential(req.Name, req.Registry, givenOr(req.Username, old.Username), password, req.ClusterSelection)
 		if err != nil {
 			return err
 		}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/rlinf/rlark/apps/rlark/astribot/identity"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/component"
@@ -57,10 +56,8 @@ func (d *Installer) Uninstall(cfg *types.DeployConfig, purge bool) error {
 				return err
 			}
 		}
-		for _, c := range identity.RLark() {
-			if err := deleteSecret(ctx, clientset, identity.RLarkSecretName(c)); err != nil {
-				return err
-			}
+		if err := deleteKCPIdentities(ctx, clientset); err != nil {
+			return err
 		}
 		if err := deleteSecret(ctx, clientset, "rlark-tls"); err != nil {
 			return err

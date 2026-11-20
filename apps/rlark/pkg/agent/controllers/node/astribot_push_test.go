@@ -107,3 +107,15 @@ func TestReconcileKeepsTheDisplayNameOfTheManagementNode(t *testing.T) {
 		t.Fatalf("spec of the management Node after the report: %+v", node.Spec)
 	}
 }
+
+// Who set a robot's desired power is the management plane's word, which no cluster reports.
+func TestRobotAnnotationsStayTheManagementPlanes(t *testing.T) {
+	set := `{"desired":"off","by":"alice"}`
+	merged := mergeManagementAnnotations(
+		map[string]string{"rlark.io/robot-power-set": set},
+		map[string]string{"rlark.io/robot-power-set": "not the cluster's to say"},
+	)
+	if merged["rlark.io/robot-power-set"] != set {
+		t.Fatalf("annotations = %v", merged)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,6 +13,7 @@ import (
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/storageref"
+	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
 )
 
 // jobConditionStorageAvailable records whether every storage the Job's Task
@@ -69,4 +71,40 @@ func setStorageCondition(job *rlarkv1alpha1.Job, err error) bool {
 	return apimeta.SetStatusCondition(&job.Status.Conditions, metav1.Condition{
 		Type: jobConditionStorageAvailable, Status: metav1.ConditionTrue, Reason: jobReasonStorageResolved, ObservedGeneration: job.Generation,
 	})
+}
+
+// storageWait collects, over one dispatch of a Job's Tasks, the first Task
+// whose storage is unavailable.
+type storageWait struct{ err error }
+
+// waits reports whether err is a Task waiting for its storage. The Task waits:
+// one that runs keeps running, one that does not exist is not created until its
+// storage is available.
+func (w *storageWait) waits(err error, task string, logger logr.Logger) bool {
+	var unavailable *storageUnavailableError
+	if !errors.As(err, &unavailable) {
+		return false
+	}
+	logger.Info("Task waits for storage", "task", task, "reason", unavailable.message)
+	if w.err == nil {
+		w.err = err
+	}
+	return true
+}
+
+// result records the Job's StorageAvailable condition when its templates name
+// a storage, and asks for a retry while a Task waits.
+func (w *storageWait) result(job *rlarkv1alpha1.Job, changed bool) (bool, error) {
+	for _, t := range job.Spec.Tasks {
+		if t.Workload.Template != nil && storageref.HasReferences(&t.Workload.Template.Spec) {
+			if setStorageCondition(job, w.err) {
+				changed = true
+			}
+			break
+		}
+	}
+	if w.err != nil {
+		return changed, controller.ErrRequeueWaiting
+	}
+	return changed, nil
 }

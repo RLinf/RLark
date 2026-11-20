@@ -155,35 +155,8 @@ func (s *Server) registerAgent(ctx context.Context, agentID string) error {
 		}
 	}
 
-	// 5. 只读自己的 Cluster：cluster Agent 按 spec.nodeAgents 维护本集群的 node Agent DaemonSet。
-	// Cluster 是集群级资源，按名字（规范形式下等于 agent namespace）限定，Agent 看不到别的集群。
-	readerName := fmt.Sprintf("%s-cluster-%s", roleName, agentID)
-	reader := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: readerName},
-		Rules: []rbacv1.PolicyRule{
-			{APIGroups: []string{"rlinf.io"}, Resources: []string{"clusters"}, ResourceNames: []string{namespace}, Verbs: []string{"get", "list", "watch"}},
-		},
-	}
-	if _, err := s.kubeClient.RbacV1().ClusterRoles().Update(ctx, reader, metav1.UpdateOptions{}); err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("update ClusterRole %s: %w", readerName, err)
-		}
-		if _, err := s.kubeClient.RbacV1().ClusterRoles().Create(ctx, reader, metav1.CreateOptions{}); err != nil && !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("create ClusterRole %s: %w", readerName, err)
-		}
-	}
-	readerBinding := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: readerName},
-		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: saName, Namespace: namespace}},
-		RoleRef:    rbacv1.RoleRef{Kind: "ClusterRole", Name: readerName, APIGroup: "rbac.authorization.k8s.io"},
-	}
-	if _, err := s.kubeClient.RbacV1().ClusterRoleBindings().Update(ctx, readerBinding, metav1.UpdateOptions{}); err != nil {
-		if !errors.IsNotFound(err) {
-			return fmt.Errorf("update ClusterRoleBinding %s: %w", readerName, err)
-		}
-		if _, err := s.kubeClient.RbacV1().ClusterRoleBindings().Create(ctx, readerBinding, metav1.CreateOptions{}); err != nil && !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("create ClusterRoleBinding %s: %w", readerName, err)
-		}
+	if err := s.grantOwnClusterReader(ctx, agentID, namespace, saName); err != nil {
+		return err
 	}
 
 	return nil
@@ -309,13 +282,6 @@ func (s *Server) startAgentBroadcaster(ctx context.Context, agentID, role, connI
 		return fmt.Errorf("create leader elector: %w", err)
 	}
 
-	// Run returns when a renewal misses RenewDeadline (the management API
-	// stalled); while the connection lives its lease is taken again, or the
-	// node stays Offline until the agent reconnects.
-	go func() {
-		for ctx.Err() == nil {
-			le.Run(ctx)
-		}
-	}()
+	go keepLeading(ctx, le)
 	return nil
 }

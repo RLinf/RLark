@@ -6,9 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -44,21 +41,15 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		return fmt.Errorf("cluster ID is empty")
 	}
 
-	mm, err := ctrl.NewManager(c.a.managementConfig, ctrl.Options{
-		Scheme: controllers.MgmtScheme,
-		// The agent serves its metrics and probes itself, the same in every mode.
-		Metrics: metricsserver.Options{BindAddress: "0"},
+	mm, err := ctrl.NewManager(c.a.managementConfig, astribotManagementOptions(clusterID, ctrl.Options{
+		Scheme:  controllers.MgmtScheme,
+		Metrics: metricsserver.Options{BindAddress: c.a.config.MetricsBindAddress},
 		Cache: cache.Options{
 			DefaultNamespaces: map[string]cache.Config{
 				clusterID: {},
 			},
-			// The agent may read only its own Cluster (named as its namespace); a list of every
-			// Cluster would be refused.
-			ByObject: map[client.Object]cache.ByObject{
-				&rlarkv1alpha1.Cluster{}: {Field: fields.OneTermEqualSelector("metadata.name", clusterID)},
-			},
 		},
-	})
+	}))
 	if err != nil {
 		return fmt.Errorf("create management manager: %w", err)
 	}
@@ -129,7 +120,7 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 	taskController.PushMaxConcurrentReconciles = map[string]int{
 		"task-deployment":  c.a.config.ControllerConcurrency.TaskDeployment,
 		"task-statefulset": c.a.config.ControllerConcurrency.TaskStatefulSet,
-		"task-daemonset":   c.a.config.ControllerConcurrency.TaskDaemonSet,
+		"task-daemonset":   c.a.config.TaskDaemonSetWorkers,
 	}
 	tc := task.NewTaskController(taskController)
 	execution, err := task.NewKubernetesExecutionCoordinator(taskController.LocalKubeClient, taskController.Image)
@@ -206,31 +197,5 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		return fmt.Errorf("setup delivery controller: %w", err)
 	}
 
-	if err := c.setupAstribotControllers(mm, localManager, lm, mclient, bc.LocalKubeClient, clusterID, agentType); err != nil {
-		return err
-	}
-
-	// The agent is ready once the first watches of both sides have synced. The
-	// watches the controllers hold are asked for here, before the managers
-	// start, so that "every informer has synced" cannot be true while a
-	// controller has yet to ask for its own. A watch that does not sync in time
-	// stops its manager, and with it the agent.
-	for _, object := range []client.Object{&rlarkv1alpha1.Cluster{}, &rlarkv1alpha1.Task{}, &rlarkv1alpha1.Node{}, &rlarkv1alpha1.Pod{}, &rlarkv1alpha1.Addon{}} {
-		if _, err := mm.GetCache().GetInformer(ctx, object, cache.BlockUntilSynced(false)); err != nil {
-			return fmt.Errorf("watch %T of the management plane: %w", object, err)
-		}
-	}
-	for _, object := range []client.Object{&corev1.Node{}, &corev1.Pod{}, &appsv1.DaemonSet{}} {
-		if _, err := localManager.GetCache().GetInformer(ctx, object, cache.BlockUntilSynced(false)); err != nil {
-			return fmt.Errorf("watch %T of the cluster: %w", object, err)
-		}
-	}
-	return startTogether(ctx, mm.Start, lm.Start, func(ctx context.Context) error {
-		if mm.GetCache().WaitForCacheSync(ctx) && localManager.GetCache().WaitForCacheSync(ctx) {
-			logger.Info("the first watches of the management plane and of the cluster have synced; the agent is ready")
-			c.a.readiness.set(partClusterWatches, true)
-		}
-		<-ctx.Done()
-		return nil
-	})
+	return c.startAstribot(ctx, mm, localManager, lm, mclient, bc.LocalKubeClient, clusterID, agentType)
 }

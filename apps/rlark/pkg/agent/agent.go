@@ -14,7 +14,6 @@ import (
 
 	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
-	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/node"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/server"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
@@ -35,7 +34,7 @@ type Agent struct {
 
 	localListener net.Listener
 	localDialer   utils.Dial
-	readiness     *readiness
+	ready         readiness
 	drainMu       sync.Mutex
 	drain         context.CancelFunc
 }
@@ -43,18 +42,16 @@ type Agent struct {
 // NewAgent creates a new Agent.
 func NewAgent(config Config) *Agent {
 	return &Agent{
-		config:    config,
-		readiness: newReadiness(),
+		config: config,
 	}
 }
 
-// SetReady is the node server saying whether it serves the node's workloads.
 func (a *Agent) SetReady(ready bool) {
-	a.readiness.set(partNodeServer, ready)
+	a.ready.Store(ready)
 }
 
 func (a *Agent) startDrain() {
-	a.readiness.set(partNodeServer, false)
+	a.ready.Store(false)
 	a.drainMu.Lock()
 	drain := a.drain
 	a.drainMu.Unlock()
@@ -69,11 +66,11 @@ func (a *Agent) init(ctx context.Context) error {
 	if err := validateTaskRuntimeResyncPeriod(a.config.Mode, a.config.TaskRuntimeResyncPeriod); err != nil {
 		return err
 	}
-	if err := node.SetManagementOwnedLabels(a.config.ManagementNodeLabels); err != nil {
-		return err
-	}
 	if err := a.config.ControllerConcurrency.Validate(); err != nil {
 		return fmt.Errorf("validate controller concurrency: %w", err)
+	}
+	if err := a.config.AstribotConfig.apply(); err != nil {
+		return err
 	}
 	if a.config.PodOrphanSweepInterval <= 0 {
 		return fmt.Errorf("pod orphan sweep interval must be positive")
@@ -152,24 +149,15 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.drain = cancel
 	a.drainMu.Unlock()
 	defer func() {
+		a.ready.Store(false)
 		a.drainMu.Lock()
 		a.drain = nil
 		a.drainMu.Unlock()
 		cancel()
 	}()
 
-	// A component that fails stops the others, so the agent exits and its Pod restarts instead of
-	// running on (tunnel and lease alive, so the Node shows Online) without that component.
 	eg, ctx := errgroup.WithContext(ctx)
-
-	// Every part this mode runs is not ready until it says so.
-	if a.config.Mode == "cluster" || a.config.Mode == "both" {
-		a.readiness.set(partClusterWatches, false)
-	}
-	if a.config.Mode == "node" || a.config.Mode == "both" {
-		a.readiness.set(partNodeWatches, false)
-		a.readiness.set(partNodeServer, false)
-	}
+	a.startAstribot(ctx, eg)
 
 	// Run tunnel for all modes
 	eg.Go(func() error {
@@ -183,14 +171,6 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Run local HTTP server for all modes
 	eg.Go(func() error {
 		return a.runLocalHTTPServer(ctx)
-	})
-
-	// One probe server and one metrics server, whichever parts this mode runs.
-	eg.Go(func() error {
-		return serve(ctx, a.config.HealthProbeBindAddress, a.probeRouter())
-	})
-	eg.Go(func() error {
-		return serve(ctx, a.config.MetricsBindAddress, a.metricsRouter())
 	})
 
 	// Run cluster agent (controller manager) based on mode

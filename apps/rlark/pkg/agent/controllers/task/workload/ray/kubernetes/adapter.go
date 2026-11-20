@@ -19,7 +19,7 @@ import (
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"
-	compatibility "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/compatibility/kubernetes"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/compatibility/kubernetes"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/compatibility/kubernetes/kubernetesobjects"
 	kubernetesssh "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/environment/kubernetes/ssh"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/coordination"
@@ -160,7 +160,11 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 	if err != nil {
 		return executionplan.Plan{}, err
 	}
-	carrier, err := decodeKubernetesCarrier(request.Task.Configuration.Carrier)
+	kind, replicas, err := decodeKubernetesCarrier(request.Task.Configuration.Carrier)
+	if err != nil {
+		return executionplan.Plan{}, err
+	}
+	rollout, err := daemonSetRollout(kind, request.Task.Configuration.Carrier)
 	if err != nil {
 		return executionplan.Plan{}, err
 	}
@@ -186,27 +190,31 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 	dependencies := make([]string, 0)
 	// 3. Compile optional Ray helpers. The head Service has Task identity and is cleaned up.
 	role := string(ray.Role)
-	if role == rlarkv1alpha1.RayRoleHead {
-		service := BuildRayHeadService(namespace, task)
-		object, err := desiredObject("ray-service", "service", service, request.Task.Identity, agentruntime.IdentityTaskIncarnation, agentruntime.LifecycleDeleteOnTaskCleanup)
-		if err != nil {
-			return executionplan.Plan{}, err
+	if role != "" {
+		if role == rlarkv1alpha1.RayRoleHead {
+			service := BuildRayHeadService(namespace, task)
+			object, err := desiredObject("ray-service", "service", service, request.Task.Identity, agentruntime.IdentityTaskIncarnation, agentruntime.LifecycleDeleteOnTaskCleanup)
+			if err != nil {
+				return executionplan.Plan{}, err
+			}
+			object.Ownership = incarnationOwnership(request.Task.Identity)
+			object.ReconcileProfile = kubernetesobjects.ServiceReconcileProfile
+			object.UpdateMode = agentruntime.UpdateReplace
+			objects, dependencies = append(objects, object), append(dependencies, "ray-service")
 		}
-		object.Ownership = incarnationOwnership(request.Task.Identity)
-		object.ReconcileProfile = kubernetesobjects.ServiceReconcileProfile
-		object.UpdateMode = agentruntime.UpdateReplace
-		objects, dependencies = append(objects, object), append(dependencies, "ray-service")
 	}
 	// 4. Render the selected primary workload as the instance-discovery root. It
 	// depends on required Ray helpers and is deleted on Task cleanup.
 	var primary runtime.Object
-	switch carrier.kind {
+	switch kind {
 	case CarrierDeployment:
-		primary = BuildDeployment(task, namespace, spec, carrier.replicas)
+		primary = BuildDeployment(task, namespace, spec, replicas)
 	case CarrierStatefulSet:
-		primary = BuildStatefulSet(task, namespace, spec, carrier.replicas)
+		primary = BuildStatefulSet(task, namespace, spec, replicas)
 	case CarrierDaemonSet:
-		primary = BuildDaemonSet(task, namespace, spec, carrier.rollout)
+		primary = BuildDaemonSet(task, namespace, spec, rollout)
+	default:
+		return executionplan.Plan{}, fault.New(fault.InvalidArgument, "unsupported builtin Kubernetes carrier kind")
 	}
 	main, err := desiredObject("workload", "workload", primary, request.Task.Identity, agentruntime.IdentityTaskIncarnation, agentruntime.LifecycleDeleteOnTaskCleanup)
 	if err != nil {
@@ -238,20 +246,18 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 			Path: "spec.template",
 		},
 	}}
-	// A Task without a Ray role still runs through the launcher, which then runs
-	// only its prepare and run scripts.
-	args := []string{"ray-launcher"}
-	if role != "" {
-		args = append(args, "--role="+role)
+	processes := []executionprocess.Declaration{}
+	if role == rlarkv1alpha1.RayRoleHead || role == rlarkv1alpha1.RayRoleWorker || role == "" {
+		args := launcherArgs(role)
+		if domain != "" {
+			args = append(args, "--wait-network")
+		}
+		processes = append(processes, executionprocess.Declaration{
+			Name: "ray-launcher", Target: workloadPodTemplateTarget, Locator: targets[0].Locator, ContainerName: "main",
+			Role: executionprocess.RolePrimary, Executable: "/rlark-tools/rlark-tools", Args: args,
+			RestartPolicy: executionprocess.RestartNever, Required: true,
+		})
 	}
-	if domain != "" {
-		args = append(args, "--wait-network")
-	}
-	processes := []executionprocess.Declaration{{
-		Name: "ray-launcher", Target: workloadPodTemplateTarget, Locator: targets[0].Locator, ContainerName: "main",
-		Role: executionprocess.RolePrimary, Executable: "/rlark-tools/rlark-tools", Args: args,
-		RestartPolicy: executionprocess.RestartNever, Required: true,
-	}}
 	// 6. Hash Adapter-owned objects and process declarations independently of
 	// execution ordering. Environment requirements and targets bind separately.
 	hash, err := compiledHash(objects, processes)
@@ -421,24 +427,24 @@ func kubernetesCarrierKind(carrier coordination.VersionedConfiguration) (string,
 	}
 }
 
-func decodeKubernetesCarrier(carrier coordination.VersionedConfiguration) (kubernetesCarrier, error) {
+func decodeKubernetesCarrier(carrier coordination.VersionedConfiguration) (string, *int32, error) {
 	kind, err := kubernetesCarrierKind(carrier)
 	if err != nil {
-		return kubernetesCarrier{}, err
+		return "", nil, err
 	}
 	parameters := apiextensionsv1.JSON{Raw: append([]byte(nil), carrier.Parameters...)}
-	if kind == CarrierDaemonSet {
-		decoded, err := taskapi.DecodeKubernetesDaemonSetCarrierParameters(parameters)
+	switch kind {
+	case CarrierDeployment, CarrierStatefulSet:
+		decoded, err := taskapi.DecodeParametersStrict[taskapi.KubernetesReplicatedCarrierParametersV1](parameters)
 		if err != nil {
-			return kubernetesCarrier{}, fault.Wrap(fault.InvalidArgument, "decode DaemonSet Kubernetes carrier parameters", err)
+			return "", nil, fault.Wrap(fault.InvalidArgument, "decode replicated Kubernetes carrier parameters", err)
 		}
-		return kubernetesCarrier{kind: kind, rollout: decoded.RolloutPolicy}, nil
+		return kind, decoded.Replicas, nil
+	case CarrierDaemonSet:
+		return kind, nil, nil
+	default:
+		return "", nil, fault.New(fault.InvalidArgument, "unsupported Kubernetes carrier type")
 	}
-	decoded, err := taskapi.DecodeParametersStrict[taskapi.KubernetesReplicatedCarrierParametersV1](parameters)
-	if err != nil {
-		return kubernetesCarrier{}, fault.Wrap(fault.InvalidArgument, "decode replicated Kubernetes carrier parameters", err)
-	}
-	return kubernetesCarrier{kind: kind, replicas: decoded.Replicas}, nil
 }
 
 func desiredObject(logicalName, role string, object runtime.Object, task agentruntime.TaskIdentity, scope agentruntime.IdentityScope, lifecycle agentruntime.ResourceLifecycle) (agentruntime.DesiredObject, error) {
@@ -528,14 +534,7 @@ func ObserveObject(kind string, manifest []byte, instances agentruntime.Instance
 		}
 		phase = StatefulSetStatusPhase(&object)
 	case CarrierDaemonSet:
-		var object appsv1.DaemonSet
-		if err := json.Unmarshal(manifest, &object); err != nil {
-			return "", "", err
-		}
-		// A failing instance holds the Task in Pending but does not fail it as it
-		// would a replicated carrier.
-		phase, message = DaemonSetStatusPhase(&object, instances)
-		return phase, message, nil
+		return observeDaemonSet(manifest, instances)
 	default:
 		return "", "", fmt.Errorf("unsupported workload kind %q", kind)
 	}

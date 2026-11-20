@@ -2,9 +2,9 @@ package component
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 
-	"github.com/rlinf/rlark/apps/rlark/astribot/identity"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/constants"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkadm/health"
@@ -58,14 +58,14 @@ func commonArgs(cfg *types.DeployConfig) []string {
 	if cfg.UsesKubernetesManagementAPI() {
 		return []string{"--in-cluster", "--kube-namespace=" + constants.Namespace}
 	}
-	return []string{"--kubeconfig", constants.KCPCredentialDir + "/" + identity.KubeconfigKey, "--kube-namespace=default"}
+	return []string{"--kubeconfig", constants.KCPKubeconfigPath, "--kube-namespace=default"}
 }
 
-func managementAPIVolume(cfg *types.DeployConfig, name string) ([]corev1.Volume, []corev1.VolumeMount) {
+func managementAPIVolume(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
 	if cfg.UsesKubernetesManagementAPI() {
 		return nil, nil
 	}
-	return kcpCredentialVolume(name)
+	return kubeconfigVolume()
 }
 
 func managementAPIRBAC(cfg *types.DeployConfig) []rbacv1.PolicyRule {
@@ -384,6 +384,23 @@ func joinStrings(items []string, sep string) string {
 	return result
 }
 
+func kubeconfigVolume() ([]corev1.Volume, []corev1.VolumeMount) {
+	return []corev1.Volume{{
+			Name: "kcp-kubeconfig",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "rlark-kcp-kubeconfig"},
+				},
+			},
+		}},
+		[]corev1.VolumeMount{{
+			Name:      "kcp-kubeconfig",
+			MountPath: constants.KCPKubeconfigPath,
+			SubPath:   "admin.kubeconfig",
+			ReadOnly:  true,
+		}}
+}
+
 func postgresqlDataVolume(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
 	storage := resolveComponentStorage(cfg, constants.ComponentPostgresql)
 	mounts := []corev1.VolumeMount{{
@@ -476,7 +493,7 @@ var components = []types.Component{
 			return append(args, commonArgs(cfg)...)
 		},
 		VolumeFn: func(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
-			vols, mounts := managementAPIVolume(cfg, constants.ComponentGateway)
+			vols, mounts := managementAPIVolume(cfg)
 			if cfg.DB != nil {
 				dv, dm := dbConfigVolume()
 				vols = append(vols, dv...)
@@ -514,7 +531,7 @@ var components = []types.Component{
 			return append(args, commonArgs(cfg)...)
 		},
 		VolumeFn: func(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
-			vols, mounts := managementAPIVolume(cfg, constants.ComponentControllerManager)
+			vols, mounts := managementAPIVolume(cfg)
 			if cfg.DB != nil {
 				dv, dm := dbConfigVolume()
 				vols = append(vols, dv...)
@@ -563,7 +580,7 @@ var components = []types.Component{
 			}
 		},
 		VolumeFn: func(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
-			vols, mounts := managementAPIVolume(cfg, constants.ComponentServer)
+			vols, mounts := managementAPIVolume(cfg)
 			if cfg.DB != nil {
 				dv, dm := dbConfigVolume()
 				vols = append(vols, dv...)
@@ -573,8 +590,8 @@ var components = []types.Component{
 		},
 	},
 	{
-		Name: constants.ComponentAgent, Port: constants.AgentProbePort, Plane: types.PlaneData,
-		MetricsPort:    constants.AgentMetricsPort,
+		Name: constants.ComponentAgent, Port: 8081, Plane: types.PlaneData,
+		MetricsPort:    8081,
 		HealthCheckFn:  health.ModeHealthCheck(types.Component{Name: constants.ComponentAgent}),
 		ServiceAccount: "rlark-agent",
 		RBACRules: []rbacv1.PolicyRule{
@@ -589,15 +606,6 @@ var components = []types.Component{
 		},
 		K8sEnvFn: func(cfg *types.DeployConfig) []corev1.EnvVar {
 			return commonEnvs
-		},
-		// Ready once the agent's first watches of the management plane and of its cluster have synced.
-		ProbeFn: func(cfg *types.DeployConfig) (*corev1.Probe, *corev1.Probe) {
-			return nil, &corev1.Probe{
-				ProbeHandler:     corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/readyz", Port: intstr.FromInt32(constants.AgentProbePort)}},
-				PeriodSeconds:    5,
-				TimeoutSeconds:   3,
-				FailureThreshold: 3,
-			}
 		},
 		ArgsFn: func(cfg *types.DeployConfig) []string {
 			args := []string{
@@ -626,6 +634,106 @@ var components = []types.Component{
 		},
 		VolumeFn: func(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
 			return certVolume()
+		},
+	},
+	{
+		Name: constants.ComponentAgentNode, Port: 8081, Plane: types.PlaneData, WorkloadKind: "DaemonSet",
+		HealthCheckFn:  health.ModeHealthCheck(types.Component{Name: constants.ComponentAgentNode}),
+		ServiceAccount: constants.ComponentAgentNode,
+		ProbeFn: func(cfg *types.DeployConfig) (*corev1.Probe, *corev1.Probe) {
+			readiness := &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+					Path: "/readyz",
+					Port: intstr.FromInt32(8081),
+				}},
+				PeriodSeconds:    5,
+				TimeoutSeconds:   3,
+				FailureThreshold: 3,
+			}
+			return nil, readiness
+		},
+		RBACRules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"nodes"}, Verbs: []string{"get"}},
+			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{"list", "watch"}},
+		},
+		ImageFn: func(cfg *types.DeployConfig) string {
+			return imageByMode(cfg, func(k *types.KubernetesEnv) string { return k.AgentImage }, func(d *types.DockerEnv) string { return d.AgentImage })
+		},
+		ArtifactFn: func(cfg *types.DeployConfig) string { return cfg.Raw.AgentArtifact },
+		CommandFn: func(cfg *types.DeployConfig) []string {
+			return []string{"/usr/local/bin/agent"}
+		},
+		K8sEnvFn: func(cfg *types.DeployConfig) []corev1.EnvVar {
+			return commonEnvs
+		},
+		ArgsFn: func(cfg *types.DeployConfig) []string {
+			args := []string{
+				"--server-address=" + cfg.ControlPlaneAddress,
+				"--agent-type=" + cfg.EnvMode(),
+				"--client-cert=" + constants.CertDir + "/tls.crt",
+				"--client-key=" + constants.CertDir + "/tls.key",
+				"--ca-cert=" + constants.CertDir + "/ca.crt",
+				"--leader-election=false",
+				"--mode=node",
+				"--rlark-server-ssh-address=" + cfg.SSHServerAddress(),
+				// Enable node-level image pre-pulling (containerd/docker). The
+				// node-agent mounts the container runtime socket below.
+				"--image-pull-enabled=true",
+			}
+
+			if cfg.Kubernetes != nil {
+				args = append(args, "--in-cluster")
+				// Override the containerd socket path for non-standard runtimes
+				// such as k3s (/run/k3s/containerd/containerd.sock).
+				if cfg.Kubernetes.ContainerdSocket != "" {
+					args = append(args, "--containerd-socket="+cfg.Kubernetes.ContainerdSocket)
+				}
+			}
+
+			if cfg.InsecureSkipTLSVerify {
+				args = append(args, "--insecure-skip-tls-verify")
+			}
+
+			return args
+		},
+		VolumeFn: func(cfg *types.DeployConfig) ([]corev1.Volume, []corev1.VolumeMount) {
+			vols, mounts := certVolume()
+			vols = append(vols, corev1.Volume{
+				Name: "nodeserver-socket",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: "/var/run/rlark",
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectoryOrCreate}[0],
+					},
+				},
+			})
+			mounts = append(mounts, corev1.VolumeMount{
+				Name:      "nodeserver-socket",
+				MountPath: "/var/run/rlark",
+			})
+			// Mount the host containerd socket so the node-agent can invoke
+			// `ctr` to pre-pull images for Kubernetes/containerd nodes.
+			// When a custom socket path is configured (e.g. k3s uses
+			// /run/k3s/containerd/containerd.sock), mount its parent
+			// directory instead of the default /run/containerd.
+			socketHostDir := "/run/containerd"
+			if cfg.Kubernetes != nil && cfg.Kubernetes.ContainerdSocket != "" {
+				socketHostDir = filepath.Dir(cfg.Kubernetes.ContainerdSocket)
+			}
+			vols = append(vols, corev1.Volume{
+				Name: "containerd-socket",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: socketHostDir,
+						Type: &[]corev1.HostPathType{corev1.HostPathDirectoryOrCreate}[0],
+					},
+				},
+			})
+			mounts = append(mounts, corev1.VolumeMount{
+				Name:      "containerd-socket",
+				MountPath: socketHostDir,
+			})
+			return vols, mounts
 		},
 	},
 	{
@@ -882,15 +990,11 @@ func imagePullSecrets(cfg *types.DeployConfig) []corev1.LocalObjectReference {
 	if cfg.Kubernetes == nil {
 		return nil
 	}
-	secrets := make([]corev1.LocalObjectReference, 0, len(cfg.Kubernetes.ImagePullSecrets)+len(cfg.Kubernetes.ImagePullCredentials))
+	secrets := make([]corev1.LocalObjectReference, 0, len(cfg.Kubernetes.ImagePullSecrets))
 	for _, name := range cfg.Kubernetes.ImagePullSecrets {
 		secrets = append(secrets, corev1.LocalObjectReference{Name: name})
 	}
-	// The installer's copy, which pulls the agent's first image, and the delivered one, which follows the credential.
-	for _, credential := range cfg.Kubernetes.ImagePullCredentials {
-		secrets = append(secrets, corev1.LocalObjectReference{Name: types.InstallCredentialName(credential.Name)}, corev1.LocalObjectReference{Name: credential.Name})
-	}
-	return secrets
+	return append(secrets, credentialPullSecrets(cfg)...)
 }
 
 func Deployment(cfg *types.DeployConfig, c *types.Component) *appsv1.Deployment {
@@ -981,22 +1085,7 @@ func Deployment(cfg *types.DeployConfig, c *types.Component) *appsv1.Deployment 
 	}
 
 	dep.Spec.Template.Spec.NodeSelector = resolveComponentNodeSelector(cfg, c.Name)
-
-	// The cluster Agent rewrites what it renders from its own flags (the node Agent DaemonSet, Task
-	// sidecars). An old and a new one side by side during a rolling update would flip those back and forth.
-	if c.Name == constants.ComponentAgent {
-		dep.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
-		// The cluster Agent reaches the management plane the way its node does: in the node's network, by the names
-		// the site gives the node (its /etc/hosts, which a host-network Pod is started with), through the node's
-		// tunnel. It goes to the control plane where the cluster has one in sight, the machine of the site that is
-		// always there, and is the first node a new cluster has.
-		spec := &dep.Spec.Template.Spec
-		spec.HostNetwork, spec.DNSPolicy = true, corev1.DNSClusterFirstWithHostNet
-		spec.Tolerations = []corev1.Toleration{{Key: constants.ControlPlaneNodeRole, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}}
-		spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{{
-			Weight: 100, Preference: corev1.NodeSelectorTerm{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: constants.ControlPlaneNodeRole, Operator: corev1.NodeSelectorOpExists}}},
-		}}}}
-	}
+	placeClusterAgent(dep, c)
 
 	return dep
 }
@@ -1076,6 +1165,9 @@ func DaemonSet(cfg *types.DeployConfig, c *types.Component) *appsv1.DaemonSet {
 	}
 
 	ds.Spec.Template.Spec.NodeSelector = resolveComponentNodeSelector(cfg, c.Name)
+	if c.Name == constants.ComponentAgentNode {
+		ds.Spec.Template.Spec.NodeSelector = map[string]string{"rlark.io/enabled": "true"}
+	}
 
 	return ds
 }

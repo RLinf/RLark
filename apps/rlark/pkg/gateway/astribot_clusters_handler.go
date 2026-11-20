@@ -92,3 +92,20 @@ func (g *Gateway) setClusterDisplayName(c *gin.Context) {
 	log.FromContext(c.Request.Context()).WithName("audit").Info("cluster display name", "action", "set", "actor", c.GetString(authSubjectKey),
 		"cluster", c.Param("cluster_id"), "was", was, "now", displayName, "set", c.Writer.Status() == http.StatusOK)
 }
+
+// AstribotClusterInfo is what the site adds to ClusterInfo.
+type AstribotClusterInfo struct {
+	// DisplayName is spec.displayName as the administrator set it; absent when unset. The official Name is what the
+	// cluster is shown as: its display name, else its ID.
+	DisplayName string `json:"displayName,omitempty"`
+	// NodeAgents is the declared node Agents of the cluster (spec.nodeAgents); absent when never declared.
+	NodeAgents *rlarkv1alpha1.ClusterNodeAgents `json:"nodeAgents,omitempty"`
+}
+
+func setAstribotClusterInfo(info *ClusterInfo, cluster rlarkv1alpha1.Cluster) {
+	info.NodeAgents = cluster.Spec.NodeAgents
+	if displayName := strings.TrimSpace(cluster.Spec.DisplayName); displayName != "" {
+		info.Name = displayName
+		info.DisplayName = displayName
+	}
+}
