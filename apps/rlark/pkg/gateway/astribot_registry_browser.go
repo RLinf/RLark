@@ -190,6 +190,11 @@ func listRegistryTags(c *gin.Context, browser *registryBrowser, credential store
 		query.Set("last", last)
 	}
 	response, err := browser.request(c.Request.Context(), credential, http.MethodGet, "/v2/"+repository+"/tags/list", query)
+	// A repository the catalog lists whose images were only pushed by digest has no tags: the registry answers 404.
+	if err == nil && response.StatusCode == http.StatusNotFound {
+		response.Body.Close()
+		return []string{}, "", true
+	}
 	if !registryBrowseResponse(c, response, err) {
 		return nil, "", false
 	}
