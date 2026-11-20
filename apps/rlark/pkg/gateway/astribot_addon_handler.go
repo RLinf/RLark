@@ -9,7 +9,7 @@ import (
 )
 
 // publishAddonPackage publishes the Package (addons.Publish) and returns, on failure, the HTTP status to answer with.
-func (g *Gateway) publishAddonPackage(ctx context.Context, clusterID, name, version string) (addons.AddonMeta, int, error) {
+func (g *Gateway) publishAddonPackage(ctx context.Context, clusterID, name, version string) (addons.ItemMeta, int, error) {
 	meta, err := addons.Publish(ctx, g.rawClient.CoreV1().ConfigMaps(clusterID), clusterID, name, version)
 	switch {
 	case errors.Is(err, addons.ErrNotInCatalog):

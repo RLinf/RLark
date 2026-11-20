@@ -9,16 +9,16 @@ import (
 )
 
 func (g *Gateway) listAddonCatalog(c *gin.Context) {
-	items := addons.Registry.List()
+	items := addons.Catalog.List()
 	if items == nil {
-		items = []addons.AddonMeta{}
+		items = []addons.ItemMeta{}
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items, "success": true})
 }
 
 func (g *Gateway) getAddonCatalog(c *gin.Context) {
 	name := c.Param("name")
-	addon, ok := addons.Registry.Get(name)
+	addon, ok := addons.Catalog.Get(name)
 	if !ok {
 		respondError(c, http.StatusNotFound, CodeResourceNotFound, "addon not found")
 		return

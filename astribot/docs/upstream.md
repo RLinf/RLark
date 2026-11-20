@@ -18,7 +18,7 @@
 | Gateway（`pkg/gateway`） | 存储（`smb`、`hostpath`、S3 新字段、按档位的 StorageClass、改名）；镜像仓库（不回密码、浏览）；集群和节点显示名；Agent 证书签发等 Secret 存好再返回并带拉取凭据；Addon 的包和 `requiredWith` | 同上 |
 | Server（`pkg/server`） | `POST /api/v1/certificates/revoke` 实现；每个集群 agent 只能读同名的 `Cluster`；agent 隧道就绪才记心跳 | 安全和发布顺序 |
 | rlarkadm（`pkg/rlarkadm`） | 不再建节点 agent 的 DaemonSet；去掉 `containerd-socket`；`image-pull-credentials` 在 agent 之前放进 `rlark-system` | 节点 agent 改由 Cluster 声明 |
-| 其他 Go | `pkg/distribution`、`pkg/addons/catalog.go`（版本化的包、`requiredWith`）、`pkg/rlarktools/raylauncher`（无 head 的 Job 不等 Ray）、`pkg/network/nodeserver`、`pkg/common`、`apps/rlark/go.mod`、`go.sum` | 随上面的行为 |
+| 其他 Go | `pkg/distribution`、`pkg/gateway/addon_catalog_handler.go`（目录接口读 `addons.Catalog`：`pkg/addons/catalog.go` 保持官方原样，它的 `Registry` 只剩官方测试和比对测试在读，现网渲染走 `Item.Render`；版本化的包、目录文件夹、`requiredWith` 都在 `pkg/addons/astribot_*.go`）、`pkg/rlarktools/raylauncher`（无 head 的 Job 不等 Ray）、`pkg/network/nodeserver`、`pkg/common`、`apps/rlark/go.mod`、`go.sum` | 随上面的行为 |
 | 内嵌 Addon | `pkg/addons/catalog/csi-driver-rclone/` 的 `addon.yaml` 和三个清单 | `nodeUpdateStrategy`、`nodeImagePullPolicy`、`controllerNodeSelector`、`nodeTpsLimit` |
 | 控制台 | 官方页面里的显示名、按名字引用存储、SMB 和挂载档位、Job 编辑器选镜像、仓库口令、节点表的 WireGuard 地址，及相应的 `i18n.ts`、`mockBackend.ts`、样式和测试；删掉了 `src/admin/CreateCluster.tsx`、`src/utils/deployYaml.ts`、`tests/deploy-yaml.test.mjs` | 新建集群改走 Gateway |
 | 可执行示例 | `apps/rlark/docs/examples/` 的 `deploy-data-plane.yaml`（去掉 `containerd-socket`）、`quickstart-cp.sh`、`update-kcp-crds.sh`（读 kcp Pod 本次启动写的 `/.kcp/admin.kubeconfig`） | 随行为改 |
@@ -48,5 +48,6 @@ git status    # 冲突的文件带冲突标记，逐个解决后 git add
 2. 官方的 Dockerfile 变了就照样改我们的：`git diff $OLD $NEW -- apps/rlark/Dockerfile apps/rlark-ui/Dockerfile apps/rlark-ui/nginx.conf`，改到 `astribot/release/rlark.Dockerfile`、`rlark-ui.Dockerfile`、`rlark-ui.nginx.conf`。发布只用这三份，官方新加的程序不照搬就进不了镜像。
 3. 跑 [README](../README.md) 的全部测试。`apps/rlark/pkg/gateway/swagger_test.go` 会指出官方新加而没写进文档的路由；我们的路由写进 `astribot/docs/swagger.yaml`。
 4. 官方改了上表中我们也改的行为，就在本文件和 [architecture.md](architecture.md) 里跟着改。
-5. 把本文件和 [README](../README.md) 里的基线 `9ad4a21` 换成 `$NEW`。
-6. 照 [release.md](release.md) 整套构建一次再上线（官方的改动可能涉及任何镜像）。
+5. 官方改了 `pkg/addons/catalog.go` 的 `embeddedAddon.Render`（参数默认值、模板数据、模板函数），就照样改 `pkg/addons/astribot_catalog.go` 的 `Item.Render`：现网渲染的每个 Addon 走后者。官方的 `Render` 只按目录读编进程序的文件，两者共用不了代码；`TestItemsRenderAsTheOfficialRegistryDoes` 逐个内置项比对两边的输出，不一致就失败。
+6. 把本文件和 [README](../README.md) 里的基线 `9ad4a21` 换成 `$NEW`。
+7. 照 [release.md](release.md) 整套构建一次再上线（官方的改动可能涉及任何镜像）。
