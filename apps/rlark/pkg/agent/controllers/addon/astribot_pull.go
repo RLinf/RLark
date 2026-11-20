@@ -23,9 +23,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/astribot/rollout"
+	"github.com/rlinf/rlark/apps/rlark/astribot/storageref"
 	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
 	raykubernetes "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/workload/ray/kubernetes"
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
@@ -42,7 +44,56 @@ const (
 	NotReadyMessageAnnotation = "rlark.io/not-ready-message"
 )
 
+func addonGeneration(mgmtAddon *rlarkv1alpha1.Addon) string {
+	return strconv.FormatInt(mgmtAddon.Generation, 10)
+}
+
 var errAddonCleanupPending = errors.New("addon resource deletion pending")
+
+// cleanupPossible refuses a cleanup that could not tell this Addon's resources from another's of its name.
+func (r *pullReconciler) cleanupPossible(mgmtAddon *rlarkv1alpha1.Addon) error {
+	if r.c.LocalKubeClient == nil {
+		return errors.New("local Kubernetes client unavailable during addon cleanup")
+	}
+	if mgmtAddon.UID == "" {
+		return errors.New("cannot clean up addon without UID")
+	}
+	return nil
+}
+
+// deleteOwned deletes one listed resource of the Addon as it was listed (one relabelled or replaced since is
+// not deleted), and sets pending when a deletion was asked for: the cleanup is done once a pass finds nothing.
+func (r *pullReconciler) deleteOwned(ctx context.Context, item client.Object, pending *error) error {
+	uid := item.GetUID()
+	version := item.GetResourceVersion()
+	if uid == "" || version == "" {
+		return fmt.Errorf("addon resource %s/%s has no UID or resourceVersion", item.GetNamespace(), item.GetName())
+	}
+	if err := r.c.LocalKubeClient.Delete(ctx, item, client.Preconditions{UID: &uid, ResourceVersion: &version}); err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			return nil
+		}
+		return fmt.Errorf("delete addon resource %s/%s: %w", item.GetNamespace(), item.GetName(), err)
+	}
+	*pending = errAddonCleanupPending
+	return nil
+}
+
+// preparer returns what is done to each rendered object before it is applied: its volumes that name an RLark
+// storage are resolved (the storage views are read once for the Addon), and its DaemonSet is made one RLark
+// rolls. The error is the Addon's status message.
+func (r *pullReconciler) preparer(ctx context.Context) func(*unstructured.Unstructured) error {
+	var storageViews []storageref.View
+	return func(obj *unstructured.Unstructured) error {
+		if err := r.resolveStorage(ctx, obj, apis.Namespace, &storageViews); err != nil {
+			return fmt.Errorf("storage: %v", err)
+		}
+		if err := rollDaemonSet(obj); err != nil {
+			return fmt.Errorf("%s/%s: %v", obj.GetKind(), obj.GetName(), err)
+		}
+		return nil
+	}
+}
 
 // rollDaemonSet makes an Addon's DaemonSet one whose Pods RLark replaces (package rollout): a node that is off
 // does not hold the other nodes back, and one node goes first. The policy is the template's rlark.io/rollout
@@ -121,8 +172,8 @@ const renderedPrefix = "addon-rendered-"
 // every later reconciliation applies what is kept. So an Addon's workloads change when the Addon does, and not
 // when the agent is replaced by one that would render the same Addon differently or that knows other versions.
 // A revision whose Package is not there is errPackageMissing, and nothing is rendered in its place.
-func (r *pullReconciler) rendered(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon) ([][]byte, error) {
-	generation := strconv.FormatInt(mgmtAddon.Generation, 10)
+func (r *pullReconciler) rendered(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon) ([]addons.Manifest, error) {
+	generation := addonGeneration(mgmtAddon)
 	kept := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: renderedPrefix + mgmtAddon.Name, Namespace: apis.Namespace}}
 	err := r.c.LocalKubeClient.Get(ctx, client.ObjectKeyFromObject(kept), kept)
 	if client.IgnoreNotFound(err) != nil {
@@ -131,9 +182,9 @@ func (r *pullReconciler) rendered(ctx context.Context, mgmtAddon *rlarkv1alpha1.
 	exists := err == nil
 	if exists && kept.Labels[addons.LabelAddonUID] == string(mgmtAddon.UID) && kept.Annotations[AddonGenerationAnnotation] == generation {
 		names := slices.Sorted(maps.Keys(kept.Data))
-		manifests := make([][]byte, 0, len(names))
+		manifests := make([]addons.Manifest, 0, len(names))
 		for _, name := range names {
-			manifests = append(manifests, kept.Data[name])
+			manifests = append(manifests, addons.Manifest{Raw: kept.Data[name]})
 		}
 		return manifests, nil
 	}
@@ -150,16 +201,14 @@ func (r *pullReconciler) rendered(ctx context.Context, mgmtAddon *rlarkv1alpha1.
 	if err != nil {
 		return nil, fmt.Errorf("package %s: %w", name, err)
 	}
-	rendered, err := item.Render(mgmtAddon.Spec.Values, apis.Namespace, mgmtAddon.Name, string(mgmtAddon.UID))
+	manifests, err := item.Render(mgmtAddon.Spec.Values, apis.Namespace, mgmtAddon.Name, string(mgmtAddon.UID))
 	if err != nil {
 		return nil, err
 	}
-	manifests := make([][]byte, 0, len(rendered))
 	kept.Labels = map[string]string{addons.LabelAddonName: mgmtAddon.Name, addons.LabelAddonUID: string(mgmtAddon.UID)}
 	kept.Annotations = map[string]string{AddonGenerationAnnotation: generation}
 	kept.Data = map[string][]byte{}
-	for i, manifest := range rendered {
-		manifests = append(manifests, manifest.Raw)
+	for i, manifest := range manifests {
 		kept.Data[fmt.Sprintf("%03d.yaml", i)] = manifest.Raw
 	}
 	if exists {
@@ -171,6 +220,18 @@ func (r *pullReconciler) rendered(ctx context.Context, mgmtAddon *rlarkv1alpha1.
 		return nil, fmt.Errorf("keep the rendering: %w", err)
 	}
 	return manifests, nil
+}
+
+// packageMissing reports a revision whose Package is not there. Nothing of the Addon is touched. Where nothing
+// new was asked of it (the agent was replaced, the Addon is as it was), its workloads are still what its status
+// says; a new revision that cannot be rendered has failed.
+func (r *pullReconciler) packageMissing(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon, missing error) (reconcile.Result, error) {
+	phase := mgmtAddon.Status.Phase
+	if phase == "" || mgmtAddon.Status.ObservedGeneration != mgmtAddon.Generation {
+		phase = rlarkv1alpha1.AddonPhaseFailed
+	}
+	r.updateStatus(ctx, mgmtAddon, phase, missing.Error())
+	return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
 }
 
 // injectImagePullSecrets gives the Pods of an Addon workload the image registry
@@ -197,6 +258,35 @@ func (r *pullReconciler) injectImagePullSecrets(ctx context.Context, obj *unstru
 		secrets = append(secrets, map[string]interface{}{"name": secret.Name})
 	}
 	return unstructured.SetNestedSlice(obj.Object, secrets, "spec", "template", "spec", "imagePullSecrets")
+}
+
+// alreadyApplied says whether existing, the live object of obj's name, needs no update: it was applied from this
+// revision of the Addon and the fields the Addon specifies are still as rendered (the annotation identifies the
+// revision, but does not prove that the live fields still match it). An object of another Addon instance is
+// never adopted. obj keeps the live image pull credentials while the workload's Pods are all ready.
+func alreadyApplied(obj, existing *unstructured.Unstructured, mgmtAddon *rlarkv1alpha1.Addon) (bool, error) {
+	labels := existing.GetLabels()
+	if labels[addons.LabelAddonName] != mgmtAddon.Name || labels[addons.LabelAddonUID] != string(mgmtAddon.UID) || mgmtAddon.UID == "" {
+		return false, fmt.Errorf("ownership conflict for %s/%s", obj.GetKind(), client.ObjectKeyFromObject(obj))
+	}
+	sameGeneration := existing.GetAnnotations()[AddonGenerationAnnotation] == addonGeneration(mgmtAddon)
+	ready, _, _ := unstructured.NestedInt64(existing.Object, "status", "readyReplicas")
+	pods, _, _ := unstructured.NestedInt64(existing.Object, "status", "replicas")
+	if obj.GetKind() == "DaemonSet" {
+		ready, _, _ = unstructured.NestedInt64(existing.Object, "status", "numberReady")
+		pods, _, _ = unstructured.NestedInt64(existing.Object, "status", "desiredNumberScheduled")
+	}
+	if sameGeneration && ready == pods {
+		// The credentials given by image name are not a reason to replace the ready Pods of an Addon that has not
+		// changed (a credential that comes to match, or is deleted): they are taken with the Addon's next change,
+		// or at once while a Pod is not ready, which may be waiting for the very credential.
+		if pulls, found, _ := unstructured.NestedFieldCopy(existing.Object, "spec", "template", "spec", "imagePullSecrets"); found {
+			_ = unstructured.SetNestedField(obj.Object, pulls, "spec", "template", "spec", "imagePullSecrets")
+		} else {
+			unstructured.RemoveNestedField(obj.Object, "spec", "template", "spec", "imagePullSecrets")
+		}
+	}
+	return sameGeneration && desiredFieldsMatch(obj, existing), nil
 }
 
 // desiredFieldsMatch ignores server-defaulted fields absent from the rendered
@@ -318,6 +408,54 @@ func (r *pullReconciler) replacePodsOnUnselectedNodes(ctx context.Context, mgmtA
 		}
 	}
 	return nil
+}
+
+// deploymentNotReady is empty for a Deployment whose Pods are all of its current template and ready (Pods of an
+// older template, a rollout stuck on an image pull, say, do not count); otherwise it says what is missing.
+func (r *pullReconciler) deploymentNotReady(ctx context.Context, d *appsv1.Deployment) string {
+	if d.Status.ObservedGeneration >= d.Generation && d.Status.UpdatedReplicas >= *d.Spec.Replicas && d.Status.Replicas <= d.Status.UpdatedReplicas && d.Status.ReadyReplicas >= *d.Spec.Replicas {
+		return ""
+	}
+	msg := fmt.Sprintf("Deployment %s: %d/%d updated, %d ready", d.Name, d.Status.UpdatedReplicas, *d.Spec.Replicas, d.Status.ReadyReplicas)
+	if why := r.podState(ctx, d.Namespace, d.Spec.Selector.MatchLabels); why != "" {
+		msg += "; " + why
+	}
+	if label := d.Annotations[NotReadyMessageAnnotation]; label != "" {
+		msg = label + ": " + msg
+	}
+	return msg
+}
+
+// daemonSetNotReady is empty for a DaemonSet that is as far as it was asked to be; otherwise it says what it
+// waits for.
+func (r *pullReconciler) daemonSetNotReady(ctx context.Context, ds *appsv1.DaemonSet) (string, error) {
+	if ds.Status.ObservedGeneration < ds.Generation {
+		return fmt.Sprintf("DaemonSet %s: not yet observed", ds.Name), nil
+	}
+	// A DaemonSet meant for one class of nodes (a robot's, say) is fine on a
+	// cluster without such nodes; one meant for every node is not.
+	pod := ds.Spec.Template.Spec
+	if ds.Status.DesiredNumberScheduled == 0 && len(pod.NodeSelector) == 0 && (pod.Affinity == nil || pod.Affinity.NodeAffinity == nil) {
+		return fmt.Sprintf("DaemonSet %s: no nodes scheduled", ds.Name), nil
+	}
+	if rollout.Rolled(ds) {
+		waiting, err := r.rolledDaemonSetWaitingOn(ctx, ds)
+		if err != nil || waiting == "" {
+			return "", err
+		}
+		return fmt.Sprintf("DaemonSet %s: waiting on %s", ds.Name, waiting), nil
+	}
+	// Under OnDelete the Pods take a new template only when someone replaces them (csi-driver-rclone keeps
+	// a node's mounts that way), so not-yet-updated Pods are what was asked for, not an unfinished rollout.
+	rolling := ds.Spec.UpdateStrategy.Type != appsv1.OnDeleteDaemonSetStrategyType
+	if (rolling && ds.Status.UpdatedNumberScheduled < ds.Status.DesiredNumberScheduled) || ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {
+		waiting, err := r.daemonSetWaitingOn(ctx, ds)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("DaemonSet %s: %d/%d ready%s", ds.Name, ds.Status.NumberReady, ds.Status.DesiredNumberScheduled, waiting), nil
+	}
+	return "", nil
 }
 
 // podState says why a workload's Pod is not ready: the init container still running and the last line it
