@@ -216,9 +216,6 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	for i := range admissionList.Items {
 		admission := &admissionList.Items[i]
 		id := admission.Spec.ClusterID + "/" + admission.Name
-		if spec.Mode == stationv1alpha1.SiteNetworkModeRouted {
-			continue
-		}
 		// A node the SiteNetwork declares stays as declared there: its
 		// admission only lets a machine in under that declaration.
 		node, inSpec := declared[id]
@@ -290,7 +287,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 			continue
 		}
 		// A node with no key is recorded and is no member of the tunnel.
-		if enrollment.Spec.PublicKey == "" && spec.Mode != stationv1alpha1.SiteNetworkModeRouted {
+		if enrollment.Spec.PublicKey == "" {
 			answer.Phase, answer.Reason = stationv1alpha1.NetworkEnrollmentPending, "the node has not reported a public key"
 			continue
 		}
@@ -321,17 +318,6 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		answer.Role = node.Role
 		if answer.Role == "" {
 			answer.Role = string(network.RoleLeaf)
-		}
-		if spec.Mode == stationv1alpha1.SiteNetworkModeRouted {
-			answer.Address = node.NodeAddress
-			if answer.Address == "" && len(enrollment.Spec.Addresses) > 0 {
-				answer.Address = enrollment.Spec.Addresses[0]
-			}
-			answer.Phase, answer.Reason = stationv1alpha1.NetworkEnrollmentEnrolled, ""
-			if answer.Address == "" {
-				answer.Phase, answer.Reason = stationv1alpha1.NetworkEnrollmentPending, "the node has not reported an address"
-			}
-			continue
 		}
 		// A node the SiteNetwork declares without an address has its admission's.
 		address := node.Address
@@ -373,7 +359,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	var addressTaken []string
 	for _, node := range spec.Nodes {
 		id := node.ClusterID + "/" + node.NodeName
-		if node.PublicKey == "" || node.Address == "" || spec.Mode == stationv1alpha1.SiteNetworkModeRouted || enrolled[id] {
+		if node.PublicKey == "" || node.Address == "" || enrolled[id] {
 			continue
 		}
 		if holder := holderOf[node.Address]; holder != "" && holder != id {
@@ -418,160 +404,151 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	}
 	connected := metav1.Condition{Type: "FullyConnected", Status: metav1.ConditionTrue, Reason: "AllPairsReachable", Message: "every pair of members has a path"}
 	status.Members, status.Unreachable, status.Declared = 0, nil, nil
-	var again time.Duration
-	if spec.Mode != stationv1alpha1.SiteNetworkModeRouted {
-		again = linkInterval
-		memberOfKey := map[string]string{}
+	again := linkInterval
+	memberOfKey := map[string]string{}
+	for _, member := range members {
+		memberOfKey[member.PublicKey] = member.ID
+	}
+	now := r.now()
+	result, err := network.Compute(topology, members)
+	if err != nil {
+		ready = metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "InvalidTopology", Message: err.Error()}
 		for _, member := range members {
-			memberOfKey[member.PublicKey] = member.ID
-		}
-		now := r.now()
-		result, err := network.Compute(topology, members)
-		if err != nil {
-			ready = metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "InvalidTopology", Message: err.Error()}
-			for _, member := range members {
-				if !declaredOnly[member.ID] {
-					answers[member.ID].Phase, answers[member.ID].Reason = stationv1alpha1.NetworkEnrollmentPending, "the SiteNetwork is invalid: "+err.Error()
-				}
+			if !declaredOnly[member.ID] {
+				answers[member.ID].Phase, answers[member.ID].Reason = stationv1alpha1.NetworkEnrollmentPending, "the SiteNetwork is invalid: "+err.Error()
 			}
 		}
-		for _, member := range members {
-			answer := answers[member.ID]
-			config, ok := result.Configs[member.ID]
-			if declaredOnly[member.ID] {
-				// Declared ahead of its enrollment: it is in its peers'
-				// configurations and has no enrollment to answer.
-				if ok {
-					status.Members++
-				}
-				data, hash := document(config)
-				if keyDeclared[member.ID] && ok {
-					clusterID, nodeName, _ := strings.Cut(member.ID, "/")
-					status.Declared = append(status.Declared, stationv1alpha1.SiteNetworkDeclaredConfig{ClusterID: clusterID, NodeName: nodeName, Config: data, ConfigHash: hash})
-				}
-				if admission := admissions[member.ID]; admission != nil && ok {
-					admitted[member.ID] = stationv1alpha1.NodeAdmissionStatus{Config: data, ConfigHash: hash, PublicKey: member.PublicKey}
-				}
-				continue
-			}
-			answer.Problems = result.Problems[member.ID]
-			answer.Relay = result.Relays[member.ID]
-			if !ok {
-				if err == nil {
-					answer.Reason = "the node is not configurable: " + fmt.Sprint(answer.Problems)
-				}
-				continue
-			}
-			answer.Phase, answer.Reason = stationv1alpha1.NetworkEnrollmentEnrolled, ""
-			answer.Config, answer.ConfigHash = document(config)
-			answer.TunnelAddress, answer.Address = member.Address, member.Address
-			if member.NodeAddress != "" {
-				answer.Address = member.NodeAddress
-			}
-			status.Members++
-			if member.Role != network.RoleLeaf {
-				continue
-			}
-			// The Hubs a Leaf dials are the peers its configuration gives an
-			// endpoint. Each one's latest report says what it sees of the Leaf.
-			var unanswered, silent, unknown []string
-			var silentSince time.Time
-			for _, peer := range config.Peers {
-				if peer.Endpoint == "" {
-					continue
-				}
-				link := stationv1alpha1.NetworkEnrollmentLink{Hub: memberOfKey[peer.PublicKey], State: stationv1alpha1.NetworkLinkUnknown}
-				var previous stationv1alpha1.NetworkEnrollmentLink
-				for _, stored := range enrollmentOf[member.ID].Status.Links {
-					if stored.Hub == link.Hub {
-						previous = stored
-					}
-				}
-				// What is kept of a report's time is kept to the second, as
-				// the API server stores it.
-				var seen *stationv1alpha1.WireguardPeerObservation
-				var reported metav1.Time
-				if hub := enrollmentOf[link.Hub]; hub != nil && hub.Status.Observation != nil && hub.Status.Observation.Wireguard != nil && now.Sub(hub.Status.Observation.ReportedAt.Time) < linkReportAge {
-					reported = hub.Status.Observation.ReportedAt.Rfc3339Copy()
-					for i := range hub.Status.Observation.Wireguard.Peers {
-						if hub.Status.Observation.Wireguard.Peers[i].Name == member.ID {
-							seen = &hub.Status.Observation.Wireguard.Peers[i]
-						}
-					}
-				}
-				stale := link
-				if seen != nil {
-					stale.LatestHandshake, stale.ReceivedBytes, stale.ObservedAt = seen.LatestHandshake, seen.ReceivedBytes, &reported
-				}
-				switch {
-				case seen == nil:
-				case seen.LatestHandshake != nil && now.Sub(seen.LatestHandshake.Time) < linkHandshakeAge:
-					link.State = stationv1alpha1.NetworkLinkConnected
-				case previous.ObservedAt == nil || seen.ReceivedBytes < previous.ReceivedBytes:
-					// The first report with a stale handshake, or with a
-					// counter the hub started again, only gives the counter
-					// to compare the next one with: until then the link
-					// keeps the state it had.
-					link = stale
-					if previous.State != "" {
-						link.State = previous.State
-					}
-				case !reported.After(previous.ObservedAt.Time):
-					link = previous
-				case seen.ReceivedBytes > previous.ReceivedBytes:
-					link = stale
-					link.State = stationv1alpha1.NetworkLinkUnanswered
-				case seen.ReceivedBytes == previous.ReceivedBytes && previous.State == stationv1alpha1.NetworkLinkSilent:
-					// Nothing moved: the stored counter still serves, and the
-					// status is not written again for a newer report time.
-					link = previous
-				default:
-					link = stale
-					link.State = stationv1alpha1.NetworkLinkSilent
-				}
-				link.Since = previous.Since
-				if link.State != previous.State {
-					link.Since = metav1.NewTime(now)
-				}
-				switch link.State {
-				case stationv1alpha1.NetworkLinkUnanswered:
-					unanswered = append(unanswered, link.Hub)
-				case stationv1alpha1.NetworkLinkSilent:
-					silent = append(silent, link.Hub)
-					if link.Since.After(silentSince) {
-						silentSince = link.Since.Time
-					}
-				case stationv1alpha1.NetworkLinkUnknown:
-					unknown = append(unknown, link.Hub)
-				}
-				answer.Links = append(answer.Links, link)
-			}
-			// The summary names hubs and, at most, the time the last one went
-			// silent, so it changes only when a link changes state.
-			var lines []string
-			if len(unanswered) > 0 {
-				lines = append(lines, "this node's requests arrive at "+strings.Join(unanswered, ", ")+" and no session forms: the answers do not get back to it")
-			}
-			if len(silent) > 0 && len(silent) == len(answer.Links) {
-				lines = append(lines, "nothing arrives from this node at any hub it dials since "+silentSince.UTC().Format(time.RFC3339))
-			} else if len(silent) > 0 {
-				lines = append(lines, "nothing arrives from this node at "+strings.Join(silent, ", "))
-			}
-			if len(unknown) > 0 {
-				lines = append(lines, "no current report of this node from "+strings.Join(unknown, ", "))
-			}
-			answer.LinkSummary = strings.Join(lines, "; ")
-		}
-		if len(result.Unreachable) > 0 {
-			status.Unreachable = result.Unreachable[:min(32, len(result.Unreachable))]
-			connected = metav1.Condition{Type: "FullyConnected", Status: metav1.ConditionFalse, Reason: "UnreachablePairs", Message: strconv.Itoa(len(result.Unreachable)) + " ordered pairs of members have no path"}
-		}
-	} else {
-		for _, answer := range answers {
-			if answer.Phase == stationv1alpha1.NetworkEnrollmentEnrolled {
+	}
+	for _, member := range members {
+		answer := answers[member.ID]
+		config, ok := result.Configs[member.ID]
+		if declaredOnly[member.ID] {
+			// Declared ahead of its enrollment: it is in its peers'
+			// configurations and has no enrollment to answer.
+			if ok {
 				status.Members++
 			}
+			data, hash := document(config)
+			if keyDeclared[member.ID] && ok {
+				clusterID, nodeName, _ := strings.Cut(member.ID, "/")
+				status.Declared = append(status.Declared, stationv1alpha1.SiteNetworkDeclaredConfig{ClusterID: clusterID, NodeName: nodeName, Config: data, ConfigHash: hash})
+			}
+			if admission := admissions[member.ID]; admission != nil && ok {
+				admitted[member.ID] = stationv1alpha1.NodeAdmissionStatus{Config: data, ConfigHash: hash, PublicKey: member.PublicKey}
+			}
+			continue
 		}
+		answer.Problems = result.Problems[member.ID]
+		answer.Relay = result.Relays[member.ID]
+		if !ok {
+			if err == nil {
+				answer.Reason = "the node is not configurable: " + fmt.Sprint(answer.Problems)
+			}
+			continue
+		}
+		answer.Phase, answer.Reason = stationv1alpha1.NetworkEnrollmentEnrolled, ""
+		answer.Config, answer.ConfigHash = document(config)
+		answer.TunnelAddress, answer.Address = member.Address, member.Address
+		if member.NodeAddress != "" {
+			answer.Address = member.NodeAddress
+		}
+		status.Members++
+		if member.Role != network.RoleLeaf {
+			continue
+		}
+		// The Hubs a Leaf dials are the peers its configuration gives an
+		// endpoint. Each one's latest report says what it sees of the Leaf.
+		var unanswered, silent, unknown []string
+		var silentSince time.Time
+		for _, peer := range config.Peers {
+			if peer.Endpoint == "" {
+				continue
+			}
+			link := stationv1alpha1.NetworkEnrollmentLink{Hub: memberOfKey[peer.PublicKey], State: stationv1alpha1.NetworkLinkUnknown}
+			var previous stationv1alpha1.NetworkEnrollmentLink
+			for _, stored := range enrollmentOf[member.ID].Status.Links {
+				if stored.Hub == link.Hub {
+					previous = stored
+				}
+			}
+			// What is kept of a report's time is kept to the second, as
+			// the API server stores it.
+			var seen *stationv1alpha1.WireguardPeerObservation
+			var reported metav1.Time
+			if hub := enrollmentOf[link.Hub]; hub != nil && hub.Status.Observation != nil && hub.Status.Observation.Wireguard != nil && now.Sub(hub.Status.Observation.ReportedAt.Time) < linkReportAge {
+				reported = hub.Status.Observation.ReportedAt.Rfc3339Copy()
+				for i := range hub.Status.Observation.Wireguard.Peers {
+					if hub.Status.Observation.Wireguard.Peers[i].Name == member.ID {
+						seen = &hub.Status.Observation.Wireguard.Peers[i]
+					}
+				}
+			}
+			stale := link
+			if seen != nil {
+				stale.LatestHandshake, stale.ReceivedBytes, stale.ObservedAt = seen.LatestHandshake, seen.ReceivedBytes, &reported
+			}
+			switch {
+			case seen == nil:
+			case seen.LatestHandshake != nil && now.Sub(seen.LatestHandshake.Time) < linkHandshakeAge:
+				link.State = stationv1alpha1.NetworkLinkConnected
+			case previous.ObservedAt == nil || seen.ReceivedBytes < previous.ReceivedBytes:
+				// The first report with a stale handshake, or with a
+				// counter the hub started again, only gives the counter
+				// to compare the next one with: until then the link
+				// keeps the state it had.
+				link = stale
+				if previous.State != "" {
+					link.State = previous.State
+				}
+			case !reported.After(previous.ObservedAt.Time):
+				link = previous
+			case seen.ReceivedBytes > previous.ReceivedBytes:
+				link = stale
+				link.State = stationv1alpha1.NetworkLinkUnanswered
+			case seen.ReceivedBytes == previous.ReceivedBytes && previous.State == stationv1alpha1.NetworkLinkSilent:
+				// Nothing moved: the stored counter still serves, and the
+				// status is not written again for a newer report time.
+				link = previous
+			default:
+				link = stale
+				link.State = stationv1alpha1.NetworkLinkSilent
+			}
+			link.Since = previous.Since
+			if link.State != previous.State {
+				link.Since = metav1.NewTime(now)
+			}
+			switch link.State {
+			case stationv1alpha1.NetworkLinkUnanswered:
+				unanswered = append(unanswered, link.Hub)
+			case stationv1alpha1.NetworkLinkSilent:
+				silent = append(silent, link.Hub)
+				if link.Since.After(silentSince) {
+					silentSince = link.Since.Time
+				}
+			case stationv1alpha1.NetworkLinkUnknown:
+				unknown = append(unknown, link.Hub)
+			}
+			answer.Links = append(answer.Links, link)
+		}
+		// The summary names hubs and, at most, the time the last one went
+		// silent, so it changes only when a link changes state.
+		var lines []string
+		if len(unanswered) > 0 {
+			lines = append(lines, "this node's requests arrive at "+strings.Join(unanswered, ", ")+" and no session forms: the answers do not get back to it")
+		}
+		if len(silent) > 0 && len(silent) == len(answer.Links) {
+			lines = append(lines, "nothing arrives from this node at any hub it dials since "+silentSince.UTC().Format(time.RFC3339))
+		} else if len(silent) > 0 {
+			lines = append(lines, "nothing arrives from this node at "+strings.Join(silent, ", "))
+		}
+		if len(unknown) > 0 {
+			lines = append(lines, "no current report of this node from "+strings.Join(unknown, ", "))
+		}
+		answer.LinkSummary = strings.Join(lines, "; ")
+	}
+	if len(result.Unreachable) > 0 {
+		status.Unreachable = result.Unreachable[:min(32, len(result.Unreachable))]
+		connected = metav1.Condition{Type: "FullyConnected", Status: metav1.ConditionFalse, Reason: "UnreachablePairs", Message: strconv.Itoa(len(result.Unreachable)) + " ordered pairs of members have no path"}
 	}
 
 	for i := range enrollments.Items {
@@ -657,7 +634,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 			continue
 		}
 		interval := time.Duration(site.Discovery.IntervalSeconds) * time.Second
-		if again == 0 || interval < again {
+		if interval < again {
 			again = interval
 		}
 		for i := range enrollments.Items {

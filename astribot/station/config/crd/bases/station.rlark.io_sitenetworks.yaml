@@ -76,7 +76,6 @@ spec:
                   each other.
                 enum:
                 - Tunnel
-                - Routed
                 type: string
               mtu:
                 default: 1380

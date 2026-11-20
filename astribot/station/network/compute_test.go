@@ -160,10 +160,10 @@ func TestComputeDropsPrefixThatHidesAnEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	robot := result.Configs["rlark-robot-s1u-01/s1u-01-x86"]
-	if contains(robot.Routes, "10.11.12.0/22") || len(result.Problems["rlark-robot-s1u-01/s1u-01-x86"]) != 1 {
+	if slices.Contains(robot.Routes, "10.11.12.0/22") || len(result.Problems["rlark-robot-s1u-01/s1u-01-x86"]) != 1 {
 		t.Fatalf("the robot dials 10.11.14.128 and must not route it into the tunnel: %v %v", robot.Routes, result.Problems)
 	}
-	if !contains(result.Configs["rlark-ksyun-gpu/10-0-2-57"].Routes, "10.11.12.0/22") {
+	if !slices.Contains(result.Configs["rlark-ksyun-gpu/10-0-2-57"].Routes, "10.11.12.0/22") {
 		t.Fatal("a node that does not dial into the prefix keeps it")
 	}
 }

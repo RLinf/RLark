@@ -238,20 +238,6 @@ func TestNetworkWithoutSiteOrKey(t *testing.T) {
 	}
 }
 
-// With a routed private line the registry stays and the tunnel goes.
-func TestNetworkRoutedModeKeepsRegistryWithoutTunnel(t *testing.T) {
-	siteNetwork := testSiteNetwork()
-	siteNetwork.Spec.Mode = stationv1alpha1.SiteNetworkModeRouted
-	objects := []client.Object{siteNetwork}
-	objects = append(objects, testMember("robot-01", "s1u-01-x86", "", "10.20.0.31")...)
-	r, c := newNetworkTest(t, objects...)
-	reconcileNetwork(t, r)
-	got := enrollmentStatus(t, c, "robot-01", "s1u-01-x86")
-	if got.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || got.Address != "10.20.0.31" || got.Config != "" || got.TunnelAddress != "" {
-		t.Fatalf("routed member: %+v", got)
-	}
-}
-
 // The declaration shipped for the live site must enroll all six nodes of
 // 2026-11-12 with the addresses and peers they have today.
 func TestLiveSiteDeclarationEnrollsTheSixNodes(t *testing.T) {

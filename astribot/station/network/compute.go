@@ -4,8 +4,10 @@
 package network
 
 import (
+	"cmp"
 	"fmt"
 	"net/netip"
+	"slices"
 	"sort"
 )
 
@@ -324,12 +326,12 @@ func Compute(topology Topology, members []Member) (Result, error) {
 		// stop carrying the answers. A leaf therefore has no port of its own
 		// (0): its gateway takes a new one with every boot and whenever a hub
 		// stops answering.
-		port := firstPositive(self.ListenPort, topology.ListenPort)
+		port := cmp.Or(self.ListenPort, topology.ListenPort)
 		if self.Role == RoleLeaf {
 			port = 0
 		}
 		config := NodeConfig{
-			Interface: firstNonEmpty(self.Interface, topology.Interface), Address: self.address.String() + "/32",
+			Interface: cmp.Or(self.Interface, topology.Interface), Address: self.address.String() + "/32",
 			ListenPort: port, MTU: topology.MTU,
 			Peers: []Peer{}, Routes: []string{}, Names: append(topology.Names[:len(topology.Names):len(topology.Names)], self.site.Names...), DNS: self.site.DNS,
 		}
@@ -367,7 +369,10 @@ func Compute(topology Topology, members []Member) (Result, error) {
 			if other.Site != self.Site {
 				for _, advertisement := range other.Advertise {
 					if prefix, err := netip.ParsePrefix(advertisement.CIDR); err != nil || !prefix.Addr().Is4() || prefix.Bits() == 0 {
-						result.Problems[other.ID] = appendOnce(result.Problems[other.ID], fmt.Sprintf("advertised prefix %q is not a non-default IPv4 prefix", advertisement.CIDR))
+						problem := fmt.Sprintf("advertised prefix %q is not a non-default IPv4 prefix", advertisement.CIDR)
+						if !slices.Contains(result.Problems[other.ID], problem) {
+							result.Problems[other.ID] = append(result.Problems[other.ID], problem)
+						}
 					}
 				}
 				c.prefixes = append(c.prefixes, beyond(other, self.Site, pool)...)
@@ -447,7 +452,7 @@ func Compute(topology Topology, members []Member) (Result, error) {
 
 // dial returns the endpoint from uses to open the tunnel to to.
 func dial(from, to *node) (netip.AddrPort, bool) {
-	local := from.Site == to.Site || contains(from.site.Reaches, to.Site)
+	local := from.Site == to.Site || slices.Contains(from.site.Reaches, to.Site)
 	var public netip.AddrPort
 	for _, endpoint := range to.Endpoints {
 		parsed := netip.MustParseAddrPort(endpoint.Address)
@@ -470,7 +475,7 @@ func beyond(far *node, site string, pool netip.Prefix) []netip.Prefix {
 	}
 	for _, advertisement := range far.Advertise {
 		prefix, err := netip.ParsePrefix(advertisement.CIDR)
-		if err == nil && prefix.Addr().Is4() && prefix.Bits() != 0 && (len(advertisement.Sites) == 0 || contains(advertisement.Sites, site)) {
+		if err == nil && prefix.Addr().Is4() && prefix.Bits() != 0 && (len(advertisement.Sites) == 0 || slices.Contains(advertisement.Sites, site)) {
 			prefixes = append(prefixes, prefix.Masked())
 		}
 	}
@@ -558,34 +563,4 @@ func Allocate(pool string, taken []string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("pool %s is exhausted", prefix)
-}
-
-func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-func appendOnce(values []string, value string) []string {
-	if contains(values, value) {
-		return values
-	}
-	return append(values, value)
-}
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
-}
-
-func firstPositive(a, b int) int {
-	if a > 0 {
-		return a
-	}
-	return b
 }

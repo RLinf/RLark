@@ -29,9 +29,6 @@ func DrainWorker(ctx context.Context, client kubernetes.Interface, name string, 
 	if _, controlPlane := node.Labels["node-role.kubernetes.io/control-plane"]; controlPlane {
 		return false, fmt.Errorf("%w: control-plane node", ErrNodeDrainBlocked)
 	}
-	if _, master := node.Labels["node-role.kubernetes.io/master"]; master {
-		return false, fmt.Errorf("%w: control-plane node", ErrNodeDrainBlocked)
-	}
 	if !node.Spec.Unschedulable {
 		node.Spec.Unschedulable = true
 		if _, err = client.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{}); err != nil {

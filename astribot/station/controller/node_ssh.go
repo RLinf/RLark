@@ -18,7 +18,6 @@ import (
 type NodeSSHConfig struct {
 	Address, User, HostKeyFingerprint string
 	Password                          []byte
-	PrivateKey                        []byte
 	Timeout                           time.Duration
 	// HostKeyAlgorithms are the host key types the host is asked for; a
 	// fingerprint a scan read is that of one type (ED25519).
@@ -195,21 +194,6 @@ func nodeSSHHandshake(ctx context.Context, conn net.Conn, cfg NodeSSHConfig) (*s
 		_ = conn.Close()
 		return nil, errors.New("SSH address, user and verified host fingerprint are required")
 	}
-	if (len(cfg.Password) == 0) == (len(cfg.PrivateKey) == 0) {
-		_ = conn.Close()
-		return nil, errors.New("exactly one SSH authentication method is required")
-	}
-	var auth ssh.AuthMethod
-	if len(cfg.PrivateKey) != 0 {
-		signer, err := ssh.ParsePrivateKey(cfg.PrivateKey)
-		if err != nil {
-			_ = conn.Close()
-			return nil, errors.New("invalid SSH private key")
-		}
-		auth = ssh.PublicKeys(signer)
-	} else {
-		auth = ssh.Password(string(cfg.Password))
-	}
 	ctx, cancel := context.WithTimeout(ctx, nodeSSHTimeout(cfg))
 	defer cancel()
 	if deadline, ok := ctx.Deadline(); ok {
@@ -218,7 +202,7 @@ func nodeSSHHandshake(ctx context.Context, conn net.Conn, cfg NodeSSHConfig) (*s
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	var mismatch *SSHHostKeyMismatchError
 	shown := false
-	config := &ssh.ClientConfig{User: cfg.User, Auth: []ssh.AuthMethod{auth}, HostKeyAlgorithms: cfg.HostKeyAlgorithms, HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
+	config := &ssh.ClientConfig{User: cfg.User, Auth: []ssh.AuthMethod{ssh.Password(string(cfg.Password))}, HostKeyAlgorithms: cfg.HostKeyAlgorithms, HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
 		actual := ssh.FingerprintSHA256(key)
 		shown = true
 		if learns {
