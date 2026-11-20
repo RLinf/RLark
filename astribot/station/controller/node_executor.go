@@ -102,10 +102,8 @@ func (e *NodeLifecycleExecutor) Execute(ctx context.Context, op *stationv1alpha1
 		if string(node.UID) != op.Spec.NodeUID || node.DeletionTimestamp != nil {
 			return false, "", ErrNodeIdentityChanged
 		}
-		for _, role := range []string{"node-role.kubernetes.io/control-plane", "node-role.kubernetes.io/master"} {
-			if _, found := node.Labels[role]; found {
-				return false, "", fmt.Errorf("%w: control-plane node", ErrNodeDrainBlocked)
-			}
+		if _, found := node.Labels["node-role.kubernetes.io/control-plane"]; found {
+			return false, "", fmt.Errorf("%w: control-plane node", ErrNodeDrainBlocked)
 		}
 		return true, op.Spec.NodeUID, nil
 	case "Drain":

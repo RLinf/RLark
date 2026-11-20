@@ -80,7 +80,6 @@
 - `names`：全站同一地址的名字，如各集群的 `cp.<集群>.rlark.internal`、`rlark-server`、`gateway.rlark.internal`。网关写进每台节点的 `/etc/hosts`（行尾 `# rlark names`）。
 - 连接规则：两台之间有隧道，当且仅当至少一台是枢纽且至少一方能拨到另一方；能拨的一方写端点和 25 s 保活；AllowedIPs 是对端的隧道地址加它的 `nodeAddress`、`advertise`，转发枢纽对叶子再加整个池。
 - 默认 MTU 1380，接口 `st-wg0`，端口 51820。controller 每次算完检查任意两台之间有没有路，没有的列在 `status.unreachable`，条件 `FullyConnected` 为假。
-- `mode: Routed`：保留登记和地址表，不下发隧道。
 - 网关只动自己的东西：只接管别名 `rlark-station-gateway/v1` 的接口；路由用协议号 242、metric 49321；对端逐个增删改，不动没变的会话。
 - 网关取文档的顺序：agent 或自己从 Station API 取回的 → 私钥旁的 `last-applied.json` → 安装器写的静态文件 `/etc/rlark/station/bootstrap.json`（只有主机上的网关有，给不经隧道连不上 Station API 的节点）。有 `station-api.json` 时网关每 30 s 用自己的私钥向 Station API 证明身份取文档，所以 agent 不在时也能跟上控制面的变化。
 - 文档版本 `documentLevel`（`astribot/station-gateway/main.go`、`astribot/station/network`）：给文档加字段时加一；发布要等所有网关报到新级别才换 controller（阶段 `controller` 的 `gateways-understand`）。

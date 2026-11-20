@@ -27,19 +27,12 @@ type NodeOperationReconciler struct {
 	reader        client.Reader
 	registrations ClusterResolver
 	executor      NodeOperationExecutor
-	// concurrency is how many operations run at a time: each is its own
-	// machine. One, as before, unless WithConcurrency says otherwise.
-	concurrency int
-}
-
-// WithConcurrency lets n operations run at a time.
-func (r *NodeOperationReconciler) WithConcurrency(n int) *NodeOperationReconciler {
-	r.concurrency = n
-	return r
+	// Concurrency is how many operations run at a time: each is its own machine.
+	Concurrency int
 }
 
 func NewNodeOperationReconciler(writer client.Client, reader client.Reader, registrations ClusterResolver, executor NodeOperationExecutor) *NodeOperationReconciler {
-	return &NodeOperationReconciler{client: writer, reader: reader, registrations: registrations, executor: executor, concurrency: 1}
+	return &NodeOperationReconciler{client: writer, reader: reader, registrations: registrations, executor: executor, Concurrency: 1}
 }
 
 var nodeOperationStages = map[string][]string{
@@ -169,5 +162,5 @@ func nodeOperationFailureCondition(stage string, err error) (string, string) {
 
 func (r *NodeOperationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).For(&stationv1alpha1.NodeOperation{}).
-		WithOptions(controller.Options{MaxConcurrentReconciles: r.concurrency}).Complete(r)
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.Concurrency}).Complete(r)
 }

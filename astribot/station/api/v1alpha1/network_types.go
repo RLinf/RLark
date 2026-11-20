@@ -3,16 +3,11 @@ package v1alpha1
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 // SiteNetworkMode says how the nodes of the network reach each other.
-// +kubebuilder:validation:Enum=Tunnel;Routed
+// +kubebuilder:validation:Enum=Tunnel
 type SiteNetworkMode string
 
-const (
-	// SiteNetworkModeTunnel gives every node a WireGuard address and peers.
-	SiteNetworkModeTunnel SiteNetworkMode = "Tunnel"
-	// SiteNetworkModeRouted keeps enrollment and the address registry but
-	// configures no tunnel: the nodes' own addresses are routable.
-	SiteNetworkModeRouted SiteNetworkMode = "Routed"
-)
+// SiteNetworkModeTunnel gives every node a WireGuard address and peers.
+const SiteNetworkModeTunnel SiteNetworkMode = "Tunnel"
 
 // SiteNetwork declares one network of nodes across sites: the address pool,
 // the sites, and the nodes that are more than a leaf. An administrator owns

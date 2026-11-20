@@ -92,7 +92,7 @@ func main() {
 		if installerBundle != "" {
 			executor.Installer = &controller.InstallerJoinDriver{Reader: reader, Writer: writer, Access: access, Members: members,
 				BundleFile: installerBundle, AddonsDirs: []string{builtInAddonsDirectory, addonsDirectory}, StationAPI: stationAPIBootstrapURL, CAFile: stationAPICAFile}
-			operations.WithConcurrency(10)
+			operations.Concurrency = 10
 			must((&controller.MachineReconciler{Client: writer, Reader: reader, Inspector: controller.SSHMachineInspector{Access: access},
 				Clusters: registration, Namespace: networkNamespace}).SetupWithManager(manager), "register Machine reconciler")
 		}
