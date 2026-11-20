@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
 } from "react";
 import {
   Activity,
@@ -26,17 +25,12 @@ import {
   Settings,
   TerminalSquare,
   Download,
-  Pencil,
 } from "lucide-react";
 import type { Phase } from "../data";
 import type { Copy } from "../i18n";
-import type { ClusterSummary, CRDNode } from "../types";
+import type { CRDNode } from "../types";
 import type { CRDTask } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
-import { hasAuthSession } from "../api";
-import { displayNameError, displayNameMessage, displayNameRefusal, nodeLabel } from "../astribot/lib/displayName";
-import { NodeName } from "../astribot/components/NodeName";
-import { ClusterName } from "../astribot/components/ClusterName";
 import { copyText } from "../utils/clipboard";
 import {
   categoryLabels,
@@ -53,7 +47,6 @@ import {
   isBusinessWorkerNode,
   nodeStatusReasonLabel,
   parseResourceQuantity,
-  useClusters,
 } from "../utils/nodes";
 import {
   compareSortValues,
@@ -64,9 +57,6 @@ import {
   type SortDirection,
 } from "../components/shared";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
-import { NodeLinks } from "../astribot/components/NodeLinks";
-import { useNodeNetworks } from "../astribot/components/useNodeNetworks";
-import { nodeNetworkKey } from "../astribot/lib/nodeNetwork";
 import { formatChinaDateTime } from "../utils/time";
 
 type NodeWorker = {
@@ -75,6 +65,7 @@ type NodeWorker = {
   name: string;
   job: string;
   role: string;
+  node: string;
   cluster: string;
   domain: string;
   ip: string;
@@ -126,7 +117,6 @@ export function ClustersPage({
   const [selectedClusterNs, setSelectedClusterNs] = useState<string | null>(
     null,
   );
-  const clusters = useClusters();
 
   const fetchNodes = async (isInitial = true) => {
     if (isInitial) setLoading(true);
@@ -292,19 +282,6 @@ export function ClustersPage({
           node={selectedNodeObj}
           copy={c}
           onTaskNavigate={onTaskNavigate}
-          onDisplayNameSaved={
-            hasAuthSession("admin")
-              ? (saved) =>
-                  setRealNodes((current) =>
-                    current.map((n) =>
-                      n.metadata.namespace === saved.metadata.namespace &&
-                      n.metadata.name === saved.metadata.name
-                        ? saved
-                        : n,
-                    ),
-                  )
-              : undefined
-          }
         />
       </div>
     );
@@ -402,7 +379,7 @@ export function ClustersPage({
                     <span>
                       <CloudCog size={15} />
                     </span>
-                    <strong><ClusterName clusters={clusters} namespace={ns} /></strong>
+                    <strong>{ns}</strong>
                     <small>
                       {nsNodes.length} {zh ? "节点" : "nodes"}
                     </small>
@@ -411,7 +388,7 @@ export function ClustersPage({
               </div>
             </div>
             <ClusterDetailReal
-              name={<ClusterName clusters={clusters} namespace={selectedCluster?.[0] ?? ""} />}
+              namespace={selectedCluster?.[0] ?? ""}
               nodes={selectedClusterNodes}
               copy={c}
             />
@@ -422,7 +399,6 @@ export function ClustersPage({
         <section className="nodes-resource-section">
           <NodeResourceBrowser
             nodes={workerNodes}
-            clusters={clusters}
             nodeWorkloads={nodeWorkloads}
             copy={c}
             initialCategory={initialCategory}
@@ -454,12 +430,11 @@ function formatBytes(bytes: number): string {
 }
 
 export function ClusterDetailReal({
-  name,
+  namespace,
   nodes: clusterNodes,
   copy: c,
 }: {
-  // What the cluster is shown as: a ClusterName.
-  name: ReactNode;
+  namespace: string;
   nodes: CRDNode[];
   copy: Copy;
 }) {
@@ -469,7 +444,7 @@ export function ClusterDetailReal({
   ).length;
   const phase: Phase = onlineCount > 0 ? "Online" : "Offline";
   const sortedNodes = [...clusterNodes].sort((a, b) =>
-    nodeLabel(a).localeCompare(nodeLabel(b), zh ? "zh-CN" : "en", {
+    a.metadata.name.localeCompare(b.metadata.name, zh ? "zh-CN" : "en", {
       numeric: true,
     }),
   );
@@ -478,7 +453,7 @@ export function ClusterDetailReal({
       <div className="cluster-detail-header">
         <div className="cluster-detail-title">
           <CloudCog size={18} />
-          <strong>{name}</strong>
+          <strong>{namespace}</strong>
           <StatusBadge phase={phase} copy={c} />
         </div>
         <div className="cluster-detail-meta">
@@ -526,9 +501,7 @@ export function ClusterDetailReal({
               return (
                 <tr key={node.metadata.name}>
                   <td>
-                    <strong>
-                      <NodeName node={node} />
-                    </strong>
+                    <strong>{node.metadata.name}</strong>
                   </td>
                   <td>
                     <small>{zh ? categoryInfo.zh : categoryInfo.en}</small>
@@ -607,54 +580,13 @@ export function NodeDetailReal({
   node,
   copy: c,
   onTaskNavigate,
-  onDisplayNameSaved,
 }: {
   node: CRDNode;
   copy: Copy;
   onTaskNavigate?: (name: string) => void;
-  // Given to an administrator: the pencil beside the name sets the Node's
-  // display name, and the saved Node comes back here.
-  onDisplayNameSaved?: (node: CRDNode) => void;
 }) {
   const zh = c.nav.overview === "总览";
-  const clusters = useClusters();
-  const clusterName = <ClusterName clusters={clusters} namespace={node.metadata.namespace ?? "default"} />;
-  // null while the name is not being edited.
-  const [nameDraft, setNameDraft] = useState<string | null>(null);
-  const [nameSaving, setNameSaving] = useState(false);
-  const [nameError, setNameError] = useState("");
-  const saveDisplayName = async (draft: string) => {
-    const trimmed = draft.trim();
-    if (trimmed === (node.spec.displayName ?? "")) {
-      setNameDraft(null);
-      setNameError("");
-      return;
-    }
-    const invalid = displayNameError(trimmed, "", []);
-    if (invalid) {
-      setNameError(displayNameMessage(invalid, "node", zh));
-      return;
-    }
-    setNameSaving(true);
-    try {
-      onDisplayNameSaved!(
-        await nodesApi.setDisplayName(
-          node.metadata.name,
-          node.metadata.namespace ?? "",
-          trimmed,
-        ),
-      );
-      setNameDraft(null);
-      setNameError("");
-    } catch (e) {
-      const refusal = displayNameRefusal(e);
-      setNameError(refusal ? displayNameMessage(refusal, "node", zh) : e instanceof Error ? e.message : String(e));
-    } finally {
-      setNameSaving(false);
-    }
-  };
   const [nodeWorkers, setNodeWorkers] = useState<NodeWorker[]>([]);
-  const networks = useNodeNetworks(useMemo(() => [node], [node]));
   useAutoRefresh(
     async () => {
       const [taskItems, podItems] = await Promise.all([
@@ -687,6 +619,7 @@ export function NodeDetailReal({
                 task?.metadata?.annotations?.["rlark.io/ray-role"] ??
                 task?.spec?.role ??
                 "—",
+              node: node.metadata.name,
               cluster: pod.metadata?.namespace ?? "default",
               domain: pod.spec?.domain ?? "",
               ip: pod.status?.ip ?? "—",
@@ -872,53 +805,9 @@ export function NodeDetailReal({
               <span className="eyebrow">
                 {zh ? "节点运行概况" : "Node overview"}
               </span>
-              {nameDraft === null ? (
-                <h3 className="job-title-row">
-                  <NodeName node={node} />
-                  {onDisplayNameSaved && (
-                    <button
-                      type="button"
-                      className="job-title-edit-btn"
-                      onClick={() => {
-                        setNameDraft(node.spec.displayName ?? "");
-                        setNameError("");
-                      }}
-                      title={zh ? "修改显示名" : "Edit display name"}
-                      aria-label={zh ? "修改显示名" : "Edit display name"}
-                    >
-                      <Pencil size={16} />
-                    </button>
-                  )}
-                </h3>
-              ) : (
-                <div className="node-name-edit">
-                  <div className="job-name-edit">
-                    <input
-                      value={nameDraft}
-                      maxLength={64}
-                      autoFocus
-                      disabled={nameSaving}
-                      placeholder={node.metadata.name}
-                      onChange={(e) => setNameDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void saveDisplayName(nameDraft);
-                        else if (e.key === "Escape") setNameDraft(null);
-                      }}
-                    />
-                    {nameSaving && <span className="job-name-saving">...</span>}
-                  </div>
-                  <small className="muted">
-                    {zh
-                      ? `节点名 ${node.metadata.name}（Kubernetes 名，调度用，不变）；留空则显示节点名。回车保存，Esc 取消`
-                      : `Node name ${node.metadata.name} (the Kubernetes name, used for scheduling, never changes); leave empty to show it. Enter saves, Esc cancels`}
-                  </small>
-                  {nameError && (
-                    <span className="job-name-edit-error">{nameError}</span>
-                  )}
-                </div>
-              )}
+              <h3>{node.metadata.name}</h3>
               <p>
-                <Network size={13} /> {clusterName}
+                <Network size={13} /> {node.metadata.namespace ?? "default"}
                 <span />
                 {internalAddress}
               </p>
@@ -1186,7 +1075,6 @@ export function NodeDetailReal({
           </div>
 
           <aside className="node-insight-side">
-            <NodeLinks network={networks[nodeNetworkKey(node)]} zh={zh} />
             <section className="node-insight-section">
               <div className="node-insight-section-head">
                 <div>
@@ -1196,7 +1084,7 @@ export function NodeDetailReal({
               <dl className="node-info-list">
                 <div>
                   <dt>{zh ? "所属集群" : "Cluster"}</dt>
-                  <dd>{clusterName}</dd>
+                  <dd>{node.metadata.namespace ?? "default"}</dd>
                 </div>
                 <div>
                   <dt>{zh ? "内部地址" : "Internal IP"}</dt>
@@ -1272,8 +1160,6 @@ export function NodeDetailReal({
         </div>
         <NodeWorkerTable
           workers={nodeWorkers}
-          clusters={clusters}
-          nodeName={nodeLabel(node)}
           copy={c}
           onTaskNavigate={onTaskNavigate}
         />
@@ -1284,15 +1170,10 @@ export function NodeDetailReal({
 
 function NodeWorkerTable({
   workers,
-  clusters,
-  nodeName,
   copy: c,
   onTaskNavigate,
 }: {
   workers: NodeWorker[];
-  clusters: ClusterSummary[];
-  // What the node the workers run on is shown as.
-  nodeName: string;
   copy: Copy;
   onTaskNavigate?: (name: string) => void;
 }) {
@@ -1549,7 +1430,7 @@ function NodeWorkerTable({
                         <div className="worker-detail-grid">
                           <div>
                             <span>{zh ? "集群" : "Cluster"}</span>
-                            <strong><ClusterName clusters={clusters} namespace={worker.cluster} /></strong>
+                            <strong>{worker.cluster}</strong>
                           </div>
                           <div>
                             <span>{zh ? "角色" : "Role"}</span>
@@ -1557,7 +1438,7 @@ function NodeWorkerTable({
                           </div>
                           <div>
                             <span>{zh ? "节点" : "Node"}</span>
-                            <strong>{nodeName}</strong>
+                            <strong>{worker.node}</strong>
                           </div>
                           <div>
                             <span>{zh ? "申请 GPU" : "GPU request"}</span>

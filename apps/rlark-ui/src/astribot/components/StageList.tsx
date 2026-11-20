@@ -1,5 +1,6 @@
 import { Check, CircleAlert, LoaderCircle, Minus } from "lucide-react";
 import type { StageView } from "../lib/clusterProvision";
+import "./provision.css";
 
 // StageList is the stages of a making or a join as they stand: each one's state, what it read back, and the
 // message of the one running (its latest line) or the one that stopped (why).

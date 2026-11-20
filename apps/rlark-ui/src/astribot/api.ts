@@ -3,6 +3,7 @@ import { ApiError, request, requestJson, withQuery } from "../api.js";
 import type { AdmittedMachine, IssuedNodeAdmission, MachineList, NodeAdmission, NodeClassAccess, RobotPowerDesired, SiteNode } from "./lib/siteNodeDisplay.js";
 import type { NodeJoin } from "./lib/nodeJoin.js";
 import type { ClusterProvision, NewClusterForm } from "./lib/clusterProvision.js";
+import type { CRDNode } from "../types.js";
 
 interface Condition {
   type: string;
@@ -246,8 +247,28 @@ export function registryError(error: unknown, zh: boolean): string {
     : "Cannot read the registry. Check the Gateway allowlist, network, certificate and registry credentials, then retry.";
 }
 
-// Read-only browsing of a configured image registry through the Gateway; pages continue from `next` as `last`.
+// Display names: an empty one clears it; a cluster's ID and a Node's metadata.name never change.
+export const displayNameApi = {
+  async cluster<T = unknown>(id: string, displayName: string) {
+    const response = await requestJson<{ data?: T }>(`/api/v1/clusters/${encodeURIComponent(id)}/display-name`, {
+      method: "PUT",
+      body: { displayName },
+    });
+    return response.data;
+  },
+  node(name: string, namespace: string, displayName: string) {
+    return requestJson<CRDNode>(withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(name)}/display-name`, { namespace }), {
+      method: "PUT",
+      body: { displayName },
+    });
+  },
+};
+
+// Read-only browsing of a configured image registry through the Gateway: its password, repositories and tags; pages continue from `next` as `last`.
 export const registryBrowseApi = {
+  password(id: string, signal?: AbortSignal) {
+    return requestJson<{ password: string }>(`/api/v1/image-registries/${encodeURIComponent(id)}/password`, { signal });
+  },
   repositories(id: string, last = "", signal?: AbortSignal) {
     return requestJson<{ items: string[]; next: string }>(withQuery(`/api/v1/image-registries/${encodeURIComponent(id)}/repositories`, { last }), { signal });
   },

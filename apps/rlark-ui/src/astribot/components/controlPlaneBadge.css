@@ -1,0 +1,18 @@
+/* A cluster's control-plane node, on the node list and the Stations page. */
+.control-plane-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #6d28d9;
+  background: rgba(124, 58, 237, 0.1);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.theme-dark .control-plane-badge {
+  color: #c4b5fd;
+  background: rgba(167, 139, 250, 0.16);
+}

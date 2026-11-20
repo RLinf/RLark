@@ -2,18 +2,18 @@ import { useEffect, useState, type ReactElement } from "react";
 import { imageRegistriesApi, type ImageRegistryItem } from "../../backend";
 import { registryBrowseApi, registryError } from "../api";
 import { formatRelativeTime } from "../lib/stationDisplay";
+import "./RegistryImagePicker.css";
 
 type ImageUsage = {
   image: string;
   useCount: number;
-  lastUsedAt: Date;
+  lastUsedAt: string;
 };
 
 type Props = {
   zh: boolean;
   value: string;
   onChange: (image: string) => void;
-  disabled?: boolean;
   recentImages: ImageUsage[];
 };
 
@@ -23,7 +23,6 @@ export function RegistryImagePicker({
   zh,
   value,
   onChange,
-  disabled,
   recentImages,
 }: Props): ReactElement {
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -97,7 +96,6 @@ export function RegistryImagePicker({
             onChange(event.target.value);
             setHistoryOpen(true);
           }}
-          disabled={disabled}
           placeholder={
             zh
               ? "例如：docker.io/library/ubuntu:22.04（需确保集群可访问）"
@@ -125,8 +123,8 @@ export function RegistryImagePicker({
                 <strong>{item.image}</strong>
                 <small>
                   {zh
-                    ? `${formatRelativeTime(item.lastUsedAt.toISOString(), Date.now(), zh)}使用 · ${item.useCount} 次`
-                    : `${formatRelativeTime(item.lastUsedAt.toISOString(), Date.now(), zh)} · used ${item.useCount} times`}
+                    ? `${formatRelativeTime(item.lastUsedAt, Date.now(), zh)}使用 · ${item.useCount} 次`
+                    : `${formatRelativeTime(item.lastUsedAt, Date.now(), zh)} · used ${item.useCount} times`}
                 </small>
               </button>
             ))}
@@ -136,7 +134,6 @@ export function RegistryImagePicker({
       <button
         type="button"
         className="secondary-button image-picker-browse"
-        disabled={disabled}
         aria-expanded={browserOpen}
         onClick={() => {
           resetBrowser();

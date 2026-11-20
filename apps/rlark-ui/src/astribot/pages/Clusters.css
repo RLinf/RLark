@@ -1,0 +1,6 @@
+/* Node display-name edit in the node hero. */
+.node-name-edit {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 5px;
+}

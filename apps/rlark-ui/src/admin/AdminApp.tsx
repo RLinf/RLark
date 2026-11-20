@@ -11,12 +11,12 @@ import { type Copy, type Lang, type Theme, copy } from "../i18n";
 import { adminNavItems } from "../constants";
 import { ApiPage } from "../pages/Api";
 import { DomainsPage } from "../pages/Domains";
-import { ClusterManagementPage } from "../pages/ClusterManagement";
+import { ClusterManagementPage } from "../astribot/pages/ClusterManagement";
 import {
   StorageClassesPage,
   StorageClassCreatePage,
   StorageClassFilesPage,
-} from "../pages/Storage";
+} from "../astribot/pages/Storage";
 import { NewClusterPage } from "../astribot/pages/NewCluster";
 import { AddonsPage } from "./Addons";
 import { AdminPage } from "./AdminPage";

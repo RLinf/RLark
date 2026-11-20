@@ -51,6 +51,7 @@ import { isControlPlaneLabels } from "../../utils/nodeVisibility";
 import { StationDrawer } from "./StationDrawer";
 import { AdmissionRecords, NodeOperations } from "./StationRecords";
 import "./Stations.css";
+import "../components/controlPlaneBadge.css";
 
 function NetworkBadge({ state, zh }: { state: StationNetworkState; zh: boolean }) {
   const Icon = state === "verified" ? CircleCheck : state === "failed" ? CircleX : CircleHelp;
@@ -60,7 +61,7 @@ function NetworkBadge({ state, zh }: { state: StationNetworkState; zh: boolean }
 
 // onJoin opens the page that adds a node, with the code a reissue answered, or on an SSH join of a node.
 export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissued?: IssuedNodeAdmission, sshJoin?: { clusterID: string; name: string }) => void }) {
-  const zh = c.nav.stations === "场站节点";
+  const zh = c.nav.overview === "总览";
   const [items, setItems] = useState<StationItem[]>([]);
   const [clusters, setClusters] = useState<ClusterSummary[]>([]);
   // The Nodes by "<namespace>/<name>", for the display names of the site nodes.
@@ -222,7 +223,7 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
     <div className="page-content resource-page stations-page">
       <div className="section-heading">
         <div>
-          <span className="eyebrow"><MonitorSmartphone size={13} />{c.nav.stations}</span>
+          <span className="eyebrow"><MonitorSmartphone size={13} />{zh ? "场站节点" : "Site Nodes"}</span>
           <h2>{zh ? "场站节点" : "Site Nodes"}</h2>
           <p>{zh ? "场站节点是一台节点在场站里的记录：身份、心跳和入网，按节点名一台一条，不是 Fleet Run 里的 Station（Run 的 Station 引用这里的节点）。数据来自 station-agent，每 30 秒刷新。" : "A site node is the record of one node in the site: identity, heartbeat and network membership, one per node name. It is not a Station of a Fleet Run, which refers to a site node. Data comes from station-agent and refreshes every 30 seconds."}</p>
         </div>

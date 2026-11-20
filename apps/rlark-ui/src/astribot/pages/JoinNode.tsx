@@ -62,8 +62,8 @@ function Result({ title, note, children }: { title: string; note: string; childr
   useEffect(() => {
     shown.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, []);
-  return <section ref={shown} className="cert-result cluster-enrollment-result join-node-result" aria-live="polite">
-    <div className="cert-result-header">
+  return <section ref={shown} className="join-node-result" aria-live="polite">
+    <div className="join-node-result-header">
       <div><Check size={18} /><strong>{title}</strong></div>
       <small>{note}</small>
     </div>
@@ -72,8 +72,8 @@ function Result({ title, note, children }: { title: string; note: string; childr
 }
 
 function Block({ title, value, zh }: { title: string; value: string; zh: boolean }) {
-  return <div className="cert-yaml-block cluster-yaml-card">
-    <div className="cert-yaml-head">
+  return <div className="join-node-block">
+    <div className="join-node-block-head">
       <div><TerminalSquare size={16} /><strong>{title}</strong></div>
       <CopyButton value={value} zh={zh} />
     </div>
@@ -334,7 +334,7 @@ function SSHJoin({ zh, clusterID, initial }: { zh: boolean; clusterID: string; i
         </div>
       </details>
       {endpointProblem && <small className="cert-error">{endpointProblem}</small>}
-      <div className="cluster-enrollment-notes">
+      <div className="join-node-notes">
         <span><KeyRound size={16} />{zh ? "密码只用于这次入网，不保存" : "The password is used by this join only and kept nowhere"}</span>
         <span><ShieldCheck size={16} />{zh ? "首次连接记下主机指纹" : "The host key is recorded on first connect"}</span>
         <span><Terminal size={16} />{zh ? "分步入网，离开这页也照常进行" : "Joins in stages, and goes on when this page is left"}</span>
@@ -443,7 +443,7 @@ function JoinCode({ zh, clusterID, reissued }: { zh: boolean; clusterID: string;
         </label>
       </div>
     </details>
-    <div className="cluster-enrollment-notes">
+    <div className="join-node-notes">
       <span><KeyRound size={16} />{zh ? "管理面只保存入网码的哈希" : "Only the code's hash is kept"}</span>
       <span><RefreshCw size={16} />{zh ? "同名节点再发码会替换原来的入网记录" : "A new code for a node replaces its admission"}</span>
     </div>

@@ -1,0 +1,1716 @@
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  AlertCircle,
+  Boxes,
+  ChevronLeft,
+  ChevronRight,
+  Database,
+  Download,
+  FileText,
+  Folder,
+  FolderOpen,
+  HardDrive,
+  Home,
+  Link2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Server,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
+import { type StorageProvider } from "../../data";
+import { copy, type Copy } from "../../i18n";
+import { storageCopy } from "../i18n";
+import {
+  ColumnFilterButton,
+  PageToolbar,
+  Pagination,
+  RefreshOverlay,
+  useColumnFilter,
+} from "../../components/shared";
+import { ColumnFilterPopover } from "../../components/ColumnFilterPopover";
+import { SmbStorageFields } from "../components/SmbStorageFields";
+import {
+  smbLocation,
+  storageLocation,
+  storageProviderLabel,
+} from "../lib/smbStorage";
+import {
+  normalizeStorageClass,
+  storageClassPayload,
+  storageClassToForm,
+  storageVolumeExample,
+  type StorageClass,
+  type StorageClassFormState,
+  type StorageType,
+} from "../lib/storageClass";
+import { formatChinaDateTime } from "../../utils/time";
+
+type ProviderOption = {
+  name: string;
+  value: string;
+};
+
+type GatewayErrorBody = {
+  code?: string;
+  details?: { fields?: unknown };
+};
+
+const storageClassFieldLabels: Record<string, { zh: string; en: string }> = {
+  name: { zh: "名称", en: "Name" },
+  bucket: { zh: "存储桶", en: "Bucket" },
+  access_key_secret: { zh: "Access Key Secret", en: "Access Key Secret" },
+  host: { zh: "服务器地址", en: "Server" },
+  share: { zh: "共享名", en: "Share" },
+  username: { zh: "用户名", en: "Username" },
+  password: { zh: "密码", en: "Password" },
+};
+
+function storageClassSubmissionError(
+  error: unknown,
+  isChinese: boolean,
+  fallback: string,
+) {
+  if (!(error instanceof ApiError)) return fallback;
+
+  const body = error.body as GatewayErrorBody | undefined;
+  if (body?.code === "STORAGE_CLASS_REQUIRED_FIELDS") {
+    const fields = Array.isArray(body.details?.fields)
+      ? body.details.fields.filter(
+          (field): field is string =>
+            typeof field === "string" && field in storageClassFieldLabels,
+        )
+      : [];
+    if (fields.length > 0) {
+      const labels = fields.map(
+        (field) => storageClassFieldLabels[field][isChinese ? "zh" : "en"],
+      );
+      return isChinese
+        ? `请填写必填字段：${labels.join("、")}。`
+        : `Required fields: ${labels.join(", ")}.`;
+    }
+  }
+
+  return errorMessage(error.body) || error.message || fallback;
+}
+
+function isMaskedAccessKeyID(value: string): boolean {
+  return /^.{2}\*+.{2}$/.test(value);
+}
+
+export function StorageClassesPage({
+  copy: c,
+  selectedName,
+  onSelect,
+  onCreate,
+  onBrowseFiles,
+  refreshKey = 0,
+}: {
+  copy: Copy;
+  selectedName?: string;
+  onSelect: (name?: string) => void;
+  onCreate: () => void;
+  onBrowseFiles: (storageClass: string) => void;
+  refreshKey?: number;
+}) {
+  const s = storageCopy(c);
+  const zh = c === copy.zh;
+  const [realClasses, setRealClasses] = useState<StorageClass[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [fetched, setFetched] = useState(false);
+  const [search, setSearch] = useState("");
+  // 表头列多选筛选；空数组 = 全部
+  const [providerFilter, setProviderFilter] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const columnFilter = useColumnFilter();
+  const [editingClass, setEditingClass] = useState<StorageClass | null>(null);
+
+  const selected = useMemo(
+    () => realClasses.find((sc) => sc.id === selectedName),
+    [realClasses, selectedName],
+  );
+
+  const fetchClasses = async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      const data = await storageClassesApi.list();
+      const list: StorageClass[] = Object.values(
+        data as Record<string, unknown>,
+      ).map(normalizeStorageClass);
+      setRealClasses(list);
+    } catch {
+      setRealClasses([]);
+    } finally {
+      setLoading(false);
+      setFetched(true);
+    }
+  };
+
+  useEffect(() => {
+    if (!fetched) fetchClasses();
+  }, [fetched]);
+
+  useEffect(() => {
+    setFetched(false);
+  }, [refreshKey]);
+
+  useEffect(() => setPage(1), [search, providerFilter, pageSize]);
+
+  const handleDelete = async (id: string, name: string) => {
+    if (
+      !confirm(
+        zh ? `确定删除存储类 "${name}" 吗?` : `Delete storage class "${name}"?`,
+      )
+    )
+      return;
+    try {
+      await storageClassesApi.remove(id || name);
+      fetchClasses();
+    } catch (e) {
+      console.error("Failed to delete storage class:", e);
+    }
+  };
+
+  if (selected) {
+    return (
+      <StorageClassDetailPage
+        copy={c}
+        storageClass={selected}
+        onBack={() => onSelect()}
+      />
+    );
+  }
+
+  const filtered = realClasses.filter((sc) => {
+    const query = search.toLowerCase();
+    const matchesSearch =
+      sc.name.toLowerCase().includes(query) ||
+      storageProviderLabel(sc).toLowerCase().includes(query) ||
+      storageLocation(sc).toLowerCase().includes(query);
+    const providerHit =
+      providerFilter.length === 0 ||
+      providerFilter.includes(storageProviderLabel(sc));
+    return matchesSearch && providerHit;
+  });
+  const providers = Array.from(
+    new Set(realClasses.map((sc) => storageProviderLabel(sc))),
+  );
+  // 列表页列不再支持排序，按名称做稳定 tiebreak 即可
+  const sortedClasses = [...filtered].sort((a, b) =>
+    a.name.localeCompare(b.name, zh ? "zh-CN" : "en", { numeric: true }),
+  );
+  const totalPages = Math.max(1, Math.ceil(sortedClasses.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedClasses = sortedClasses.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+
+  return (
+    <div className="page-content resource-page storage-class-page">
+      <div className="section-heading">
+        <div>
+          <span className="eyebrow">
+            <HardDrive size={13} />
+            {s.eyebrow}
+          </span>
+          <h2>{s.title}</h2>
+          <p>{s.desc}</p>
+        </div>
+        <div className="section-actions">
+          <button className="primary-button" onClick={onCreate}>
+            <Plus size={17} />
+            {s.createBtn}
+          </button>
+        </div>
+      </div>
+      <section
+        className="storage-overview-grid"
+        aria-label={zh ? "存储资源概况" : "Storage overview"}
+      >
+        <div className="storage-overview-card purple">
+          <span>
+            <Database size={18} />
+          </span>
+          <div>
+            <small>{zh ? "存储类" : "Storage classes"}</small>
+            <strong>{realClasses.length}</strong>
+            <em>{zh ? "个可用存储配置" : "available configurations"}</em>
+          </div>
+        </div>
+        <div className="storage-overview-card orange">
+          <span>
+            <Boxes size={18} />
+          </span>
+          <div>
+            <small>{zh ? "存储提供商" : "Providers"}</small>
+            <strong>{providers.length}</strong>
+            <em>{providers.join(" · ") || "—"}</em>
+          </div>
+        </div>
+      </section>
+      <PageToolbar
+        placeholder={s.search}
+        value={search}
+        onChange={setSearch}
+        count={filtered.length}
+        copy={c}
+        onRefresh={fetchClasses}
+        refreshing={loading}
+      />
+      <section
+        className={`table-panel storage-class-table-panel refreshable-region${loading ? " is-refreshing" : ""}`}
+        aria-busy={loading}
+      >
+        <div className="storage-table-heading">
+          <div>
+            <strong>{zh ? "存储资源" : "Storage resources"}</strong>
+            <small>
+              {zh
+                ? "管理存储桶和访问配置"
+                : "Manage buckets and access settings"}
+            </small>
+          </div>
+          <span>
+            {zh ? `共 ${filtered.length} 项` : `${filtered.length} items`}
+          </span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>{s.name}</th>
+              <th>
+                <ColumnFilterButton
+                  label={s.provider}
+                  selectedCount={providerFilter.length}
+                  onClick={columnFilter.openFor("provider")}
+                />
+              </th>
+              <th>{s.bucket}</th>
+              <th>{s.description}</th>
+              <th className="storage-actions-col">{zh ? "操作" : "Actions"}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={5} className="storage-empty-cell">
+                  {loading
+                    ? zh
+                      ? "加载中..."
+                      : "Loading..."
+                    : s.noData}
+                </td>
+              </tr>
+            )}
+            {pagedClasses.map((sc) => (
+              <tr key={sc.id}>
+                <td>
+                  <button
+                    className="storage-name-cell"
+                    onClick={() => onSelect(sc.id)}
+                    aria-label={`${zh ? "查看存储类" : "View storage class"} ${sc.name}`}
+                  >
+                    <span>
+                      <HardDrive size={16} />
+                    </span>
+                    <span>
+                      <strong>{sc.name}</strong>
+                    </span>
+                  </button>
+                </td>
+                <td>
+                  <span className="storage-provider-chip">
+                    {storageProviderLabel(sc)}
+                  </span>
+                </td>
+                <td>
+                  <code className="inline-code">{storageLocation(sc)}</code>
+                </td>
+                <td>
+                  <span className="storage-description">
+                    {sc.description || "—"}
+                  </span>
+                </td>
+                <td className="storage-actions-col">
+                  <div className="row-actions">
+                    {sc.type === "s3" && (
+                      <button
+                        className="icon-button"
+                        title={c.files.eyebrow}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onBrowseFiles(sc.id);
+                        }}
+                      >
+                        <FolderOpen size={14} />
+                      </button>
+                    )}
+                    <button
+                      className="icon-button"
+                      title={zh ? "编辑存储类" : "Edit storage class"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingClass(sc);
+                      }}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      className="icon-button danger"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(sc.id, sc.name);
+                      }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <RefreshOverlay
+          visible={loading}
+          label={zh ? "正在刷新存储类列表" : "Refreshing storage class list"}
+        />
+      </section>
+      <Pagination
+        page={currentPage}
+        pageSize={pageSize}
+        total={filtered.length}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        zh={zh}
+      />
+      {columnFilter.openKey === "provider" && (
+        <ColumnFilterPopover
+          label={s.provider}
+          options={providers.map((p) => ({ value: p, label: p }))}
+          selected={providerFilter}
+          onChange={setProviderFilter}
+          anchorRect={columnFilter.anchorRect}
+          onClose={columnFilter.close}
+          zh={zh}
+        />
+      )}
+      {editingClass && (
+        <StorageClassCreatePage
+          copy={c}
+          initialStorageClass={editingClass}
+          onCreated={() => {
+            setEditingClass(null);
+            fetchClasses();
+          }}
+          onBack={() => setEditingClass(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+export function StorageClassDetailPage({
+  copy: c,
+  storageClass,
+  onBack,
+}: {
+  copy: Copy;
+  storageClass: StorageClass;
+  onBack: () => void;
+}) {
+  const s = storageCopy(c);
+  const zh = c === copy.zh;
+  return (
+    <div className="page-content resource-page storage-detail-page">
+      <div className="section-heading storage-detail-hero">
+        <div>
+          <button
+            type="button"
+            className="plain-button back-button"
+            onClick={onBack}
+          >
+            ← {zh ? "返回存储列表" : "Back to storage"}
+          </button>
+          <span className="eyebrow">
+            <HardDrive size={13} />
+            {s.eyebrow}
+          </span>
+          <h2>{storageClass.name}</h2>
+          <p>
+            {storageProviderLabel(storageClass)} ·{" "}
+            {storageLocation(storageClass)}
+          </p>
+          <div className="storage-detail-badges">
+            <span>{storageClass.namespace}</span>
+            <span>
+              {storageClass.type === "hostpath"
+                ? s.typeHostPath
+                : storageClass.type === "smb"
+                ? "SMB / NAS"
+                : storageClass.pathStyle
+                  ? zh
+                    ? "Path Style 已启用"
+                    : "Path Style enabled"
+                  : zh
+                    ? "标准访问模式"
+                    : "Standard access"}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="node-detail-body storage-detail-layout">
+        <section className="node-detail-section storage-detail-panel">
+          <span className="node-detail-label">
+            <Database size={15} />
+            {s.basicInfo}
+          </span>
+          <p className="storage-detail-section-copy">
+            {zh
+              ? "存储资源的归属与基础配置"
+              : "Ownership and base configuration"}
+          </p>
+          <div className="node-detail-grid storage-detail-info-grid">
+            <div>
+              <span className="muted">{s.provider}</span>
+              <strong>{storageProviderLabel(storageClass)}</strong>
+            </div>
+            {storageClass.type === "hostpath" ? (
+              <>
+                <div>
+                  <span className="muted">{s.hostPath}</span>
+                  <strong>{storageClass.path || "—"}</strong>
+                </div>
+                <div>
+                  <span className="muted">{s.fsType}</span>
+                  <strong>{storageClass.fs_type || "—"}</strong>
+                </div>
+              </>
+            ) : storageClass.type === "smb" ? (
+              <>
+                <div>
+                  <span className="muted">{s.share}</span>
+                  <strong>{smbLocation(storageClass)}</strong>
+                </div>
+                <div>
+                  <span className="muted">{s.username}</span>
+                  <strong>{storageClass.username || "—"}</strong>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <span className="muted">{s.bucket}</span>
+                  <strong>{storageClass.bucket}</strong>
+                </div>
+                <div>
+                  <span className="muted">{s.region}</span>
+                  <strong>{storageClass.region || "—"}</strong>
+                </div>
+              </>
+            )}
+            <div>
+              <span className="muted">{s.createdAt}</span>
+              <strong>{storageClass.createdAt || "—"}</strong>
+            </div>
+          </div>
+        </section>
+        <section className="node-detail-section storage-detail-panel">
+          <span className="node-detail-label">
+            <Link2 size={15} />
+            {s.connection}
+          </span>
+          <p className="storage-detail-section-copy">
+            {zh ? "访问端点与连接方式" : "Endpoint and connection mode"}
+          </p>
+          <div className="node-detail-grid storage-detail-info-grid">
+            {storageClass.type === "hostpath" ? (
+              <div>
+                <span className="muted">{zh ? "集群" : "Clusters"}</span>
+                <strong>{storageClass.clusters.join(", ") || "—"}</strong>
+              </div>
+            ) : storageClass.type === "smb" ? (
+              <>
+                <div>
+                  <span className="muted">{s.host}</span>
+                  <strong>{storageClass.host || "—"}</strong>
+                </div>
+                <div>
+                  <span className="muted">{s.domain}</span>
+                  <strong>{storageClass.domain || "—"}</strong>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <span className="muted">{s.endpoint}</span>
+                  <strong>{storageClass.endpoint || "—"}</strong>
+                </div>
+                <div>
+                  <span className="muted">{s.mountEndpoint}</span>
+                  <strong>
+                    {storageClass.mount_endpoint ||
+                      storageClass.endpoint ||
+                      "—"}
+                  </strong>
+                </div>
+                {Object.entries(storageClass.cluster_mount_endpoints ?? {})
+                  .length > 0 && (
+                  <div>
+                    <span className="muted">
+                      {s.clusterEndpoints}
+                    </span>
+                    <pre>
+                      {Object.entries(storageClass.cluster_mount_endpoints ?? {})
+                        .map(([cluster, endpoint]) => `${cluster}: ${endpoint}`)
+                        .join("\n")}
+                    </pre>
+                  </div>
+                )}
+                <div>
+                  <span className="muted">{s.pathStyle}</span>
+                  <strong>
+                    {storageClass.pathStyle
+                      ? zh
+                        ? "启用"
+                        : "Enabled"
+                      : zh
+                        ? "禁用"
+                        : "Disabled"}
+                  </strong>
+                </div>
+                <div>
+                  <span className="muted">{s.prefix}</span>
+                  <strong>{storageClass.prefix || "—"}</strong>
+                </div>
+                <div>
+                  <span className="muted">{s.vfsCacheMode}</span>
+                  <strong>{storageClass.vfs_cache_mode || "writes"}</strong>
+                </div>
+                <div>
+                  <span className="muted">
+                    {zh ? "挂载配置" : "Mount profile"}
+                  </span>
+                  <strong>{storageClass.mount_profile || "default"}</strong>
+                </div>
+                <div>
+                  <span className="muted">
+                    {zh
+                      ? "生效选项（新挂载）"
+                      : "Effective options (new mounts)"}
+                  </span>
+                  <pre>
+                    {[
+                      ...(storageClass.effective_mount_options || []),
+                      ...Object.entries(
+                        storageClass.effective_backend_options || {},
+                      ).map(([key, value]) => `${key}=${value}`),
+                    ].join("\n")}
+                  </pre>
+                </div>
+              </>
+            )}
+            <div>
+              <span className="muted">{s.description}</span>
+              <strong>{storageClass.description || "—"}</strong>
+            </div>
+          </div>
+        </section>
+        <section className="node-detail-section storage-detail-panel">
+          <span className="node-detail-label">
+            <HardDrive size={15} />
+            {s.usage}
+          </span>
+          <p className="storage-detail-section-copy">
+            {s.usageHint}
+          </p>
+          <div className="node-detail-grid storage-detail-info-grid">
+            <div>
+              <span className="muted">{s.profiles}</span>
+              <pre>
+                {Object.entries(storageClass.profiles ?? {})
+                  .map(
+                    ([profile, className]) =>
+                      `${profile}${profile === storageClass.default_profile ? " *" : ""}: ${className}`,
+                  )
+                  .join("\n") ||
+                  (storageClass.type === "hostpath" ? "default, read" : "—")}
+              </pre>
+            </div>
+            <div>
+              <span className="muted">YAML</span>
+              <pre>{storageVolumeExample(storageClass.name)}</pre>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+export function StorageClassCreatePage({
+  copy: c,
+  onBack,
+  onCreated,
+  initialStorageClass,
+}: {
+  copy: Copy;
+  onBack: () => void;
+  onCreated?: () => void;
+  initialStorageClass?: StorageClass;
+}) {
+  const s = storageCopy(c);
+  const zh = c === copy.zh;
+  const isEdit = Boolean(initialStorageClass);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState<StorageClassFormState>(() =>
+    storageClassToForm(initialStorageClass),
+  );
+  const [providerOptions, setProviderOptions] = useState<ProviderOption[]>([]);
+  const [clusterOptions, setClusterOptions] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [clustersMenuOpen, setClustersMenuOpen] = useState(false);
+  const clustersMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setForm(storageClassToForm(initialStorageClass));
+  }, [initialStorageClass]);
+
+  // 提供商目录来自后端，取值必须与后端校验的 canonical 值一致，否则下发到
+  // 数据面的 rclone 配置无法识别。
+  useEffect(() => {
+    let cancelled = false;
+    storageClassesApi
+      .providers()
+      .then((data) => {
+        if (cancelled) return;
+        setProviderOptions(
+          data
+            .map((provider) => ({
+              name: provider.name ?? provider.value ?? "",
+              value: provider.value ?? "",
+            }))
+            .filter((provider) => provider.value),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    clustersApi
+      .list<{ id?: string; name?: string }>()
+      .then((clusters) => {
+        if (cancelled) return;
+        setClusterOptions(
+          clusters
+            .map((cluster) => {
+              const id = cluster.id || cluster.name || "";
+              return { id, name: cluster.name || id };
+            })
+            .filter((cluster) => cluster.id),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setClusterOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        clustersMenuRef.current &&
+        !clustersMenuRef.current.contains(event.target as Node)
+      ) {
+        setClustersMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (clustersMenuOpen) {
+          setClustersMenuOpen(false);
+          return;
+        }
+        if (!submitting) onBack();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [clustersMenuOpen, onBack, submitting]);
+
+  const isSMB = form.type === "smb";
+  const isHostPath = form.type === "hostpath";
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!isEdit && form.type === "s3" && !form.access_key_secret.trim()) {
+      setError(
+        zh ? "Access Key Secret 不能为空。" : "Access Key Secret is required.",
+      );
+      return;
+    }
+    if (!isEdit && isSMB && !form.password) {
+      setError(zh ? "密码不能为空。" : "Password is required.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    // 只提交当前类型用到的字段，避免把另一类型的空值写进存储类。
+    const payload = storageClassPayload(form);
+    try {
+      if (isEdit)
+        await storageClassesApi.update(initialStorageClass!.name, payload);
+      else await storageClassesApi.create(payload);
+      onCreated?.();
+      onBack();
+    } catch (err) {
+      setError(
+        storageClassSubmissionError(err, zh, s.createFailed),
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    // 表单内容无法恢复，遮罩点击不关闭弹层；关闭入口为右上角按钮、取消按钮和 Esc。
+    <div className="modal-backdrop storage-create-backdrop">
+      <div
+        className="modal storage-create-modal"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="modal-head storage-create-head">
+          <div>
+            <span className="eyebrow">
+              <HardDrive size={13} />
+              {s.eyebrow}
+            </span>
+            <h2>
+              {isEdit
+                ? zh
+                  ? "编辑存储类"
+                  : "Edit storage class"
+                : s.createTitle}
+            </h2>
+            <p>
+              {isEdit
+                ? zh
+                  ? "调整对象存储配置和访问参数。"
+                  : "Update object storage settings and access parameters."
+                : s.desc}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="icon-button storage-create-close"
+            aria-label={zh ? "关闭" : "Close"}
+            onClick={onBack}
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="storage-create-form">
+          <div className="form-section">
+            <strong>{s.basicInfo}</strong>
+            <div className="form-grid">
+              <label>
+                {s.name} *
+                <input
+                  required
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="ks3"
+                />
+                {isEdit && (
+                  <span className="muted">{s.renameHint}</span>
+                )}
+              </label>
+              <label>
+                {s.type} *
+                <select
+                  required
+                  disabled={isEdit}
+                  value={form.type}
+                  onChange={(e) =>
+                    setForm({ ...form, type: e.target.value as StorageType })
+                  }
+                >
+                  <option value="s3">{s.typeS3}</option>
+                  <option value="smb">{s.typeSMB}</option>
+                  <option value="hostpath">
+                    {s.typeHostPath}
+                  </option>
+                </select>
+              </label>
+              {form.type === "s3" && (
+                <label>
+                  {s.provider} *
+                  <select
+                    required
+                    value={form.provider}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        provider: e.target.value as StorageProvider,
+                      })
+                    }
+                  >
+                    <option value="">{zh ? "请选择" : "Select"}</option>
+                    {providerOptions.map((p, index) => (
+                      <option key={`${p.value}-${index}`} value={p.value}>
+                        {p.name}
+                      </option>
+                    ))}
+                    {form.provider &&
+                      !providerOptions.some(
+                        (p) => p.value === form.provider,
+                      ) && (
+                        <option value={form.provider}>{form.provider}</option>
+                      )}
+                  </select>
+                </label>
+              )}
+            </div>
+          </div>
+          <div className="form-section">
+            <strong>{zh ? "关联集群" : "Associated clusters"}</strong>
+            <div className="registry-cluster-select" ref={clustersMenuRef}>
+              <button
+                type="button"
+                className="registry-cluster-trigger"
+                aria-expanded={clustersMenuOpen}
+                aria-haspopup="listbox"
+                onClick={() => setClustersMenuOpen((open) => !open)}
+              >
+                <span>
+                  {form.clusters.length === 0
+                    ? zh
+                      ? "请选择集群"
+                      : "Select clusters"
+                    : zh
+                      ? `已选择 ${form.clusters.length} 个集群`
+                      : `${form.clusters.length} cluster${
+                          form.clusters.length === 1 ? "" : "s"
+                        } selected`}
+                </span>
+                <ChevronRight
+                  size={16}
+                  className={clustersMenuOpen ? "open" : ""}
+                />
+              </button>
+              {clustersMenuOpen && (
+                <div className="registry-cluster-options" role="listbox">
+                  {Array.from(
+                    new Set([
+                      ...clusterOptions.map((cluster) => cluster.id),
+                      ...form.clusters,
+                    ]),
+                  )
+                    .sort()
+                    .map((id) => {
+                      const option = clusterOptions.find(
+                        (cluster) => cluster.id === id,
+                      );
+                      return (
+                        <label
+                          key={id}
+                          className={form.clusters.includes(id) ? "active" : ""}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={form.clusters.includes(id)}
+                            onChange={() =>
+                              setForm({
+                                ...form,
+                                clusters: form.clusters.includes(id)
+                                  ? form.clusters.filter(
+                                      (cluster) => cluster !== id,
+                                    )
+                                  : [...form.clusters, id].sort(),
+                              })
+                            }
+                          />
+                          <span>
+                            <strong>{option?.name || id}</strong>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  {clusterOptions.length === 0 &&
+                    form.clusters.length === 0 && (
+                      <p>{zh ? "暂无可选集群" : "No clusters available"}</p>
+                    )}
+                </div>
+              )}
+            </div>
+          </div>
+          {isSMB && (
+            <SmbStorageFields
+              copy={c}
+              zh={zh}
+              isEdit={isEdit}
+              value={form}
+              onChange={(patch) => setForm({ ...form, ...patch })}
+            />
+          )}
+          {isHostPath && (
+            <div className="form-section">
+              <strong>{s.connection}</strong>
+              <div className="form-grid">
+                <label>
+                  {s.hostPath} *
+                  <input
+                    required
+                    value={form.path}
+                    onChange={(e) => setForm({ ...form, path: e.target.value })}
+                    placeholder="/mnt/xc_kpfs/regular/post_train"
+                  />
+                  <span className="muted">{s.hostPathHint}</span>
+                </label>
+                <label className="field">
+                  {s.fsType}
+                  <input
+                    value={form.fs_type}
+                    onChange={(e) =>
+                      setForm({ ...form, fs_type: e.target.value })
+                    }
+                    placeholder="kingstorage"
+                  />
+                  <span className="muted">{s.fsTypeHint}</span>
+                </label>
+              </div>
+            </div>
+          )}
+          {form.type === "s3" && (
+            <div className="form-section">
+              <strong>{s.connection}</strong>
+              <div className="form-grid">
+                <label>
+                  {s.endpoint} *
+                  <input
+                    required
+                    value={form.endpoint}
+                    onChange={(e) =>
+                      setForm({ ...form, endpoint: e.target.value })
+                    }
+                    placeholder="https://s3.amazonaws.com"
+                  />
+                </label>
+                <label>
+                  {s.mountEndpoint}
+                  <input
+                    value={form.mount_endpoint}
+                    onChange={(e) =>
+                      setForm({ ...form, mount_endpoint: e.target.value })
+                    }
+                    placeholder={form.endpoint || "https://s3.amazonaws.com"}
+                  />
+                  <span className="muted">
+                    {s.mountEndpointHint}
+                  </span>
+                </label>
+                {form.clusters.length > 0 && (
+                  <fieldset className="field">
+                    <legend>{s.clusterEndpoints}</legend>
+                    {form.clusters.map((cluster) => (
+                      <label key={cluster}>
+                        {cluster}
+                        <input
+                          aria-label={`${s.clusterEndpoints} ${cluster}`}
+                          value={form.cluster_mount_endpoints[cluster] ?? ""}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              cluster_mount_endpoints: {
+                                ...form.cluster_mount_endpoints,
+                                [cluster]: e.target.value,
+                              },
+                            })
+                          }
+                          placeholder={
+                            form.mount_endpoint ||
+                            form.endpoint ||
+                            "https://s3.amazonaws.com"
+                          }
+                        />
+                      </label>
+                    ))}
+                    <span className="muted">
+                      {s.clusterEndpointsHint}
+                    </span>
+                  </fieldset>
+                )}
+                <label>
+                  {s.region} *
+                  <input
+                    required
+                    value={form.region}
+                    onChange={(e) =>
+                      setForm({ ...form, region: e.target.value })
+                    }
+                    placeholder="us-east-1"
+                  />
+                </label>
+                <label>
+                  {s.bucket} *
+                  <input
+                    required
+                    value={form.bucket}
+                    onChange={(e) =>
+                      setForm({ ...form, bucket: e.target.value })
+                    }
+                    placeholder="my-bucket"
+                  />
+                </label>
+                <label>
+                  {s.prefix}
+                  <input
+                    value={form.prefix}
+                    onChange={(e) =>
+                      setForm({ ...form, prefix: e.target.value })
+                    }
+                    placeholder="ks3-regular"
+                  />
+                  <span className="muted">{s.prefixHint}</span>
+                </label>
+                <label className="field">
+                  {zh ? "挂载配置" : "Mount profile"}
+                  <select
+                    value={form.mount_profile}
+                    onChange={(e) => {
+                      const profile = e.target.value as
+                        "default" | "read" | "archive";
+                      setForm({
+                        ...form,
+                        mount_profile: profile,
+                        vfs_cache_mode:
+                          profile === "archive" ? "off" : form.vfs_cache_mode,
+                      });
+                    }}
+                  >
+                    <option value="default">
+                      {zh ? "默认（兼容现有配置）" : "Default (compatible)"}
+                    </option>
+                    <option value="read">{zh ? "只读" : "Read only"}</option>
+                    <option value="archive">
+                      {zh ? "归档（关闭写缓存）" : "Archive (write cache off)"}
+                    </option>
+                  </select>
+                </label>
+                <label className="field">
+                  {zh
+                    ? "挂载选项覆盖（每行一项）"
+                    : "Mount option overrides (one per line)"}
+                  <textarea
+                    value={form.mount_options.join("\n")}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        mount_options: e.target.value.split("\n"),
+                      })
+                    }
+                    placeholder={"tpslimit=2\nlow-level-retries=10"}
+                  />
+                  <span className="muted">
+                    {zh
+                      ? "仅新挂载生效；支持的选项由服务端校验。"
+                      : "Applies to new mounts; supported options are validated by the server."}
+                  </span>
+                </label>
+                <label>
+                  {s.vfsCacheMode}
+                  <select
+                    value={form.vfs_cache_mode}
+                    disabled={form.mount_profile === "archive"}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        vfs_cache_mode: e.target.value as "off" | "writes",
+                      })
+                    }
+                  >
+                    <option value="off">
+                      {s.vfsCacheModeOff}
+                    </option>
+                    <option value="writes">
+                      {s.vfsCacheModeWrites}
+                    </option>
+                  </select>
+                </label>
+                <label>
+                  {s.pathStyle}
+                  <input
+                    type="checkbox"
+                    checked={form.path_style}
+                    onChange={(e) =>
+                      setForm({ ...form, path_style: e.target.checked })
+                    }
+                  />
+                </label>
+                <label>
+                  {s.accessKeyId} *
+                  <input
+                    required={!isEdit}
+                    autoComplete="off"
+                    value={form.access_key_id}
+                    onChange={(e) =>
+                      setForm({ ...form, access_key_id: e.target.value })
+                    }
+                    placeholder={
+                      isEdit
+                        ? zh
+                          ? "留空则保持原 Access Key ID"
+                          : "Leave blank to keep the existing Access Key ID"
+                        : "AKIAIOSFODNN7EXAMPLE"
+                    }
+                  />
+                </label>
+                <label>
+                  {s.accessKeySecret} *
+                  <input
+                    required={!isEdit}
+                    type="password"
+                    autoComplete="new-password"
+                    value={form.access_key_secret}
+                    onChange={(e) =>
+                      setForm({ ...form, access_key_secret: e.target.value })
+                    }
+                    placeholder={
+                      isEdit
+                        ? zh
+                          ? "留空则保持原密钥"
+                          : "Leave blank to keep the existing secret"
+                        : "••••••••••••"
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+          <div className="form-section">
+            <label>
+              {s.description}
+              <textarea
+                value={form.description}
+                onChange={(e) =>
+                  setForm({ ...form, description: e.target.value })
+                }
+                placeholder={
+                  zh
+                    ? "描述存储类的用途和特性"
+                    : "Describe the purpose and characteristics of the storage class"
+                }
+                rows={3}
+              />
+            </label>
+          </div>
+          {error && (
+            <div className="storage-create-error" role="alert">
+              <AlertCircle size={18} aria-hidden="true" />
+              <span>{error}</span>
+              <button
+                type="button"
+                className="storage-create-error-close"
+                aria-label={zh ? "关闭错误提示" : "Dismiss error"}
+                onClick={() => setError("")}
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+          )}
+          <div className="form-actions">
+            <button type="button" className="secondary-button" onClick={onBack}>
+              {zh ? "取消" : "Cancel"}
+            </button>
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={submitting}
+            >
+              <Plus size={17} />
+              {submitting
+                ? zh
+                  ? isEdit
+                    ? "保存中..."
+                    : "创建中..."
+                  : isEdit
+                    ? "Saving..."
+                    : "Creating..."
+                : isEdit
+                  ? zh
+                    ? "保存修改"
+                    : "Save changes"
+                  : s.createBtn}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+export function StorageClassFilesPage({
+  copy: c,
+  sub,
+  onBack,
+}: {
+  copy: Copy;
+  sub: string;
+  onBack: () => void;
+}) {
+  const zh = c === copy.zh;
+  const name = decodeURIComponent(sub);
+  const [prefix, setPrefix] = useState("");
+  const [objects, setObjects] = useState<any[]>([]);
+  const [commonPrefixes, setCommonPrefixes] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
+  const fetchFiles = async () => {
+    if (!name) {
+      setError(
+        zh ? "参数错误：缺少存储类名称" : "Error: missing storage class name",
+      );
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const data = await storageObjectsApi.list<{
+        objects?: any[];
+        common_prefixes?: string[];
+      }>(name, prefix);
+      setObjects(data.objects || []);
+      setCommonPrefixes(data.common_prefixes || []);
+    } catch (e: any) {
+      setError(
+        e?.message || (zh ? "加载文件列表失败" : "Failed to load file list"),
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchFiles();
+  }, [name, prefix]);
+
+  const handleUpload = async (files: FileList) => {
+    if (!name) return;
+    setUploading(true);
+    setError("");
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const formData = new FormData();
+        const key = prefix ? `${prefix}${file.name}` : file.name;
+        formData.append("file", file, key);
+        setUploadProgress(
+          `${zh ? "上传中" : "Uploading"}: ${file.name} (${i + 1}/${files.length})`,
+        );
+        await storageObjectsApi.upload(name, formData);
+      }
+      setUploadProgress("");
+      fetchFiles();
+    } catch (e: any) {
+      setError(e?.message || (zh ? "上传失败" : "Upload failed"));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDownload = async (key: string) => {
+    try {
+      const data = await storageObjectsApi.download<{ url?: string }>(
+        name,
+        key,
+      );
+      if (data.url) {
+        window.open(data.url, "_blank");
+      }
+    } catch (e: any) {
+      alert(
+        e?.message || (zh ? "获取下载链接失败" : "Failed to get download URL"),
+      );
+    }
+  };
+
+  const handleDelete = async (key: string) => {
+    if (!confirm(zh ? `确定删除文件 "${key}" 吗?` : `Delete file "${key}"?`))
+      return;
+    try {
+      await storageObjectsApi.remove(name, key);
+      fetchFiles();
+    } catch (e: any) {
+      alert(e?.message || (zh ? "删除失败" : "Delete failed"));
+    }
+  };
+
+  const normalizeDirectoryPrefix = (directoryPrefix: string) => {
+    const normalized = directoryPrefix.replace(/^\/+|\/+$/g, "");
+    return normalized ? `${normalized}/` : "";
+  };
+
+  const navigateFolder = (folderPrefix: string) => {
+    setPrefix(normalizeDirectoryPrefix(folderPrefix));
+  };
+
+  const goUp = () => {
+    const currentDirectory = normalizeDirectoryPrefix(prefix).slice(0, -1);
+    const parentEnd = currentDirectory.lastIndexOf("/");
+    setPrefix(
+      parentEnd >= 0 ? `${currentDirectory.slice(0, parentEnd + 1)}` : "",
+    );
+  };
+
+  const filteredObjects = objects.filter((obj) =>
+    obj.key.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  const filteredPrefixes = commonPrefixes.filter((folder) =>
+    folder.toLowerCase().includes(search.toLowerCase()),
+  );
+  const totalPages = Math.max(1, Math.ceil(filteredObjects.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedObjects = filteredObjects.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+
+  useEffect(() => setPage(1), [prefix, search, pageSize]);
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    if (bytes < 1024 * 1024 * 1024)
+      return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+  };
+
+  const formatDate = (dateStr: string) => {
+    return formatChinaDateTime(dateStr);
+  };
+
+  const breadcrumbs = () => {
+    if (!prefix) return [<span key="root">{c.files.rootPath}</span>];
+    const parts = prefix.split("/").filter(Boolean);
+    const crumbs = [
+      <button type="button" key="root" onClick={() => setPrefix("")}>
+        {c.files.rootPath}
+      </button>,
+    ];
+    let path = "";
+    for (const part of parts) {
+      path += part + "/";
+      const breadcrumbPath = path;
+      crumbs.push(
+        <button
+          type="button"
+          key={breadcrumbPath}
+          onClick={() => setPrefix(breadcrumbPath)}
+        >
+          {part}
+        </button>,
+      );
+    }
+    return crumbs;
+  };
+
+  return (
+    <div className="page-content resource-page files-page storage-files-page">
+      <div className="section-heading storage-files-hero">
+        <div>
+          <span className="eyebrow">
+            <FolderOpen size={13} />
+            {c.files.eyebrow}
+          </span>
+          <h2>{name || c.files.title}</h2>
+          <p>
+            {c.files.storageClass}: {name || "—"}
+          </p>
+          <div className="storage-detail-badges">
+            <span>
+              {prefix
+                ? zh
+                  ? "子目录"
+                  : "Subfolder"
+                : zh
+                  ? "根目录"
+                  : "Root directory"}
+            </span>
+          </div>
+        </div>
+        <div className="section-actions">
+          <button className="secondary-button" onClick={onBack}>
+            <ChevronLeft size={17} />
+            {c.files.backToStorage}
+          </button>
+        </div>
+      </div>
+
+      <section
+        className="storage-files-summary"
+        aria-label={zh ? "文件资源概况" : "File resource overview"}
+      >
+        <div>
+          <span>
+            <HardDrive size={17} />
+          </span>
+          <small>{zh ? "存储类" : "Storage class"}</small>
+          <strong>{name || "—"}</strong>
+        </div>
+        <div>
+          <span>
+            <FolderOpen size={17} />
+          </span>
+          <small>{zh ? "当前目录内容" : "Current contents"}</small>
+          <strong>
+            {commonPrefixes.length + objects.length}{" "}
+            <em>{zh ? "项" : "items"}</em>
+          </strong>
+        </div>
+      </section>
+
+      <div className="files-breadcrumb">
+        <Home size={15} />
+        <span className="breadcrumb-label">{c.files.currentPath}:</span>
+        {breadcrumbs()}
+      </div>
+
+      <div className="page-toolbar storage-files-toolbar">
+        <div className="search-field">
+          <Search size={16} />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={c.files.search}
+          />
+        </div>
+        <button
+          className="primary-button"
+          onClick={() => {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.multiple = true;
+            input.onchange = (e) => {
+              const files = (e.target as HTMLInputElement).files;
+              if (files && files.length > 0) handleUpload(files);
+            };
+            input.click();
+          }}
+          disabled={uploading}
+        >
+          <Upload size={16} />
+          {uploading ? uploadProgress || "..." : c.files.uploadBtn}
+        </button>
+        <button
+          className="secondary-button"
+          onClick={fetchFiles}
+          disabled={loading}
+        >
+          <RefreshCw
+            size={16}
+            className={loading ? "job-action-loading" : ""}
+          />
+          {loading ? (zh ? "刷新中..." : "Refreshing...") : c.common.refresh}
+        </button>
+      </div>
+
+      {error && (
+        <div className="storage-files-error" role="alert">
+          <AlertCircle size={18} />
+          <div>
+            <strong>
+              {zh ? "目录内容加载失败" : "Failed to load directory"}
+            </strong>
+            <span>{error}</span>
+          </div>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={fetchFiles}
+          >
+            <RefreshCw size={14} />
+            {zh ? "重试" : "Retry"}
+          </button>
+        </div>
+      )}
+
+      <section
+        className={`table-panel files-table storage-files-table-panel refreshable-region${loading ? " is-refreshing" : ""}`}
+        aria-busy={loading}
+      >
+        <div className="storage-table-heading">
+          <div>
+            <strong>{zh ? "目录内容" : "Directory contents"}</strong>
+            <small>
+              {zh
+                ? "浏览文件夹并管理当前路径下的对象"
+                : "Browse folders and manage objects in the current path"}
+            </small>
+          </div>
+          <span>
+            {zh
+              ? `共 ${filteredPrefixes.length + filteredObjects.length} 项`
+              : `${filteredPrefixes.length + filteredObjects.length} items`}
+          </span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>{c.files.fileName}</th>
+              <th>{c.files.size}</th>
+              <th>{c.files.lastModified}</th>
+              <th>{c.files.actions}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {prefix && (
+              <tr className="clickable storage-go-up-row" onClick={goUp}>
+                <td colSpan={4}>
+                  <ChevronLeft size={15} />
+                  {zh ? "返回上级目录" : "Go up"}
+                </td>
+              </tr>
+            )}
+            {filteredPrefixes.map((folder) => {
+              const folderName = folder.endsWith("/")
+                ? folder.slice(0, -1)
+                : folder;
+              const displayName = prefix
+                ? folderName.replace(prefix, "")
+                : folderName;
+              return (
+                <tr
+                  key={folder}
+                  className="clickable"
+                  onClick={() => navigateFolder(folder)}
+                >
+                  <td>
+                    <span className="storage-file-name folder">
+                      <i>
+                        <Folder size={17} />
+                      </i>
+                      <span>
+                        <strong>{displayName}</strong>
+                        <small>{zh ? "文件夹" : "Folder"}</small>
+                      </span>
+                    </span>
+                  </td>
+                  <td className="muted">—</td>
+                  <td className="muted">—</td>
+                  <td>
+                    <button
+                      className="icon-button"
+                      title={zh ? "进入目录" : "Enter folder"}
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {pagedObjects.map((obj) => {
+              const fileName = obj.key.split("/").pop() || obj.key;
+              return (
+                <tr key={obj.key}>
+                  <td>
+                    <span className="storage-file-name file">
+                      <i>
+                        <FileText size={17} />
+                      </i>
+                      <span>
+                        <strong>{fileName}</strong>
+                        <small>{zh ? "对象文件" : "Object"}</small>
+                      </span>
+                    </span>
+                  </td>
+                  <td>{formatSize(obj.size || 0)}</td>
+                  <td>{formatDate(obj.last_modified)}</td>
+                  <td>
+                    <div className="row-actions">
+                      <button
+                        className="icon-button"
+                        title={c.files.download}
+                        onClick={() => handleDownload(obj.key)}
+                      >
+                        <Download size={14} />
+                      </button>
+                      <button
+                        className="icon-button danger"
+                        title={c.files.delete}
+                        onClick={() => handleDelete(obj.key)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {!loading &&
+              filteredObjects.length === 0 &&
+              filteredPrefixes.length === 0 &&
+              !error && (
+                <tr>
+                  <td colSpan={4}>
+                    <div className="storage-files-state empty">
+                      <span>
+                        <FolderOpen size={22} />
+                      </span>
+                      <strong>{c.files.noData}</strong>
+                      <small>
+                        {zh
+                          ? "可以上传文件，或返回上级目录继续浏览。"
+                          : "Upload files or return to the parent directory."}
+                      </small>
+                    </div>
+                  </td>
+                </tr>
+              )}
+          </tbody>
+        </table>
+        <RefreshOverlay
+          visible={loading}
+          label={zh ? "正在刷新目录内容" : "Refreshing directory contents"}
+        />
+      </section>
+      {!loading && filteredObjects.length > 0 && (
+        <Pagination
+          page={currentPage}
+          pageSize={pageSize}
+          total={filteredObjects.length}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          zh={zh}
+        />
+      )}
+    </div>
+  );
+}
+import { clustersApi, storageClassesApi, storageObjectsApi } from "../../backend";
+import { ApiError, errorMessage } from "../../api";

@@ -1,4 +1,4 @@
-import type { StorageClass } from "../../data";
+import type { StorageClass } from "./storageClass";
 
 /** 列表和详情中“提供商”一栏：SMB 类型统一显示 SMB。 */
 export function storageProviderLabel(

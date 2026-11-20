@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Ban, ChevronRight, Info, LayoutGrid, LockOpen, Trash2 } from "lucide-react";
+import { Ban, ChevronRight, Info, LayoutGrid, LockOpen } from "lucide-react";
 import type { Phase } from "../data";
 import type { Copy } from "../i18n";
-import type { ClusterSummary, CRDNode, NodeCategory } from "../types";
-import { clusterLabel, nodeLabel, nodeSearchNames } from "../astribot/lib/displayName";
-import { ClusterName } from "../astribot/components/ClusterName";
-import { NodeName } from "../astribot/components/NodeName";
+import type { CRDNode, NodeCategory } from "../types";
 import {
   categoryLabels,
   getNodeCategories,
@@ -22,14 +19,6 @@ import {
   useColumnFilter,
 } from "./shared";
 import { ColumnFilterPopover } from "./ColumnFilterPopover";
-import { NodeNetworkAddresses } from "../astribot/components/NodeNetworkAddresses";
-import { useNodeNetworks } from "../astribot/components/useNodeNetworks";
-import { isControlPlaneLabels } from "../utils/nodeVisibility";
-import {
-  nodeLinkHealth,
-  nodeNetworkKey,
-  nodeNetworkSearchText,
-} from "../astribot/lib/nodeNetwork";
 
 type CategoryFilter = "all" | NodeCategory;
 
@@ -37,14 +26,12 @@ const categoryOrder: NodeCategory[] = ["cloud", "edge", "robot", "unknown"];
 
 export function NodeResourceBrowser({
   nodes,
-  clusters,
   nodeWorkloads = {},
   copy: c,
   onSelectNode,
   onRefresh,
   refreshing,
   onToggleScheduling,
-  onRemoveNode,
   updatingNode,
   initialCategory = "all",
   initialQuery = "",
@@ -54,15 +41,12 @@ export function NodeResourceBrowser({
   onClearSelection,
 }: {
   nodes: CRDNode[];
-  // What the cluster column shows each node's namespace as.
-  clusters: ClusterSummary[];
   nodeWorkloads?: Record<string, { jobs: string[]; workers: number }>;
   copy: Copy;
   onSelectNode: (name: string) => void;
   onRefresh?: () => void | Promise<void>;
   refreshing?: boolean;
   onToggleScheduling?: (node: CRDNode) => void;
-  onRemoveNode?: (node: CRDNode) => void;
   updatingNode?: string | null;
   initialCategory?: CategoryFilter;
   initialQuery?: string;
@@ -71,7 +55,6 @@ export function NodeResourceBrowser({
   onSelectFiltered?: (keys: string[]) => void;
   onClearSelection?: () => void;
 }) {
-  const nodeNetworks = useNodeNetworks(nodes);
   const zh = c.nav.overview === "总览";
   const [category, setCategory] = useState<CategoryFilter>(initialCategory);
   const [query, setQuery] = useState(initialQuery);
@@ -109,16 +92,17 @@ export function NodeResourceBrowser({
     const normalizedQuery = query.trim().toLowerCase();
     return nodes
       .filter((node) => {
-        const address = nodeNetworkSearchText(
-          node,
-          nodeNetworks[nodeNetworkKey(node)],
-        );
+        const address =
+          node.status?.addresses?.find((item) => item.type === "InternalIP")
+            ?.address ??
+          node.status?.addresses?.[0]?.address ??
+          "";
         const taskName = (nodeWorkloads[node.metadata.name]?.jobs ?? []).join(
           " ",
         );
         const location = getNodeLocation(node);
         const searchable =
-          `${nodeSearchNames(node, clusterLabel(clusters, clusterOf(node)))} ${node.spec.agentType ?? ""} ${address} ${taskName} ${location}`.toLowerCase();
+          `${node.metadata.name} ${node.metadata.namespace ?? ""} ${node.spec.agentType ?? ""} ${address} ${taskName} ${location}`.toLowerCase();
         const phase = (node.status?.phase ?? "Offline") as Phase;
         const typeHit =
           typeFilter.length === 0 ||
@@ -141,18 +125,16 @@ export function NodeResourceBrowser({
         );
       })
       .sort((a, b) =>
-        nodeLabel(a).localeCompare(nodeLabel(b), zh ? "zh-CN" : "en", {
+        a.metadata.name.localeCompare(b.metadata.name, zh ? "zh-CN" : "en", {
           numeric: true,
         }),
       );
   }, [
     category,
     clusterFilter,
-    clusters,
     locationFilter,
     nodeWorkloads,
     nodes,
-    nodeNetworks,
     phaseFilter,
     query,
     typeFilter,
@@ -217,8 +199,8 @@ export function NodeResourceBrowser({
     nodes.forEach((n) => set.add(clusterOf(n) || "—"));
     return [...set]
       .sort((a, b) => a.localeCompare(b, zh ? "zh-CN" : "en"))
-      .map((v) => ({ value: v, label: clusterLabel(clusters, v) }));
-  }, [clusters, nodes, zh]);
+      .map((v) => ({ value: v, label: v }));
+  }, [nodes, zh]);
   const locationOptions = useMemo(() => {
     const set = new Set<string>();
     nodes.forEach((n) => set.add(getNodeLocation(n) || "—"));
@@ -371,7 +353,15 @@ export function NodeResourceBrowser({
                   ? "上次在线时间未知"
                   : "Last online time unavailable";
               const nodeCategories = getNodeCategories(node);
-              const namespace = clusterOf(node) || "—";
+              const labels = node.metadata.labels ?? {};
+              const cluster =
+                node.metadata.namespace ?? labels["rlark.io/cluster-id"] ?? "—";
+              const address =
+                node.status?.addresses?.find(
+                  (item) => item.type === "InternalIP",
+                )?.address ??
+                node.status?.addresses?.[0]?.address ??
+                "—";
               const workload = nodeWorkloads[node.metadata.name];
               const jobCount = workload?.jobs.length ?? 0;
               const workerCount = workload?.workers ?? 0;
@@ -386,13 +376,9 @@ export function NodeResourceBrowser({
               const resource = getNodeResourceSummary(node, zh);
               const key = nodeKey(node);
               const checked = selectedNodeKeys?.has(key) ?? false;
-              const site = nodeNetworks[nodeNetworkKey(node)]?.site;
-              const controlPlane = isControlPlaneLabels(node.metadata.labels);
-              // Its cluster ends with its control plane: that is not a node's removal.
-              const removeRefused = zh ? "控制面不能删：删了整个集群就没了" : "A control plane cannot be removed: its cluster would end with it";
               return (
                 <div
-                  className={`node-resource-row${onToggleScheduling ? " has-admin-actions" : ""}${selectable ? " has-selection" : ""}${checked ? " selected" : ""}${site && nodeLinkHealth(site) === "down" ? " link-down" : ""}`}
+                  className={`node-resource-row${onToggleScheduling ? " has-admin-actions" : ""}${selectable ? " has-selection" : ""}${checked ? " selected" : ""}`}
                   key={key}
                 >
                   {selectable && (
@@ -400,7 +386,7 @@ export function NodeResourceBrowser({
                       <input
                         type="checkbox"
                         checked={checked}
-                        aria-label={`${zh ? "选择节点" : "Select node"} ${nodeLabel(node)}`}
+                        aria-label={`${zh ? "选择节点" : "Select node"} ${node.metadata.name}`}
                         onClick={(event) => event.stopPropagation()}
                         onChange={() => {
                           if (!selectedNodeKeys || !onSelectionChange) return;
@@ -416,19 +402,14 @@ export function NodeResourceBrowser({
                     type="button"
                     className="node-row-primary node-detail-link"
                     onClick={() => onSelectNode(node.metadata.name)}
-                    aria-label={`${zh ? "查看节点" : "View node"} ${nodeLabel(node)}`}
+                    aria-label={`${zh ? "查看节点" : "View node"} ${node.metadata.name}`}
                   >
                     <span
                       className={`node-status-ring ${phase.toLowerCase()}`}
                     />
                     <strong className="node-row-name">
-                      <NodeName node={node} />
+                      {node.metadata.name}
                     </strong>
-                    {controlPlane && (
-                      <span className="control-plane-badge" title={zh ? "这台是所在集群的控制面" : "This node is its cluster's control plane"}>
-                        {zh ? "控制面" : "Control plane"}
-                      </span>
-                    )}
                   </button>
                   <span className="node-type-list">
                     {nodeCategories.map((item) => {
@@ -474,17 +455,13 @@ export function NodeResourceBrowser({
                       </span>
                     )}
                   </span>
-                  <span className="node-row-meta" title={namespace}>
-                    <ClusterName clusters={clusters} namespace={namespace} />
+                  <span className="node-row-meta" title={cluster}>
+                    {cluster}
                   </span>
                   <span className="node-row-location" title={location}>
                     {location}
                   </span>
-                  <NodeNetworkAddresses
-                    node={node}
-                    network={nodeNetworks[nodeNetworkKey(node)]}
-                    zh={zh}
-                  />
+                  <code className="node-row-ip">{address}</code>
                   <span
                     className="node-row-resource"
                     title={resource.lines
@@ -566,24 +543,6 @@ export function NodeResourceBrowser({
                               ? "封锁"
                               : "Cordon"}
                       </button>
-                      {onRemoveNode && (
-                        <button
-                          type="button"
-                          className="secondary-button danger node-scheduling-button"
-                          disabled={controlPlane}
-                          title={controlPlane ? removeRefused : undefined}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onRemoveNode(node);
-                          }}
-                        >
-                          <Trash2 size={14} />
-                          {zh ? "删除" : "Remove"}
-                        </button>
-                      )}
-                      {onRemoveNode && controlPlane && (
-                        <small className="node-remove-refused">{removeRefused}</small>
-                      )}
                     </span>
                   ) : (
                     <ChevronRight size={15} className="node-row-chevron" />

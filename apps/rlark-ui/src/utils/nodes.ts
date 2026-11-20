@@ -1,15 +1,14 @@
 import { useEffect, useState } from "react";
 import { Bot, CircleDot, CloudCog, Server } from "lucide-react";
-import { nodes as mockNodes, type NodeKind } from "../data.js";
-import { clustersApi, nodesApi } from "../backend.js";
-import type { ClusterSummary, CRDNode, CRDNodeLite, NodeCategory } from "../types";
+import { nodes as mockNodes, type NodeKind } from "../data";
+import type { CRDNode, CRDNodeLite, NodeCategory } from "../types";
 import {
   getNodeCategories,
   getNodeCategory,
   hasNodeCategory,
   isBusinessWorkerNode,
   NODE_CATEGORY_LABEL,
-} from "./nodeVisibility.js";
+} from "./nodeVisibility";
 
 export {
   getNodeCategories,
@@ -26,7 +25,7 @@ export {
   isDiskUsageWarning,
   parseResourceQuantity,
   selectDeviceResourceKey,
-} from "./nodeResources.js";
+} from "./nodeResources";
 
 export function getNodeLocation(node: CRDNode): string {
   return (
@@ -194,20 +193,6 @@ export function buildMockCRDNodes(): CRDNode[] {
   });
 }
 
-// The clusters as the Gateway lists them, read once per mount: what
-// clusterLabel shows a namespace as.
-export function useClusters() {
-  const [clusters, setClusters] = useState<ClusterSummary[]>([]);
-  useEffect(() => {
-    clustersApi
-      .list<ClusterSummary>()
-      .then(setClusters)
-      .catch(() => {});
-  }, []);
-  return clusters;
-}
-
-// The nodes and the namespaces they sit in: the values cluster selects keep.
 export function useNodeLabels() {
   const [nodes, setNodes] = useState<CRDNodeLite[]>([]);
   const [loading, setLoading] = useState(false);
@@ -224,5 +209,7 @@ export function useNodeLabels() {
       nodes.map((n) => n.metadata.namespace).filter((v): v is string => !!v),
     ),
   );
-  return { nodes, loading, clusterNames };
+  const clusterDisplayNames = clusterNames;
+  return { nodes, loading, clusterNames, clusterDisplayNames };
 }
+import { nodesApi } from "../backend";

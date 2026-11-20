@@ -67,6 +67,33 @@
   word-break: break-all;
 }
 
+.cert-result {
+  margin-top: 24px;
+}
+
+.cert-result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cert-result-header div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cert-result-header div svg {
+  color: var(--green);
+}
+
+.cert-result-header small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .row-actions {
   display: flex;
   align-items: center;

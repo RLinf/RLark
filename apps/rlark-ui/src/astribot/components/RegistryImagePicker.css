@@ -1,0 +1,44 @@
+/* The registry image picker of the Job editor. It is loaded before RLark's
+   styles, so each rule sits under .image-picker to win over theirs (the
+   modal's own label rule among them). */
+.image-picker .image-picker-input {
+  position: relative;
+}
+
+.image-picker .image-picker-heading {
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.image-picker .image-picker-browse {
+  margin-top: 8px;
+}
+
+.image-picker .image-picker-browser {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.image-picker .image-picker-browser label {
+  display: grid;
+  gap: 6px;
+}
+
+.image-picker .image-picker-browser p {
+  margin: 0;
+}
+
+.image-picker .image-picker-results {
+  max-height: 224px;
+  overflow-y: auto;
+}
+
+.image-picker .image-picker-pagination {
+  display: flex;
+  gap: 8px;
+}

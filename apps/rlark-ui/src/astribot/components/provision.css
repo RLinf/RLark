@@ -1,0 +1,128 @@
+/* The new-cluster page, a cluster's provisioning stages and the retry and
+   clear forms under them. Loaded before RLark's styles: the rule that has to
+   beat .cert-form label names .cert-form too. */
+.new-cluster-form {
+  flex-wrap: wrap;
+}
+
+.cert-form.new-cluster-form label {
+  flex: 1 1 160px;
+}
+
+.provision-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.provision-stage {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--soft);
+}
+
+.provision-stage div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.provision-stage small {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.provision-stage-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.provision-stage-done,
+.provision-stage-running {
+  color: inherit;
+}
+
+.provision-stage-done .provision-stage-icon {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.provision-stage-running .provision-stage-icon {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.provision-stage-skipped .provision-stage-icon {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.provision-stage-skip {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.provision-stage-failed {
+  color: var(--red);
+}
+
+.provision-stage-failed .provision-stage-icon {
+  border-color: var(--red);
+}
+
+.provision-stage-failed .provision-stage-message {
+  color: var(--red);
+}
+
+.provision-retry {
+  margin-top: 16px;
+}
+
+/* Taking a making away: what it does on a line of its own, then the password or "machine gone" and the button. */
+.provision-clear {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.provision-clear > small {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.provision-clear .cert-form {
+  flex-wrap: wrap;
+}
+
+.cert-form label.provision-clear-gone {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+}
+
+.cert-form label.provision-clear-gone input {
+  padding: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.cert-form label.provision-clear-gone span {
+  font-weight: 400;
+}

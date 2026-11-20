@@ -8,15 +8,15 @@ import { hasTerminalSession, parseRoute, useIsAdminPath } from "./utils/route";
 import { Logo, Header, PlatformFooter } from "./components/shared";
 import { TerminalPage } from "./components/terminal";
 import { Overview } from "./pages/Overview";
-import { ClustersPage } from "./pages/Clusters";
-import { ClusterManagementPage } from "./pages/ClusterManagement";
+import { ClustersPage } from "./astribot/pages/Clusters";
+import { ClusterManagementPage } from "./astribot/pages/ClusterManagement";
 import { JobsPage } from "./pages/Jobs";
 import { WorkflowsPage, CreateWorkflowModal } from "./pages/Workflows";
 import {
   StorageClassesPage,
   StorageClassCreatePage,
   StorageClassFilesPage,
-} from "./pages/Storage";
+} from "./astribot/pages/Storage";
 import { CreateJobModal } from "./pages/CreateJob";
 import { UserLogin } from "./pages/Login";
 import { SSHKeysPage } from "./pages/SSHKeys";

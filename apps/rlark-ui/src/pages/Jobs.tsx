@@ -50,8 +50,10 @@ import { effectiveJobPhase, type JobDisplayPhase } from "../utils/jobPhase";
 import { formatChinaDateTime } from "../utils/time";
 import { resolveSSHKeyOwners, type SSHUserKey } from "../utils/sshKeys";
 import { isDiskUsageWarning } from "../utils/nodeResources";
-import { useClusters } from "../utils/nodes";
-import { clusterLabel, nodeLabel } from "../astribot/lib/displayName";
+import { useClusters } from "../astribot/components/useClusters";
+import { clusterIDsLabel, clusterLabel, workerNodeLabel } from "../astribot/lib/displayName";
+import { RealName } from "../astribot/components/NodeName";
+import { storageMountLabel } from "../astribot/lib/storageVolume";
 import { overlayContainer } from "../utils/overlayContainer";
 import {
   partitionWorkerEvents,
@@ -1683,15 +1685,6 @@ export function JobDetailPage({
   const [tasks, setTasks] = useState<CRDTask[]>([]);
   const [networkNodes, setNetworkNodes] = useState<CRDNode[]>([]);
   const clusters = useClusters();
-  // What a worker's node is shown as: its Node's display name once read.
-  const workerNodeLabel = (worker: { node: string; cluster?: string }) => {
-    const node = networkNodes.find(
-      (item) =>
-        item.metadata.name === worker.node &&
-        item.metadata.namespace === worker.cluster,
-    );
-    return node ? nodeLabel(node) : worker.node;
-  };
   const [detailNodeDiskWarningMap, setDetailNodeDiskWarningMap] = useState<
     Record<string, boolean>
   >({});
@@ -1851,11 +1844,7 @@ export function JobDetailPage({
           }
         }),
       );
-      setNetworkNodes(
-        nodeResponses.filter(
-          (node): node is CRDNode => node !== null,
-        ) as CRDNode[],
-      );
+      setNetworkNodes(nodeResponses.filter((node): node is CRDNode => node !== null));
       const diskWarningMap: Record<string, boolean> = {};
       const nodeProgressMap: Record<string, PullProgressEntry[]> = {};
       const nodeWarningEventsMap: Record<string, NodeEventEntry[]> = {};
@@ -2349,9 +2338,7 @@ export function JobDetailPage({
   const workerClusterOptions = useMemo(() => {
     const set = new Set<string>();
     jobWorkers.forEach((w) => w.cluster && set.add(w.cluster));
-    return [...set]
-      .sort()
-      .map((v) => ({ value: v, label: clusterLabel(clusters, v) }));
+    return [...set].sort().map((v) => ({ value: v, label: clusterLabel(clusters, v) }));
   }, [clusters, jobWorkers]);
   const workerKindOptions = useMemo(() => {
     const set = new Set<string>();
@@ -2658,12 +2645,7 @@ export function JobDetailPage({
               <span>{job.id}</span>
             </button>
             <span>
-              {c.jobType[job.type]} ·{" "}
-              {/* job.cluster is the Tasks' cluster IDs, joined by ", ". */}
-              {job.cluster
-                .split(", ")
-                .map((id) => clusters.find((cluster) => cluster.id === id)?.name ?? id)
-                .join(", ")}
+              {c.jobType[job.type]} · {clusterIDsLabel(clusters, job.cluster)}
             </span>
           </div>
         </div>
@@ -2970,7 +2952,7 @@ export function JobDetailPage({
                           onSelectNode={onSelectNode}
                           onSelectCluster={onSelectCluster}
                           clusterName={clusterLabel(clusters, worker.cluster ?? "")}
-                          nodeName={workerNodeLabel(worker)}
+                          nodeName={workerNodeLabel(networkNodes, worker)}
                           diskWarning={
                             detailNodeDiskWarningMap[worker.node] ?? false
                           }
@@ -4177,11 +4159,7 @@ function RoleRuntimeConfig({
                     ? (storageClassDisplayNames[mount.objectStorage] ??
                       mount.objectStorage)
                     : mount.hostPath,
-                  mount.type === "storage"
-                    ? [mount.profile || (zh ? "默认" : "default"), mount.readOnly ? (zh ? "只读" : "read-only") : ""]
-                        .filter(Boolean)
-                        .join(" · ")
-                    : "",
+                  mount.type === "storage" ? storageMountLabel(mount, zh) : "",
                   mount.mountPath,
                 ];
               })}
@@ -5303,10 +5281,7 @@ function WorkerClusterLink({
   if (!onSelectCluster || !cluster || cluster === "—") {
     return (
       <span className="worker-chip" title={cluster || "—"}>
-        <span className="worker-link-label">
-          {label || "—"}
-          {label && label !== cluster && <span className="real-name"> · {cluster}</span>}
-        </span>
+        <span className="worker-link-label">{label ? <RealName label={label} name={cluster} /> : "—"}</span>
       </span>
     );
   }
@@ -5317,10 +5292,7 @@ function WorkerClusterLink({
       onClick={() => onSelectCluster(cluster)}
       title={cluster}
     >
-      <span className="worker-link-label">
-        {label}
-        {label !== cluster && <span className="real-name"> · {cluster}</span>}
-      </span>
+      <span className="worker-link-label"><RealName label={label} name={cluster} /></span>
     </button>
   );
 }
@@ -5337,10 +5309,7 @@ function WorkerNodeLink({
   if (!onSelectNode || !node || node === "—" || node.includes(",")) {
     return (
       <span className="worker-chip" title={node || "—"}>
-        <span className="worker-link-label">
-          {label || "—"}
-          {label && label !== node && <span className="real-name"> · {node}</span>}
-        </span>
+        <span className="worker-link-label">{label ? <RealName label={label} name={node} /> : "—"}</span>
       </span>
     );
   }
@@ -5351,10 +5320,7 @@ function WorkerNodeLink({
       onClick={() => onSelectNode(node)}
       title={node}
     >
-      <span className="worker-link-label">
-        {label}
-        {label !== node && <span className="real-name"> · {node}</span>}
-      </span>
+      <span className="worker-link-label"><RealName label={label} name={node} /></span>
     </button>
   );
 }

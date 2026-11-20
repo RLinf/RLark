@@ -1,7 +1,7 @@
 import type { JobTag, JobType } from "../data";
 import type { RoleResource } from "../types";
 import type { CRDJob, CRDJobTask } from "../crdModels";
-import { STORAGE_DRIVER } from "./crd.js";
+import { storageVolume } from "../astribot/lib/storageVolume.js";
 
 // 任务名称限制：1-64 个字符，支持中英文、数字、中划线（-）、下划线（_）和英文句号（.）
 export const JOB_DISPLAY_NAME_MAX_LENGTH = 64;
@@ -210,19 +210,7 @@ export function generateJobCRD(opts: {
         hostPath: { path: m.hostPath || m.objectStorage },
       }));
 
-      // A storage mount names the storage; RLark resolves it to the
-      // StorageClass or node directory of the cluster the Task runs in.
-      const storageVolumes = storageMounts.map((m) => ({
-        name: toVolumeName(m.mountPath),
-        csi: {
-          driver: STORAGE_DRIVER,
-          ...(m.readOnly ? { readOnly: true } : {}),
-          volumeAttributes: {
-            storage: m.objectStorage,
-            ...(m.profile ? { profile: m.profile } : {}),
-          },
-        },
-      }));
+      const storageVolumes = storageMounts.map((m) => storageVolume(toVolumeName(m.mountPath), m));
 
       // 丢失了原始定义的 opaque 挂载无法写出对应的 volume，跳过以免产生悬空引用。
       const allVolumeMounts = roleMounts

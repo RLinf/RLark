@@ -2,12 +2,10 @@
 @media (max-width: 1300px) {
   .cluster-management-table-head,
   .cluster-management-row {
-    min-width: 990px;
+    min-width: 760px;
     grid-template-columns:
       minmax(170px, 1.35fr)
       minmax(66px, 0.55fr)
-      minmax(120px, 0.9fr)
-      minmax(96px, 0.75fr)
       minmax(48px, 0.42fr)
       minmax(48px, 0.42fr)
       minmax(48px, 0.42fr)
@@ -18,7 +16,7 @@
   }
 
   .cluster-management-empty {
-    min-width: 990px;
+    min-width: 760px;
   }
 
   .node-resource-table-head,
@@ -39,7 +37,7 @@
 
   .node-resource-table-head.has-admin-actions,
   .node-resource-row.has-admin-actions {
-    min-width: 1290px;
+    min-width: 1250px;
     grid-template-columns:
       minmax(130px, 1.25fr)
       minmax(76px, 0.65fr)
@@ -49,7 +47,7 @@
       minmax(98px, 0.8fr)
       minmax(170px, 1.25fr)
       minmax(120px, 0.95fr)
-      minmax(210px, 1fr);
+      minmax(170px, 1fr);
   }
 
   .storage-class-table-panel table,

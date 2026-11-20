@@ -5,6 +5,7 @@ import { clusterProvisionsApi, selfHealApi } from "../api";
 import { RetryClear } from "../components/RetryClear";
 import { StageList } from "../components/StageList";
 import { useAction } from "../components/useAction";
+import "../components/provision.css";
 import {
   defaultClusterName,
   newClusterProblem,

@@ -17,11 +17,11 @@ import {
   X,
 } from "lucide-react";
 import {
-  storageClasses as mockStorageClasses,
   clusters,
   type Cluster,
   type JobType,
 } from "../data";
+import { mockStorageClasses } from "../astribot/mockBackend";
 import type { Copy } from "../i18n";
 import type { DAGEdge, DAGNode, RoleResource, WorkflowJobDef } from "../types";
 import type { CRDWorkflow } from "../crdModels";
@@ -761,7 +761,7 @@ export function CreateWorkflowModal({
   }, [onClose, submitting]);
   const [domains, setDomains] = useState<{ name: string; cidr: string }[]>([]);
   const {
-    clusterNames,
+    clusterDisplayNames,
     nodes: allNodes,
     loading: nodesLoading,
   } = useNodeLabels();
@@ -809,7 +809,7 @@ export function CreateWorkflowModal({
       roleResources: makeDefaultRoleResources(
         "RL",
         ROLE_TEMPLATES["RL"],
-        clusterNames,
+        clusterDisplayNames,
       ),
       runScript:
         "python train.py --config /mnt/config/train.yaml --dataset /mnt/dataset --output /mnt/checkpoints",
@@ -960,7 +960,7 @@ export function CreateWorkflowModal({
       type: "RL",
       roles,
       headerRole: roles[0],
-      roleResources: makeDefaultRoleResources("RL", roles, clusterNames),
+      roleResources: makeDefaultRoleResources("RL", roles, clusterDisplayNames),
       runScript:
         "python train.py --config /mnt/config/train.yaml --dataset /mnt/dataset --output /mnt/checkpoints",
       domain: "",
@@ -1364,7 +1364,7 @@ export function CreateWorkflowModal({
   const onJobTypeChange = (next: JobType) => {
     if (!activeJob) return;
     const newRoles = ROLE_TEMPLATES[next];
-    const newRR = makeDefaultRoleResources(next, newRoles, clusterNames);
+    const newRR = makeDefaultRoleResources(next, newRoles, clusterDisplayNames);
     updateJob(activeJob.id, {
       type: next,
       roles: newRoles,
@@ -1381,7 +1381,7 @@ export function CreateWorkflowModal({
     const rr = { ...activeJob.roleResources };
     rr[newRole] = {
       role: newRole,
-      cluster: clusterNames[0] ?? "",
+      cluster: clusterDisplayNames[0] ?? "",
       nodeSelector: "",
       replicas: 0,
       cpu: "",
@@ -1398,7 +1398,7 @@ export function CreateWorkflowModal({
           mountPath: "/mnt/dataset",
           hostPath: "/host/dataset",
           profile: "",
-        readOnly: false,
+          readOnly: false,
         },
       ],
     };

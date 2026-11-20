@@ -1,0 +1,98 @@
+/* The cluster list as this fork shows it: two more columns (control plane,
+   Kubernetes) and the cluster ID under a display name. The official rules
+   stay as they are in styles/clusters/management.css and
+   styles/overrides/global-responsive.css; the rules here are scoped one
+   class deeper, so each wins over the official rule it widens. */
+.cluster-management-table-panel .cluster-management-table-head,
+.cluster-management-table-panel .cluster-management-row {
+  min-width: 1340px;
+  grid-template-columns:
+    minmax(210px, 1.4fr)
+    minmax(100px, 0.7fr)
+    minmax(150px, 1fr)
+    minmax(120px, 0.9fr)
+    minmax(80px, 0.55fr)
+    minmax(80px, 0.55fr)
+    minmax(80px, 0.55fr)
+    minmax(150px, 1fr)
+    minmax(120px, 0.8fr)
+    36px;
+}
+
+.cluster-management-table-panel .cluster-management-row {
+  cursor: pointer;
+}
+
+.cluster-management-table-panel .cluster-management-empty {
+  min-width: 1340px;
+}
+
+@media (max-width: 1300px) {
+  .cluster-management-table-panel .cluster-management-table-head,
+  .cluster-management-table-panel .cluster-management-row {
+    min-width: 990px;
+    grid-template-columns:
+      minmax(170px, 1.35fr)
+      minmax(66px, 0.55fr)
+      minmax(120px, 0.9fr)
+      minmax(96px, 0.75fr)
+      minmax(48px, 0.42fr)
+      minmax(48px, 0.42fr)
+      minmax(48px, 0.42fr)
+      minmax(104px, 0.8fr)
+      minmax(82px, 0.65fr)
+      36px;
+  }
+
+  .cluster-management-table-panel .cluster-management-empty {
+    min-width: 990px;
+  }
+}
+
+.cluster-management-name code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cluster-control-plane {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cluster-control-plane > span {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cluster-control-plane strong,
+.cluster-control-plane small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cluster-kubernetes-version {
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+
+.cluster-control-plane small {
+  color: var(--muted);
+  font-family: var(--mono, monospace);
+}
+
+.cluster-detail-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cluster-detail-identity .real-name {
+  display: block;
+  margin-bottom: 6px;
+}
