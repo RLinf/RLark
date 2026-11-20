@@ -30,7 +30,7 @@ addons:
       prewarm: '{{images.s1u-robot}},{{images.fleet-robot}},{{images.quest-bridge}}'
     version: v0.3.0
 images:
-  cluster-agent: registry.rlark.internal:5443/rlark/agent@sha256:b8694b4dd17322d5d66a1449c70dcf4b3dc44221a5dc8dd5a179e6732a2def1f
+  cluster-agent: registry.rlark.internal:5443/rlark/agent@sha256:2d03618df90fe551174dbe8123b831e3ebecc396f8a595ba19d8bc49d4778836
   cluster-check: registry.rlark.internal:5443/mirror/ubuntu@sha256:45e9ddc6895604674618a409ca9f73d301da8fdb75fe330e8e9a27b3b219e4ad
   csi-livenessprobe: registry.rlark.internal:5443/csi-rclone/livenessprobe@sha256:7fe80915b3cb9fb1d09dbd300a0682cafa8ab93947cd3ddc3e15a8250621bf24
   csi-node-driver-registrar: registry.rlark.internal:5443/csi-rclone/csi-node-driver-registrar@sha256:aeecba5b171b50558bab359fdb8e28b9da185f666cef35cd87ac9784e51956c5
@@ -38,25 +38,25 @@ images:
   csi-rclone: registry.rlark.internal:5443/csi-rclone/csi-driver-rclone@sha256:4909777afbfaa6df954861fe757a929a35f1fc73a477b5f771349b9d2d988d70
   fleet-robot: registry.rlark.internal:5443/fleet/robot@sha256:7e26d72fc3a11b983d5eaa7788a432efe4524ba3ba79a170bba4171bb8d8a37f
   installer-live: registry.rlark.internal:5443/rlark/staging-artifact@sha256:ac57d27ea8b55d610c1640b69a5d25db21b763721acc8fa4ab729b7d1afea74d
-  node-agent: registry.rlark.internal:5443/rlark/agent@sha256:228ecff9b67e92dd70c54d7635faebef1ae8e044b9a0a3ba3d54e1dbd1b1f46c
+  node-agent: registry.rlark.internal:5443/rlark/agent@sha256:2d03618df90fe551174dbe8123b831e3ebecc396f8a595ba19d8bc49d4778836
   nvidia-container-toolkit: registry.rlark.internal:5443/mirror/container-toolkit@sha256:a4d9d439fa05929a2a489f7b6b557a03e035f85e6f31f8ff674fd1cd7579a6fa
   nvidia-device-plugin: registry.rlark.internal:5443/mirror/k8s-device-plugin@sha256:ad155f1089b64673c75b2f39258f0791cbad6d3011419726ec605196981e1c32
   quest-bridge: registry.rlark.internal:5443/fleet/quest-bridge@sha256:cf521623b25fe9b1fbd223a75e6df96a80117b006cb0c1fd2ba83160ceeb4c60
   registry-trust: registry.rlark.internal:5443/rlark/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
   registry-trust-kubectl: registry.rlark.internal:5443/rlark/kubectl@sha256:a179e6c6f0b87263426fe2a793412c422999d55ffb06d7bc069635468aba3324
-  rlark-controller-manager: registry.rlark.internal:5443/rlark/agent@sha256:228ecff9b67e92dd70c54d7635faebef1ae8e044b9a0a3ba3d54e1dbd1b1f46c
-  rlark-gateway: registry.rlark.internal:5443/rlark/agent@sha256:b8694b4dd17322d5d66a1449c70dcf4b3dc44221a5dc8dd5a179e6732a2def1f
-  rlark-server: registry.rlark.internal:5443/rlark/agent@sha256:228ecff9b67e92dd70c54d7635faebef1ae8e044b9a0a3ba3d54e1dbd1b1f46c
-  rlark-ui: registry.rlark.internal:5443/rlark/rlark-ui@sha256:079fd65dd39141da83a19d4e5102dfd2f1ae1354a3186b4eb790387dd679c68e
+  rlark-controller-manager: registry.rlark.internal:5443/rlark/agent@sha256:2d03618df90fe551174dbe8123b831e3ebecc396f8a595ba19d8bc49d4778836
+  rlark-gateway: registry.rlark.internal:5443/rlark/agent@sha256:2d03618df90fe551174dbe8123b831e3ebecc396f8a595ba19d8bc49d4778836
+  rlark-server: registry.rlark.internal:5443/rlark/agent@sha256:2d03618df90fe551174dbe8123b831e3ebecc396f8a595ba19d8bc49d4778836
+  rlark-ui: registry.rlark.internal:5443/rlark/rlark-ui@sha256:f607ec5b75851fd1de8fe41e69199caf4fe231fdd4b6cb17a5ccb2f481e2f587
   s1u-robot: registry.rlark.internal:5443/rlark/s1u-robot@sha256:fb61b9cbc267eb4275fbcb606b9f6c050322f41f502714e1ded8609928906df2
   site-registry: registry.rlark.internal:5443/rlark/registry@sha256:e681a91fae320795d41e98897eff8f61c01359cfc1dde1ddd716d7d0be22b18e
   site-registry-relay: registry.rlark.internal:5443/rlark/agent@sha256:073476a2f62ac55df00d76d8bb8fd4dc10df6ef1229b905f2a65dbacd079b71f
-  station-agent: registry.rlark.internal:5443/rlark/station-agent@sha256:40be5dcf98c1e45b412d5ec645c27de096865ea7a36b3ebbdbdafcb9861868c8
-  station-api: registry.rlark.internal:5443/rlark/agent@sha256:fb9c79cfec46c160b4ff9ae26bdba7481507c7cf40ed7b22415fe12ccd94054f
-  station-controller: registry.rlark.internal:5443/rlark/station-controller@sha256:74bb871fe6d078f2ab77ab52ed0c657ed17b4cd61f023014dca9263f02998217
-  station-wireguard: registry.rlark.internal:5443/rlark/station-wireguard@sha256:e481b1972528bdecd0f56c712bf33d1f7afb471e3e7ac4c9a2e869b0e9cb5bca
+  station-agent: registry.rlark.internal:5443/rlark/station-agent@sha256:cbdf62c6e1437df7a2a799fde7c40c3f217d4ede25de1aa50df39990ddd0488b
+  station-api: registry.rlark.internal:5443/rlark/agent@sha256:2d03618df90fe551174dbe8123b831e3ebecc396f8a595ba19d8bc49d4778836
+  station-controller: registry.rlark.internal:5443/rlark/station-controller@sha256:2d346231fe9246cab8d9296b8e8adf7996bdf90557d084edde21def4142edd71
+  station-wireguard: registry.rlark.internal:5443/rlark/station-wireguard@sha256:33582b7ce664b35d5ec200878a6a5221863bccc7c510ccfd0f1c8283084ce0e6
   tools: registry.rlark.internal:5443/rlark/agent@sha256:18794643fc1884fc58890eaca06cd65803d88210f6eb47d1afab912d07659b75
-name: ci-1a9da07-381b687
+name: ci-0bd3517-381b687
 source:
   fleet: 381b6871d8e3a291d8acb7b5af11fd572f2797c3
-  rlark: 1a9da079146490c3f5b2c0249f43aadc88336cbb
+  rlark: 0bd3517684859ccecd1632bee21b9340283fccfe
