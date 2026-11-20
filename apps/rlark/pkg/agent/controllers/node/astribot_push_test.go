@@ -31,8 +31,8 @@ func TestManagementOwnedNodeLabels(t *testing.T) {
 		"rlark.io/robot-model": true, "rlark.io/robot-body": true, "rlark.io/robot-id": true,
 		"fleet.astribot/robot-body": true, "site.example/anything": true,
 		"rlark.io/rollout-wave": true, "rlark.io/restart-request": true, "rlark.io/accelerator": true,
-		// What a machine reports of its rollout and restarts is its own.
-		"rlark.io/rollout-state": false, "rlark.io/node-profile-state": false,
+		// What a machine reports of its rollout and restarts, and of its cameras, is its own.
+		"rlark.io/rollout-state": false, "rlark.io/node-profile-state": false, "rlark.io/camera-state": false,
 		// What a node says of itself stays the node's.
 		"fleet.astribot/robot-body-state": false, "fleet.astribot/orin-state": false, "fleet.astribot/node-profile-state": false,
 		"rlark.io/enabled": false, "rlark.io/cluster-id": false, "kubernetes.io/hostname": false,
@@ -116,6 +116,11 @@ func TestRobotAnnotationsStayTheManagementPlanes(t *testing.T) {
 		map[string]string{"rlark.io/robot-power-set": "not the cluster's to say"},
 	)
 	if merged["rlark.io/robot-power-set"] != set {
+		t.Fatalf("annotations = %v", merged)
+	}
+	// What a robot says of itself is carried up: its cameras' state (s1u-robot's video container).
+	cameras := `{"state":"stuck","cameras":{"head":{"state":"stale","step":3}}}`
+	if merged := mergeManagementAnnotations(map[string]string{"rlark.io/cameras": "{}"}, map[string]string{"rlark.io/cameras": cameras}); merged["rlark.io/cameras"] != cameras {
 		t.Fatalf("annotations = %v", merged)
 	}
 }

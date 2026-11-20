@@ -601,6 +601,7 @@ def make_orin(tmp_path, monkeypatch, payloads=(), retired=()):
     monkeypatch.setattr(orin.tempfile, "mkdtemp", lambda dir: str(tmp_path))
     monkeypatch.setattr(orin, "ACCESS", str(tmp_path))
     monkeypatch.setattr(orin, "HOST", str(tmp_path))
+    monkeypatch.setattr(orin, "CAMERAS", str(tmp_path))
     monkeypatch.setattr(orin, "IN_USE", tmp_path / "in-use")
     monkeypatch.setattr(orin, "PAYLOADS", tmp_path / "payloads")
     for name, files in dict(payloads).items():
@@ -727,6 +728,8 @@ def test_the_uplink_is_one_file_its_setup_script_is_the_addons_and_a_retired_uni
     assert (tmp_path / "orin_addresses").read_text() == "192.168.31.5\n"
     camera = next(line for line in sent if line.startswith("sudo sh -c 'install -m 644 ~astribot/rl/.s1u-camera.rules"))
     assert camera.endswith("|| { rm -f /etc/udev/rules.d/70-s1u-camera.rules; exit 1; }'")  # retried while udev did not take it
+    # The cameras of both vendors are the account's: Orbbec's (head, torso) and the wrists' RealSense.
+    assert "--attr-match=idVendor=2bc5 && udevadm trigger --subsystem-match=usb --attr-match=idVendor=8086 " in camera
     # A unit not there yet is placed by its setup script, which starts it: no restart beyond that (its stop step would
     # drop the x86's forwarding for a moment).
     there.update(unit="", retired="")
@@ -735,7 +738,8 @@ def test_the_uplink_is_one_file_its_setup_script_is_the_addons_and_a_retired_uni
     assert "sudo sh -c 'sh ~astribot/rl/.s1u-orin-uplink.sh'" in sent
     # Nothing to retire, the unit as it is, the rule there: nothing as root.
     there.update(unit=hashlib.sha256(unit.encode()).hexdigest(), retired="",
-                 camera='SUBSYSTEM=="usb", ATTR{idVendor}=="2bc5", OWNER="1000", MODE="0660"')
+                 camera='SUBSYSTEM=="usb", ATTR{idVendor}=="2bc5", OWNER="1000", MODE="0660" '
+                        'SUBSYSTEM=="usb", ATTR{idVendor}=="8086", OWNER="1000", MODE="0660"')
     sent.clear()
     robot.root("KEY", {})
     assert not [line for line in sent if line.startswith("sudo")]
@@ -779,43 +783,59 @@ def test_removing_takes_back_what_the_orin_got_and_sends_nothing_to_one_never_tr
                         {"metadata": {"annotations": {orin.HOST_KEY: None, orin.TRUST: None, orin.SERIAL: None}}})]
 
 
-def test_the_orin_resets_the_cameras_usb_once_per_request_of_the_device_layer(tmp_path, monkeypatch):
+def test_the_orin_resets_a_views_camera_by_its_serial_once_per_request(tmp_path, monkeypatch):
     """s1u_01 11-13 22:40: the head camera's own stream wedged and no restart of the vendor's camera driver brought it
-    back. The device layer asks through a file on the host; the reset is the Orin account's (the cameras' rule)."""
+    back. The camera service asks through a file the two containers share; the reset is the Orin account's (the
+    cameras' rule), of the one device whose serial the vendor's camera_info.json gives the view's camera."""
     robot = make_orin(tmp_path, monkeypatch)
-    sent, events, answer = [], [], ["bus 002 dev 008\n", 0]
+    sent, answer = [], ["head_rgbd bus 002 dev 008\n", 0]
     monkeypatch.setattr(robot, "known", lambda: ("ssh-ed25519 KEY", {}))
     monkeypatch.setattr(robot, "ssh", lambda key, remote, *a, **k: sent.append(remote) or done(
         answer[0].encode(), answer[1], b"PermissionError: [Errno 13]\n"))
-    monkeypatch.setattr(robot, "event", lambda *arguments: events.append(arguments))
     robot.camera_pass()
     assert not sent  # no request
-    (tmp_path / "camera-reset-request").write_text(json.dumps({"id": "a" * 32, "cameras": ["base_rgb"]}))
-    # The device layer asks only when it may (it knows whether a Station is attached): no mark is consulted.
-    (tmp_path / "in-use").mkdir()
-    (tmp_path / "in-use/fleet-station").write_text("attached\n")
+    (tmp_path / "reset-request").write_text(json.dumps({"id": "a" * 32, "cameras": ["head"]}))
     robot.camera_pass()
-    assert sent[0].startswith("python3 -c '") and sent[0].endswith("' 2bc5") and "sudo" not in sent[0]
-    result = json.loads((tmp_path / "camera-reset-result").read_text())
-    assert set(result) == {"id", "ok", "detail", "finished_at"}  # the contract with the device layer
-    assert result["id"] == "a" * 32 and result["ok"] and result["detail"] == "reset ok bus 002 dev 008"
-    assert events[0][0] == "OrinCameraReset"
+    assert sent[0].startswith("python3 -c '") and sent[0].endswith("' head_rgbd") and "sudo" not in sent[0]
+    result = json.loads((tmp_path / "reset-result").read_text())
+    assert set(result) == {"id", "ok", "detail", "finished_at"}  # the contract with the camera service
+    assert result["id"] == "a" * 32 and result["ok"] and result["detail"] == "reset ok head_rgbd bus 002 dev 008"
     robot.camera_pass()
     assert len(sent) == 1  # the same request once
-    (tmp_path / "camera-reset-request").write_text(json.dumps({"id": "b" * 32, "cameras": ["base_rgb"]}))
+    # A restart of the container: the result beside the request says it was done.
+    again = make_orin(tmp_path, monkeypatch)
+    monkeypatch.setattr(again, "ssh", lambda *a, **k: sent.append("again") or done())
+    again.camera_pass()
+    assert len(sent) == 1 and again.state["camera_reset"]["id"] == "a" * 32
+    # Two cameras asked for, one of them not on the bus: said, and not ok.
+    (tmp_path / "reset-request").write_text(json.dumps({"id": "b" * 32, "cameras": ["head", "wrist_left"]}))
+    robot.camera_pass()
+    assert sent[-1].endswith("' head_rgbd left_wrist_rgbd")
+    result = json.loads((tmp_path / "reset-result").read_text())
+    assert not result["ok"] and result["detail"] == "reset ok head_rgbd bus 002 dev 008; no USB device of left_wrist_rgbd"
+    (tmp_path / "reset-request").write_text(json.dumps({"id": "c" * 32, "cameras": ["head"]}))
     answer[:] = ["", 1]
     robot.camera_pass()
-    assert json.loads((tmp_path / "camera-reset-result").read_text())["detail"] == "PermissionError: [Errno 13]"
+    assert json.loads((tmp_path / "reset-result").read_text())["detail"] == "PermissionError: [Errno 13]"
+    # The script on an Orin: the device whose serial is the camera's, whatever its vendor, and no other.
+    (tmp_path / "camera_info.json").write_text(json.dumps(
+        {"head_rgbd": "CL8TC53000T", "torso_rgbd": "CP0HC5300034", "left_wrist_rgbd": {"serial": "261123074156"}}))
     script = orin.USB_RESET.replace("/sys/bus/usb/devices/*", str(tmp_path / "sys/*")).replace(
-        "/dev/bus/usb/%03d/%03d", str(tmp_path / "dev/%03d-%03d")).replace("fcntl.ioctl(f, 0x5514)", "f.write(b'reset')")
-    for name, vendor, bus, number in (("2-3.2.6", "2bc5", 2, 8), ("1-1", "0bda", 1, 3)):
+        "/dev/bus/usb/%03d/%03d", str(tmp_path / "dev/%03d-%03d")).replace("fcntl.ioctl(f, 0x5514)", "f.write(b'reset')").replace(
+        "/etc/config/camera_info.json", str(tmp_path / "camera_info.json"))
+    for name, serial, bus, number in (("2-1.3", "CL8TC53000T", 2, 8), ("2-3.2.6", "CP0HC5300034", 2, 9),
+                                      ("2-3.4.4", "261123074156", 2, 10), ("1-1", None, 1, 3)):
         (tmp_path / "sys" / name).mkdir(parents=True)
-        for key, value in (("idVendor", vendor), ("busnum", bus), ("devnum", number)):
-            (tmp_path / "sys" / name / key).write_text("%s\n" % value)
+        for key, value in (("serial", serial), ("busnum", bus), ("devnum", number)):
+            if value is not None:
+                (tmp_path / "sys" / name / key).write_text("%s\n" % value)
     (tmp_path / "dev").mkdir()
-    said = subprocess.run([sys.executable, "-c", script, "2bc5"], capture_output=True, text=True, check=True).stdout
-    assert said == "bus 002 dev 008\n" and (tmp_path / "dev/002-008").read_bytes() == b"reset"
-    assert not (tmp_path / "dev/001-003").exists()
+    said = subprocess.run([sys.executable, "-c", script, "head_rgbd", "left_wrist_rgbd", "right_wrist_rgbd"],
+                          capture_output=True, text=True, check=True).stdout
+    assert said == "head_rgbd bus 002 dev 008\nleft_wrist_rgbd bus 002 dev 010\n"
+    assert (tmp_path / "dev/002-008").read_bytes() == b"reset" and (tmp_path / "dev/002-010").read_bytes() == b"reset"
+    assert not (tmp_path / "dev/002-009").exists() and not (tmp_path / "dev/001-003").exists()
+    assert "'" not in orin.USB_RESET  # it is sent inside single quotes
 
 
 def test_a_trusted_host_key_is_kept_on_the_robot_at_once(tmp_path, monkeypatch):

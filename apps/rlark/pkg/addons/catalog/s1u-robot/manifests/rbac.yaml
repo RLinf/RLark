@@ -1,5 +1,5 @@
-# The tuner, orin and clock containers publish their results on their own Node (labels, annotations) and record an
-# Orin's trusted host key, its replacement and a camera reset as Events; nothing else.
+# The tuner, orin, power, video and clock containers publish their results on their own Node (labels, annotations)
+# and record an Orin's trusted host key, its replacement and each step of a camera's recovery as Events; nothing else.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

@@ -1,4 +1,4 @@
-# The S1U robot x86's model configuration (extensions/s1u): the node tuner, the Orin, the power, the video, the clock,
+# The S1U robot x86's model configuration (extensions/s1u): the node tuner, the Orin, the power, the cameras, the clock,
 # the robot's device layer and its Station, one Pod on every S1U robot. Privileged in the host's PID namespace (tuner,
 # clock): it writes the host's /etc, /boot/grub and sysfs.
 apiVersion: apps/v1
@@ -146,6 +146,8 @@ spec:
             - {name: state, mountPath: /state}
             - {name: in-use, mountPath: /in-use, readOnly: true}
             - {name: payloads, mountPath: /payloads, readOnly: true}
+            # The camera service's requests for a USB reset of cameras, and their results.
+            - {name: camera, mountPath: /camera}
         # The robot's power, driver start and restart (device/power.py): the vendor's buttons through its ROS master,
         # on a Unix socket only, which RLark reaches on the node. No capability: ROS over the host's network.
         - name: power
@@ -173,33 +175,37 @@ spec:
             # this container writes (/run/rlark/s1u/claim).
             - {name: host, mountPath: /host}
             - {name: state, mountPath: /state}
-        # The robot's camera video (device/video_server.py): the body's cameras from the vendor's ROS topics to MediaMTX
-        # (WebRTC :18889, a viewing session's token checked on a loopback port), the camera wall's strip from the device
-        # layer's thumbnails (/run/rlark/s1u/preview.bin); its control a Unix socket only, which RLark reaches on the node.
+        # The robot's cameras (device/cameras.py): the body's cameras from the vendor's ROS topics, read from start to
+        # stop, served read-only on the node's address (port 18891: the state, each view's JPEG and stream, the wall),
+        # which RLark's Gateway reaches through the API server's proxy of this Pod; cameras without frames brought
+        # back (the vendor's driver restarted, a USB reset asked of the orin container through /camera), the state on
+        # the Node (rlark.io/camera-state, rlark.io/cameras). No capability: ROS over the host's network.
         - name: video
           image: {{ .Values.image }}
           imagePullPolicy: IfNotPresent
-          command: [/bin/bash, -c, "source /opt/ros/noetic/setup.bash && exec python3 /s1u/device/video_server.py"]
+          command: [/bin/bash, -c, "source /opt/ros/noetic/setup.bash && exec python3 /s1u/device/cameras.py"]
           env:
             - name: NODE_NAME
               valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            # Where the port listens: the node's address (the site tunnel's), which is this Pod's.
             - name: S1U_NODE_ADDRESS
               valueFrom: {fieldRef: {fieldPath: status.hostIP}}
             - {name: S1U_NODE_PROFILE, value: /s1u/tuner/node_profile.env}
             - {name: S1U_BODIES, value: /s1u/tuner/bodies.json}
-            - {name: S1U_SERVICE_SOCKET, value: /services/s1u-video.sock}
-            - {name: S1U_VIDEO_DIRECTORY, value: /video}
+            - {name: S1U_CAMERA_DIRECTORY, value: /camera}
+          # Ready once it answers, whatever the cameras are: their state is the Node's label.
+          readinessProbe:
+            httpGet: {path: /cameras, port: 18891}
+            periodSeconds: 5
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
           resources:
-            requests: {cpu: 500m, memory: 256Mi}
-            limits: {cpu: "2", memory: 512Mi}
+            requests: {cpu: 200m, memory: 128Mi}
+            limits: {cpu: "1", memory: 256Mi}
           volumeMounts:
-            - {name: services, mountPath: /services}
-            - {name: host, mountPath: /host, readOnly: true}
-            - {name: video, mountPath: /video}
+            - {name: camera, mountPath: /camera}
         # The robot's clock held to the site's time (clock/clock.py): it trims the frequency of the NIC hardware clock
         # at the root of the vendor's own time chain. Privileged for that clock's device (/dev/ptpN).
         - name: clock
@@ -225,9 +231,10 @@ spec:
         # (/run/fleet). It starts once the tuner has written which robot this x86 is (/run/rlark/s1u/robot.json, the
         # Node's labels rlark.io/robot-id and rlark.io/robot-body), reads the node profile and the bodies' cameras
         # read-only, powers an unpowered robot for a session through the power service's socket (and never off),
-        # marks the robot in use, asks for a camera's USB reset and leaves the robot's self-check under
-        # /run/rlark/s1u. Its command thread runs alone at SCHED_FIFO on the profile's SDK core
-        # (SYS_NICE for that, and nothing else); its other threads keep to the device layer's CPUs by themselves.
+        # marks the robot in use and leaves the robot's self-check under /run/rlark/s1u. The cameras' drivers and
+        # their recovery are the video container's, not the device layer's. Its command thread runs alone at
+        # SCHED_FIFO on the profile's SDK core (SYS_NICE for that, and nothing else); its other threads keep to the
+        # device layer's CPUs by themselves.
         - name: device
           image: {{ .Values.deviceImage }}
           imagePullPolicy: IfNotPresent
@@ -253,34 +260,6 @@ spec:
             - {name: host, mountPath: /run/rlark/s1u}
             - {name: services, mountPath: /run/rlark/services}
             - {name: in-use, mountPath: /run/rlark/in-use}
-        # The device layer's own camera service for the application's pages (/device/start --video), which reads the
-        # device layer's frames from the shared memory the two have in common. It goes once the application's pages
-        # reach this Addon's video through RLark.
-        - name: device-video
-          image: {{ .Values.deviceImage }}
-          imagePullPolicy: IfNotPresent
-          command: [/device/start, --video]
-          env:
-            # Where a viewer's media reaches this robot: its node's address (the site tunnel's).
-            - name: S1U_NODE_ADDRESS
-              valueFrom: {fieldRef: {fieldPath: status.hostIP}}
-            - {name: S1U_DEVICE_ORIGINS, value: "{{ .Values.deviceOrigins }}"}
-          readinessProbe:
-            tcpSocket: {port: 8890}
-            periodSeconds: 5
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]
-          resources:
-            requests: {cpu: 500m, memory: 512Mi}
-            limits: {cpu: "2", memory: 512Mi}
-          volumeMounts:
-            - {name: device-data, mountPath: /var/lib/fleet}
-            - {name: device-token, mountPath: /site-token, readOnly: true}
-            - {name: device-shm, mountPath: /dev/shm}
-            - {name: profile, mountPath: /etc/rlark/s1u, readOnly: true}
-            - {name: host, mountPath: /run/rlark/s1u, readOnly: true}
         # The robot's standing Station (/device/start --station, the device layer's image: the two change together):
         # while a Run holds the robot (the claim the power container keeps in /run/rlark/s1u/claim) it asks the site's
         # application at stationControlURL, with the site token, how to join that Run, and runs a Ray node and the
@@ -322,8 +301,10 @@ spec:
           emptyDir: {medium: Memory, sizeLimit: 8Mi}
         - name: payloads
           emptyDir: {sizeLimit: 256Mi}
-        - name: video
-          emptyDir: {sizeLimit: 64Mi}
+        # What the camera service and the orin container tell each other (a USB reset asked for, its result): the
+        # Pod's own, kept across a restart of either container.
+        - name: camera
+          emptyDir: {sizeLimit: 1Mi}
         - name: host
           hostPath: {path: /run/rlark/s1u, type: DirectoryOrCreate}
         # What must outlast a boot and is root's (the Orin's record).

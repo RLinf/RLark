@@ -9,7 +9,6 @@ mirror/node:22.20.0-bookworm-slim            docker.io/library/node@sha256:c385e
 mirror/nginx:1.29.1                          docker.io/library/nginx@sha256:17ae566734b63632e543c907ba74757e0c1a25d812ab9f10a07a6bed98dd199c
 mirror/distroless-static:debian12-nonroot    gcr.io/distroless/static-debian12@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d
 mirror/ros:noetic-ros-core                   docker.io/library/ros@sha256:4c1435fd85be3edde3820f0d132ab30a6b030209dce4fa3ac428a2aa5a763caf
-mirror/mediamtx:1.21.3                       docker.io/bluenviron/mediamtx@sha256:a620222875948ed1a9c7706d8089a82a09bb33726e3b2cfbfddbc8959aee95dd
 mirror/buildkit:v0.24.0                      docker.io/moby/buildkit@sha256:8c2ce26a3722e0cf4514fad4cfcd0e0f0f16214219ca7b73f3e1fcef74640ac4
 # The images the installer's base of Kubernetes v1.36.6 carries (astribot/station/bootstrap/Dockerfile.base, IMAGES):
 # kubeadm config images list --kubernetes-version v1.36.6, and calico.yaml v3.32.3's (quay.io/calico/…, the same

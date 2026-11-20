@@ -8,11 +8,12 @@ declares:
   (none is the x86's, none is of the robot's own network). Units the Addon retires (orinRetiredUnits: the same
   uplink under an earlier name) are stopped and removed, and this one started again at once, since stopping such a
   unit deletes the forwarding rules both of them hold;
-- the cameras' USB rule (their devices the account's), and on request a USB reset of the cameras as the Orin's
-  account: the robot's device layer writes /run/rlark/s1u/camera-reset-request on the host ({"id", "cameras"}) when
-  it restarted the vendor's camera driver and still had no frames; each id is done once (the device layer asks only
-  when it may: it knows whether a Station is attached), the result written to /run/rlark/s1u/camera-reset-result and
-  as an Event on the Node;
+- the cameras' USB rule (the devices of the cameras' vendors the account's), and on request a USB reset of single
+  cameras as the Orin's account: this Pod's camera service (device/cameras.py) writes reset-request ({"id",
+  "cameras": views}) in the directory the two share (/camera) when it restarted the vendor's camera driver and still
+  had no frames; each view's camera is found by its serial number in the Orin's /etc/config/camera_info.json (the
+  vendor's record of which camera is which) and its USB device reset. Each id is done once, also across a restart of
+  this container: the result ({"id", "ok", "detail", "finished_at"}) is written to reset-result beside it;
 - a vendor process that must not run there (the profile's S1U_ORIN_STOPPED) ended at every pass, and the line that
   starts it in the vendor's start script (S1U_ORIN_STOPPED_LAUNCHER) commented out;
 - the site's adb key the headsets trust (the secret's adb_key, if it holds one) as ~/.android/adbkey_rlark;
@@ -45,6 +46,7 @@ The state is on the Node: label s1u.rlark.io/orin-state, one word: ok | updating
 cluster yet) | unreachable | login_failed | identity_changed | failed; with the Addon's profile=removed, removing (the
 host is marked in use) | removed (remove: nothing of the Addon's is left there); annotation s1u.rlark.io/orin, the
 whole state as JSON (reachable, identity, trust, fingerprints, serial, payloads, the last camera reset, failures).
+The camera service tells the Node of each reset (Event CameraUsbReset).
 
 Standard library and the image's ssh only."""
 import hashlib
@@ -69,19 +71,27 @@ IN_USE = Path("/in-use")  # the host's /run/rlark/in-use
 # this container runs as root without any capability and writes only what root owns (11-14: the robot's data
 # directory is the vendor account's, the write was refused and the pass ended there).
 KEPT = "/state/orin_trust.json"
-# The robot's cameras' USB vendor (Orbbec), whose devices the device layer may ask to reset, and how often its
-# request is looked for.
-CAMERA_VENDOR, WATCH_SECONDS = "2bc5", 5
-# Run on the Orin as its account: each USB device of the vendor given, by its sysfs entry, reset through usbfs
-# (USBDEVFS_RESET); prints the reset devices as "bus BBB dev DDD".
-USB_RESET = ("import fcntl, glob, os, sys\n"
-             "for d in glob.glob(\"/sys/bus/usb/devices/*\"):\n"
-             "    v = os.path.join(d, \"idVendor\")\n"
-             "    if os.path.exists(v) and open(v).read().strip() == sys.argv[1]:\n"
-             "        r = lambda n: int(open(os.path.join(d, n)).read())\n"
-             "        with open(\"/dev/bus/usb/%03d/%03d\" % (r(\"busnum\"), r(\"devnum\")), \"wb\") as f:\n"
-             "            fcntl.ioctl(f, 0x5514)\n"
-             "        print(\"bus %03d dev %03d\" % (r(\"busnum\"), r(\"devnum\")))\n")
+# The robot's cameras' USB vendors (Orbbec: head and torso; Intel: the wrists' RealSense), whose devices the account
+# may reset; how often the camera service's request is looked for, and where (the Pod's shared directory).
+CAMERA_VENDORS, WATCH_SECONDS, CAMERAS = ("2bc5", "8086"), 5, "/camera"
+# Each view's camera as the vendor's driver names it (device/cameras.py VENDOR).
+CAMERA_NAMES = {"head": "head_rgbd", "torso": "torso_rgbd", "wrist_left": "left_wrist_rgbd", "wrist_right": "right_wrist_rgbd"}
+# Run on the Orin as its account with the vendor's names of the cameras to reset: each one's serial number from the
+# vendor's /etc/config/camera_info.json (under the camera's name: the serial, or an object that holds it), the USB
+# device of that serial by its sysfs entry, reset through usbfs (USBDEVFS_RESET); prints "NAME bus BBB dev DDD" for
+# each device reset.
+USB_RESET = ("import fcntl, glob, json, os, sys\n"
+             "info = json.load(open(\"/etc/config/camera_info.json\"))\n"
+             "def texts(v):\n"
+             "    return [v] if isinstance(v, str) else [t for x in (v.values() if isinstance(v, dict) else []) for t in texts(x)]\n"
+             "for name in sys.argv[1:]:\n"
+             "    for d in glob.glob(\"/sys/bus/usb/devices/*\"):\n"
+             "        s = os.path.join(d, \"serial\")\n"
+             "        if os.path.exists(s) and open(s).read().strip() in texts(info.get(name, {})):\n"
+             "            r = lambda n: int(open(os.path.join(d, n)).read())\n"
+             "            with open(\"/dev/bus/usb/%03d/%03d\" % (r(\"busnum\"), r(\"devnum\")), \"wb\") as f:\n"
+             "                fcntl.ioctl(f, 0x5514)\n"
+             "            print(\"%s bus %03d dev %03d\" % (name, r(\"busnum\"), r(\"devnum\")))\n")
 CAMERA_RULE = '/etc/udev/rules.d/70-s1u-camera.rules'
 HOST = "/host"  # the host's /run/rlark/s1u, the node profile's state
 ACCOUNT = "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -168,6 +178,10 @@ class Orin:
                          for path in sorted(PAYLOADS.iterdir()) if path.is_dir()} if PAYLOADS.is_dir() else {}
         self.state = dict(reachable=False, identity=None, trust=None, failures=0,
                           payloads={name: dict(wanted=version) for name, (version, _) in self.payloads.items()})
+        # The camera reset last done, as its result in the Pod's shared directory says: a request done before this
+        # container restarted is not done again.
+        if os.path.exists(CAMERAS + "/reset-result"):
+            self.state["camera_reset"] = json.loads(Path(CAMERAS + "/reset-result").read_text())
         self.wake = threading.Event()
         self.serial = None  # the Orin's hardware serial as the Node records it (known)
         self.kept = None  # the Node's record of the Orin as last written to KEPT
@@ -375,13 +389,14 @@ class Orin:
             print("The x86's uplink placed and started on the Orin%s" % (
                 " (retired: %s)" % read["retired"] if read["retired"] else ""), flush=True)
         uid = self.ssh(key, "id -u").stdout.decode().strip()
-        rule = 'SUBSYSTEM=="usb", ATTR{idVendor}=="%s", OWNER="%s", MODE="0660"' % (CAMERA_VENDOR, uid)
-        if read["camera"] != rule:
-            steps.append(self.upload(key, "~/rl/.s1u-camera.rules", rule.encode() + b"\n"))
+        rules = ['SUBSYSTEM=="usb", ATTR{idVendor}=="%s", OWNER="%s", MODE="0660"' % (vendor, uid) for vendor in CAMERA_VENDORS]
+        if read["camera"] != " ".join(rules):  # as read: the file's lines on one
+            steps.append(self.upload(key, "~/rl/.s1u-camera.rules", "".join(rule + "\n" for rule in rules).encode()))
             # Taken out again when udev did not take it: the next pass sees no rule and tries again.
-            steps.append(self.sudo(key, "sh -c 'install -m 644 ~%s/rl/.s1u-camera.rules %s && udevadm control "
-                                        "--reload-rules && udevadm trigger --subsystem-match=usb --attr-match=idVendor=%s "
-                                        "|| { rm -f %s; exit 1; }'" % (self.user, CAMERA_RULE, CAMERA_VENDOR, CAMERA_RULE)))
+            steps.append(self.sudo(key, "sh -c 'install -m 644 ~%s/rl/.s1u-camera.rules %s && udevadm control --reload-rules%s "
+                                        "|| { rm -f %s; exit 1; }'" % (self.user, CAMERA_RULE, "".join(
+                                            " && udevadm trigger --subsystem-match=usb --attr-match=idVendor=%s" % vendor
+                                            for vendor in CAMERA_VENDORS), CAMERA_RULE)))
         return steps
 
     def place(self, key, steps, result):
@@ -466,7 +481,7 @@ class Orin:
             self.wake.clear()
 
     def watch_cameras(self):
-        """The device layer's request for a USB reset of the cameras (/run/rlark/s1u/camera-reset-request: id,
+        """The camera service's request for a USB reset of cameras (reset-request in the Pod's shared directory: id,
         cameras), when it restarted the vendor's camera driver and still had no frames (the camera's own stream
         wedged: s1u_01 11-13 22:40). Each request once; the result beside it."""
         while True:
@@ -474,33 +489,34 @@ class Orin:
             self.camera_pass()
 
     def camera_pass(self):
-        """One look at the device layer's request, and the reset it asks for."""
+        """One look at the camera service's request, and the reset it asks for."""
         try:
-            request = json.loads(Path(HOST + "/camera-reset-request").read_text())
+            request = json.loads(Path(CAMERAS + "/reset-request").read_text())
         except (OSError, ValueError):  # none, or being written
             return
-        if request.get("id") == self.state.get("camera_reset", {}).get("id"):
+        if request["id"] == self.state.get("camera_reset", {}).get("id"):
             return
-        ok, detail = self.reset_cameras()
+        ok, detail = self.reset_cameras(request["cameras"])
         done = dict(id=request["id"], ok=ok, detail=detail, finished_at=time.time())
         self.state = dict(self.state, camera_reset=done)
-        Path(HOST + "/camera-reset-result.new").write_text(json.dumps(done) + "\n")
-        os.replace(HOST + "/camera-reset-result.new", HOST + "/camera-reset-result")
-        self.event("OrinCameraReset", "%s: %s, asked for by the device layer (%s)"
-                   % (self.node, detail, ", ".join(request.get("cameras", []))))
-        print("Camera USB reset on the Orin: %s" % detail, flush=True)
+        Path(CAMERAS + "/reset-result.new").write_text(json.dumps(done) + "\n")
+        os.replace(CAMERAS + "/reset-result.new", CAMERAS + "/reset-result")
+        print("Camera USB reset on the Orin (%s): %s" % (", ".join(request["cameras"]), detail), flush=True)
 
-    def reset_cameras(self):
-        """(done, one line): the Orin's cameras' USB devices reset through usbfs as its account, whose they are by
-        the cameras' USB rule; no sudo."""
+    def reset_cameras(self, views):
+        """(every one done, one line): the USB devices of ``views``' cameras reset through usbfs as the Orin's
+        account, whose they are by the cameras' USB rule; no sudo."""
         known, _ = self.known()
         if known is None:
             return False, "the Orin's host key is not trusted yet"
-        done = self.ssh(known, "python3 -c '%s' %s" % (USB_RESET, CAMERA_VENDOR))
+        names = [CAMERA_NAMES[view] for view in views]
+        done = self.ssh(known, "python3 -c '%s' %s" % (USB_RESET, " ".join(names)))
         if done.returncode:
             return False, done.stderr.decode(errors="replace").strip().splitlines()[-1][-200:]
-        devices = done.stdout.decode().split()
-        return bool(devices), ("reset ok " + " ".join(devices)) if devices else "no device %s" % CAMERA_VENDOR
+        devices = done.stdout.decode().splitlines()
+        missing = [name for name in names if not any(line.startswith(name + " ") for line in devices)]
+        return not missing, "; ".join((["reset ok " + ", ".join(devices)] if devices else []) + (
+            ["no USB device of " + ", ".join(missing)] if missing else []))
 
 
 def main():
