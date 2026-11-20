@@ -24,21 +24,21 @@ var (
 // is written; whoever writes an Addon (the Gateway, the release command) publishes it so. The Package comes
 // from the catalog; a version the catalog no longer holds is still what was published to the cluster when the
 // Addon was installed, and stays usable there. An item's content at a version does not change.
-func Publish(ctx context.Context, packages corev1client.ConfigMapInterface, cluster, name, version string) (AddonMeta, error) {
-	item, inCatalog := Registry.GetVersion(name, version)
+func Publish(ctx context.Context, packages corev1client.ConfigMapInterface, cluster, name, version string) (ItemMeta, error) {
+	item, inCatalog := Catalog.GetVersion(name, version)
 	if !inCatalog {
 		if version == "" {
-			return AddonMeta{}, fmt.Errorf("addon %q: %w", name, ErrNotInCatalog)
+			return ItemMeta{}, fmt.Errorf("addon %q: %w", name, ErrNotInCatalog)
 		}
 		published, err := packages.Get(ctx, PackageName(name, version), metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
-			return AddonMeta{}, fmt.Errorf("version %s of addon %q was never published to cluster %s: %w", version, name, cluster, ErrNotInCatalog)
+			return ItemMeta{}, fmt.Errorf("version %s of addon %q was never published to cluster %s: %w", version, name, cluster, ErrNotInCatalog)
 		}
 		if err != nil {
-			return AddonMeta{}, err
+			return ItemMeta{}, err
 		}
 		if item, err = FromPackage(published.Data); err != nil {
-			return AddonMeta{}, fmt.Errorf("package %s of cluster %s: %w", published.Name, cluster, err)
+			return ItemMeta{}, fmt.Errorf("package %s of cluster %s: %w", published.Name, cluster, err)
 		}
 		return item.Meta(), nil
 	}
@@ -47,10 +47,10 @@ func Publish(ctx context.Context, packages corev1client.ConfigMapInterface, clus
 	if apierrors.IsNotFound(err) {
 		_, err = packages.Create(ctx, desired, metav1.CreateOptions{})
 	} else if err == nil && !reflect.DeepEqual(published.Data, desired.Data) {
-		return AddonMeta{}, fmt.Errorf("version %s of addon %q, cluster %s: give the changed item a new version: %w", item.Meta().Version, name, cluster, ErrPublishedOtherwise)
+		return ItemMeta{}, fmt.Errorf("version %s of addon %q, cluster %s: give the changed item a new version: %w", item.Meta().Version, name, cluster, ErrPublishedOtherwise)
 	}
 	if err != nil {
-		return AddonMeta{}, err
+		return ItemMeta{}, err
 	}
 	return item.Meta(), nil
 }

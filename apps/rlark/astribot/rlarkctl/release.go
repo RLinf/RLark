@@ -63,7 +63,7 @@ func site(ctx context.Context, environment release.Environment) (*release.Site, 
 		return nil, err
 	}
 	// The Packages of Addons are published from the catalog the Gateway is given.
-	addons.Registry.SetDirectory(environment.AddonCatalog)
+	addons.Catalog.SetDirectory(environment.AddonCatalog)
 	site := &release.Site{
 		Environment: environment, Management: management, Core: core,
 		Members: map[string]kubernetes.Interface{}, MemberDefinitions: map[string]dynamic.Interface{},

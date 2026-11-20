@@ -22,10 +22,7 @@ import (
 // one, in both layouts, and appears without a restart.
 func TestCatalogDirectoryAddsItemsAtRuntime(t *testing.T) {
 	dir := t.TempDir()
-	r := &registry{addons: map[string]Addon{}, dir: dir}
-	if err := r.load(); err != nil {
-		t.Fatal(err)
-	}
+	r := newCatalog(dir)
 	builtIn := len(r.List())
 	write := func(name, content string) {
 		t.Helper()
@@ -93,8 +90,8 @@ func TestCatalogDirectoryAddsItemsAtRuntime(t *testing.T) {
 
 // A Package holds what an item is rendered from, and renders the same after it was published and read back.
 func TestPackageRendersLikeItsItem(t *testing.T) {
-	for _, meta := range Registry.List() {
-		item, _ := Registry.Get(meta.Name)
+	for _, meta := range Catalog.List() {
+		item, _ := Catalog.Get(meta.Name)
 		pkg := PackageOf(item)
 		published := pkg.ConfigMap("cluster-a")
 		if published.Name != PackageName(meta.Name, meta.Version) || !*published.Immutable || published.Labels[LabelPackage] != meta.Name {
@@ -138,8 +135,16 @@ func TestPackageRendersLikeItsItem(t *testing.T) {
 }
 
 func TestMissingRequired(t *testing.T) {
-	meta := AddonMeta{Parameters: []AddonParameter{{Name: "image", Required: true}, {Name: "mode", Required: true, Default: "auto"}, {Name: "note"},
-		{Name: "device"}, {Name: "url", RequiredWith: "device"}}}
+	meta, err := parseMeta([]byte(`parameters:
+- {name: image, required: true}
+- {name: mode, required: true, default: auto}
+- {name: note}
+- {name: device}
+- {name: url, requiredWith: device}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
 		values map[string]string
 		want   string
@@ -183,7 +188,7 @@ func decodeStrict(t *testing.T, name string, manifests []Manifest) []runtime.Obj
 
 func render(t *testing.T, name string, values map[string]string) []runtime.Object {
 	t.Helper()
-	item, _ := Registry.Get(name)
+	item, _ := Catalog.Get(name)
 	manifests, err := item.Render(values, "rlark-system", name, "uid")
 	if err != nil {
 		t.Fatalf("%s: %v", name, err)
@@ -207,7 +212,7 @@ func TestS1URobotRendersTheDeviceLayerAndEachPayload(t *testing.T) {
 		"orinPayloads":      "quest-bridge=registry/fleet/quest-bridge@sha256:3,leds=registry/x/leds@sha256:4",
 		"stationControlURL": "http://fleet-dashboard.rlark.internal:33334",
 	}
-	item, _ := Registry.Get("s1u-robot")
+	item, _ := Catalog.Get("s1u-robot")
 	missing := MissingRequired(item.Meta(), map[string]string{"image": values["image"], "deviceImage": values["deviceImage"]})
 	if !slices.Equal(missing, []string{"stationControlURL"}) {
 		t.Fatalf("a device layer without its Station's control URL: missing %v", missing)

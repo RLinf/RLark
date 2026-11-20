@@ -450,7 +450,7 @@ func writeFiles(t *testing.T) (string, Environment, Release) {
 			t.Fatal(err)
 		}
 	}
-	addons.Registry.SetDirectory(filepath.Join(dir, "catalog"))
+	addons.Catalog.SetDirectory(filepath.Join(dir, "catalog"))
 	for name, content := range map[string]string{
 		"releases/candidate.yaml": releaseYAML,
 		"environments/live.yaml":  strings.Replace(environmentYAML, "STATE", filepath.Join(dir, "state"), 1),
@@ -832,7 +832,7 @@ func TestAnAddonIsRefusedAsTheGatewayRefusesIt(t *testing.T) {
 	if _, err := s.mcore.CoreV1().ConfigMaps("lab").Get(context.Background(), addons.PackageName("s1u-robot", "v1.3.9"), metav1.GetOptions{}); err != nil {
 		t.Errorf("the Package was not published: %v", err)
 	}
-	builtIn, _ := addons.Registry.Get("s1u-robot")
+	builtIn, _ := addons.Catalog.Get("s1u-robot")
 	err = run.retryWrite(context.Background(), func() error {
 		return run.Site.PutAddon(context.Background(), "lab", "s1u-robot", AddonState{Version: builtIn.Meta().Version}, false)
 	})

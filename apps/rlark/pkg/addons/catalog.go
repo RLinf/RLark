@@ -4,15 +4,11 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
-	"os"
 	"path"
 	"strings"
-	"sync"
 	"text/template"
-	"time"
 
 	"go.yaml.in/yaml/v3"
-	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 //go:embed catalog/*/addon.yaml
@@ -48,8 +44,6 @@ type AddonParameter struct {
 	Default     string        `yaml:"default,omitempty" json:"default,omitempty"`
 	Options     []string      `yaml:"options,omitempty" json:"options,omitempty"`
 	Required    bool          `yaml:"required,omitempty" json:"required,omitempty"`
-	// RequiredWith names the parameter whose value makes this one required.
-	RequiredWith string `yaml:"requiredWith,omitempty" json:"requiredWith,omitempty"`
 }
 
 // AddonMeta holds metadata.
@@ -76,19 +70,13 @@ type Addon interface {
 
 type registry struct {
 	addons map[string]Addon
-
-	dir      string
-	mu       sync.Mutex
-	readAt   time.Time
-	external []Addon
-	problem  string
 }
 
 // Registry is an exported variable.
 var Registry *registry
 
 func init() {
-	Registry = &registry{addons: make(map[string]Addon), dir: os.Getenv(CatalogDirEnv)}
+	Registry = &registry{addons: make(map[string]Addon)}
 	if err := Registry.load(); err != nil {
 		panic(fmt.Sprintf("failed to load addon catalog: %v", err))
 	}
@@ -116,9 +104,23 @@ func (r *registry) load() error {
 		}
 
 		manifestsDir := path.Join("catalog", entry.Name(), "manifests")
-		a, err := newAddon(meta, data, manifestsFS, manifestsDir)
+		manifestEntries, err := manifestsFS.ReadDir(manifestsDir)
 		if err != nil {
-			return err
+			return fmt.Errorf("read manifests dir %s: %w", manifestsDir, err)
+		}
+
+		var manifestFiles []string
+		for _, me := range manifestEntries {
+			if me.IsDir() || path.Ext(me.Name()) != ".yaml" {
+				continue
+			}
+			manifestFiles = append(manifestFiles, me.Name())
+		}
+
+		a := &embeddedAddon{
+			meta:          meta,
+			dir:           entry.Name(),
+			manifestFiles: manifestFiles,
 		}
 		r.addons[meta.Name] = a
 	}
@@ -126,39 +128,25 @@ func (r *registry) load() error {
 	return nil
 }
 
-// List returns every item of the catalog, each version of a name on its own.
+// List is an exported method.
 func (r *registry) List() []AddonMeta {
 	var result []AddonMeta
 	for _, a := range r.addons {
 		result = append(result, a.Meta())
 	}
-	for _, a := range r.fromDir() {
-		result = append(result, a.Meta())
-	}
 	return result
 }
 
-// Get returns the current version of name: the built-in one, or for a name
-// that is not built in the highest version the catalog directory holds.
+// Get is an exported method.
 func (r *registry) Get(name string) (Addon, bool) {
-	if a, ok := r.addons[name]; ok {
-		return a, true
-	}
-	var current Addon
-	for _, a := range r.fromDir() {
-		if a.Meta().Name == name && (current == nil || versionLess(current.Meta().Version, a.Meta().Version)) {
-			current = a
-		}
-	}
-	return current, current != nil
+	a, ok := r.addons[name]
+	return a, ok
 }
 
 type embeddedAddon struct {
-	meta AddonMeta
-	// metaRaw is addon.yaml as written, templates the manifest templates in
-	// the order of their names: together, the item's Package.
-	metaRaw   []byte
-	templates []manifestTemplate
+	meta          AddonMeta
+	dir           string
+	manifestFiles []string
 }
 
 // Meta is an exported method.
@@ -168,18 +156,6 @@ func (a *embeddedAddon) Meta() AddonMeta {
 
 // Render is an exported method.
 func (a *embeddedAddon) Render(values map[string]string, namespace string, addonName string, addonUID string) ([]Manifest, error) {
-	if a.meta.Name == "csi-driver-rclone" {
-		for _, name := range []string{"nodeSelector", "controllerNodeSelector"} {
-			value := values[name]
-			if value == "" {
-				continue
-			}
-			parts := strings.Split(value, "=")
-			if len(parts) != 2 || len(validation.IsQualifiedName(parts[0])) != 0 || len(validation.IsValidLabelValue(parts[1])) != 0 {
-				return nil, fmt.Errorf("parameter %s must be a valid label=value selector", name)
-			}
-		}
-	}
 	renderValues := make(map[string]interface{})
 	for _, p := range a.meta.Parameters {
 		v, ok := values[p.Name]
@@ -190,15 +166,6 @@ func (a *embeddedAddon) Render(values map[string]string, namespace string, addon
 			return nil, fmt.Errorf("parameter %s is required", p.Name)
 		}
 		renderValues[p.Name] = v
-		if a.meta.Name == "csi-driver-rclone" && (p.Name == "nodeUpdateStrategy" || p.Name == "nodeImagePullPolicy") {
-			valid := false
-			for _, option := range p.Options {
-				valid = valid || v == option
-			}
-			if !valid {
-				return nil, fmt.Errorf("parameter %s must be one of %v", p.Name, p.Options)
-			}
-		}
 	}
 
 	addonLabels := map[string]string{
@@ -221,8 +188,13 @@ func (a *embeddedAddon) Render(values map[string]string, namespace string, addon
 	}
 
 	var result []Manifest
-	for _, manifest := range a.templates {
-		fname, raw := manifest.name, manifest.raw
+	for _, fname := range a.manifestFiles {
+		manifestPath := path.Join("catalog", a.dir, "manifests", fname)
+		raw, err := manifestsFS.ReadFile(manifestPath)
+		if err != nil {
+			return nil, fmt.Errorf("read manifest %s: %w", manifestPath, err)
+		}
+
 		tmpl, err := template.New(fname).Funcs(template.FuncMap{
 			"splitList": func(sep, s string) []string {
 				if s == "" {

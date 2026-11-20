@@ -15,8 +15,7 @@ func TestRcloneManifestsUseSafeMountsAndCanarySelector(t *testing.T) {
 	}
 
 	manifests, err := addon.Render(map[string]string{
-		"nodeSelector":           "rlark.io/rclone-csi=enabled",
-		"controllerNodeSelector": "kubernetes.io/hostname=worker-1",
+		"nodeSelector": "rlark.io/rclone-csi=enabled",
 	}, "rlark-system", "csi-driver-rclone", "test-uid")
 	if err != nil {
 		t.Fatalf("render addon: %v", err)
@@ -43,10 +42,6 @@ func TestRcloneManifestsUseSafeMountsAndCanarySelector(t *testing.T) {
 				spec := resource["spec"].(map[string]any)
 				template := spec["template"].(map[string]any)
 				podSpec := template["spec"].(map[string]any)
-				selector := podSpec["nodeSelector"].(map[string]any)
-				if selector["kubernetes.io/hostname"] != "worker-1" {
-					t.Fatalf("unexpected controller selector: %v", selector)
-				}
 				containers := podSpec["containers"].([]any)
 				provisioner := containers[1].(map[string]any)
 				for _, arg := range provisioner["args"].([]any) {

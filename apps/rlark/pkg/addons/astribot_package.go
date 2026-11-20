@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strings"
 
-	"go.yaml.in/yaml/v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -38,8 +37,7 @@ func PackageName(name, version string) string {
 }
 
 // PackageOf returns the Package of a catalog item.
-func PackageOf(a Addon) Package {
-	item := a.(*embeddedAddon)
+func PackageOf(item *Item) Package {
 	files := map[string]string{packageMetaFile: string(item.metaRaw)}
 	for _, manifest := range item.templates {
 		files[manifest.name] = string(manifest.raw)
@@ -58,16 +56,16 @@ func (p Package) ConfigMap(namespace string) *corev1.ConfigMap {
 }
 
 // FromPackage returns the item a published Package holds, to be rendered.
-func FromPackage(files map[string]string) (Addon, error) {
+func FromPackage(files map[string]string) (*Item, error) {
 	raw, found := files[packageMetaFile]
 	if !found {
 		return nil, fmt.Errorf("the package has no %s", packageMetaFile)
 	}
-	var meta AddonMeta
-	if err := yaml.Unmarshal([]byte(raw), &meta); err != nil || meta.Name == "" {
+	meta, err := parseMeta([]byte(raw))
+	if err != nil || meta.Name == "" {
 		return nil, fmt.Errorf("the package's %s is not a catalog item: %v", packageMetaFile, err)
 	}
-	a := &embeddedAddon{meta: meta, metaRaw: []byte(raw)}
+	a := &Item{meta: meta, metaRaw: []byte(raw)}
 	for name, content := range files {
 		if name != packageMetaFile {
 			a.templates = append(a.templates, manifestTemplate{name: name, raw: []byte(content)})
@@ -80,7 +78,7 @@ func FromPackage(files map[string]string) (Addon, error) {
 // MissingRequired names the parameters of the item that are required, or
 // required with another that has a value, and that values and the defaults
 // leave empty.
-func MissingRequired(meta AddonMeta, values map[string]string) []string {
+func MissingRequired(meta ItemMeta, values map[string]string) []string {
 	value := map[string]string{}
 	for _, parameter := range meta.Parameters {
 		given, ok := values[parameter.Name]

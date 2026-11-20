@@ -40,7 +40,7 @@ func addonRequest(t *testing.T, gateway *Gateway, method, name string, body map[
 func TestInstallPublishesThePackageAndPinsTheVersion(t *testing.T) {
 	ctx := context.Background()
 	gateway := &Gateway{kubeClient: clientset.NewSimpleClientset(), rawClient: k8sfake.NewSimpleClientset()}
-	item, _ := addons.Registry.Get("fluent-bit")
+	item, _ := addons.Catalog.Get("fluent-bit")
 	version := item.Meta().Version
 
 	// What the item requires is asked for before anything is written.
@@ -110,7 +110,7 @@ func TestUpdateUsesThePackagePublishedToTheClusterWhenTheCatalogHasMovedOn(t *te
 // A name at a version has one content. A cluster that holds other content for the catalog's version is not
 // given the catalog's under the same name.
 func TestPublishRefusesOtherContentForAPublishedVersion(t *testing.T) {
-	item, _ := addons.Registry.Get("fluent-bit")
+	item, _ := addons.Catalog.Get("fluent-bit")
 	other := addons.PackageOf(item).ConfigMap("cluster-a")
 	other.Data = map[string]string{"addon.yaml": "name: fluent-bit\nversion: " + item.Meta().Version + "\n", "daemonset.yaml": "kind: DaemonSet # as it was"}
 	gateway := &Gateway{kubeClient: clientset.NewSimpleClientset(), rawClient: k8sfake.NewSimpleClientset(other)}

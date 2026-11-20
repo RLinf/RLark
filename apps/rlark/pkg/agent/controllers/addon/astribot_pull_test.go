@@ -691,7 +691,7 @@ func TestCheckReadyRolledDaemonSetCountsReadyNodesOnly(t *testing.T) {
 // publishedBuiltIn is the Package of a built-in item as the control plane publishes it to a cluster, under version.
 func publishedBuiltIn(t *testing.T, name, version, cluster string) *corev1.ConfigMap {
 	t.Helper()
-	item, ok := addons.Registry.Get(name)
+	item, ok := addons.Catalog.Get(name)
 	if !ok {
 		t.Fatalf("%s is not built in", name)
 	}
