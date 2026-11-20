@@ -74,7 +74,7 @@ paths:
                   reportedAt: {type: string, format: date-time}
         '400': {description: Missing cluster ID}
         '404': {description: Cluster or node not visible}
-        '409': {description: Ambiguous cluster namespace}
+        '409': {description: Invalid cluster namespace mapping}
         '503': {description: Verified observation unavailable}
   /api/v1/site-nodes:
     get:
@@ -94,7 +94,7 @@ paths:
                   items: {type: array, items: {type: object}}
         '400': {description: Missing cluster ID}
         '404': {description: Cluster not found}
-        '409': {description: Ambiguous cluster namespace}
+        '409': {description: Invalid cluster namespace mapping}
         '502': {description: Management API request failed}
         '503': {description: Station API unavailable}
   /api/v1/site-nodes/{name}:
@@ -154,7 +154,7 @@ paths:
                             latest_handshake: {type: string, format: date-time}
         '400': {description: Missing cluster ID}
         '404': {description: Cluster or site node not found}
-        '409': {description: Ambiguous cluster namespace}
+        '409': {description: Invalid cluster namespace mapping}
         '502': {description: Management API request failed}
         '503': {description: Station API unavailable}
   /api/v1/cluster-provisions:
@@ -710,7 +710,7 @@ paths:
         '400': {description: Cluster ID required}
         '403': {description: Administrator role required}
         '404': {description: Cluster or site node not found}
-        '409': {description: Cluster namespace mapping is ambiguous}
+        '409': {description: Invalid cluster namespace mapping}
         '502': {description: Management Kubernetes API unavailable}
     delete:
       tags: [Station]
@@ -783,7 +783,7 @@ paths:
         '400': {description: Cluster ID required}
         '403': {description: Administrator role required}
         '404': {description: Cluster or operation not found}
-        '409': {description: Operation cluster binding mismatch}
+        '409': {description: Invalid cluster namespace mapping}
         '502': {description: Management Kubernetes API failure}
         '503': {description: Station API unavailable}
   /api/v1/image-registries/{id}/repositories:

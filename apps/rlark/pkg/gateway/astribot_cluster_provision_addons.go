@@ -224,19 +224,15 @@ func (g *Gateway) distributeJobSecret(ctx context.Context, name, cluster string)
 	if err != nil {
 		return fmt.Errorf("RLark's secret object %s: %w", name, err)
 	}
-	var stored storedJobSecret
-	if err := json.Unmarshal(current.Data["secret"], &stored); err != nil {
+	stored, err := readJobSecret(current)
+	if err != nil {
 		return fmt.Errorf("RLark's secret object %s: %w", name, err)
 	}
 	if slices.Contains(stored.Clusters, cluster) {
 		return nil
 	}
-	values, err := jobSecretValues(current)
-	if err != nil {
-		return err
-	}
-	return putJobSecret(ctx, g.rawClient, g.managementNamespace(), current.Annotations[tenant.CreatedByAnnotation],
-		jobSecretRequest{Name: name, Description: stored.Description, Clusters: append(stored.Clusters, cluster), Data: values}, true)
+	stored.Clusters = append(stored.Clusters, cluster)
+	return putJobSecret(ctx, g.rawClient, g.managementNamespace(), current.Annotations[tenant.CreatedByAnnotation], stored, true)
 }
 
 // addClusterToSiteStorage gives the new cluster every S3 storage every other cluster has. A storage a cloud's

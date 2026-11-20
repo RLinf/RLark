@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"sort"
 	"strings"
@@ -200,13 +199,12 @@ func (g *Gateway) updateJobSecret(c *gin.Context) {
 		return
 	}
 	if len(req.Data) == 0 {
-		if req.Data, err = jobSecretValues(current); err != nil {
+		stored, err := readJobSecret(current)
+		if err != nil {
 			respondError(c, http.StatusInternalServerError, CodeInternalError, "the stored secret cannot be read")
 			return
 		}
-		if req.Description == "" {
-			var stored storedJobSecret
-			_ = json.Unmarshal(current.Data["secret"], &stored)
+		if req.Data = stored.Data; req.Description == "" {
 			req.Description = stored.Description
 		}
 	}
@@ -245,20 +243,19 @@ func (g *Gateway) deleteJobSecret(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
-// jobSecretValues are the values a secret's declaration holds: the Secret its delivery declares.
-func jobSecretValues(replication *v1.Secret) (map[string]string, error) {
-	var deliveries []v1.Secret
-	if err := yaml.Unmarshal(replication.Data["manifests"], &deliveries); err != nil || len(deliveries) != 1 {
-		return nil, fmt.Errorf("the declaration of %s holds no delivery: %v", replication.Name, err)
+// readJobSecret is the request a job secret's declaration was built from: what it stores of itself, and the values
+// of the Secret its delivery declares.
+func readJobSecret(declaration *v1.Secret) (jobSecretRequest, error) {
+	var stored storedJobSecret
+	var deliveries, delivered []v1.Secret
+	if err := json.Unmarshal(declaration.Data["secret"], &stored); err != nil {
+		return jobSecretRequest{}, err
 	}
-	var delivered []v1.Secret
+	if err := yaml.Unmarshal(declaration.Data["manifests"], &deliveries); err != nil || len(deliveries) != 1 {
+		return jobSecretRequest{}, fmt.Errorf("the declaration of %s holds no delivery: %v", declaration.Name, err)
+	}
 	if err := yaml.Unmarshal(deliveries[0].Data["manifests"], &delivered); err != nil || len(delivered) != 1 {
-		return nil, fmt.Errorf("the delivery of %s holds no secret: %v", replication.Name, err)
+		return jobSecretRequest{}, fmt.Errorf("the delivery of %s holds no secret: %v", declaration.Name, err)
 	}
-	values := map[string]string{}
-	maps.Copy(values, delivered[0].StringData)
-	for key, value := range delivered[0].Data {
-		values[key] = string(value)
-	}
-	return values, nil
+	return jobSecretRequest{Name: stored.Name, Description: stored.Description, Clusters: stored.Clusters, Data: delivered[0].StringData}, nil
 }

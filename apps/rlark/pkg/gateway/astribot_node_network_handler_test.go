@@ -73,16 +73,15 @@ func (s *networkClientStub) Read(context.Context, string, string) (stationidenti
 func TestNodeNetworkAuthorizationAndFailures(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
-		name                                             string
-		delisted, admin, ambiguous, missingNode, failure bool
-		status, calls                                    int
+		name                                  string
+		delisted, admin, missingNode, failure bool
+		status, calls                         int
 	}{
-		{"visible", false, false, false, false, false, 200, 1},
-		{"delisted user", true, false, false, false, false, 404, 0},
-		{"delisted admin", true, true, false, false, false, 200, 1},
-		{"ambiguous", false, false, true, false, false, 409, 0},
-		{"node absent", false, false, false, true, false, 404, 0},
-		{"station unavailable", false, false, false, false, true, 503, 1},
+		{"visible", false, false, false, false, 200, 1},
+		{"delisted user", true, false, false, false, 404, 0},
+		{"delisted admin", true, true, false, false, 200, 1},
+		{"node absent", false, false, true, false, 404, 0},
+		{"station unavailable", false, false, false, true, 503, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cluster := &api.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: api.ClusterSpec{AgentNamespace: "agent", Delisted: tc.delisted}}
@@ -95,12 +94,6 @@ func TestNodeNetworkAuthorizationAndFailures(t *testing.T) {
 				}
 			}
 			objects := stationHandlerClient(stationHandlerCluster("cluster", "agent"))
-			if tc.ambiguous {
-				_, err := objects.Resource(stationClusterGVR).Create(context.Background(), stationHandlerCluster("other", "agent"), metav1.CreateOptions{})
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
 			stub := &networkClientStub{}
 			if tc.failure {
 				stub.err = errors.New("down")

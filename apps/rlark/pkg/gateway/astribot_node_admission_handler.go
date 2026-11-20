@@ -76,9 +76,18 @@ func newStationBootstrapClient(bootstrapURL, origin, caFile string) (*stationBoo
 	}
 	address := machines.Host
 	u, err := url.Parse(origin)
-	if err != nil || u.Scheme != "https" || u.Host == "" || caFile == "" {
-		return nil, errors.New("the Station API HTTPS origin and CA are required to give out join codes")
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return nil, errors.New("the Station API HTTPS origin is required to give out join codes")
 	}
+	client, err := stationHTTPClient(caFile)
+	if err != nil {
+		return nil, err
+	}
+	return &stationBootstrapClient{address: address, tunnel: u.Host, origin: strings.TrimRight(origin, "/"), http: client}, nil
+}
+
+// stationHTTPClient reaches Station API verified by the CA of caFile, and follows no redirect.
+func stationHTTPClient(caFile string) (*http.Client, error) {
 	pem, err := os.ReadFile(caFile)
 	if err != nil {
 		return nil, errors.New("read Station API CA")
@@ -87,9 +96,8 @@ func newStationBootstrapClient(bootstrapURL, origin, caFile string) (*stationBoo
 	if !roots.AppendCertsFromPEM(pem) {
 		return nil, errors.New("invalid Station API CA")
 	}
-	return &stationBootstrapClient{address: address, tunnel: u.Host, origin: strings.TrimRight(origin, "/"),
-		http: &http.Client{Timeout: 12 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}},
-			CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect forbidden") }}}, nil
+	return &http.Client{Timeout: 12 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect forbidden") }}, nil
 }
 
 func (s *stationBootstrapClient) Address() string { return s.address }

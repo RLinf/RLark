@@ -165,23 +165,13 @@ func (g *Gateway) admissionAddresses(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// provisionSubnetPairs are the Pod and Service subnets a new cluster may take, in order.
-func provisionSubnetPairs() [][2]netip.Prefix {
-	var pairs [][2]netip.Prefix
-	for second := 200; second+1 < 256; second += 2 {
-		pairs = append(pairs, [2]netip.Prefix{
-			netip.PrefixFrom(netip.AddrFrom4([4]byte{10, byte(second), 0, 0}), 16),
-			netip.PrefixFrom(netip.AddrFrom4([4]byte{10, byte(second + 1), 0, 0}), 16),
-		})
-	}
-	return pairs
-}
-
-// chooseSubnets is the first pair of subnets that overlaps none of taken.
+// chooseSubnets is the first pair of /16 Pod and Service subnets, from 10.200.0.0 on, that overlaps none of taken.
 func chooseSubnets(taken []netip.Prefix) (string, string, error) {
-	for _, pair := range provisionSubnetPairs() {
-		if !slices.ContainsFunc(taken, pair[0].Overlaps) && !slices.ContainsFunc(taken, pair[1].Overlaps) {
-			return pair[0].String(), pair[1].String(), nil
+	for second := 200; second+1 < 256; second += 2 {
+		pod := netip.PrefixFrom(netip.AddrFrom4([4]byte{10, byte(second), 0, 0}), 16)
+		service := netip.PrefixFrom(netip.AddrFrom4([4]byte{10, byte(second + 1), 0, 0}), 16)
+		if !slices.ContainsFunc(taken, pod.Overlaps) && !slices.ContainsFunc(taken, service.Overlaps) {
+			return pod.String(), service.String(), nil
 		}
 	}
 	return "", "", errors.New("no pair of /16 in 10.200.0.0–10.255.255.255 is free of every cluster's and the machine's networks")
