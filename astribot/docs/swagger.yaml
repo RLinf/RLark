@@ -1143,6 +1143,85 @@ paths:
         '403': {description: A forced release by neither administrator nor operator}
         '404': {description: Not Found}
         '409': {description: "ROBOT_CLAIM_BUSY: held by another; details.current is its claim"}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras:
+    get:
+      tags: [Node]
+      summary: A robot's cameras and their state (anyone signed in)
+      description: >-
+        What the camera service of the robot's model Addon (s1u-robot's video container, port 18891 on the node)
+        answers, reached through the member cluster's API server as a proxy of the node's running s1u-robot Pod. The
+        same JSON is the Node's annotation rlark.io/cameras, written when a state changes (label
+        rlark.io/camera-state); this is the live one, with the rates and ages of now.
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+      responses:
+        '200':
+          description: The cameras of the robot's body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RobotCameras'
+        '400': {description: namespace is not a cluster's (rlark-<cluster>)}
+        '404': {description: No such Node, or no s1u-robot Pod runs on it}
+        '502': {description: The cluster or the robot did not answer}
+        '503': {description: The API server does not reach the robot's Pod}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}:
+    get:
+      tags: [Node]
+      summary: A robot camera's newest JPEG, or the camera wall (anyone signed in)
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - name: camera
+          in: path
+          required: true
+          schema: {type: string, enum: [head.jpg, torso.jpg, wrist_left.jpg, wrist_right.jpg, wall.jpg]}
+          description: >-
+            <view>.jpg: the camera's own newest JPEG; wall.jpg: the body's views as one 256 x 144 image of 2 x 2
+            cells of 128 x 72 (head, torso / wrist_left, wrist_right), a view without a fresh frame (or that the body
+            lacks) black.
+      responses:
+        '200':
+          description: The JPEG; a view's carries X-Age-Seconds, the seconds since the robot received it
+          headers:
+            X-Age-Seconds: {schema: {type: number}}
+          content:
+            image/jpeg:
+              schema: {type: string, format: binary}
+        '404': {description: No such Node, no s1u-robot Pod on it, a view the robot's body lacks, or no such camera}
+        '502': {description: The cluster or the robot did not answer}
+        '503': {description: The camera has sent no frame yet, or the API server does not reach the robot's Pod}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras/{camera}/stream:
+    get:
+      tags: [Node]
+      summary: A robot camera's stream, or the camera wall's (anyone signed in)
+      description: >-
+        multipart/x-mixed-replace of JPEGs, each part as the robot sends it (a view's parts are the camera's own
+        JPEGs, not encoded again, each with X-Age-Seconds; a camera that stopped sends its last frame again each
+        second). Passed on part by part, never buffered; usable as an <img> source (the console's session cookie
+        authenticates it). The robot serves at most 16 streams at a time.
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+        - name: camera
+          in: path
+          required: true
+          schema: {type: string, enum: [head, torso, wrist_left, wrist_right, wall]}
+        - name: fps
+          in: query
+          schema: {type: integer, minimum: 1}
+          description: Parts a second at most, 1 to 30 for a view (default 10), 1 to 10 for the wall (default 5)
+      responses:
+        '200':
+          description: The stream, until the viewer leaves
+          content:
+            multipart/x-mixed-replace:
+              schema: {type: string, format: binary}
+        '400': {description: fps is out of range, or namespace is not a cluster's}
+        '404': {description: No such Node, no s1u-robot Pod on it, a view the robot's body lacks, or no such camera}
+        '502': {description: The cluster or the robot did not answer}
+        '503': {description: The camera has sent no frame yet, the robot serves 16 streams already, or the API server does not reach the robot's Pod}
   /api/v1/rlinf.io/v1alpha1/nodes/{name}/display-name:
     put:
       tags: [Node]
@@ -1177,6 +1256,26 @@ paths:
 
 components:
   schemas:
+    RobotCamera:
+      type: object
+      properties:
+        state: {type: string, enum: [ok, slow, stale, absent], description: 'slow: under 10 frames a second for 30 s; stale: no frame for 5 s; absent: none since the camera service started'}
+        fps: {type: number, description: Frames a second over the last 5 s}
+        age_seconds: {type: number, nullable: true, description: Seconds since the newest frame; null before the first}
+        step: {type: integer, enum: [0, 1, 2, 3], description: 'Where its recovery is: 0 none, 1 driver restarts, 2 USB reset, 3 stuck'}
+        attempts: {type: integer, description: Driver restarts done in this round of the recovery}
+        next_attempt_at: {type: integer, nullable: true, description: When the recovery acts next (Unix seconds)}
+        last_action: {type: string, nullable: true, enum: [driver_restart, usb_reset, stuck]}
+        last_result: {type: string, nullable: true}
+    RobotCameras:
+      type: object
+      properties:
+        state: {type: string, enum: [ok, recovering, degraded, stuck], description: 'recovering: a camera has no frames; degraded: only slow cameras; stuck: 相机需要断电或 USB 复位'}
+        cameras:
+          type: object
+          description: The views of the robot's body (s1u head, torso, wrist_left, wrist_right; s1u_observer head, torso)
+          additionalProperties: {$ref: '#/components/schemas/RobotCamera'}
+        updated_at: {type: number, description: Unix seconds}
     NodeClassPassword:
       type: object
       required: [secret, key, configured]
