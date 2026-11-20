@@ -74,9 +74,9 @@ func TestListStationsUsesClusterNamespaceAndIgnoresRequestedNamespace(t *testing
 	}
 }
 
-func TestGetStationRequiresClusterAndRejectsAmbiguousNamespace(t *testing.T) {
+func TestGetStationRequiresCluster(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	client := stationHandlerClient(stationHandlerCluster("cluster-a", "agent-a"), stationHandlerCluster("cluster-b", "agent-a"), stationHandlerRecord("node-a", "agent-a"))
+	client := stationHandlerClient(stationHandlerCluster("cluster-a", "agent-a"), stationHandlerRecord("node-a", "agent-a"))
 	gateway := &Gateway{astribotState: astribotState{stationClient: client}}
 	request := httptest.NewRequest("GET", "/api/v1/station/stations/node-a", nil)
 	recorder := httptest.NewRecorder()
@@ -86,15 +86,5 @@ func TestGetStationRequiresClusterAndRejectsAmbiguousNamespace(t *testing.T) {
 	gateway.handleGetStation(ctx)
 	if recorder.Code != 400 {
 		t.Fatalf("missing cluster ID status=%d", recorder.Code)
-	}
-
-	request = httptest.NewRequest("GET", "/api/v1/station/stations/node-a?cluster_id=cluster-a", nil)
-	recorder = httptest.NewRecorder()
-	ctx, _ = gin.CreateTestContext(recorder)
-	ctx.Request = request
-	ctx.Params = gin.Params{{Key: "name", Value: "node-a"}}
-	gateway.handleGetStation(ctx)
-	if recorder.Code != 409 {
-		t.Fatalf("ambiguous namespace status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

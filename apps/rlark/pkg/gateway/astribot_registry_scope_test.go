@@ -90,9 +90,9 @@ func TestASecretGoesToAnotherClusterWithTheValuesItHas(t *testing.T) {
 	require.Equal(t, http.StatusOK, updated.Code, updated.Body.String())
 	replication, err := gateway.rawClient.CoreV1().Secrets("management").Get(context.Background(), jobSecretReplicationName("site-registry"), metav1.GetOptions{})
 	require.NoError(t, err)
-	values, err := jobSecretValues(replication)
+	read, err := readJobSecret(replication)
 	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"tls.key": "k", "htpasswd": "h"}, values)
+	assert.Equal(t, map[string]string{"tls.key": "k", "htpasswd": "h"}, read.Data)
 	var config distribution.Config
 	require.NoError(t, yaml.Unmarshal(replication.Data["config"], &config))
 	assert.Equal(t, []string{"rlark-baidu-gpu", "rlark-ksyun-gpu"}, config.Targets.Namespaces.Include)

@@ -117,7 +117,7 @@ func safeNodeOperation(op *unstructured.Unstructured) map[string]any {
 }
 
 func (g *Gateway) handleGetNodeOperation(c *gin.Context) {
-	clusterID, namespace, ok := g.clusterNamespace(c)
+	_, namespace, ok := g.clusterNamespace(c)
 	if !ok {
 		return
 	}
@@ -130,20 +130,11 @@ func (g *Gateway) handleGetNodeOperation(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "node operation lookup failed"})
 		return
 	}
-	id, found, nestedErr := unstructured.NestedString(op.Object, "spec", "clusterID")
-	if nestedErr != nil || !found {
-		c.JSON(http.StatusConflict, gin.H{"error": "operation cluster binding is invalid"})
-		return
-	}
-	if id != clusterID {
-		c.JSON(http.StatusConflict, gin.H{"error": "operation cluster binding mismatch"})
-		return
-	}
 	c.JSON(http.StatusOK, safeNodeOperation(op))
 }
 
 func (g *Gateway) handleListNodeOperations(c *gin.Context) {
-	clusterID, namespace, ok := g.clusterNamespace(c)
+	_, namespace, ok := g.clusterNamespace(c)
 	if !ok {
 		return
 	}
@@ -158,9 +149,6 @@ func (g *Gateway) handleListNodeOperations(c *gin.Context) {
 	}
 	out := make([]map[string]any, 0, len(items.Items))
 	for i := range items.Items {
-		if id, found, _ := unstructured.NestedString(items.Items[i].Object, "spec", "clusterID"); !found || id != clusterID {
-			continue
-		}
 		out = append(out, safeNodeOperation(&items.Items[i]))
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out, "continue": items.GetContinue()})

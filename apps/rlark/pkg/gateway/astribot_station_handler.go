@@ -89,38 +89,19 @@ func (g *Gateway) handleGetStation(c *gin.Context) {
 }
 
 func (g *Gateway) stationNamespace(c *gin.Context, clusterID string) (string, error) {
-	clusters, err := g.stationClient.Resource(stationClusterGVR).List(c.Request.Context(), metav1.ListOptions{})
+	cluster, err := g.stationClient.Resource(stationClusterGVR).Get(c.Request.Context(), clusterID, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Cluster not found"})
+		return "", err
+	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Cluster API request failed"})
 		return "", err
 	}
-	var namespace string
-	for i := range clusters.Items {
-		cluster := &clusters.Items[i]
-		if cluster.GetName() != clusterID {
-			continue
-		}
-		value, found, nestedErr := unstructured.NestedString(cluster.Object, "spec", "agentNamespace")
-		if nestedErr != nil || !found || value == "" {
-			c.JSON(http.StatusConflict, gin.H{"error": "Cluster namespace mapping is invalid"})
-			return "", apierrors.NewBadRequest("invalid Cluster namespace mapping")
-		}
-		namespace = value
-	}
+	namespace, _, _ := unstructured.NestedString(cluster.Object, "spec", "agentNamespace")
 	if namespace == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Cluster not found"})
-		return "", apierrors.NewNotFound(stationClusterGVR.GroupResource(), clusterID)
-	}
-	for i := range clusters.Items {
-		cluster := &clusters.Items[i]
-		if cluster.GetName() == clusterID {
-			continue
-		}
-		value, found, nestedErr := unstructured.NestedString(cluster.Object, "spec", "agentNamespace")
-		if nestedErr == nil && found && value == namespace {
-			c.JSON(http.StatusConflict, gin.H{"error": "Cluster namespace mapping is ambiguous"})
-			return "", apierrors.NewConflict(stationClusterGVR.GroupResource(), clusterID, nil)
-		}
+		c.JSON(http.StatusConflict, gin.H{"error": "Cluster namespace mapping is invalid"})
+		return "", apierrors.NewBadRequest("invalid Cluster namespace mapping")
 	}
 	return namespace, nil
 }

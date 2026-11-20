@@ -3,8 +3,6 @@ package gateway
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/rlinf/rlark/apps/rlark/astribot/stationidentity"
@@ -32,19 +29,14 @@ var errStationNetworkCredentialRejected = errors.New("Station network service cr
 
 func newStationNetworkClient(address, caFile, credentialFile string) (*stationNetworkClient, error) {
 	u, err := url.Parse(address)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || caFile == "" || credentialFile == "" {
-		return nil, errors.New("Station API HTTPS origin, CA and credential file are required")
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || credentialFile == "" {
+		return nil, errors.New("Station API HTTPS origin and credential file are required")
 	}
-	pem, err := os.ReadFile(caFile)
+	client, err := stationHTTPClient(caFile)
 	if err != nil {
-		return nil, errors.New("read Station API CA")
+		return nil, err
 	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(pem) {
-		return nil, errors.New("invalid Station API CA")
-	}
-	return &stationNetworkClient{endpoint: strings.TrimRight(address, "/") + "/v1/internal/node-network", credentialFile: credentialFile,
-		http: &http.Client{Timeout: 12 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}}, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect forbidden") }}}, nil
+	return &stationNetworkClient{endpoint: strings.TrimRight(address, "/") + "/v1/internal/node-network", credentialFile: credentialFile, http: client}, nil
 }
 
 func (s *stationNetworkClient) Read(ctx context.Context, cluster, node string) (stationidentity.NodeNetworkSummary, error) {

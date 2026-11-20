@@ -3,18 +3,15 @@ package gateway
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/yaml"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
@@ -53,22 +50,6 @@ type setNodeClassAccessRequest struct {
 	NodePassword string `json:"node_password"`
 	// SudoPassword is given where the node's sudo asks for another password.
 	SudoPassword string `json:"sudo_password,omitempty"`
-}
-
-// readJobSecret is the request a job secret's declaration was built from.
-func readJobSecret(declaration *v1.Secret) (jobSecretRequest, error) {
-	var stored storedJobSecret
-	var deliveries, delivered []v1.Secret
-	if err := json.Unmarshal(declaration.Data["secret"], &stored); err != nil {
-		return jobSecretRequest{}, err
-	}
-	if err := yaml.Unmarshal(declaration.Data["manifests"], &deliveries); err != nil || len(deliveries) != 1 {
-		return jobSecretRequest{}, fmt.Errorf("job secret %s: not one delivery", stored.Name)
-	}
-	if err := yaml.Unmarshal(deliveries[0].Data["manifests"], &delivered); err != nil || len(delivered) != 1 {
-		return jobSecretRequest{}, fmt.Errorf("job secret %s: not one Secret", stored.Name)
-	}
-	return jobSecretRequest{Name: stored.Name, Description: stored.Description, Clusters: stored.Clusters, Data: delivered[0].StringData}, nil
 }
 
 // nodeClassAccessOf reads which passwords of a class are there. ok is false
