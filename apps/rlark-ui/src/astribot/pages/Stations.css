@@ -260,7 +260,7 @@
 }
 
 .station-operation-drawer {
-  width: min(560px, 100vw);
+  z-index: 1243;
 }
 
 .station-join-progress {
@@ -277,10 +277,6 @@
 
 .stations-operation-overlay {
   z-index: 1242;
-}
-
-.station-operation-drawer {
-  z-index: 1243;
 }
 
 .theme-dark .storage-overview-card.red > span {

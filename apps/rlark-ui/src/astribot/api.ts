@@ -1,9 +1,8 @@
 // The console's requests to the Gateway routes this fork adds. backend.ts keeps RLark's own.
-import { request, requestJson, withQuery } from "../api.js";
-import type { AdmittedMachine, IssuedNodeAdmission, MachineList, NodeAdmission, NodeClassAccess, SiteNode } from "./lib/siteNodeDisplay.js";
+import { ApiError, request, requestJson, withQuery } from "../api.js";
+import type { AdmittedMachine, IssuedNodeAdmission, MachineList, NodeAdmission, NodeClassAccess, RobotPowerDesired, SiteNode } from "./lib/siteNodeDisplay.js";
 import type { NodeJoin } from "./lib/nodeJoin.js";
 import type { ClusterProvision, NewClusterForm } from "./lib/clusterProvision.js";
-import type { RobotPowerDesired } from "./lib/siteNodeDisplay.js";
 
 interface Condition {
   type: string;
@@ -18,20 +17,16 @@ type Page<T> = { items: T[]; continue?: string };
 
 // A site node: the NetworkEnrollment of the node its name is, as GET /api/v1/station/stations lists it.
 export interface StationItem {
-  apiVersion: string;
-  kind: "NetworkEnrollment";
-  metadata: { name: string; namespace: string; uid?: string; creationTimestamp?: string };
+  metadata: { name: string; namespace: string };
   spec: {
-    clusterID: string;
     nodeUID: string;
     systemUUID?: string;
-    publicKey?: string;
     // The node was removed: the record stays until it is deleted or the node is admitted again.
     retired?: boolean;
   };
   status?: {
     // The node's last report; nodeUID is the Node that made it.
-    observation?: { nodeUID: string; systemUUID?: string; reportedAt: string };
+    observation?: { nodeUID: string };
     node?: {
       state?: "Bound" | "Offline" | "Conflict" | "Retired";
       bootTime?: string;
@@ -43,22 +38,12 @@ export interface StationItem {
 }
 
 export interface NodeOperation {
-  apiVersion: string;
-  kind: "NodeOperation";
   // annotations: what a removal's PowerOff stage found (station.rlark.io/power-off).
-  metadata: { name: string; namespace: string; uid?: string; creationTimestamp?: string; annotations?: Record<string, string> };
-  spec: {
-    requestID: string;
-    action: "Join" | "Remove";
-    clusterID: string;
-    nodeName: string;
-    nodeUID?: string;
-    requestedBy: string;
-  };
+  metadata: { name: string; namespace: string; annotations?: Record<string, string> };
+  spec: { action: "Join" | "Remove"; nodeName: string };
   status?: {
     phase?: "Pending" | "Running" | "Blocked" | "Succeeded" | "Failed";
     stage?: string;
-    nodeUID?: string;
     conditions?: Condition[];
   };
 }
@@ -67,12 +52,6 @@ export const clusterProvisionsApi = {
   async list() {
     const response = await requestJson<{ data?: ClusterProvision[] }>("/api/v1/cluster-provisions");
     return response.data ?? [];
-  },
-  async get(name: string) {
-    const response = await requestJson<{ data: ClusterProvision }>(
-      `/api/v1/cluster-provisions/${encodeURIComponent(name)}`,
-    );
-    return response.data;
   },
   async create(form: NewClusterForm) {
     const response = await requestJson<{ data: ClusterProvision }>("/api/v1/cluster-provisions", {
@@ -102,9 +81,6 @@ export const stationsApi = {
   list(query: Record<string, string | undefined> = {}, signal?: AbortSignal) {
     return requestJson<Page<StationItem>>(withQuery("/api/v1/station/stations", query), { signal });
   },
-  get(name: string, clusterID: string, signal?: AbortSignal) {
-    return requestJson<StationItem>(withQuery(`/api/v1/station/stations/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { signal });
-  },
   listNodeOperations(clusterID: string, signal?: AbortSignal) {
     return requestJson<Page<NodeOperation>>(withQuery("/api/v1/station/node-operations", { cluster_id: clusterID, limit: 100 }), { signal });
   },
@@ -132,10 +108,6 @@ export const nodeJoinsApi = {
   async list(clusterID: string, signal?: AbortSignal) {
     const response = await requestJson<{ items?: NodeJoin[] }>(withQuery("/api/v1/station/node-joins", { cluster_id: clusterID }), { signal });
     return response.items ?? [];
-  },
-  async get(name: string) {
-    const response = await requestJson<{ data: NodeJoin }>(`/api/v1/station/node-joins/${encodeURIComponent(name)}`);
-    return response.data;
   },
   async create(input: {
     cluster_id: string;
@@ -190,10 +162,10 @@ export const nodeAdmissionsApi = {
       body: input,
     });
   },
-  reissue(name: string, clusterID: string, ttlSeconds?: number) {
+  reissue(name: string, clusterID: string) {
     return requestJson<IssuedNodeAdmission>(
       withQuery(`/api/v1/station/node-admissions/${encodeURIComponent(name)}/reissue`, { cluster_id: clusterID }),
-      { method: "POST", body: ttlSeconds ? { ttl_seconds: ttlSeconds } : {} },
+      { method: "POST", body: {} },
     );
   },
   revoke(name: string, clusterID: string) {
@@ -262,6 +234,16 @@ export interface RegistryTagDetail {
 export interface RegistryTagDetailPage {
   items: RegistryTagDetail[];
   next: string;
+}
+
+// What a failed read of a registry says to the person browsing it.
+export function registryError(error: unknown, zh: boolean): string {
+  if (error instanceof ApiError && error.status === 403) {
+    return zh ? "浏览镜像仓库需要管理员权限。" : "Registry browsing requires administrator access.";
+  }
+  return zh
+    ? "读取仓库失败，请检查 Gateway 白名单、网络、证书和仓库认证后重试。"
+    : "Cannot read the registry. Check the Gateway allowlist, network, certificate and registry credentials, then retry.";
 }
 
 // Read-only browsing of a configured image registry through the Gateway; pages continue from `next` as `last`.

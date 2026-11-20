@@ -2,7 +2,6 @@
   margin-top: 16px;
 }
 
-.registry-browser-heading h3,
 .registry-browser-panel h3 {
   color: var(--ink);
   font-size: 15px;
@@ -59,13 +58,6 @@
   color: var(--danger, #c2414b);
 }
 
-
-
-
-
-
-
-
 .registry-command {
   display: flex;
   align-items: center;
@@ -112,13 +104,7 @@
   background: transparent;
 }
 
-}
-
 /* Image table */
-.registry-toolbar .page-toolbar {
-  margin: 16px 0 10px;
-}
-
 .registry-namespaces {
   display: flex;
   flex-wrap: wrap;

@@ -3,8 +3,7 @@ import { KeyRound, RefreshCw, Server, X } from "lucide-react";
 import { nodeAdmissionsApi, selfHealApi, stationsApi, type NodeOperation } from "../api";
 import type { ClusterSummary } from "../../types";
 import { formatChinaDateTime } from "../../utils/time.js";
-import { NodeName } from "../components/NodeName";
-import { useFollow } from "../components/useFollow";
+import { NodeName, type NodeRef } from "../components/NodeName";
 import { joinStageLabel } from "../lib/nodeJoin";
 import {
   admissionStateClass,
@@ -13,8 +12,6 @@ import {
   type IssuedNodeAdmission,
   type NodeAdmission,
 } from "../lib/siteNodeDisplay";
-
-type NodeRef = { metadata: { name: string }; spec?: { displayName?: string } };
 
 const operationStatusClass = (phase?: string) =>
   phase === "Succeeded" ? "status-online" : phase === "Failed" ? "status-failed" : "status-pending";
@@ -44,17 +41,30 @@ export function NodeOperations({ clusterID, zh, nodeAt }: { clusterID: string; z
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useFollow(
-    shown?.metadata.name,
-    (signal) => stationsApi.getNodeOperation(shown!.metadata.name, clusterID, signal),
-    (operation) => operation.status?.phase === "Succeeded" || operation.status?.phase === "Failed",
-    (operation) => {
-      setShown((current) => current?.metadata.name === operation.metadata.name ? operation : current);
-      setOperations((current) => current.map((item) => item.metadata.name === operation.metadata.name ? operation : item));
-    },
-    setShownError,
-    60,
-  );
+  // The operation shown is read at once and every 3 s until it ends, for three minutes.
+  const shownName = shown?.metadata.name;
+  useEffect(() => {
+    if (!shownName) return;
+    const controller = new AbortController();
+    let timer = 0;
+    let left = 60;
+    const poll = async () => {
+      try {
+        const operation = await stationsApi.getNodeOperation(shownName, clusterID, controller.signal);
+        setShown((current) => current?.metadata.name === shownName ? operation : current);
+        setOperations((current) => current.map((item) => item.metadata.name === shownName ? operation : item));
+        if (operation.status?.phase === "Succeeded" || operation.status?.phase === "Failed") return;
+      } catch (reason) {
+        if (!controller.signal.aborted) setShownError((reason as Error).message);
+      }
+      if (--left > 0 && !controller.signal.aborted) timer = window.setTimeout(poll, 3000);
+    };
+    void poll();
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [shownName, clusterID]);
 
   return <>
     <section className="station-operation-history-panel">

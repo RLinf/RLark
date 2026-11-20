@@ -14,6 +14,7 @@ import {
 import { ApiError } from "../../api";
 import { clustersApi } from "../../backend";
 import { machinesApi, nodeAdmissionsApi, nodeJoinsApi } from "../api";
+import { RetryClear } from "../components/RetryClear";
 import { StageList } from "../components/StageList";
 import { useAction } from "../components/useAction";
 import type { ClusterSummary } from "../../types";
@@ -254,9 +255,6 @@ function SSHJoin({ zh, clusterID, initial }: { zh: boolean; clusterID: string; i
   const [selected, setSelected] = useState(initial ?? "");
   // Whether the shown join is the operator's to choose: from the first list on, or once a join is named.
   const chosen = useRef(Boolean(initial));
-  const [retryUser, setRetryUser] = useState("");
-  const [retryPassword, setRetryPassword] = useState("");
-  const [machineGone, setMachineGone] = useState(false);
   const [cleared, setCleared] = useState<string[]>([]);
   const update = (patch: Partial<typeof form>) => setForm((current) => ({ ...current, ...patch }));
   const port = Number(form.port);
@@ -311,18 +309,6 @@ function SSHJoin({ zh, clusterID, initial }: { zh: boolean; clusterID: string; i
 
   const current = joins.find((j) => j.metadata?.name === selected);
   const view = current ? nodeJoinView(current, lang) : undefined;
-  const act = (work: () => Promise<unknown>) => run(async () => {
-    await work();
-    setRetryPassword("");
-    setRetryUser("");
-    setMachineGone(false);
-    await refresh();
-  });
-  const retry = () => current?.metadata?.name && act(() => nodeJoinsApi.retry(current.metadata!.name!, retryPassword, retryUser || current.spec.machine.user));
-  const clear = () => current?.metadata?.name && act(async () => {
-    setCleared(await nodeJoinsApi.clear(current.metadata!.name!, machineGone ? "" : retryPassword, retryUser || current.spec.machine.user, machineGone));
-    setSelected("");
-  });
   const phaseText = (j: NodeJoin) => j.status?.phase === "Succeeded"
     ? (zh ? "已入网" : "Joined")
     : j.status?.phase === "Failed"
@@ -372,37 +358,20 @@ function SSHJoin({ zh, clusterID, initial }: { zh: boolean; clusterID: string; i
           {j === current && view && <div className="provision-progress">
             <small className="muted">{zh ? `主机指纹 ${j.status?.hostKey ?? ""} · 由 ${j.spec.requestedBy ?? ""} 发起` : `Host key ${j.status?.hostKey ?? ""} · by ${j.spec.requestedBy ?? ""}`}</small>
             <StageList stages={view.stages} zh={zh} />
-            {view.canRetry && <form className="cert-form provision-retry" onSubmit={(event) => { event.preventDefault(); void retry(); }}>
-              {view.retryNeedsPassword && <label>
-                <span>{zh ? "SSH 账号" : "SSH account"}</span>
-                <input value={retryUser || j.spec.machine.user} onChange={(event) => setRetryUser(event.target.value)} />
-              </label>}
-              {view.retryNeedsPassword && <label>
-                <span>{zh ? "SSH 密码（这一步要重新登录机器）" : "SSH password (this stage logs in again)"}</span>
-                <input type="password" autoComplete="new-password" value={retryPassword} onChange={(event) => setRetryPassword(event.target.value)} />
-              </label>}
-              <button type="submit" className="primary-button" disabled={pending || (view.retryNeedsPassword && !retryPassword)}>
-                {zh ? "从这一步重试" : "Retry from this stage"}
-              </button>
-            </form>}
-            {view.canClear && <div className="provision-clear">
-              <small>{view.phase === "Succeeded"
+            <RetryClear zh={zh} view={view} clearReach={zh ? "要登录机器撤掉隧道" : "to take the tunnel away"} user={j.spec.machine.user} pending={pending} run={run}
+              retry={async (user, password) => {
+                await nodeJoinsApi.retry(selected, password, user);
+                await refresh();
+              }}
+              clear={async (user, password, machineGone) => {
+                setCleared(await nodeJoinsApi.clear(selected, password, user, machineGone));
+                setSelected("");
+                await refresh();
+              }}
+              clearNote={view.phase === "Succeeded"
                 ? (zh ? "清掉这条记录。节点还在集群里；要删节点，到场站节点页删。" : "Clear this record. The node stays in its cluster; remove it on the Site Nodes page.")
-                : (zh ? "不从这一步重试（机器或名字填错）：清掉这次入网。还没执行入网码的，撤掉这次的 Hub 声明和机器上的隧道；已执行的，按名字删除节点。之后可以重新入网。" : "Not retrying (a wrong machine or name): clear this join. Before its code's line ran, its hub declaration and the tunnel on the machine go; after, the node is removed by name. Then it can join again.")}</small>
-              <div className="cert-form">
-                {view.clearReachesMachine && !view.retryNeedsPassword && !machineGone && <label>
-                  <span>{zh ? "SSH 密码（要登录机器撤掉隧道）" : "SSH password (to take the tunnel away)"}</span>
-                  <input type="password" autoComplete="new-password" value={retryPassword} onChange={(event) => setRetryPassword(event.target.value)} />
-                </label>}
-                {view.clearReachesMachine && <label className="provision-clear-gone">
-                  <input type="checkbox" checked={machineGone} onChange={(event) => setMachineGone(event.target.checked)} />
-                  <span>{zh ? "机器已经不在了：只清 RLark 里的记录" : "The machine is gone: clear RLark's records only"}</span>
-                </label>}
-                <button type="button" className="secondary-button danger" onClick={() => void clear()} disabled={pending || (view.clearReachesMachine && !machineGone && !retryPassword)}>
-                  {view.phase === "Succeeded" ? (zh ? "清掉这条记录" : "Clear this record") : (zh ? "清掉这次入网" : "Clear this join")}
-                </button>
-              </div>
-            </div>}
+                : (zh ? "不从这一步重试（机器或名字填错）：清掉这次入网。还没执行入网码的，撤掉这次的 Hub 声明和机器上的隧道；已执行的，按名字删除节点。之后可以重新入网。" : "Not retrying (a wrong machine or name): clear this join. Before its code's line ran, its hub declaration and the tunnel on the machine go; after, the node is removed by name. Then it can join again.")}
+              clearLabel={view.phase === "Succeeded" ? (zh ? "清掉这条记录" : "Clear this record") : (zh ? "清掉这次入网" : "Clear this join")} />
           </div>}
         </div>)}
       </div>

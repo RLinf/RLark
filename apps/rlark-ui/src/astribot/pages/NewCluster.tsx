@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Server, Shield } from "lucide-react";
 import type { Lang } from "../../i18n";
 import { clusterProvisionsApi, selfHealApi } from "../api";
+import { RetryClear } from "../components/RetryClear";
 import { StageList } from "../components/StageList";
 import { useAction } from "../components/useAction";
 import {
@@ -21,10 +22,7 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
   const [form, setForm] = useState<NewClusterForm>(emptyForm);
   const [provisions, setProvisions] = useState<ClusterProvision[]>([]);
   const [selected, setSelected] = useState("");
-  const [retryPassword, setRetryPassword] = useState("");
-  const [retryUser, setRetryUser] = useState("");
   const { pending: busy, error, setError, run } = useAction();
-  const [machineGone, setMachineGone] = useState(false);
   const [cleared, setCleared] = useState<string[]>([]);
 
   const refresh = async () => {
@@ -44,28 +42,11 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
   const problem = newClusterProblem(form, lang);
   const current = provisions.find((p) => p.metadata?.name === selected) ?? provisions[0];
   const view = current ? provisionView(current, lang) : undefined;
-  const act = (work: () => Promise<unknown>) => run(async () => {
-    await work();
-    await refresh();
-  });
-  const create = () => act(async () => {
+  const create = () => run(async () => {
     const made = await clusterProvisionsApi.create(form);
     setForm(emptyForm);
     setSelected(made.metadata?.name ?? "");
-  });
-  const retry = () => act(async () => {
-    await clusterProvisionsApi.retry(current!.metadata!.name!, retryPassword, retryUser || current!.spec.machine.user);
-    setRetryPassword("");
-    setRetryUser("");
-  });
-  // A making that stopped (or what a deleted cluster's left) is taken away: the machine is put back, and the site,
-  // the cluster's name and the machine can be used again.
-  const clear = () => act(async () => {
-    setCleared(await selfHealApi.clearClusterProvision(current!.metadata!.name!, machineGone ? "" : retryPassword, retryUser || current!.spec.machine.user, machineGone));
-    setRetryPassword("");
-    setRetryUser("");
-    setMachineGone(false);
-    setSelected("");
+    await refresh();
   });
 
   const field = (key: keyof NewClusterForm, labelZh: string, labelEn: string, placeholder: string, type = "text") => (
@@ -147,51 +128,20 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
               </div>
             </div>
             <StageList stages={view.stages} zh={zh} />
-            {view.canRetry && (
-              <div className="cert-form provision-retry">
-                {view.retryNeedsPassword && (
-                  <label>
-                    <span>{zh ? "SSH 账号" : "SSH account"}</span>
-                    <input value={retryUser || current.spec.machine.user} onChange={(e) => setRetryUser(e.target.value)} />
-                  </label>
-                )}
-                {view.retryNeedsPassword && (
-                  <label>
-                    <span>{zh ? "SSH 密码（这一步要重新登录机器）" : "SSH password (this stage logs in again)"}</span>
-                    <input type="password" autoComplete="new-password" value={retryPassword} onChange={(e) => setRetryPassword(e.target.value)} />
-                  </label>
-                )}
-                <button className="primary-button" onClick={retry} disabled={busy || (view.retryNeedsPassword && !retryPassword)}>
-                  {zh ? "从这一步重试" : "Retry from this stage"}
-                </button>
-              </div>
-            )}
-            {view.canClear && (
-              <div className="provision-clear">
-                <small>
-                  {view.phase === "Succeeded"
-                    ? zh ? "集群删除以后，这次新建留下的场地、名字和节点声明还占着：清掉后才能用同一个场地或集群名重新建。集群还在时不能清。" : "After the cluster is deleted, what its making declared still holds the site and the name: clear it to make them again. It is not cleared while the cluster is listed."
-                    : zh ? "不想从这一步重试（机器或名字填错、要换机器）：撤销这次新建。RLark 撤掉机器上建到一半的控制面和隧道，删掉没建完就登记了的集群和凭据，去掉场地、名字和节点声明；之后可以重新建。" : "Not retrying (a wrong machine or name): take this making away. RLark undoes the half-made control plane and tunnel on the machine, deletes the Cluster and credentials it listed, and takes the site, name and node out of the SiteNetwork; then it can be made again."}
-                </small>
-                <div className="cert-form">
-                  {view.clearReachesMachine && !view.retryNeedsPassword && !machineGone && (
-                    <label>
-                      <span>{zh ? "SSH 密码（要登录机器把它恢复原样）" : "SSH password (to put the machine back)"}</span>
-                      <input type="password" autoComplete="new-password" value={retryPassword} onChange={(e) => setRetryPassword(e.target.value)} />
-                    </label>
-                  )}
-                  {view.clearReachesMachine && (
-                    <label className="provision-clear-gone">
-                      <input type="checkbox" checked={machineGone} onChange={(e) => setMachineGone(e.target.checked)} />
-                      <span>{zh ? "机器已经不在了（重装或退还）：只清 RLark 里的记录" : "The machine is gone (reinstalled or returned): clear RLark's records only"}</span>
-                    </label>
-                  )}
-                  <button className="secondary-button danger" onClick={clear} disabled={busy || (view.clearReachesMachine && !machineGone && !retryPassword)}>
-                    {view.phase === "Succeeded" ? (zh ? "清掉这次新建留下的声明" : "Clear what the making left") : (zh ? "撤销这次新建，清掉重来" : "Take this making away and start over")}
-                  </button>
-                </div>
-              </div>
-            )}
+            <RetryClear zh={zh} view={view} clearReach={zh ? "要登录机器把它恢复原样" : "to put the machine back"} goneWhy={zh ? "（重装或退还）" : " (reinstalled or returned)"} user={current.spec.machine.user} pending={busy} run={run}
+              retry={async (user, password) => {
+                await clusterProvisionsApi.retry(current.metadata!.name!, password, user);
+                await refresh();
+              }}
+              clear={async (user, password, machineGone) => {
+                setCleared(await selfHealApi.clearClusterProvision(current.metadata!.name!, password, user, machineGone));
+                setSelected("");
+                await refresh();
+              }}
+              clearNote={view.phase === "Succeeded"
+                ? zh ? "集群删除以后，这次新建留下的场地、名字和节点声明还占着：清掉后才能用同一个场地或集群名重新建。集群还在时不能清。" : "After the cluster is deleted, what its making declared still holds the site and the name: clear it to make them again. It is not cleared while the cluster is listed."
+                : zh ? "不想从这一步重试（机器或名字填错、要换机器）：撤销这次新建。RLark 撤掉机器上建到一半的控制面和隧道，删掉没建完就登记了的集群和凭据，去掉场地、名字和节点声明；之后可以重新建。" : "Not retrying (a wrong machine or name): take this making away. RLark undoes the half-made control plane and tunnel on the machine, deletes the Cluster and credentials it listed, and takes the site, name and node out of the SiteNetwork; then it can be made again."}
+              clearLabel={view.phase === "Succeeded" ? (zh ? "清掉这次新建留下的声明" : "Clear what the making left") : (zh ? "撤销这次新建，清掉重来" : "Take this making away and start over")} />
           </section>
         )}
       </div>
