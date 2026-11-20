@@ -281,7 +281,7 @@ func TestInstallerJoinNamesARefusedAccount(t *testing.T) {
 	}
 	stored := &stationv1alpha1.NodeOperation{}
 	_ = c.Get(ctx, client.ObjectKeyFromObject(op), stored)
-	if stored.Status.Phase != "Blocked" || len(stored.Status.Conditions) != 1 || stored.Status.Conditions[0].Reason != stationv1alpha1.MachineCredentialRejected {
+	if stored.Status.Phase != "Blocked" || len(stored.Status.Conditions) != 1 || stored.Status.Conditions[0].Reason != stationv1alpha1.MachineNodeCredentialRejected {
 		t.Fatalf("the operation says the account was refused: %+v", stored.Status)
 	}
 }

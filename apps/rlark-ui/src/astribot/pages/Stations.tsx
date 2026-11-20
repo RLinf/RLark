@@ -184,7 +184,7 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
     item.metadata.namespace,
     nodeLabel(nodeOf(item)),
     item.spec.nodeUID,
-    item.spec.systemUUID ?? "",
+    item.status?.observation?.systemUUID ?? "",
   ].some((value) => value.toLocaleLowerCase().includes(query)));
   const selected = items.find((item) => keyOf(item) === selectedID);
   const selectedLabels = selected && siteNodeOf(selected)?.labels;

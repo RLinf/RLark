@@ -90,7 +90,7 @@ export function StationDrawer({ station, cluster, node, labels, now, zh, power, 
             <div><span className="muted">{zh ? "节点名" : "Node name"}</span><CopyValue value={station.metadata.name} zh={zh} /></div>
             <div><span className="muted">{zh ? "集群" : "Cluster"}</span><strong>{cluster?.name ?? (zh ? "集群未确定" : "Cluster unresolved")}</strong></div>
             <div className="station-detail-wide"><span className="muted">Node UID</span><CopyValue value={station.spec.nodeUID} zh={zh} /></div>
-            <div className="station-detail-wide"><span className="muted">System UUID</span><CopyValue value={station.spec.systemUUID} zh={zh} /></div>
+            <div className="station-detail-wide"><span className="muted">System UUID</span><CopyValue value={station.status?.observation?.systemUUID} zh={zh} /></div>
             <div><span className="muted">{zh ? "启动时间" : "Boot time"}</span><strong>{formatChinaDateTime(status?.bootTime)}</strong></div>
             <div><span className="muted">{zh ? "运行时间" : "Uptime"}</span><strong>{stationUptime(status?.bootTime, now, zh)}</strong></div>
             <div><span className="muted">{zh ? "重启次数" : "Reboots"}</span><strong>{status?.reboots ?? 0}</strong></div>

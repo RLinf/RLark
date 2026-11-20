@@ -176,8 +176,10 @@ export interface AdmittedMachine {
 }
 
 const machineProblems: Record<string, [string, string]> = {
-  CredentialRejected: ["口令不符", "Password refused"],
-  HostKeyChanged: ["主机密钥变了", "Host key changed"],
+  CredentialRejected: ["Orin 口令不符", "Entry device refused the password"],
+  HostKeyChanged: ["Orin 主机密钥变了", "Entry device's host key changed"],
+  NodeCredentialRejected: ["x86 口令不符", "Computer behind the entry device refused the password"],
+  NodeHostKeyChanged: ["x86 主机密钥变了", "Host key of the computer behind the entry device changed"],
   NodeUnreachable: ["Orin 通，x86 不通", "Computer behind the entry device does not answer"],
   EntryUnreachable: ["连不上", "Does not answer"],
   HubUnreachable: ["场地 Hub 不应答", "The site's hub does not answer"],
@@ -185,7 +187,7 @@ const machineProblems: Record<string, [string, string]> = {
   DuplicateSerial: ["序列号重复", "Duplicate serial"],
   AlreadyNode: ["已是别处的节点", "A node elsewhere already"],
   ClassIncomplete: ["机型声明不全", "Node class incomplete"],
-  AccessUnconfigured: ["该机型的 x86 口令未配置", "The class's x86 password has not been entered"],
+  AccessUnconfigured: ["该机型的口令未配置", "A password of the class has not been entered"],
   JoinBlocked: ["入网停住了", "Join stopped"],
 };
 
@@ -220,12 +222,20 @@ export interface Reach {
 // The problems that say RLark did not get in to the entry device: it does not answer, from its site's hub either;
 // the hub does not; the device refused the class's account or shows another key.
 const entryFaults = ["EntryUnreachable", "HubUnreachable", "CredentialRejected", "HostKeyChanged"];
+// The problems that say RLark got in to the entry device (it read the serial) and not to the x86 behind it.
+const nodeFaults = ["NodeUnreachable", "NodeCredentialRejected", "NodeHostKeyChanged"];
+// The problems for which RLark logs in to no machine of the class until an administrator completes the class.
+const notLoggedIn = ["AccessUnconfigured", "ClassIncomplete"];
 
 // Whether RLark got through to a machine's Orin (its serial was read) and, through it, to the x86 behind it (its
 // host key was read), as the last login found. Nothing is known of the x86 while the Orin is not reached.
 export function machineReach(machine: Machine, zh: boolean): { orin: Reach; x86: Reach } {
   const problem = machine.problem ?? "";
   const label = machineStateLabel(machine, zh);
+  if (notLoggedIn.includes(problem)) {
+    const untried: Reach = { state: "unknown", reason: `${label}${zh ? "，RLark 不登录" : "; RLark does not log in"}` };
+    return { orin: untried, x86: untried };
+  }
   const checking: Reach = {
     state: "checking",
     reason: problem === "InspectFailed" ? `${label}${zh ? "，RLark 自动再试" : "; RLark tries again"}` : zh ? "RLark 还没登录读取" : "Not read by RLark yet",
@@ -236,7 +246,7 @@ export function machineReach(machine: Machine, zh: boolean): { orin: Reach; x86:
   else orin = { state: "ok", reason: zh ? `读到序列号 ${machine.serial}` : `Serial ${machine.serial} read` };
   let x86: Reach;
   if (orin.state === "fail") x86 = { state: "unknown", reason: zh ? "Orin 不通，到不了 x86" : "Not reached: the entry device is not" };
-  else if (problem === "NodeUnreachable") x86 = { state: "fail", reason: label };
+  else if (nodeFaults.includes(problem)) x86 = { state: "fail", reason: label };
   else if (orin.state === "checking") x86 = checking;
   else if (machine.node_host_key_fingerprint) x86 = { state: "ok", reason: zh ? `读到主机密钥 ${machine.node_host_key_fingerprint}` : `Host key ${machine.node_host_key_fingerprint} read` };
   else x86 = { state: "unknown", reason: problem ? label : (zh ? "没读到主机密钥" : "No host key read") };
@@ -256,6 +266,7 @@ export function machineNotTickable(machine: Machine, zh: boolean): string {
   const { orin, x86 } = machineReach(machine, zh);
   if (orin.state === "fail") return `Orin ${reachLabel("fail", zh)}${zh ? "：" : ": "}${orin.reason}`;
   if (x86.state === "fail") return `x86 ${reachLabel("fail", zh)}${zh ? "：" : ": "}${x86.reason}`;
+  if (notLoggedIn.includes(machine.problem ?? "")) return orin.reason;
   if (orin.state === "checking") return zh ? "等 RLark 登录读取完" : "Waiting for RLark to read it";
   return machineStateLabel(machine, zh);
 }

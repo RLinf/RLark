@@ -47,7 +47,7 @@
 | 对象 | 用途 |
 |---|---|
 | `SiteNetwork`（`station-system/default`） | 全站网络的唯一声明：地址池、场站、名字表、非叶子节点。改拓扑只改它 |
-| `NetworkEnrollment` | 场站节点：每台节点一个，在集群的命名空间里按 Node 名命名。spec 是身份（`nodeUID`、`systemUUID`：station-api 验上报的令牌时读到的 Node 的 UID 和 `status.nodeInfo.systemUUID`，不由 agent 自报）、入网登记（公钥、自报地址；没有公钥的节点只有身份、不在隧道网里）和 `retired`（节点已删除）；status 分三块，各有一个写者：算出来的隧道文档（controller 的网络部分）、`observation`（agent 每 30 s 的上报：心跳、开机时间、隧道探测、网关版本，station-api 写）、`node`（`state` Bound / Offline / Conflict / Retired、重启次数、各条件，controller 写） |
+| `NetworkEnrollment` | 场站节点：每台节点一个，在集群的命名空间里按 Node 名命名。spec 是身份（`nodeUID`、`systemUUID`：station-api 验上报的令牌时读到的 Node 的 UID 和 `status.nodeInfo.systemUUID`，不由 agent 自报；建记录时写入，名字转给另一个 Node 时由 controller 改写）、入网登记（公钥、自报地址；没有公钥的节点只有身份、不在隧道网里）和 `retired`（节点已删除）；status 分三块，各有一个写者：算出来的隧道文档（controller 的网络部分）、`observation`（agent 每 30 s 的上报：上报的 Node 的 `nodeUID` 和 `systemUUID`（控制台显示和搜索的 System UUID）、心跳、开机时间、隧道探测、网关版本，station-api 写）、`node`（`state` Bound / Offline / Conflict / Retired、重启次数、各条件，controller 写） |
 | `NodeClass`（集群级） | 一类机器：标签和污点、命名、怎么在网上认出（discovery）、登录账号放哪（access）、上联（uplink，如机器人经 Orin 上网的脚本） |
 | `Machine` | RLark 知道的一台机器：扫到的或自己登记的，管理员从这里勾选入网 |
 | `NodeAdmission` | 一次入网许可：只存入网码的 SHA-256；兑换后留作这台节点的网络声明 |

@@ -39,6 +39,9 @@ var (
 	ErrSSHCredentialRejected = errors.New("the host refused the account")
 	ErrSSHJumpUnreachable    = errors.New("the jump host does not answer")
 	ErrSSHTargetUnreachable  = errors.New("the host behind the jump host does not answer")
+	// A handshake with the host behind the jump host failed, after the jump host let RLark in: an account refused
+	// or another key shown is the host's, not the jump host's.
+	ErrSSHBehindJump = errors.New("the host behind the jump host")
 	// The relay of the site's hub answers that it cannot connect to the host:
 	// the host does not answer on the site's network, or the hub is no longer on it.
 	ErrSSHSiteHostUnreachable = errors.New("the site's hub cannot connect to the host")
@@ -183,7 +186,7 @@ func DialNodeSSH(ctx context.Context, cfg NodeSSHConfig) (*ssh.Client, error) {
 	client, err := nodeSSHHandshake(ctx, conn, cfg)
 	if err != nil {
 		_ = jump.Close()
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrSSHBehindJump, err)
 	}
 	go func() {
 		_ = client.Wait()

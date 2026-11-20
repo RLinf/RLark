@@ -21,13 +21,12 @@ export interface StationItem {
   metadata: { name: string; namespace: string };
   spec: {
     nodeUID: string;
-    systemUUID?: string;
     // The node was removed: the record stays until it is deleted or the node is admitted again.
     retired?: boolean;
   };
   status?: {
-    // The node's last report; nodeUID is the Node that made it.
-    observation?: { nodeUID: string };
+    // The node's last report; nodeUID and systemUUID are the Node's that made it.
+    observation?: { nodeUID: string; systemUUID?: string };
     node?: {
       state?: "Bound" | "Offline" | "Conflict" | "Retired";
       bootTime?: string;

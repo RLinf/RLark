@@ -70,11 +70,17 @@ const (
 
 // The problems a machine can have; none means it has none.
 const (
-	// The accounts of the machine's class were refused: somebody has changed
-	// a password on this machine.
+	// The entry device refused the account of the machine's class: somebody
+	// has changed its password on this machine.
 	MachineCredentialRejected = "CredentialRejected"
 	// The entry device no longer shows the key it was recognised by.
 	MachineHostKeyChanged = "HostKeyChanged"
+	// The entry device let RLark in; the computer behind it refused the
+	// class's account for it.
+	MachineNodeCredentialRejected = "NodeCredentialRejected"
+	// The entry device let RLark in; the computer behind it no longer shows
+	// the key it was read with (it was set up anew).
+	MachineNodeHostKeyChanged = "NodeHostKeyChanged"
 	// The entry device answers; the computer behind it does not.
 	MachineNodeUnreachable = "NodeUnreachable"
 	// The entry device does not answer, from the hub of its site either.

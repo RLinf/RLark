@@ -39,7 +39,7 @@ func TestDialNodeSSHThroughAJumpHostSendsNoCredentialToAHostWithAnotherKey(t *te
 	cfg := config()
 	cfg.Jump.Address = other.address()
 	var mismatch *SSHHostKeyMismatchError
-	if _, err := DialNodeSSH(ctx, cfg); !errors.As(err, &mismatch) || mismatch.Received != other.fingerprint() {
+	if _, err := DialNodeSSH(ctx, cfg); !errors.As(err, &mismatch) || mismatch.Received != other.fingerprint() || machineProblem(err) != stationv1alpha1.MachineHostKeyChanged {
 		t.Fatalf("a jump host with another key: %v", err)
 	}
 	if other.auths.Load() != 0 || node.auths.Load() != 0 {
@@ -48,18 +48,18 @@ func TestDialNodeSSHThroughAJumpHostSendsNoCredentialToAHostWithAnotherKey(t *te
 	// Likewise the host behind the entry device.
 	cfg = config()
 	cfg.HostKeyFingerprint = other.fingerprint()
-	if _, err := DialNodeSSH(ctx, cfg); !errors.As(err, &mismatch) || node.auths.Load() != 0 {
+	if _, err := DialNodeSSH(ctx, cfg); !errors.As(err, &mismatch) || node.auths.Load() != 0 || machineProblem(err) != stationv1alpha1.MachineNodeHostKeyChanged {
 		t.Fatalf("a host with another key behind the jump host: %v, %d authentication requests", err, node.auths.Load())
 	}
 
 	cfg = config()
 	cfg.Jump.Password = []byte("changed")
-	if _, err := DialNodeSSH(ctx, cfg); !errors.Is(err, ErrSSHCredentialRejected) || node.auths.Load() != 0 {
+	if _, err := DialNodeSSH(ctx, cfg); !errors.Is(err, ErrSSHCredentialRejected) || node.auths.Load() != 0 || machineProblem(err) != stationv1alpha1.MachineCredentialRejected {
 		t.Fatalf("a jump host that refuses the account: %v", err)
 	}
 	cfg = config()
 	cfg.Password = []byte("changed")
-	if _, err := DialNodeSSH(ctx, cfg); !errors.Is(err, ErrSSHCredentialRejected) {
+	if _, err := DialNodeSSH(ctx, cfg); !errors.Is(err, ErrSSHCredentialRejected) || machineProblem(err) != stationv1alpha1.MachineNodeCredentialRejected {
 		t.Fatalf("a host that refuses the account: %v", err)
 	}
 	cfg = config()

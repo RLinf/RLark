@@ -150,9 +150,14 @@ func sudoPassword(ctx context.Context, client *ssh.Client, password []byte) []by
 // site's hub does not answer; empty for any other fault.
 func machineProblem(err error) string {
 	var mismatch *SSHHostKeyMismatchError
+	behind := errors.Is(err, ErrSSHBehindJump)
 	switch {
 	case errors.Is(err, ErrClassAccessUnconfigured):
 		return stationv1alpha1.MachineAccessUnconfigured
+	case behind && errors.Is(err, ErrSSHCredentialRejected):
+		return stationv1alpha1.MachineNodeCredentialRejected
+	case behind && errors.As(err, &mismatch):
+		return stationv1alpha1.MachineNodeHostKeyChanged
 	case errors.Is(err, ErrSSHCredentialRejected):
 		return stationv1alpha1.MachineCredentialRejected
 	case errors.As(err, &mismatch):

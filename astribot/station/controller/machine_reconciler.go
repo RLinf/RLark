@@ -450,7 +450,7 @@ func (r *MachineReconciler) follow(ctx context.Context, machine *stationv1alpha1
 				continue
 			}
 			status.Message = condition.Message
-			if slices.Contains([]string{stationv1alpha1.MachineCredentialRejected, stationv1alpha1.MachineHostKeyChanged, stationv1alpha1.MachineEntryUnreachable, stationv1alpha1.MachineNodeUnreachable, stationv1alpha1.MachineHubUnreachable}, condition.Reason) {
+			if slices.Contains([]string{stationv1alpha1.MachineCredentialRejected, stationv1alpha1.MachineHostKeyChanged, stationv1alpha1.MachineNodeCredentialRejected, stationv1alpha1.MachineNodeHostKeyChanged, stationv1alpha1.MachineEntryUnreachable, stationv1alpha1.MachineNodeUnreachable, stationv1alpha1.MachineHubUnreachable}, condition.Reason) {
 				status.Problem = condition.Reason
 			}
 		}
