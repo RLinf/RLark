@@ -128,11 +128,11 @@ Addon 的包：装或更新时，Gateway（或发布命令）把“名字@版本
 | 容器 | 源码 | 做什么 |
 |---|---|---|
 | `tuner` | `s1u/tuner/` | 宿主机符合节点规格（隔离核、cgroup v2、CPU 和内存预留、kubelet CPU 管理、调频、调度参数）；需要时在没人用时重启整机或 kubelet（维护）；发布自检结果 |
-| `orin` | `s1u/orin/` | 经机器人内网维护 Orin：上网单元、相机 USB 规则和复位、adb 密钥、`orinPayloads` 载荷 |
+| `orin` | `s1u/orin/` | 经机器人内网维护 Orin：上网单元、相机 USB 规则（Orbbec `2bc5`、RealSense `8086`）和按序列号的单路相机 USB 复位、adb 密钥、`orinPayloads` 载荷 |
 | `power` | `s1u/device/power.py` | 电源对账（下面）；把占用镜像到宿主机文件 |
-| `video` | `s1u/device/video*.py` | 相机经 MediaMTX 给浏览器（端口见下） |
+| `video` | `s1u/device/cameras.py` | 机器人相机的唯一出口和看护：一直订阅本机体的各路相机，只读 HTTP（端口 18891），没画面的相机按阶梯自动恢复（下面） |
 | `clock` | `s1u/clock/` | 把 x86 和 Orin 对到站点时间源（`timeSource`） |
-| `device`、`device-video`、`station` | `deviceImage`（Fleet 的镜像）的 `/device/start`、`--video`、`--station` | 设备层、它的相机服务、机器人上常驻的 Station。声明了 `deviceImage` 才有 |
+| `device`、`station` | `deviceImage`（Fleet 的镜像）的 `/device/start`、`--station` | 设备层、机器人上常驻的 Station。声明了 `deviceImage` 才有 |
 
 和其他组件的接口：
 
@@ -144,6 +144,7 @@ Addon 的包：装或更新时，Gateway（或发布命令）把“名字@版本
 | 占用 | 节点标签 `rlark.io/robot-claim`；`power` 盯着自己的节点，一秒内写到 `/run/rlark/s1u/claim`（`{"holder"}`，没人持有时没有文件） |
 | 在用 | `/run/rlark/in-use/<组件>`：Station 服务 Run 时写 `fleet-station`，设备层有会话时写 `s1u-device`；上电、驱动在跑不算在用 |
 | 维护 | 租约 `/run/rlark/s1u/maintenance`；标签 `rlark.io/maintenance-state`，注解 `rlark.io/maintenance` |
+| 相机 | 标签 `rlark.io/camera-state`（`ok`/`recovering`/`degraded`/`stuck`），注解 `rlark.io/cameras`（和 `GET /cameras` 同一份 JSON），只在变化时写；节点事件 `CameraDriverRestart`、`CameraUsbReset`、`CameraStuck`；看画面经 Gateway `GET .../nodes/{name}/cameras…`（下面） |
 | 自检 | 设备层写 `/run/rlark/s1u/self-check.json`；标签 `rlark.io/self-check-state`，注解 `rlark.io/self-check` |
 | 机器人是谁 | tuner 从标签 `rlark.io/robot-id`、`rlark.io/robot-body` 写 `/run/rlark/s1u/robot.json` |
 | 规格和机体 | `/etc/rlark/s1u/node_profile.env`、`bodies.json` |
@@ -152,17 +153,30 @@ Addon 的包：装或更新时，Gateway（或发布命令）把“名字@版本
 | 无人下电 | 参数 `powerOff`：`unattended`（默认）tuner 自己下电再重启；`attended` 电机带电的要等人在 RLark 上下电 |
 | 分批 | 维护按节点标签 `rlark.io/rollout-wave`（整数，没有的是最后一批）分批，同时进行的台数不超过参数 `rolloutParallel`；进度在标签 `rlark.io/rollout-state`、注解 `rlark.io/rollout` |
 
-端口（都在主机网络上，避开 MediaMTX 默认端口和 8890）：
+端口（都在主机网络上）：
 
 | 端口 | 绑定 | 做什么 |
 |---|---|---|
-| 18889/tcp | 所有地址 | MediaMTX 给浏览器的 WebRTC，地址随观看会话下发 |
-| 18189/udp、tcp | 所有地址 | WebRTC ICE |
-| 18890/tcp | 127.0.0.1 | MediaMTX 的鉴权回调（观看会话的令牌） |
-| 18554/tcp | 127.0.0.1 | RTSP，相机推流 |
-| 19997/tcp | 127.0.0.1 | MediaMTX 的 API |
+| 18891/tcp | 节点地址（站点隧道的，`status.hostIP`） | `video` 的只读相机接口；只由 Gateway 经成员集群 API 的 Pod 代理访问 |
 
-电源和视频的控制只走 `/run/rlark/services/s1u-{power,video}.sock`。
+电源的控制只走 `/run/rlark/services/s1u-power.sock`。
+
+相机（`video`，`s1u/device/cameras.py`）：
+- 视角四个，顺序固定：`head`、`torso` / `wrist_left`、`wrist_right`（2x2）。厂商名 `head_rgbd`（Orbbec Femto Bolt）、`torso_rgbd`（Orbbec Gemini 335）、`left_wrist_rgbd`、`right_wrist_rgbd`（Intel RealSense D405）。机体的视角在 `bodies.json`：`s1u` 四个，`s1u_observer` 只有 `head`、`torso`。
+- 从启动起一直订阅 `/astribot_camera/<厂商名>/color_compress/compressed`（`rospy.AnyMsg`，不解码），留最新一帧 JPEG、收到的时刻和帧率。
+- 每路状态只看话题本身：`ok`；`slow`（低于 10 帧每秒持续 30 s）；`stale`（5 s 没有帧）；`absent`（启动以来没见过）。厂商的 `/astribot_error_code/multi_error_code` 只留最后一个码，不用。
+- 接口（只读）：
+
+| 路径 | 回答 |
+|---|---|
+| `GET /cameras` | `{state, cameras: {<view>: {state, fps, age_seconds, step, attempts, next_attempt_at, last_action, last_result}}, updated_at}` |
+| `GET /cameras/<view>.jpg` | 最新一帧 JPEG（头 `X-Age-Seconds`）；机体没有这路 404，还没有帧 503 |
+| `GET /cameras/<view>/stream?fps=N` | `multipart/x-mixed-replace`，相机自己的 JPEG 原样转发，N 为 1–30（默认 10） |
+| `GET /cameras/wall.jpg`、`/cameras/wall/stream?fps=N` | 2x2 缩略图 256x144（每格 128x72），没有新鲜帧的格子是黑的，N 为 1–10（默认 5）；只有这里解码 |
+
+- 自动恢复（不管有没有 Run 在用都做；每一步在节点上记一条事件）：容器启动后 90 s 内不动手。有相机 `stale`/`absent`：① 重启厂商相机驱动（`/astribot_system_monitor/camera_control_command` False，2 s，True；所有相机约 25 s 没画面），最多 3 次，间隔 60 s 起翻倍、最长 900 s；厂商服务不在不算一次。② 经 Pod 内共享目录 `/camera` 请 `orin` 容器对这几路做 USB 复位（`reset-request {id, cameras}` → `reset-result {id, ok, detail, finished_at}`；`orin` 按 Orin 上 `/etc/config/camera_info.json` 找到序列号对应的设备，经 usbfs `USBDEVFS_RESET` 复位，同一个 id 只做一次，容器重启也不重做），再重启一次驱动。③ `stuck`：相机需要断电或 USB 复位；一小时后或画面回来后整套重来。只有 `slow` 的相机：只做 ①，每小时最多一次。
+- 节点状态：标签 `rlark.io/camera-state` = `ok` / `recovering`（有相机没画面）/ `degraded`（只有帧率低的）/ `stuck`，注解 `rlark.io/cameras`；agent 把它们带到管理面的 Node 上。
+- Gateway：`GET /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras`、`.../cameras/{camera}`（`<view>.jpg`、`wall.jpg`）、`.../cameras/{camera}/stream?fps=N`（`<view>`、`wall`），`?namespace=<集群命名空间>`；鉴权同 `robot-claim`（登录即可）。Gateway 在成员集群里找这个节点上的 `s1u-robot` Pod，经 API 的 Pod 代理（`/api/v1/namespaces/rlark-system/pods/<pod>:18891/proxy/cameras…`）转发，流不缓冲。控制台站点节点页的“相机”一栏用它。
 
 电源规则：
 - `power` 每几秒对账，不在任务里也一样：该上电就上电，驱动掉了就重启并记一次恢复；`estop`/`fault` 时不拉，解除后再收敛；失败从 30 s 起退避，最长 10 分钟。

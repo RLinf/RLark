@@ -9,7 +9,7 @@
 | `astribot/station/` | 场站节点：CRD 类型（`api/v1alpha1`）、station-controller、隧道拓扑计算（`network`）、节点安装器（`bootstrap`）、RBAC 和 DaemonSet 清单（`deploy`）、运维脚本（`hack`）。独立 Go module |
 | `astribot/station-gateway/` | 每台节点的 WireGuard 隧道程序。独立 Go module |
 | `astribot/station-forwarder/` | 到 NAS 的 SMB 转发。独立 Go module |
-| `astribot/s1u/` | Addon `s1u-robot` 的镜像（tuner、orin、power、video、clock）和测试 |
+| `astribot/s1u/` | Addon `s1u-robot` 的镜像（tuner、orin、power、相机 video、clock）和测试 |
 | `astribot/csi-rclone-ks3/` | rclone CSI 节点插件的 KS3 补丁和构建脚本 |
 | `astribot/release/` | 构建（`build.sh`、`run.sh`）、发布文件（`releases/`）、环境（`environments/live.yaml`）、控制面 compose、镜像清单 |
 | `astribot/docs/` | 本目录的文档；`swagger.yaml` 是我们加的接口（叠在官方 `apps/rlark/docs/api/swagger.yaml` 上，`apps/rlark/pkg/gateway/astribot_swagger_test.go` 检查） |

@@ -62,6 +62,18 @@
 | 加入节点页“未加入的机器”是空的，机器人删掉后回不来 | 场地的发现 Hub 不在机器人所在网段（看 Machine 的 `status.entry.lastSeen` 停在哪天；Hub 本机 `ip -br addr` 有没有机器人网段的地址） | 把一台 Hub 接回机器人网段（或让机器人网段里的机器当 Hub）；Hub 没扫到入口时删除对话框会先警告 |
 | 网关停在某条路由上不协调 | 自己接口上有文档里没有、带协议号 242 的路由 | 开 `--prune-routes`，或手删那条路由 |
 
+## 相机
+
+先看节点标签 `rlark.io/camera-state` 和注解 `rlark.io/cameras`（每路的 `state`、`fps`、`age_seconds`、恢复到第几步、上一步做了什么），节点事件 `CameraDriverRestart`、`CameraUsbReset`、`CameraStuck`，再在控制台站点节点页的“相机”里看画面。相机的状态只看话题本身；厂商的 `/astribot_error_code/multi_error_code` 只留数组的最后一个元素，会漏报，不能用来判断相机。
+
+| 现象 | 原因 | 修法 |
+|---|---|---|
+| `s1u_observer`（s1u-01，没有腕部相机）的厂商页面一直报 14120003、14120004 | 厂商驱动总按 5 路相机启动（`camera_config.yaml` 的 `camera_config_list`，各台相同），没有腕部相机就一直报；改这个文件关不掉（试过、已还原） | 误报，不处理；我们只看本机体有的视角（`bodies.json`） |
+| s1u-01 的 `head_stereo` 只有约 5 帧每秒 | 厂商进程里的问题：内核侧 30 帧、0 错误 | 我们不用这一路；已作为厂商问题记下 |
+| 头部相机没画面，驱动重启也不回来（s1u_01 11-13 22:40） | Femto Bolt（`head_rgbd`，经 libusb/usbfs 打开）卡在 Orbbec SDK 里：libusb 控制传输失败、取帧超时 | 相机容器自动按阶梯做：重启驱动三次后请 `orin` 按序列号 USB 复位这一路，再重启驱动；仍不行是 `stuck`，要人给机器人断电。一小时后会自动再来一遍 |
+| 所有相机同时约 25 s 没画面 | 相机驱动被重启（只能整个重启，所有相机一起） | 看事件 `CameraDriverRestart` 是谁、为什么 |
+| `stuck` 且事件说 `no USB device of …` | Orin 上 `/etc/config/camera_info.json` 的序列号对不上总线上的设备（换过相机，或相机掉线了） | 断电重启机器人；仍不对就核对这个文件（厂商的 `camera_serial_generator.py` 按 `lsusb` 生成它，Femto Bolt 记为 `head_rgbd`、Gemini 335 记为 `torso_rgbd`） |
+
 ## 仓库里删镜像
 
 - 只删按摘要列出、核对过没在用的：各集群的 Pod 和工作负载、Addon 取值、RLark Job、发布文件、回退记录、`pinned.yaml` 都没有引用。
