@@ -94,9 +94,9 @@ func TestStorageMountEndpointLifecycle(t *testing.T) {
 
 func TestNormalizeMountEndpointRejectsInvalidAndSMB(t *testing.T) {
 	for _, endpoint := range []string{"ftp://internal.example.com", "https://", "https://internal.example.com\nkey=value"} {
-		_, err := normalizeStorageClass(CreateStorageClassRequest{Name: "cloud", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://public.example.com", MountEndpoint: endpoint, AccessKeySecret: "secret", Bucket: "bucket"})
+		_, err := normalizeStorageClass(CreateStorageClassRequest{Name: "cloud", Clusters: []string{"cloud"}, Provider: "Other", Endpoint: "https://public.example.com", AccessKeySecret: "secret", Bucket: "bucket", astribotStorageClassRequest: astribotStorageClassRequest{MountEndpoint: endpoint}})
 		require.ErrorContains(t, err, "mount_endpoint")
 	}
-	_, err := normalizeStorageClass(CreateStorageClassRequest{Name: "nas", Clusters: []string{"cloud"}, Type: "smb", Host: "nas.example.com", Share: "share", Username: "user", Password: "password", MountEndpoint: "https://internal.example.com"})
+	_, err := normalizeStorageClass(CreateStorageClassRequest{Name: "nas", Clusters: []string{"cloud"}, astribotStorageClassRequest: astribotStorageClassRequest{Type: "smb", Host: "nas.example.com", Share: "share", Username: "user", Password: "password", MountEndpoint: "https://internal.example.com"}})
 	require.ErrorContains(t, err, "mount_endpoint is only supported for S3")
 }

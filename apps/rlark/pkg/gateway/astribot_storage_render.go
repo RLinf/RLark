@@ -313,9 +313,11 @@ func storageReplication(namespace, name string, labels map[string]string, id str
 	}, nil
 }
 
-// buildStorageClassReplicationSecret renders the primary declaration: the
+// buildAstribotStorageReplicationSecret renders the primary declaration: the
 // stored declaration, delivered to the clusters that use the default endpoint.
-func buildStorageClassReplicationSecret(namespace, id string, stored storedStorageClass) (*v1.Secret, error) {
+// The official flow calls it where it called buildStorageClassReplicationSecret,
+// which renders one S3 StorageClass.
+func buildAstribotStorageReplicationSecret(namespace, id string, stored storedStorageClass) (*v1.Secret, error) {
 	clusters := make([]string, 0, len(stored.Clusters))
 	for _, cluster := range stored.Clusters {
 		if _, own := stored.ClusterMountEndpoints[cluster]; !own {
@@ -364,7 +366,11 @@ func storageClassRenderKey(data map[string][]byte) string {
 	if err := json.Unmarshal(manifests, &objects); err != nil {
 		return ""
 	}
-	parts := []string{string(data["storageclass"]), string(data["config"])}
+	// The stored fields are compared by value, not by their order in the JSON. An endpoint declaration has none.
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(data["storageclass"], &fields)
+	stored, _ := json.Marshal(fields)
+	parts := []string{string(stored), string(data["config"])}
 	for _, object := range objects {
 		var delivery v1.Secret
 		if err := json.Unmarshal(object, &delivery); err == nil && delivery.Type == distribution.DeliverySecretType {

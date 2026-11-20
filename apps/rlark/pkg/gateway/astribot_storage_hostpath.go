@@ -38,8 +38,7 @@ func normalizeHostPathStorage(req CreateStorageClassRequest, name string, cluste
 	if fsType != "" && !fsTypePattern.MatchString(fsType) {
 		return storedStorageClass{}, fmt.Errorf("fs_type must be a file system type as /proc/mounts lists it, such as kingstorage")
 	}
-	return storedStorageClass{
-		Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters, Type: storageTypeHostPath,
-		Path: directory, FSType: fsType,
-	}, nil
+	stored := storedStorageClass{Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters}
+	stored.Type, stored.Path, stored.FSType = storageTypeHostPath, directory, fsType
+	return stored, nil
 }

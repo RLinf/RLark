@@ -112,7 +112,7 @@ func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvis
 	if err != nil {
 		return "", fmt.Errorf("sign the agent's certificate: %w", err)
 	}
-	if err := r.g.storeAgentCertSecret(ctx, agentID, caPEM, []byte(certPEM), []byte(keyPEM)); err != nil {
+	if err := r.g.storeOwnedAgentCertSecret(ctx, agentID, caPEM, []byte(certPEM), []byte(keyPEM)); err != nil {
 		return "", err
 	}
 	pulls, err := r.g.imagePullSecretsOf(ctx, agentID)

@@ -24,7 +24,7 @@ func TestStoreAgentCertCreateAndUpdate(t *testing.T) {
 	cl := fake.NewSimpleClientset()
 	g := &Gateway{rawClient: cl}
 	ns := g.managementNamespace()
-	if err := g.storeAgentCertSecret(ctx, "test", []byte("ca"), []byte("cert"), []byte("key")); err != nil {
+	if err := g.storeOwnedAgentCertSecret(ctx, "test", []byte("ca"), []byte("cert"), []byte("key")); err != nil {
 		t.Fatal(err)
 	}
 	s, err := cl.CoreV1().Secrets(ns).Get(ctx, "rlark-agent-cert-test", metav1.GetOptions{})
@@ -43,7 +43,7 @@ func TestStoreAgentCertCreateAndUpdate(t *testing.T) {
 		}
 		return false, nil, nil
 	})
-	if err = g.storeAgentCertSecret(ctx, "test", []byte("new-ca"), []byte("new-cert"), []byte("new-key")); err != nil {
+	if err = g.storeOwnedAgentCertSecret(ctx, "test", []byte("new-ca"), []byte("new-cert"), []byte("new-key")); err != nil {
 		t.Fatal(err)
 	}
 	s, err = cl.CoreV1().Secrets(ns).Get(ctx, s.Name, metav1.GetOptions{})
@@ -80,7 +80,7 @@ func TestRevokeRequiresDurableServerReceipt(t *testing.T) {
 			defer upstream.Close()
 			g := &Gateway{config: Config{ServerAddress: upstream.URL}, serverTransport: http.DefaultTransport.(*http.Transport)}
 			router := gin.New()
-			router.POST("/", g.handleRevokeCertificate)
+			router.POST("/", g.handleRevokeCertificateViaServer)
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"cert_type":"x509","serial_number":"1","subject_key_id":"ab"}`)))
 			if rec.Code != tc.want {
@@ -99,7 +99,7 @@ func TestStoreAgentCertRejectsForeignAndCreateFailure(t *testing.T) {
 	if _, err := cl.CoreV1().Secrets(ns).Create(ctx, foreign, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.storeAgentCertSecret(ctx, "test", nil, nil, []byte("new")); err == nil {
+	if err := g.storeOwnedAgentCertSecret(ctx, "test", nil, nil, []byte("new")); err == nil {
 		t.Fatal("accepted foreign secret")
 	}
 	s, err := cl.CoreV1().Secrets(ns).Get(ctx, foreign.Name, metav1.GetOptions{})
@@ -109,7 +109,7 @@ func TestStoreAgentCertRejectsForeignAndCreateFailure(t *testing.T) {
 	denied := fake.NewSimpleClientset()
 	denied.PrependReactor("create", "secrets", func(a ktesting.Action) (bool, runtime.Object, error) { return true, nil, errors.New("unavailable") })
 	g.rawClient = denied
-	if err := g.storeAgentCertSecret(ctx, "test", nil, nil, nil); err == nil {
+	if err := g.storeOwnedAgentCertSecret(ctx, "test", nil, nil, nil); err == nil {
 		t.Fatal("ignored create failure")
 	}
 	for _, a := range denied.Actions() {

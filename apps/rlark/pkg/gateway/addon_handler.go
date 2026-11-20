@@ -4,13 +4,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
-	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
 )
 
 type installAddonRequest struct {
@@ -95,18 +93,10 @@ func (g *Gateway) installClusterAddon(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "addonName is required")
 		return
 	}
-
-	meta, status, err := g.publishAddonPackage(ctx, clusterID, req.AddonName, req.Version)
-	if err != nil {
-		respondError(c, status, codeForAddonPackage(status), err.Error())
-		return
-	}
-	if missing := addons.MissingRequired(meta, req.Values); len(missing) > 0 {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "required parameters are missing: "+strings.Join(missing, ", "))
+	if !g.publishAddonPackageFor(c, clusterID, req.AddonName, &req.Version, req.Values) {
 		return
 	}
 
-	// The Addon is pinned to the version it was installed at: a later catalog changes nothing for it.
 	addonCR := &rlarkv1alpha1.Addon{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      req.AddonName,
@@ -114,7 +104,7 @@ func (g *Gateway) installClusterAddon(c *gin.Context) {
 		},
 		Spec: rlarkv1alpha1.AddonSpec{
 			AddonName: req.AddonName,
-			Version:   meta.Version,
+			Version:   req.Version,
 			Values:    req.Values,
 		},
 	}
@@ -150,22 +140,13 @@ func (g *Gateway) updateClusterAddon(c *gin.Context) {
 		return
 	}
 
-	// A request without a version keeps the Addon's own; one without values keeps its values. Either way the
-	// version's Package is published (again, for an Addon installed before Packages were).
 	if req.Version != "" {
 		existing.Spec.Version = req.Version
 	}
 	if req.Values != nil {
 		existing.Spec.Values = req.Values
 	}
-	meta, status, err := g.publishAddonPackage(ctx, clusterID, existing.Spec.AddonName, existing.Spec.Version)
-	if err != nil {
-		respondError(c, status, codeForAddonPackage(status), err.Error())
-		return
-	}
-	existing.Spec.Version = meta.Version
-	if missing := addons.MissingRequired(meta, existing.Spec.Values); len(missing) > 0 {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "required parameters are missing: "+strings.Join(missing, ", "))
+	if !g.publishAddonPackageFor(c, clusterID, existing.Spec.AddonName, &existing.Spec.Version, existing.Spec.Values) {
 		return
 	}
 
@@ -186,9 +167,7 @@ func (g *Gateway) deleteClusterAddon(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
-	// The Packages published for it go with it; installing it again publishes anew.
-	if err := g.rawClient.CoreV1().ConfigMaps(clusterID).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: addons.LabelPackage + "=" + name}); err != nil {
-		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+	if !g.deleteAddonPackages(c, clusterID, name) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
