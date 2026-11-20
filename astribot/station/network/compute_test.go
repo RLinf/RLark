@@ -213,42 +213,6 @@ func TestComputedDocumentIsTheGatewayContract(t *testing.T) {
 	}
 }
 
-// The site can instead send its robots through the workstation only: one peer
-// per robot, and the workstation carries the cloud addresses for them.
-func TestComputeLeavesThroughTheRelayOnly(t *testing.T) {
-	topology, members := collectionSite(96)
-	topology.Sites[0].LeavesViaRelay = true
-	result, err := Compute(topology, members)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Problems) != 0 || len(result.Unreachable) != 0 {
-		t.Fatalf("problems %v, unreachable %v", result.Problems, result.Unreachable[:min(5, len(result.Unreachable))])
-	}
-	links := 0
-	for _, config := range result.Configs {
-		links += len(config.Peers)
-	}
-	if links/2 != 99 { // 96 robots and 3 cloud nodes, each with the workstation
-		t.Errorf("%d tunnels, want 99", links/2)
-	}
-	robot := result.Configs["robots/s1u-01-x86"]
-	want := []string{"10.254.240.1/32", "10.254.240.0/22", "10.0.2.10/32", "10.0.2.11/32", "10.0.2.12/32"}
-	if len(robot.Peers) != 1 || !reflect.DeepEqual(robot.Peers[0].AllowedIPs, want) || len(robot.UplinkRoutes) != 1 {
-		t.Errorf("robot: %+v", robot)
-	}
-	cloud := result.Configs["ksyun/h100-0"]
-	if len(cloud.Peers) != 1 || len(cloud.Peers[0].AllowedIPs) != 97 {
-		t.Errorf("a cloud node answers the robots through the workstation: %d peers, %d prefixes", len(cloud.Peers), len(cloud.Peers[0].AllowedIPs))
-	}
-
-	members[0].Relay = false
-	result, _ = Compute(topology, members)
-	if len(result.Problems["robots/s1u-01-x86"]) != 1 || len(result.Configs["robots/s1u-01-x86"].Peers) != 0 {
-		t.Errorf("a leaf without a relay is reported and peers with nobody: %v", result.Problems["robots/s1u-01-x86"])
-	}
-}
-
 func TestNamesReachEveryMemberAndASitesOwnItsMembers(t *testing.T) {
 	everywhere := []HostName{{Name: "cp.robots.rlark.internal", Address: "10.254.240.5"}}
 	lab := []HostName{{Name: "registry.rlark.internal", Address: "10.11.14.128"}}

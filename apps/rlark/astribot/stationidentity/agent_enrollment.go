@@ -24,20 +24,17 @@ import (
 // stored configuration in place: the tunnel never depends on station-api
 // being reachable.
 func (a *Agent) Enroll(ctx context.Context) (string, error) {
-	request := enrollmentRequest{ClusterID: a.config.ClusterID}
-	if a.config.NetworkIdentityFile != "" {
-		identity, err := a.read(a.config.NetworkIdentityFile)
-		if err != nil {
-			return "", errors.New("the gateway has not published its public key")
-		}
-		var published struct {
-			PublicKey string `json:"publicKey"`
-		}
-		if err := json.Unmarshal(identity, &published); err != nil || published.PublicKey == "" {
-			return "", errors.New("gateway identity file is invalid")
-		}
-		request.PublicKey = published.PublicKey
+	identity, err := a.read(a.config.NetworkIdentityFile)
+	if err != nil {
+		return "", errors.New("the gateway has not published its public key")
 	}
+	var published struct {
+		PublicKey string `json:"publicKey"`
+	}
+	if err := json.Unmarshal(identity, &published); err != nil || published.PublicKey == "" {
+		return "", errors.New("gateway identity file is invalid")
+	}
+	request := enrollmentRequest{ClusterID: a.config.ClusterID, PublicKey: published.PublicKey}
 	if address := a.localAddress(); address != "" {
 		request.Addresses = []string{address}
 	}

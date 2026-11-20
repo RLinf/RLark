@@ -1,6 +1,8 @@
 # Replace the images, endpoint, cluster ID and registry credentials.
-# Label network nodes station.rlark.io/network=enabled; other nodes run identity only.
-# A network node enrolls itself: the wireguard container publishes its public
+# A node runs the agent its label station.rlark.io/network calls for: enabled
+# (station-agent-network, the gateway in the Pod) or host (station-agent-host,
+# the gateway a service of the host, as the installer leaves it).
+# A node enrolls itself: the wireguard container publishes its public
 # key, the station-agent container registers it with Station API and stores the
 # computed configuration, and the wireguard container reconciles it. Nothing is
 # written per node.
@@ -13,128 +15,6 @@ metadata:
 data:
   api-url: https://REPLACE_STATION_API_ENDPOINT
   cluster-id: REPLACE_REGISTERED_CLUSTER_ID
----
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: station-agent
-  namespace: station-system
-  annotations:
-    rlark.io/rollout: "{}"
-spec:
-  # RLark replaces the pods (the cluster agent's rollout): a machine that is
-  # off does not hold the others back, one machine goes first, then one in
-  # ten of the ready machines at a time.
-  updateStrategy:
-    type: OnDelete
-  selector:
-    matchLabels:
-      app: station-agent
-  template:
-    metadata:
-      labels:
-        app: station-agent
-    spec:
-      serviceAccountName: station-agent
-      automountServiceAccountToken: false
-      # The account of the site's registry, where the images are not public: a
-      # Secret of type kubernetes.io/dockerconfigjson in this namespace. A
-      # cluster without one pulls without an account.
-      imagePullSecrets:
-      - name: REPLACE_IMAGE_PULL_SECRET
-      # Under disk pressure a kubelet turns away every Pod that is not
-      # critical and deletes the images nothing runs: the node's way to its
-      # site must not be among them.
-      priorityClassName: system-node-critical
-      tolerations:
-      - operator: Exists
-      containers:
-      - name: station-agent
-        image: REPLACE_RLARK_IMAGE
-        imagePullPolicy: IfNotPresent
-        command:
-        - /usr/local/bin/station-agent
-        args:
-        - --api-url=$(STATION_API_URL)
-        - --cluster-id=$(STATION_CLUSTER_ID)
-        - --token-file=/var/run/secrets/station/token
-        - --ca-file=$(STATION_API_CA_FILE)
-        - --interval=30s
-        - --request-timeout=10s
-        env:
-        - name: STATION_API_URL
-          valueFrom:
-            configMapKeyRef:
-              name: station-agent
-              key: api-url
-        - name: STATION_CLUSTER_ID
-          valueFrom:
-            configMapKeyRef:
-              name: station-agent
-              key: cluster-id
-        - name: STATION_API_CA_FILE
-          value: /var/run/secrets/station-api-ca/ca.crt
-        ports:
-        - name: health
-          containerPort: 8081
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: health
-          periodSeconds: 20
-          timeoutSeconds: 3
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: health
-          periodSeconds: 10
-          timeoutSeconds: 3
-        resources:
-          requests:
-            cpu: 10m
-            memory: 24Mi
-          limits:
-            cpu: 200m
-            memory: 128Mi
-        securityContext:
-          runAsNonRoot: true
-          runAsUser: 65532
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
-          capabilities:
-            drop:
-            - ALL
-        volumeMounts:
-        - name: token
-          mountPath: /var/run/secrets/station
-          readOnly: true
-        - name: station-api-ca
-          mountPath: /var/run/secrets/station-api-ca
-          readOnly: true
-      volumes:
-      - name: token
-        projected:
-          sources:
-          - serviceAccountToken:
-              path: token
-              audience: station.rlark.io
-              expirationSeconds: 600
-      - name: station-api-ca
-        secret:
-          secretName: station-api-ca
-          items:
-          - key: ca.crt
-            path: ca.crt
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-            - matchExpressions:
-              - key: station.rlark.io/network
-                operator: NotIn
-                values:
-                - enabled
-                - host
 ---
 apiVersion: apps/v1
 kind: DaemonSet

@@ -64,18 +64,17 @@
 | station-agent | 每个成员集群的 DaemonSet | 心跳、登记公钥、取回文档、探测对端 |
 | station-gateway | 每台节点 | 按文档维护 WireGuard 接口、对端、路由、`/etc/hosts` 里的站点名字、给 kubelet 的 `resolv.conf`；每 10 s 协调一次 |
 
-三个 DaemonSet，按节点标签 `station.rlark.io/network` 放置：
+两个 DaemonSet，按节点标签 `station.rlark.io/network` 放置：
 
 | DaemonSet | 标签 | 内容 |
 |---|---|---|
-| `station-agent` | 不是 `enabled`/`host` | 只有身份 |
 | `station-agent-network` | `enabled` | agent + `wireguard` 容器（网关在 Pod 里） |
 | `station-agent-host` | `host`（安装器装的节点） | agent + `gateway-program` 容器：把主机上的 `/opt/rlark/bin/station-gateway` 换成本镜像的版本（机器在用时不换，起不来换回），维护 `/etc/rlark/station/station-api.json` 和 CA。网关本身是主机服务 `rlark-station-gateway.service`，在 kubelet 之前起来 |
 
 ### 网络
 
 - 拓扑：叶子拨枢纽，枢纽之间按需互联，转发枢纽替叶子转发。没在 `spec.nodes` 里列出的节点都是叶子。
-- `sites[]`：`clusters`、`reaches`（能拨到哪些场站的 `Site` 端点）、`mesh`（本站枢纽之间建隧道）、`leavesViaRelay`（叶子只连转发枢纽）、`relay`、`leafUplink`（同型号叶子共用的上联，如机器人经 Orin）、`discovery`、`dns`、`names`（本站的名字，如 `registry.rlark.internal`）。
+- `sites[]`：`clusters`、`reaches`（能拨到哪些场站的 `Site` 端点）、`mesh`（本站枢纽之间建隧道）、`relay`、`leafUplink`（同型号叶子共用的上联，如机器人经 Orin）、`discovery`、`dns`、`names`（本站的名字，如 `registry.rlark.internal`）。
 - `nodes[]`：`role: Hub` 加 `endpoints`（`Public` 谁都能拨，`Site` 本站和 `reaches` 它的场站能拨）、`relay`、`nodeAddress`（别人找它用的地址不是隧道地址时，如云上 VPC 地址）、`advertise`（经它可达的网段）、`uplink`、`publicKey`（还连不上 Station API 的节点先声明公钥）。
 - `names`：全站同一地址的名字，如各集群的 `cp.<集群>.rlark.internal`、`rlark-server`、`gateway.rlark.internal`。网关写进每台节点的 `/etc/hosts`（行尾 `# rlark names`）。
 - 连接规则：两台之间有隧道，当且仅当至少一台是枢纽且至少一方能拨到另一方；能拨的一方写端点和 25 s 保活；AllowedIPs 是对端的隧道地址加它的 `nodeAddress`、`advertise`，转发枢纽对叶子再加整个池。

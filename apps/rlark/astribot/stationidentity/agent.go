@@ -31,10 +31,9 @@ type AgentConfig struct {
 	RequestLimit             time.Duration
 	ProbeAddress             string
 	WireguardObservationFile string
-	// NetworkConfigFile enables network enrollment: it is where the agent
-	// stores the configuration computed for the node. NetworkIdentityFile is
-	// where the gateway container publishes its public key; without it the
-	// node enrolls its address only, for a network that runs no tunnel.
+	// NetworkIdentityFile is where the node's gateway publishes its public
+	// key, NetworkConfigFile where the agent stores the configuration
+	// computed for the node.
 	NetworkIdentityFile string
 	NetworkConfigFile   string
 }
@@ -153,20 +152,18 @@ func (a *Agent) Run(ctx context.Context) error {
 				fmt.Fprintln(os.Stderr, "observation: accepted")
 			}
 		}
-		if a.config.NetworkConfigFile != "" {
-			state, err := a.Enroll(ctx)
-			if err != nil {
-				state = err.Error()
-			}
-			if state != enrollment {
-				enrollment = state
-				fmt.Fprintln(os.Stderr, "network enrollment:", state)
-			}
-			// The controller answers a new request within seconds; do not
-			// make a joining node wait a whole interval for it.
-			if state == "pending" {
-				wait = min(wait, pendingEnrollmentRetry)
-			}
+		state, err := a.Enroll(ctx)
+		if err != nil {
+			state = err.Error()
+		}
+		if state != enrollment {
+			enrollment = state
+			fmt.Fprintln(os.Stderr, "network enrollment:", state)
+		}
+		// The controller answers a new request within seconds; do not
+		// make a joining node wait a whole interval for it.
+		if state == "pending" {
+			wait = min(wait, pendingEnrollmentRetry)
 		}
 		timer := time.NewTimer(wait)
 		select {
@@ -184,12 +181,8 @@ func (a *Agent) Report(ctx context.Context) error {
 		return fmt.Errorf("collect Station observation: %w", err)
 	}
 	observation.Agent = a.program
-	if a.config.WireguardObservationFile != "" {
-		observation.Wireguard, observation.Gateway = readWireguardSnapshot(a.config.WireguardObservationFile, a.now())
-	}
-	if a.config.NetworkConfigFile != "" {
-		observation.Probes = a.probePeers(ctx)
-	}
+	observation.Wireguard, observation.Gateway = readWireguardSnapshot(a.config.WireguardObservationFile, a.now())
+	observation.Probes = a.probePeers(ctx)
 	body, err := json.Marshal(observationRequest{ClusterID: a.config.ClusterID, Observation: observation})
 	if err != nil {
 		return err

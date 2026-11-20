@@ -54,9 +54,6 @@ var ErrNodeStageUnavailable = errors.New("node operation stage is not implemente
 // The stage list of each action (nodeOperationStages) says which stages run.
 func (e *NodeLifecycleExecutor) Execute(ctx context.Context, op *stationv1alpha1.NodeOperation, stage string) (bool, string, error) {
 	if op.Spec.Action == "Join" && stage != "VerifyNode" && stage != "VerifyRLark" {
-		if e.Installer == nil {
-			return false, "", ErrNodeStageUnavailable
-		}
 		return e.Installer.Execute(ctx, op, stage)
 	}
 	// A removal of a name its cluster has no Node of (Preflight found none):

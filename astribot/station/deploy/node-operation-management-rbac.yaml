@@ -1,4 +1,4 @@
-# Apply only when the experimental node operation controller is explicitly enabled.
+# What station-controller's node operations may do on the management plane.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -19,7 +19,7 @@ rules:
 - apiGroups: ["station.rlark.io"]
   resources: ["networkenrollments"]
   verbs: ["delete"]
-# With --installer-bundle: a Machine an administrator admitted gets its
+# A Machine an administrator admitted gets its
 # NodeAdmission and the NodeOperation that joins it; the join gives the
 # admission its code and writes down the entry device's new host key.
 - apiGroups: ["station.rlark.io"]

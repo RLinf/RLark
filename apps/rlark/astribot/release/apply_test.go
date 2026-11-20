@@ -508,7 +508,7 @@ func TestApplyWalksTheStagesInOrderAndReadsBack(t *testing.T) {
 		{"office deployment station-controller", "lab deployment rlark-agent"},
 		{"lab deployment rlark-agent", "office deployment rlark-cluster-agent"}, // one cluster at a time
 		{"office deployment rlark-cluster-agent", "node-agents lab"},
-		{"node-agents office", "lab daemonset station-agent OnDelete"},
+		{"node-agents office", "lab daemonset station-agent-host OnDelete"},
 		{"office daemonset station-agent-host", "compose rlark-server"}, // the server after every agent
 		{"compose rlark-controller-manager", "compose rlark-ui"},
 		{"compose rlark-ui", "addon lab/site-registry v0.2.9"},
@@ -1233,22 +1233,20 @@ func TestTheControlPlaneRunsTheTreesComposeFile(t *testing.T) {
 	}
 }
 
-// A Station DaemonSet a cluster has is placed as the tree states it (station-agent.yaml), before the controller: on
-// 11-17 the live office's station-agent, placed on every node not enabled, ran beside station-agent-host on a node
-// labelled host.
+// A Station DaemonSet a cluster has is placed as the tree states it (station-agent.yaml), before the controller.
 func TestStationDaemonSetsArePlacedAsTheTreeStates(t *testing.T) {
 	s := newFakeSite(t)
 	_, environment, release := writeFiles(t)
 	desired := environment.Desired(release, testClusters)
 	ctx := context.Background()
-	notEnabled := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
-		MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "station.rlark.io/network", Operator: corev1.NodeSelectorOpNotIn, Values: []string{"enabled"}}}}}}}}
+	everyNode := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+		MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "station.rlark.io/network", Operator: corev1.NodeSelectorOpExists}}}}}}}
 	daemonSets := s.members["office"].AppsV1().DaemonSets(stationNamespace)
-	agent, err := daemonSets.Get(ctx, "station-agent", metav1.GetOptions{})
+	agent, err := daemonSets.Get(ctx, "station-agent-host", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent.Spec.Template.Spec.Affinity = notEnabled
+	agent.Spec.Template.Spec.Affinity = everyNode
 	if _, err := daemonSets.Update(ctx, agent, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -1259,15 +1257,47 @@ func TestStationDaemonSetsArePlacedAsTheTreeStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "station-placement office DaemonSet station-agent placement: station.rlark.io/network NotIn [enabled] -> station.rlark.io/network NotIn [enabled host]"
+	want := "station-placement office DaemonSet station-agent-host placement: station.rlark.io/network Exists [] -> station.rlark.io/network In [host]"
 	if !slices.ContainsFunc(plan, func(change Change) bool { return strings.Join(strings.Fields(change.String()), " ") == want }) {
 		t.Errorf("the plan lacks %q: %v", want, plan)
 	}
 	if err := run.Apply(ctx); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	placed, _ := daemonSets.Get(ctx, "station-agent", metav1.GetOptions{})
-	if got := placement(placed.Spec.Template.Spec.Affinity); got != "station.rlark.io/network NotIn [enabled host]" {
-		t.Errorf("station-agent is placed on %s", got)
+	placed, _ := daemonSets.Get(ctx, "station-agent-host", metav1.GetOptions{})
+	if got := placement(placed.Spec.Template.Spec.Affinity); got != "station.rlark.io/network In [host]" {
+		t.Errorf("station-agent-host is placed on %s", got)
+	}
+}
+
+// What a site of a build before had and this one's Station does not take is gone after the run: the DaemonSet of the
+// nodes without a gateway, and the controller's --enable-node-operations, which this build's would not start with.
+func TestTheRetiredAgentAndArgumentAreTakenAway(t *testing.T) {
+	s := newFakeSite(t)
+	_, environment, release := writeFiles(t)
+	ctx := context.Background()
+	office := s.members["office"]
+	s.create(office, &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: stationNamespace, Name: retiredStationAgent}})
+	controller, err := office.AppsV1().Deployments(stationNamespace).Get(ctx, stationController, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.Spec.Template.Spec.Containers[0].Args = []string{"--enable-node-operations=true", "--site-network-name=default"}
+	if err := office.Tracker().Update(schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, controller, stationNamespace); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := newRun(t, s, environment, environment.Desired(release, testClusters), &out).Apply(ctx); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "office DaemonSet station-agent: nodes without a gateway -> deleted") {
+		t.Errorf("the plan does not say the agent goes:\n%s", out.String())
+	}
+	if _, err := office.AppsV1().DaemonSets(stationNamespace).Get(ctx, retiredStationAgent, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("station-agent is still there: %v", err)
+	}
+	controller, _ = office.AppsV1().Deployments(stationNamespace).Get(ctx, stationController, metav1.GetOptions{})
+	if args := controller.Spec.Template.Spec.Containers[0].Args; !slices.Equal(args, []string{"--site-network-name=default"}) {
+		t.Errorf("station-controller is started with %v", args)
 	}
 }

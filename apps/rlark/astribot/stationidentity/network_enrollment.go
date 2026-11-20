@@ -58,7 +58,7 @@ func (a *API) enroll(w http.ResponseWriter, r *http.Request, token string) {
 		writeAuthError(w, err)
 		return
 	}
-	if key, err := base64.StdEncoding.DecodeString(req.PublicKey); req.PublicKey != "" && (err != nil || len(key) != 32) {
+	if key, err := base64.StdEncoding.DecodeString(req.PublicKey); err != nil || len(key) != 32 {
 		writeError(w, http.StatusBadRequest, "public_key must be a WireGuard public key")
 		return
 	}
@@ -140,7 +140,7 @@ func (s *KubernetesNetworkEnroller) Enroll(ctx context.Context, evidence Evidenc
 	}
 	status, _, _ := unstructured.NestedMap(current.Object, "status")
 	observed, _, _ := unstructured.NestedInt64(status, "observedGeneration")
-	if observed != current.GetGeneration() || status["publicKey"] != request.PublicKey && request.PublicKey != "" {
+	if observed != current.GetGeneration() || status["publicKey"] != request.PublicKey {
 		return pending, nil
 	}
 	text := func(key string) string { value, _ := status[key].(string); return value }

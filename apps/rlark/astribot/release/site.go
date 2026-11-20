@@ -33,7 +33,7 @@ const (
 // StationDaemonSets are Station's DaemonSets in every member cluster;
 // stationContainers which image each container of them runs.
 var (
-	StationDaemonSets = []string{"station-agent", "station-agent-network", "station-agent-host"}
+	StationDaemonSets = []string{"station-agent-network", "station-agent-host"}
 	stationContainers = map[string]func(ClusterState) string{
 		"station-agent": func(c ClusterState) string { return c.StationAgent },
 		"wireguard":     func(c ClusterState) string { return c.StationWireguard },

@@ -314,12 +314,6 @@ spec:
                       required:
                       - gateway
                       type: object
-                    leavesViaRelay:
-                      description: |-
-                        LeavesViaRelay makes the leaves of this site peer with their relay only
-                        and reach everything else through it. Without it a leaf also dials
-                        every other hub it can.
-                      type: boolean
                     mesh:
                       description: Mesh links the hubs of this site to each other
                         over the tunnel.

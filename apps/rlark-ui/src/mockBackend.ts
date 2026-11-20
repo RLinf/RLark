@@ -740,8 +740,6 @@ export function installMockBackend() {
       return json({ data: [] });
     if (method === "GET" && path === "/api/v1/installed-addons")
       return json({ data: [] });
-    if (method === "GET" && path === "/api/v1/station/node-joins")
-      return json({ items: [] });
     if (method === "GET" && path === "/api/v1/cluster-provisions")
       return json({ success: true, data: mockClusterProvisions });
     if (["POST", "PUT", "PATCH", "DELETE"].includes(method))

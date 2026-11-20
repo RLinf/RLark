@@ -1,4 +1,4 @@
-# Sourced by calico-endpoint.sh and calico-upgrade.sh, with K the cluster's kubeconfig.
+# Sourced by calico-endpoint.sh, with K the cluster's kubeconfig.
 k() { kubectl --kubeconfig "$K" "$@"; }
 # renew_calico: calico-node made anew on every node, one at a time, whatever the
 # DaemonSet's update strategy (OnDelete replaces nothing by itself).
