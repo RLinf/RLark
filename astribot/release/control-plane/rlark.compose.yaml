@@ -73,7 +73,7 @@ services:
       - --addr=:8080
       - --server-address=https://rlark-server:8443
       - --db-config=/etc/rlark/db-config.yaml
-      - --registry-browse-allowed-hosts=10.0.0.0/8,192.168.0.0/16
+      - --registry-browse-allowed-hosts=10.0.0.0/8,192.168.0.0/16,registry.rlark.internal:5443
       - --station-api-address=${STATION_API_ADDRESS:?the environment's controlPlane.variables}
       - --station-api-ca-file=/etc/rlark/station-ca.crt
       - --station-gateway-credential-file=/etc/rlark/station-service/token

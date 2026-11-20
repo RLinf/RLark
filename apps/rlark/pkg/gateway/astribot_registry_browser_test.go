@@ -88,6 +88,10 @@ func TestRegistryBrowse(t *testing.T) {
 	require.Equal(t, http.StatusOK, second.Code)
 	require.JSONEq(t, `{"items":["rlark/gateway"],"next":""}`, second.Body.String())
 	require.Equal(t, http.StatusOK, call("tags?repository=rlark%2Fagent", admin).Code)
+	// rlark/gateway has no tags (pushed by digest only): the registry answers 404, the Gateway an empty list.
+	untagged := call("tags?repository=rlark%2Fgateway", admin)
+	require.Equal(t, http.StatusOK, untagged.Code)
+	require.JSONEq(t, `{"items":[],"next":""}`, untagged.Body.String())
 	require.Contains(t, call("manifest?repository=rlark%2Fagent&tag=v1", admin).Body.String(), strings.Repeat("a", 64))
 	require.Equal(t, http.StatusBadRequest, call("tags?repository=..%2Ffoo", admin).Code)
 	failing.Store(true)
