@@ -27,7 +27,7 @@ func TestTheNodePasswordsOfAClassAreEnteredAndNeverAnswered(t *testing.T) {
 			"node":  map[string]interface{}{"password": map[string]interface{}{"secret": "orin-access", "key": "x86_password"}}}},
 	}}
 	g := &Gateway{config: Config{KubeClientConfig: configs.KubernetesClientConfig{Namespace: "management"}}, rawClient: fake.NewSimpleClientset(),
-		astribotState: astribotState{stationClient: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{machineGVR: "MachineList", nodeClassGVR: "NodeClassList"},
+		astribotState: astribotState{stationClient: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{machineGVR: "MachineList", nodeClassGVR: "NodeClassList", nodeOperationGVR: "NodeOperationList"},
 			class, handlerMachine("lab-01", "Discovered", "AccessUnconfigured", ""))}}
 	const path = "/api/v1/station/node-classes/s1u/access"
 

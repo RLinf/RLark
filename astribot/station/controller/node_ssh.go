@@ -39,6 +39,11 @@ var (
 	ErrSSHCredentialRejected = errors.New("the host refused the account")
 	ErrSSHJumpUnreachable    = errors.New("the jump host does not answer")
 	ErrSSHTargetUnreachable  = errors.New("the host behind the jump host does not answer")
+	// The relay of the site's hub answers that it cannot connect to the host:
+	// the host does not answer on the site's network, or the hub is no longer on it.
+	ErrSSHSiteHostUnreachable = errors.New("the site's hub cannot connect to the host")
+	// The relay of the site's hub does not answer: nothing of the site's network is reached.
+	ErrSSHRelayUnreachable = errors.New("the site's hub does not answer")
 )
 
 // SSHHostKeyMismatchError is a host that showed another key than the one it
@@ -129,7 +134,7 @@ func DialNodeSSH(ctx context.Context, cfg NodeSSHConfig) (*ssh.Client, error) {
 	if cfg.Jump == nil && cfg.Via != "" {
 		conn, err := (&net.Dialer{Timeout: nodeSSHTimeout(cfg)}).DialContext(ctx, "tcp", cfg.Via)
 		if err != nil {
-			return nil, fmt.Errorf("connect to the site's relay: %w", err)
+			return nil, fmt.Errorf("%w: connect to its relay %s: %v", ErrSSHRelayUnreachable, cfg.Via, err)
 		}
 		_ = conn.SetDeadline(time.Now().Add(nodeSSHTimeout(cfg)))
 		answer := make([]byte, 0, 16)
@@ -143,7 +148,13 @@ func DialNodeSSH(ctx context.Context, cfg NodeSSHConfig) (*ssh.Client, error) {
 		}
 		if err != nil || string(answer) != "ok\n" {
 			_ = conn.Close()
-			return nil, fmt.Errorf("connect SSH through the site's relay: %q %v", strings.TrimSpace(string(answer)), err)
+			switch string(answer) {
+			case "unreachable\n":
+				return nil, fmt.Errorf("%w: %s, through relay %s", ErrSSHSiteHostUnreachable, cfg.Address, cfg.Via)
+			case "refused\n":
+				return nil, fmt.Errorf("the relay %s refuses %s: the address or port is outside its site's discovery", cfg.Via, cfg.Address)
+			}
+			return nil, fmt.Errorf("%w: its relay %s answered %q: %v", ErrSSHRelayUnreachable, cfg.Via, strings.TrimSpace(string(answer)), err)
 		}
 		return nodeSSHHandshake(ctx, conn, cfg)
 	}
@@ -157,7 +168,7 @@ func DialNodeSSH(ctx context.Context, cfg NodeSSHConfig) (*ssh.Client, error) {
 	jump, err := DialNodeSSH(ctx, *cfg.Jump)
 	if err != nil {
 		var mismatch *SSHHostKeyMismatchError
-		if errors.Is(err, ErrSSHCredentialRejected) || errors.As(err, &mismatch) || ctx.Err() != nil {
+		if errors.Is(err, ErrSSHCredentialRejected) || errors.As(err, &mismatch) || errors.Is(err, ErrSSHRelayUnreachable) || ctx.Err() != nil {
 			return nil, fmt.Errorf("jump host: %w", err)
 		}
 		return nil, fmt.Errorf("%w: %v", ErrSSHJumpUnreachable, err)

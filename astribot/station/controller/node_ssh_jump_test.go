@@ -8,6 +8,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	stationv1alpha1 "github.com/rlinf/rlark/astribot/station/api/v1alpha1"
 )
 
 func TestDialNodeSSHThroughAJumpHostSendsNoCredentialToAHostWithAnotherKey(t *testing.T) {
@@ -98,6 +100,10 @@ func TestDialNodeSSHThroughAJumpHostSendsNoCredentialToAHostWithAnotherKey(t *te
 			go func() {
 				defer conn.Close()
 				line, _ := bufio.NewReaderSize(conn, 64).ReadString('\n')
+				if line == "192.168.31.58:22\n" {
+					_, _ = io.WriteString(conn, "unreachable\n")
+					return
+				}
 				if line != "192.168.31.56:22\n" {
 					_, _ = io.WriteString(conn, "refused\n")
 					return
@@ -123,5 +129,15 @@ func TestDialNodeSSHThroughAJumpHostSendsNoCredentialToAHostWithAnotherKey(t *te
 	cfg.Jump.Address = "192.168.31.57:22"
 	if _, err := DialNodeSSH(ctx, cfg); !errors.Is(err, ErrSSHJumpUnreachable) {
 		t.Fatalf("a host the relay refuses: %v", err)
+	}
+	// The hub cannot connect to the entry device: the entry device does not answer.
+	cfg.Jump.Address = "192.168.31.58:22"
+	if _, err := DialNodeSSH(ctx, *cfg.Jump); !errors.Is(err, ErrSSHSiteHostUnreachable) || machineProblem(err) != stationv1alpha1.MachineEntryUnreachable {
+		t.Fatalf("a host the hub cannot connect to: %v", err)
+	}
+	// The hub does not answer: that is said through the jump too.
+	_ = relay.Close()
+	if _, err := DialNodeSSH(ctx, cfg); !errors.Is(err, ErrSSHRelayUnreachable) || machineProblem(err) != stationv1alpha1.MachineHubUnreachable {
+		t.Fatalf("a hub that does not answer: %v", err)
 	}
 }

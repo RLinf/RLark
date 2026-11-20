@@ -36,11 +36,26 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission", "metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "agent-a"},
 		"spec": map[string]interface{}{"clusterID": "cluster-a"},
 	}}
+	// The join of lab-03, stopped after its first stage.
+	blocked := handlerMachine("lab-03", "Admitted", "JoinBlocked", "1794925030999")
+	blocked.SetGeneration(2)
+	_ = unstructured.SetNestedField(blocked.Object, "join-s1u-02-x86-2", "status", "operation")
+	_ = unstructured.SetNestedField(blocked.Object, map[string]interface{}{"clusterID": "cluster-a", "requestedBy": "alice", "requestedAt": "2027-01-15T07:59:00Z"}, "spec", "admit")
+	join := func(name, generation, phase, stage string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeOperation",
+			"metadata": map[string]interface{}{"name": name, "namespace": "agent-a", "labels": map[string]interface{}{machineOperationLabel: "lab-03"},
+				"annotations": map[string]interface{}{machineRequestAnnotation: generation}},
+			"status": map[string]interface{}{"phase": phase, "stage": stage},
+		}}
+	}
+	// An earlier request's join, which made a node removed since, is not this request's.
+	blockedJoin, spentJoin := join("join-s1u-02-x86-2", "2", "Blocked", "Preflight"), join("join-s1u-02-x86-1", "1", "Succeeded", "RotateEntryHostKey")
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		stationClusterGVR: "ClusterList", nodeAdmissionGVR: "NodeAdmissionList", machineGVR: "MachineList", nodeClassGVR: "NodeClassList",
-	}, stationHandlerCluster("cluster-a", "agent-a"), class, earlier,
+		stationClusterGVR: "ClusterList", nodeAdmissionGVR: "NodeAdmissionList", machineGVR: "MachineList", nodeClassGVR: "NodeClassList", nodeOperationGVR: "NodeOperationList",
+	}, stationHandlerCluster("cluster-a", "agent-a"), class, earlier, blockedJoin, spentJoin,
 		handlerMachine("lab-01", "Discovered", "", "1794925030610"), handlerMachine("lab-02", "Discovered", "CredentialRejected", "1794925029733"),
-		handlerMachine("lab-03", "Admitted", "JoinBlocked", "1794925030999"), handlerMachine("lab-04", "Joined", "", "1794925031000"))
+		blocked, handlerMachine("lab-04", "Joined", "", "1794925031000"))
 	g := &Gateway{astribotState: astribotState{stationClient: client}}
 
 	status, body := nodeAdmissionCall(t, g.handleListMachines, "GET", "/api/v1/station/machines?phase=Discovered", "", "")
@@ -52,6 +67,13 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 	if status != 200 || len(listed.Items) != 2 || listed.Items[0].Name != "lab-02" || listed.Items[0].Admissible || !listed.Items[1].Admissible ||
 		listed.Items[1].Serial != "1794925030610" || listed.Classes["s1u"].Labels["rlark.io/robot-body"] != "s1u" {
 		t.Fatalf("list %d: %s", status, body)
+	}
+	// An admitted machine is listed with where its join stands.
+	status, body = nodeAdmissionCall(t, g.handleListMachines, "GET", "/api/v1/station/machines?phase=Admitted", "", "")
+	_ = json.Unmarshal(body, &listed)
+	if status != 200 || len(listed.Items) != 1 || listed.Items[0].AdmitClusterID != "cluster-a" || listed.Items[0].Join == nil ||
+		*listed.Items[0].Join != (machineJoin{Phase: "Blocked", Stage: "Preflight"}) {
+		t.Fatalf("an admitted machine's join %d: %s", status, body)
 	}
 
 	status, body = nodeAdmissionCall(t, g.handleAdmitMachines, "POST", "/api/v1/station/machines/admit", "",

@@ -83,20 +83,106 @@
   color: var(--red);
 }
 
+/* The issued command and code: a card with a header, dark code blocks and
+   the notes under a form. */
 .join-node-result {
   display: grid;
   gap: 14px;
+  min-width: 0;
+  padding: 18px 20px 20px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 16px 45px rgba(35, 42, 60, 0.07);
 }
 
-.join-node-result .join-node-block pre {
+.theme-dark .join-node-result {
+  background: #151d2b;
+}
+
+.join-node-result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 2px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.join-node-result-header div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.join-node-result-header div svg {
+  color: var(--green);
+}
+
+.join-node-result-header small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.join-node-block {
+  overflow: hidden;
+  border: 1px solid #202b3d;
+  border-radius: 14px;
+  background: #0b1320;
+}
+
+.join-node-block-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border-bottom: 1px solid #253247;
+  background: #111c2c;
+}
+
+.join-node-block-head > div,
+.join-node-block-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.join-node-block-head strong,
+.join-node-block-head svg {
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.join-node-block pre {
+  max-height: 560px;
+  margin: 0;
+  padding: 16px;
+  color: #b9c7da;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
 }
 
-.join-node-admitted {
+.join-node-notes {
   display: flex;
   flex-wrap: wrap;
+  gap: 9px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.join-node-notes span {
+  display: flex;
+  align-items: center;
   gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.join-node-notes svg {
+  color: #7042d8;
 }
 
 .join-class-access {
@@ -162,4 +248,94 @@
 
 .join-ssh-records .provision-progress {
   padding: 4px 12px 14px;
+}
+
+/* The admitted machines' joins: a bar of how many joined (green) and stopped
+   (red), then a row each with its step dots. */
+.join-progress {
+  overflow: hidden;
+}
+
+.join-progress-bar {
+  display: flex;
+  height: 6px;
+  margin: 0 16px 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.join-progress-bar > i {
+  display: block;
+  transition: width 0.18s ease;
+}
+
+.join-progress-joined {
+  background: var(--green);
+}
+
+.join-progress-failed {
+  background: var(--red);
+}
+
+.join-progress-rows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.join-progress-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.join-progress-row > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.join-progress-row > div > small:last-child {
+  overflow-wrap: anywhere;
+}
+
+.join-progress-steps {
+  display: flex;
+  gap: 4px;
+}
+
+.join-progress-steps > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+
+.join-progress-steps > i.is-done {
+  background: var(--green);
+}
+
+.join-progress-steps > i.is-running {
+  background: var(--orange);
+}
+
+.join-progress-steps > i.is-failed {
+  background: var(--red);
+}
+
+@media (max-width: 620px) {
+  .join-node-result-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .join-progress-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

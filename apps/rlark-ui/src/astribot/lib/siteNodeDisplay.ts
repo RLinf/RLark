@@ -131,6 +131,12 @@ export interface Machine {
   cluster_id?: string;
   node_name?: string;
   admissible: boolean;
+  // The administrator's decision that it is to be a node: who, when, of which cluster.
+  requested_by?: string;
+  requested_at?: string;
+  admit_cluster_id?: string;
+  // Where the NodeOperation of the present request stands: its phase and the last stage it completed.
+  join?: { phase?: string; stage?: string };
 }
 
 // One password every machine of a NodeClass has: the value of a secret kept
@@ -164,6 +170,8 @@ const machineProblems: Record<string, [string, string]> = {
   HostKeyChanged: ["主机密钥变了", "Host key changed"],
   NodeUnreachable: ["Orin 通，x86 不通", "Computer behind the entry device does not answer"],
   EntryUnreachable: ["连不上", "Does not answer"],
+  HubUnreachable: ["场地 Hub 不应答", "The site's hub does not answer"],
+  InspectFailed: ["读取失败", "Could not be read"],
   DuplicateSerial: ["序列号重复", "Duplicate serial"],
   AlreadyNode: ["已是别处的节点", "A node elsewhere already"],
   ClassIncomplete: ["机型声明不全", "Node class incomplete"],
@@ -286,5 +294,31 @@ export function robotSelfCheckLabel(state: string, zh: boolean): string {
 // leaves nothing that can join it again from here (its tunnel goes with it), only someone at the machine.
 export function unseenMachineOf(machines: Machine[], clusterID: string, nodeName: string, now: number): Machine | undefined {
   const machine = machines.find((item) => item.cluster_id === clusterID && item.node_name === nodeName);
-  return machine && now - Date.parse(machine.last_seen ?? "") < 10 * 60 * 1000 ? undefined : machine;
+  return machine && !machineUnseen(machine, now) ? undefined : machine;
+}
+
+// No hub has seen the machine's entry device for ten minutes (a hub looks at its site's network every 30 s).
+export function machineUnseen(machine: Pick<Machine, "last_seen">, now: number): boolean {
+  return !(now - Date.parse(machine.last_seen ?? "") < 10 * 60 * 1000);
+}
+
+const two = (value: number) => String(value).padStart(2, "0");
+
+// When a hub last saw a machine, in local time: the time alone today, with its date before.
+export function seenTime(lastSeen: string | undefined, now: number): string {
+  if (!lastSeen) return "—";
+  const seen = new Date(lastSeen);
+  const today = new Date(now);
+  const time = `${two(seen.getHours())}:${two(seen.getMinutes())}`;
+  if (seen.toDateString() === today.toDateString()) return `${time}:${two(seen.getSeconds())}`;
+  const date = `${two(seen.getMonth() + 1)}-${two(seen.getDate())} ${time}`;
+  return seen.getFullYear() === today.getFullYear() ? date : `${seen.getFullYear()}-${date}`;
+}
+
+// How long no hub has seen the machine, in its largest unit.
+export function unseenFor(lastSeen: string | undefined, now: number, zh: boolean): string {
+  const minutes = Math.floor((now - Date.parse(lastSeen ?? "")) / 60000);
+  if (!Number.isFinite(minutes)) return zh ? "没有被看到过" : "never seen";
+  const [count, zhUnit, enUnit] = minutes < 120 ? [minutes, "分钟", "min"] : minutes < 48 * 60 ? [Math.floor(minutes / 60), "小时", "h"] : [Math.floor(minutes / 1440), "天", "d"];
+  return zh ? `Hub 已 ${count} ${zhUnit}没看到` : `not seen by a hub for ${count} ${enUnit}`;
 }

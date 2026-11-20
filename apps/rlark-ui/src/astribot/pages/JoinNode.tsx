@@ -21,18 +21,22 @@ import type { ClusterSummary } from "../../types";
 import { CopyButton } from "../components/CopyButton";
 import { tunnelEndpointProblem } from "../lib/clusterProvision";
 import { joinStageLabel, nodeJoinView, type NodeJoin } from "../lib/nodeJoin";
+import { machineJoinProgress, machineJoinSteps, machineJoinSummary, type MachineJoinProgress } from "../lib/machineJoin";
 import {
   classPasswordLabel,
   machineClassAccess,
   machineLabelChoices,
   machineStateLabel,
+  machineUnseen,
   parseLabelLines,
   parseTaintLines,
   robotIDOfNode,
   robotTaint,
   s1uRobotLabels,
+  seenTime,
   sshJoinFailure,
   unjoinedMachines,
+  unseenFor,
   type AdmittedMachine,
   type IssuedNodeAdmission,
   type MachineList,
@@ -139,6 +143,43 @@ function ClassPasswords({ zh, name, access, onSaved }: { zh: boolean; name: stri
   </div>;
 }
 
+// The machines admitted to the cluster, as their joins go: each one's step, where and why one stopped, and how
+// many have joined.
+function JoinProgress({ zh, progress }: { zh: boolean; progress: MachineJoinProgress }) {
+  const shown = useRef<HTMLElement>(null);
+  useEffect(() => {
+    shown.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, []);
+  const steps = machineJoinSteps.length;
+  return <section ref={shown} className="table-panel join-progress" aria-live="polite">
+    <div className="storage-table-heading">
+      <div>
+        <strong>{zh ? "入网进度" : "Join progress"}</strong>
+        <small>{machineJoinSummary(progress, zh)}</small>
+      </div>
+    </div>
+    <div className="join-progress-bar" aria-hidden="true">
+      <i className="join-progress-joined" style={{ width: `${100 * progress.joined / progress.total}%` }} />
+      <i className="join-progress-failed" style={{ width: `${100 * progress.failed / progress.total}%` }} />
+    </div>
+    <ol className="join-progress-rows">
+      {progress.rows.map((item) => <li key={item.machine.name} className={`join-progress-row join-progress-${item.state}`}>
+        <span className={`status ${item.state === "joined" ? "status-online" : item.state === "failed" ? "status-failed" : "status-pending"}`}>
+          <i />{item.state === "joined" ? (zh ? "已加入" : "Joined") : item.state === "failed" ? (zh ? "失败" : "Stopped") : (zh ? "进行中" : "Joining")}
+        </span>
+        <div>
+          <strong>{item.machine.node_name || item.machine.serial || item.machine.name}</strong>
+          <small className="muted"> {item.machine.site} · {item.machine.address}</small>
+          <small className={item.state === "failed" ? "join-missing" : ""} title={item.machine.message}>{item.text}</small>
+        </div>
+        <span className="join-progress-steps" title={zh ? `完成 ${item.done}/${steps} 步` : `${item.done} of ${steps} steps done`}>
+          {machineJoinSteps.map((step, index) => <i key={step.name} className={index < item.done ? "is-done" : index === item.done && item.state !== "joined" ? `is-${item.state}` : ""} />)}
+        </span>
+      </li>)}
+    </ol>
+  </section>;
+}
+
 // The machines the hubs of the sites have found and that are not nodes yet:
 // ticking them is all it takes. RLark names each one, logs in to it with the
 // accounts of its class and joins it; nobody types anything at the machine.
@@ -152,22 +193,24 @@ function UnjoinedMachines({ zh, clusterID }: { zh: boolean; clusterID: string })
   const load = (signal?: AbortSignal) => machinesApi.list(signal).then(setList, (reason) => {
     if (!signal?.aborted) setError((reason as Error).message);
   });
+  const now = Date.now();
+  const progress = machineJoinProgress(list?.items ?? [], clusterID, now, zh);
+  const joining = progress.running > 0;
   useEffect(() => {
     const controller = new AbortController();
     void load(controller.signal);
-    // A machine that was just plugged in shows up within a minute.
-    const timer = window.setInterval(() => void load(controller.signal), 10000);
+    // A machine that was just plugged in shows up within a minute; a join is followed step by step.
+    const timer = window.setInterval(() => void load(controller.signal), joining ? 3000 : 10000);
     return () => {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, []);
+  }, [joining]);
 
   const machines = unjoinedMachines(list?.items ?? []);
   const chosen = machines.filter((machine) => machine.admissible && ticked.includes(machine.name));
   const choices = machineLabelChoices(chosen, list?.classes ?? {});
   const admissible = machines.filter((machine) => machine.admissible).map((machine) => machine.name);
-  const admitted = answers.filter((answer) => answer.admitted);
 
   const submit = () => run(async () => {
     const replaced = Object.fromEntries(Object.entries(labels).filter(([key, value]) => key in choices && value.trim() && value.trim() !== choices[key]).map(([key, value]) => [key, value.trim()]));
@@ -208,7 +251,10 @@ function UnjoinedMachines({ zh, clusterID }: { zh: boolean; clusterID: string })
             <td><code className="inline-code">{machine.serial || "—"}</code></td>
             <td>{machine.node_class}</td>
             <td>{machine.site} · {machine.address}</td>
-            <td>{machine.last_seen ? new Date(machine.last_seen).toLocaleTimeString() : "—"}</td>
+            <td>
+              {seenTime(machine.last_seen, now)}
+              {machineUnseen(machine, now) && <small className="join-missing"> {unseenFor(machine.last_seen, now, zh)}</small>}
+            </td>
             <td title={machine.message}>
               <span className={machine.problem ? "status status-failed" : "status status-pending"}><i />{machineStateLabel(machine, zh)}</span>
               {machine.node_name && <small className="muted"> {machine.node_name}</small>}
@@ -232,12 +278,7 @@ function UnjoinedMachines({ zh, clusterID }: { zh: boolean; clusterID: string })
         {pending ? (zh ? "提交中…" : "Admitting…") : (zh ? `加入所选 ${chosen.length} 台` : `Add the ${chosen.length} selected`)}
       </button>
     </div>
-    {admitted.length > 0 && <Result
-      title={zh ? `已开始加入 ${admitted.length} 台` : `${admitted.length} machine(s) joining`}
-      note={zh ? "进度在场站节点页的“入网记录”里" : "Progress is in the admission records"}
-    >
-      <div className="join-node-admitted">{admitted.map((answer) => <code key={answer.name} className="inline-code">{answer.name}</code>)}</div>
-    </Result>}
+    {progress.total > 0 && <JoinProgress zh={zh} progress={progress} />}
   </>;
 }
 
