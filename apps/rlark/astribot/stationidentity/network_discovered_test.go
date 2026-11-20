@@ -14,7 +14,7 @@ import (
 
 func TestAHubsDiscoveredHostsBecomeMachinesOfTheClassWhoseKeyTheyShow(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
-	hub, leaf := newDocumentNode(t), newDocumentNode(t)
+	hub, neighbour, leaf := newDocumentNode(t), newDocumentNode(t), newDocumentNode(t)
 	factory := "SHA256:" + strings.Repeat("f", 43)
 	enrollment := func(name string, node documentNode, role string) *unstructured.Unstructured {
 		holder := documentHolder("NetworkEnrollment", "robots", name, "Enrolled", node.public(), `{}`)
@@ -26,13 +26,15 @@ func TestAHubsDiscoveredHostsBecomeMachinesOfTheClassWhoseKeyTheyShow(t *testing
 	network := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "SiteNetwork", "metadata": map[string]interface{}{"name": "default", "namespace": "station-system"},
 		"spec": map[string]interface{}{"sites": []interface{}{
-			map[string]interface{}{"name": "lab", "discovery": map[string]interface{}{"enabled": true, "ranges": []interface{}{"192.168.31.0/24"}}}}},
+			map[string]interface{}{"name": "lab", "discovery": map[string]interface{}{"enabled": true, "ranges": []interface{}{"192.168.31.0/24"}, "intervalSeconds": int64(30)}}}},
 	}}
 	class := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeClass", "metadata": map[string]interface{}{"name": "s1u"},
 		"spec": map[string]interface{}{"discovery": map[string]interface{}{"hostKeyFingerprints": []interface{}{factory}}},
 	}}
-	api, client := testNetworkDocuments(t, &now, enrollment("cp", hub, "Hub"), enrollment("s1u-01-x86", leaf, "Leaf"), network, class)
+	second := enrollment("alexfu", neighbour, "Hub")
+	_ = unstructured.SetNestedField(second.Object, "10.254.240.6", "status", "tunnelAddress")
+	api, client := testNetworkDocuments(t, &now, enrollment("cp", hub, "Hub"), second, enrollment("s1u-01-x86", leaf, "Leaf"), network, class)
 	report := func(node documentNode, hosts string) int {
 		t.Helper()
 		request := func(challenge, proof string) (int, documentAnswer) {
@@ -115,6 +117,28 @@ func TestAHubsDiscoveredHostsBecomeMachinesOfTheClassWhoseKeyTheyShow(t *testing
 	}
 	if list, _ := machines.List(context.Background(), metav1.ListOptions{}); len(list.Items) != 1 {
 		t.Fatalf("Machines after a known key on another device: %d", len(list.Items))
+	}
+
+	// Another hub on the same network sees it too: it stays with the hub that has it, and is not looked at anew,
+	// until that hub has not seen it for three intervals.
+	_ = unstructured.SetNestedField(machine.Object, "2027-01-15T08:00:00Z", "status", "inspectedAt")
+	if _, err := machines.UpdateStatus(context.Background(), machine, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	seenThere := `[{"address":"192.168.31.140","port":22,"mac":"48:b0:2d:5c:9a:11","host_key":"` + rotated + `"}]`
+	now = now.Add(30 * time.Second)
+	_ = report(neighbour, seenThere)
+	machine, _ = machines.Get(context.Background(), "lab-48b02d5c9a11", metav1.GetOptions{})
+	_, inspected, _ = unstructured.NestedString(machine.Object, "status", "inspectedAt")
+	if via, _, _ := unstructured.NestedString(machine.Object, "status", "entry", "via"); via != "10.254.240.5:18022" || !inspected {
+		t.Fatalf("a machine its hub still sees, reported by another: via %s, inspected %v", via, inspected)
+	}
+	now = now.Add(61 * time.Second)
+	_ = report(neighbour, seenThere)
+	machine, _ = machines.Get(context.Background(), "lab-48b02d5c9a11", metav1.GetOptions{})
+	_, inspected, _ = unstructured.NestedString(machine.Object, "status", "inspectedAt")
+	if via, _, _ := unstructured.NestedString(machine.Object, "status", "entry", "via"); via != "10.254.240.6:18022" || inspected {
+		t.Fatalf("a machine its hub has not seen for three intervals, reported by another: via %s, inspected %v", via, inspected)
 	}
 
 	// A leaf looks for nothing, and says nothing of its site's network.

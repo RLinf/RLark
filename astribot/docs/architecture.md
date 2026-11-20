@@ -74,7 +74,7 @@
 ### 网络
 
 - 拓扑：叶子拨枢纽，枢纽之间按需互联，转发枢纽替叶子转发。没在 `spec.nodes` 里列出的节点都是叶子。
-- `sites[]`：`clusters`、`reaches`（能拨到哪些场站的 `Site` 端点）、`mesh`（本站枢纽之间建隧道）、`relay`、`leafUplink`（同型号叶子共用的上联，如机器人经 Orin）、`discovery`、`dns`、`names`（本站的名字，如 `registry.rlark.internal`）。
+- `sites[]`：`clusters`、`reaches`（能拨到哪些场站的 `Site` 端点）、`mesh`（本站枢纽之间建隧道）、`relay`、`leafUplink`（同型号叶子共用的上联，如机器人经 Orin）、`discovery`（枢纽在 `ranges` 和自己接着的每个私有 IPv4 网段里按 NodeClass 的出厂主机密钥找未入网的机器，比 /22 大的网段只扫自己地址所在的 /22，不含公网、`st-*` 隧道、容器和集群接口；每轮最多 128 个并发探测，三个 /22 最多约 25 s，每轮从上一轮开始算起隔 `intervalSeconds`；几台枢纽在同一网段时，机器跟着先报它的枢纽，那台三个周期没再看到它才换）、`dns`、`names`（本站的名字，如 `registry.rlark.internal`）。
 - `nodes[]`：`role: Hub` 加 `endpoints`（`Public` 谁都能拨，`Site` 本站和 `reaches` 它的场站能拨）、`relay`、`nodeAddress`（别人找它用的地址不是隧道地址时，如云上 VPC 地址）、`advertise`（经它可达的网段）、`uplink`、`publicKey`（还连不上 Station API 的节点先声明公钥）。
 - 有上联（`uplink` 或本站的 `leafUplink`）的节点，文档里的 `uplinkRoutes` 是它拨的每个端点和本站 `dns` 的每台域名服务器各一条经上联网关的 /32 路由；站点不写 `dns` 时网关把机器自己的 resolv.conf 交给 kubelet，机器人上那份没有域名服务器，所以机器人所在的站点要写 `dns`。
 - `names`：全站同一地址的名字，如各集群的 `cp.<集群>.rlark.internal`、`rlark-server`、`gateway.rlark.internal`。网关写进每台节点的 `/etc/hosts`（行尾 `# rlark names`）。
