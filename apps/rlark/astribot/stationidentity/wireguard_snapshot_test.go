@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,13 +66,13 @@ func TestAgentForwardsWhatTheGatewayStates(t *testing.T) {
 	agent.observe = func() (Observation, error) { return Observation{}, nil }
 	agent.program = AgentProgram{Digest: strings.Repeat("cd", 32)}
 	var sent string
-	agent.post = func(_ context.Context, _ string, body []byte, _ string) error {
+	agent.post = func(_ context.Context, _ string, body []byte) (int, []byte, error) {
 		sent = string(body)
 		var request observationRequest
 		if err := json.Unmarshal(body, &request); err != nil {
-			return err
+			return 0, nil, err
 		}
-		return validateObservation(request.Observation, now)
+		return http.StatusAccepted, nil, validateObservation(request.Observation, now)
 	}
 	for name, c := range map[string]struct{ file, want string }{
 		"a gateway that states its program": {

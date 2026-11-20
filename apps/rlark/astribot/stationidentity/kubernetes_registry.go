@@ -59,13 +59,6 @@ func NewKubernetesClusterRegistry(management dynamic.Interface, core kubernetes.
 }
 
 func (r *KubernetesClusterRegistry) Reader(ctx context.Context, clusterID string) (IdentityReader, error) {
-	_, err := (KubernetesClusterNamespaceResolver{Client: r.Management}).ResolveObservationNamespace(ctx, clusterID)
-	if errors.Is(err, ErrClusterNotRegistered) {
-		return nil, ErrClusterNotRegistered
-	}
-	if err != nil {
-		return nil, fmt.Errorf("resolve registered cluster: %w", err)
-	}
 	cluster, err := r.Management.Resource(rlarkClusterGVR).Get(ctx, clusterID, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, ErrClusterNotRegistered
@@ -73,25 +66,19 @@ func (r *KubernetesClusterRegistry) Reader(ctx context.Context, clusterID string
 	if err != nil {
 		return nil, fmt.Errorf("read registered Cluster: %w", err)
 	}
-	delisted, found, err := unstructured.NestedBool(cluster.Object, "spec", "delisted")
-	if err != nil {
-		return nil, fmt.Errorf("read Cluster delisted state: %w", err)
-	}
-	if found && delisted {
+	if delisted, _, _ := unstructured.NestedBool(cluster.Object, "spec", "delisted"); delisted {
 		return nil, ErrClusterNotRegistered
 	}
 
 	secretName := stationmember.SecretName(clusterID)
 	secret, err := r.Core.CoreV1().Secrets(r.CredentialsNS).Get(ctx, secretName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		r.evict(clusterID)
 		return nil, ErrClusterNotRegistered
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read member credential Secret: %w", err)
 	}
 	if secret.Annotations[memberClusterIDKey] != clusterID {
-		r.evict(clusterID)
 		return nil, errors.New("member credential Secret ownership mismatch")
 	}
 	data := secret.Data
@@ -102,7 +89,6 @@ func (r *KubernetesClusterRegistry) Reader(ctx context.Context, clusterID string
 		Audience: string(data[memberAudience]),
 	}
 	if len(kubeconfig) == 0 || reg.Namespace == "" || reg.ServiceAccount == "" || reg.ServiceAccountUID == "" || reg.Audience == "" {
-		r.evict(clusterID)
 		return nil, errors.New("member credential Secret is incomplete")
 	}
 	digest := sha256.Sum256(kubeconfig)
@@ -118,7 +104,7 @@ func (r *KubernetesClusterRegistry) Reader(ctx context.Context, clusterID string
 		r.cache[clusterID] = entry
 	}
 	r.mu.Unlock()
-	return registeredReader{cluster: RegisteredCluster{Registration: reg, Client: entry.client}}, nil
+	return registeredReader{registration: reg, client: entry.client}, nil
 }
 
 // MemberClient returns the client of a registered cluster.
@@ -127,13 +113,7 @@ func (r *KubernetesClusterRegistry) MemberClient(ctx context.Context, clusterID 
 	if err != nil {
 		return nil, err
 	}
-	return reader.(registeredReader).cluster.Client, nil
-}
-
-func (r *KubernetesClusterRegistry) evict(clusterID string) {
-	r.mu.Lock()
-	delete(r.cache, clusterID)
-	r.mu.Unlock()
+	return reader.(registeredReader).client, nil
 }
 
 func newMemberKubernetesClient(kubeconfig []byte) (kubernetes.Interface, error) {

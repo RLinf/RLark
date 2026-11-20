@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	authv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,27 +13,32 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+// Evidence is what a verified Pod-bound token says of its caller: the Node its Pod runs on.
+type Evidence struct {
+	ClusterID, NodeName, NodeUID string
+	// NodePressures are the pressure conditions that are True on that Node.
+	NodePressures []string
+}
+
 // Registration is supplied by a trusted server-side registry, never by the
 // caller. The client must target that registered cluster with verified TLS.
 type Registration struct {
 	ClusterID, Namespace, ServiceAccount, ServiceAccountUID, Audience string
 }
 
-type RegisteredCluster struct {
-	Registration Registration
-	Client       kubernetes.Interface
+type registeredReader struct {
+	registration Registration
+	client       kubernetes.Interface
 }
 
-type registeredReader struct{ cluster RegisteredCluster }
-
 func (r registeredReader) Authenticate(ctx context.Context, token string) (Evidence, error) {
-	return Authenticate(ctx, r.cluster.Client, r.cluster.Registration, token)
+	return Authenticate(ctx, r.client, r.registration, token)
 }
 
 // CurrentNodeUID rechecks the member Node on each query. A historical
 // heartbeat is not proof that a Node still exists.
 func (r registeredReader) CurrentNodeUID(ctx context.Context, nodeName string) (string, error) {
-	node, err := r.cluster.Client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	node, err := r.client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("read current member Node: %w", err)
 	}
@@ -54,12 +58,11 @@ func Authenticate(ctx context.Context, client kubernetes.Interface, reg Registra
 	if review.Status.Error != "" || !review.Status.Authenticated || review.Status.User.Username != "system:serviceaccount:"+reg.Namespace+":"+reg.ServiceAccount || string(review.Status.User.UID) != reg.ServiceAccountUID {
 		return Evidence{}, errors.New("token review rejected identity")
 	}
-	name, okName := singleExtra(review.Status.User.Extra, "authentication.kubernetes.io/pod-name")
-	uid, okUID := singleExtra(review.Status.User.Extra, "authentication.kubernetes.io/pod-uid")
-	if !okName || !okUID {
+	names, uids := review.Status.User.Extra["authentication.kubernetes.io/pod-name"], review.Status.User.Extra["authentication.kubernetes.io/pod-uid"]
+	if len(names) != 1 || len(uids) != 1 {
 		return Evidence{}, errors.New("token missing bound pod identity")
 	}
-	pod, err := client.CoreV1().Pods(reg.Namespace).Get(ctx, name, metav1.GetOptions{})
+	pod, err := client.CoreV1().Pods(reg.Namespace).Get(ctx, names[0], metav1.GetOptions{})
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return Evidence{}, fmt.Errorf("%w: read bound Pod: %w", ErrIdentityUnavailable, err)
@@ -83,29 +86,18 @@ func Authenticate(ctx context.Context, client kubernetes.Interface, reg Registra
 		}
 		return Evidence{}, fmt.Errorf("read node: %w", err)
 	}
-	e := Evidence{ClusterID: reg.ClusterID, RegisteredClusterID: reg.ClusterID, ServiceAccountNamespace: reg.Namespace, RegisteredNamespace: reg.Namespace, ServiceAccountName: reg.ServiceAccount, RegisteredServiceAccount: reg.ServiceAccount, TokenServiceAccountUID: string(review.Status.User.UID), RegisteredServiceAccountUID: string(sa.UID), PodServiceAccountName: pod.Spec.ServiceAccountName, TokenPodName: name, PodName: pod.Name, TokenPodUID: uid, PodUID: string(pod.UID), PodNodeName: pod.Spec.NodeName, NodeName: node.Name, NodeUID: string(node.UID), TokenAuthenticated: review.Status.Authenticated, TokenAudiences: review.Status.Audiences, RequiredAudiences: []string{reg.Audience}, PodDeleted: pod.DeletionTimestamp != nil || sa.DeletionTimestamp != nil, NodeDeleted: node.DeletionTimestamp != nil}
+	if string(sa.UID) != reg.ServiceAccountUID || pod.Spec.ServiceAccountName != reg.ServiceAccount || string(pod.UID) != uids[0] || node.UID == "" ||
+		!slices.Contains(review.Status.Audiences, reg.Audience) ||
+		pod.DeletionTimestamp != nil || sa.DeletionTimestamp != nil || node.DeletionTimestamp != nil {
+		return Evidence{}, errors.New("the token is not of a current Pod of the registered ServiceAccount on a current Node")
+	}
 	// The Node is in hand for its UID; its pressure is stored with the report
 	// it vouches for, so no agent is given a way to read or to state it.
-	e.NodePressures = []string{}
+	e := Evidence{ClusterID: reg.ClusterID, NodeName: node.Name, NodeUID: string(node.UID), NodePressures: []string{}}
 	for _, condition := range node.Status.Conditions {
 		if condition.Status == corev1.ConditionTrue && slices.Contains([]corev1.NodeConditionType{corev1.NodeDiskPressure, corev1.NodeMemoryPressure, corev1.NodePIDPressure}, condition.Type) {
 			e.NodePressures = append(e.NodePressures, string(condition.Type))
 		}
 	}
-	if string(sa.UID) != reg.ServiceAccountUID {
-		return Evidence{}, errors.New("service account registration changed")
-	}
-	if err := Validate(e); err != nil {
-		return Evidence{}, err
-	}
 	return e, nil
-}
-
-func singleExtra(extras map[string]authv1.ExtraValue, key string) (string, bool) {
-	values := extras[key]
-	returnValue := ""
-	if len(values) == 1 {
-		returnValue = values[0]
-	}
-	return returnValue, len(values) == 1 && returnValue != "" && strings.TrimSpace(returnValue) == returnValue
 }

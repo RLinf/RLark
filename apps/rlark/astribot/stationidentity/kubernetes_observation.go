@@ -16,15 +16,14 @@ import (
 )
 
 const (
-	stationGroup         = "station.rlark.io"
-	stationVersion       = "v1alpha1"
-	rlarkClusterResource = "clusters"
+	stationGroup   = "station.rlark.io"
+	stationVersion = "v1alpha1"
 )
 
-var rlarkClusterGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: rlarkClusterResource}
+var rlarkClusterGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "clusters"}
 
 // ObservationNamespaceResolver maps a trusted RLark cluster ID to its
-// management-plane agentNamespace. Implementations must reject ambiguous scope.
+// management-plane agentNamespace.
 type ObservationNamespaceResolver interface {
 	ResolveObservationNamespace(context.Context, string) (string, error)
 }
@@ -34,43 +33,24 @@ type ObservationNamespaceResolver interface {
 type KubernetesClusterNamespaceResolver struct{ Client dynamic.Interface }
 
 func (r KubernetesClusterNamespaceResolver) ResolveObservationNamespace(ctx context.Context, clusterID string) (string, error) {
-	if clusterID == "" {
-		return "", ErrClusterNotRegistered
-	}
 	clusters, err := r.Client.Resource(rlarkClusterGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return "", fmt.Errorf("list registered RLark Clusters: %w", err)
 	}
-	var namespace string
+	// The namespace of the Cluster of that name, which no other Cluster may claim.
+	namespace, claims := "", map[string]int{}
 	for i := range clusters.Items {
-		cluster := &clusters.Items[i]
-		agentNamespace, found, err := unstructured.NestedString(cluster.Object, "spec", "agentNamespace")
-		if err != nil {
-			return "", fmt.Errorf("read Cluster %q agentNamespace: %w", cluster.GetName(), err)
+		agentNamespace, _, _ := unstructured.NestedString(clusters.Items[i].Object, "spec", "agentNamespace")
+		claims[agentNamespace]++
+		if clusters.Items[i].GetName() == clusterID {
+			namespace = agentNamespace
 		}
-		if cluster.GetName() != clusterID || !found || agentNamespace == "" {
-			continue
-		}
-		if namespace != "" {
-			return "", fmt.Errorf("cluster ID %q is ambiguous", clusterID)
-		}
-		namespace = agentNamespace
 	}
 	if namespace == "" {
 		return "", ErrClusterNotRegistered
 	}
-	for i := range clusters.Items {
-		other := &clusters.Items[i]
-		if other.GetName() == clusterID {
-			continue
-		}
-		otherNamespace, found, err := unstructured.NestedString(other.Object, "spec", "agentNamespace")
-		if err != nil {
-			return "", fmt.Errorf("read Cluster %q agentNamespace: %w", other.GetName(), err)
-		}
-		if found && otherNamespace == namespace {
-			return "", fmt.Errorf("multiple RLark Clusters claim agent namespace %q", namespace)
-		}
+	if claims[namespace] > 1 {
+		return "", fmt.Errorf("multiple RLark Clusters claim agent namespace %q", namespace)
 	}
 	return namespace, nil
 }
@@ -94,9 +74,6 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 	namespace, err := s.Namespaces.ResolveObservationNamespace(ctx, evidence.ClusterID)
 	if err != nil {
 		return fmt.Errorf("resolve observation namespace: %w", err)
-	}
-	if namespace == "" || evidence.NodeName == "" || evidence.NodeUID == "" {
-		return errors.New("verified observation has incomplete namespace or identity")
 	}
 	// A node tells its peers by public key. What is stored is the member each
 	// key is enrolled as, or the node a redeemed admission or the SiteNetwork
@@ -137,7 +114,7 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 			}
 		}
 	}
-	status, err := observationStatus(evidence, observation, members, s.now())
+	status, err := observationStatus(evidence, observation, members, clock(s.Now))
 	if err != nil {
 		return fmt.Errorf("encode observation: %w", err)
 	}
@@ -165,51 +142,23 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 	return nil
 }
 
-func (s *KubernetesObservationSink) now() time.Time {
-	if s.Now != nil {
-		return s.Now().UTC()
-	}
-	return time.Now().UTC()
-}
-
 func observationStatus(evidence Evidence, observation Observation, members map[string]string, receivedAt time.Time) (map[string]interface{}, error) {
-	// Written as a list even when empty: that is what tells a Node under no
-	// pressure from a report stored before pressures were.
-	pressures := make([]interface{}, 0, len(evidence.NodePressures))
-	for _, pressure := range evidence.NodePressures {
-		pressures = append(pressures, pressure)
-	}
+	// A merge patch keeps what it does not name: what this report lacks is written as null.
 	status := map[string]interface{}{
 		"reportedAt": receivedAt.UTC().Format(time.RFC3339Nano),
 		"nodeUID":    evidence.NodeUID,
 		"systemUUID": observation.SystemUUID,
 		"bootTime":   nil,
 		"wireguard":  nil,
-		"roles":      []interface{}{},
-		"probes":     []interface{}{},
-		"gateway":    nil,
-		"agent":      map[string]interface{}{"digest": observation.Agent.Digest},
-		"pressures":  pressures,
-	}
-	if observation.Gateway != nil {
-		status["gateway"] = map[string]interface{}{"documentLevel": int64(observation.Gateway.DocumentLevel), "digest": observation.Gateway.Digest}
+		"probes":     append([]Probe{}, observation.Probes...),
+		"gateway":    observation.Gateway,
+		"agent":      observation.Agent,
+		// Written as a list even when empty: that is what tells a Node under no
+		// pressure from a report stored before pressures were.
+		"pressures": append([]string{}, evidence.NodePressures...),
 	}
 	if observation.BootTime != nil {
 		status["bootTime"] = observation.BootTime.UTC().Format(time.RFC3339Nano)
-	}
-	if len(observation.Roles) > 0 {
-		roles := make([]interface{}, len(observation.Roles))
-		for i, role := range observation.Roles {
-			roles[i] = role
-		}
-		status["roles"] = roles
-	}
-	if len(observation.Probes) > 0 {
-		probes, err := toUnstructuredValue(observation.Probes)
-		if err != nil {
-			return nil, err
-		}
-		status["probes"] = probes
 	}
 	if len(observation.Wireguard) > 0 {
 		var wireguard map[string]interface{}
@@ -231,16 +180,4 @@ func observationStatus(evidence Evidence, observation Observation, members map[s
 		status["wireguard"] = wireguard
 	}
 	return status, nil
-}
-
-func toUnstructuredValue(value any) (interface{}, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	var converted interface{}
-	if err := json.Unmarshal(data, &converted); err != nil {
-		return nil, err
-	}
-	return converted, nil
 }

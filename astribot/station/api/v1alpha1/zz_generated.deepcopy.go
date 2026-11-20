@@ -714,11 +714,6 @@ func (in *NodeObservation) DeepCopyInto(out *NodeObservation) {
 		in, out := &in.BootTime, &out.BootTime
 		*out = (*in).DeepCopy()
 	}
-	if in.Roles != nil {
-		in, out := &in.Roles, &out.Roles
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.Wireguard != nil {
 		in, out := &in.Wireguard, &out.Wireguard
 		*out = new(WireguardObservation)

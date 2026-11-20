@@ -72,11 +72,6 @@ func covering(mounts []Mount, target string) (Mount, bool) {
 	return best, found
 }
 
-// rootUnavailableError says why a node cannot serve a root.
-type rootUnavailableError struct{ message string }
-
-func (e *rootUnavailableError) Error() string { return e.message }
-
 // CheckRoot finds the mount a storage's root lies on in the node's file
 // systems (seen under hostRoot) and requires it to be one of its own, not the
 // node's root file system (a directory that is only there because the file
@@ -86,16 +81,16 @@ func CheckRoot(mounts []Mount, hostRoot, node, root, fsType string) (Mount, erro
 	target := path.Join(hostRoot, root)
 	info, err := os.Stat(target)
 	if err != nil || !info.IsDir() {
-		return Mount{}, &rootUnavailableError{fmt.Sprintf("node %s has no directory %s", node, root)}
+		return Mount{}, fmt.Errorf("node %s has no directory %s", node, root)
 	}
 	mount, found := covering(mounts, target)
 	nodeRoot := path.Clean(hostRoot)
 	if !found || mount.MountPoint == nodeRoot || mount.MountPoint == "/" {
-		return Mount{}, &rootUnavailableError{fmt.Sprintf("node %s: %s is not on a mounted file system (it is on the node's root file system)%s", node, root, expecting(fsType))}
+		return Mount{}, fmt.Errorf("node %s: %s is not on a mounted file system (it is on the node's root file system)%s", node, root, expecting(fsType))
 	}
 	point := "/" + strings.TrimPrefix(strings.TrimPrefix(mount.MountPoint, nodeRoot), "/")
 	if fsType != "" && mount.FSType != fsType {
-		return Mount{}, &rootUnavailableError{fmt.Sprintf("node %s: %s is mounted as %s, expected %s", node, point, mount.FSType, fsType)}
+		return Mount{}, fmt.Errorf("node %s: %s is mounted as %s, expected %s", node, point, mount.FSType, fsType)
 	}
 	return mount, nil
 }

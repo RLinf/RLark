@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -25,10 +24,6 @@ import (
 // stored configuration in place: the tunnel never depends on station-api
 // being reachable.
 func (a *Agent) Enroll(ctx context.Context) (string, error) {
-	tokenBytes, err := a.read(a.config.TokenFile)
-	if err != nil {
-		return "", errors.New("read projected Station token")
-	}
 	request := enrollmentRequest{ClusterID: a.config.ClusterID}
 	if a.config.NetworkIdentityFile != "" {
 		identity, err := a.read(a.config.NetworkIdentityFile)
@@ -50,28 +45,15 @@ func (a *Agent) Enroll(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, a.config.RequestLimit)
-	defer cancel()
-	httpRequest, err := http.NewRequestWithContext(requestCtx, http.MethodPost, strings.TrimRight(a.config.APIURL, "/")+"/v1/network/enrollments", bytes.NewReader(body))
+	status, data, err := a.post(ctx, "/v1/network/enrollments", body)
 	if err != nil {
-		return "", errors.New("build Station API request")
+		return "", err
 	}
-	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tokenBytes)))
-	response, err := a.client.Do(httpRequest)
-	if err != nil {
-		return "", fmt.Errorf("send network enrollment: %w", err)
-	}
-	defer func() { _ = response.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return "", errors.New("read network enrollment answer")
-	}
-	if response.StatusCode == http.StatusConflict {
+	if status == http.StatusConflict {
 		return "pending", nil
 	}
-	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Station API rejected network enrollment with HTTP %d", response.StatusCode)
+	if status != http.StatusOK {
+		return "", fmt.Errorf("Station API rejected network enrollment with HTTP %d", status)
 	}
 	var answer NetworkEnrollmentAnswer
 	if err := json.Unmarshal(data, &answer); err != nil {

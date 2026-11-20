@@ -60,10 +60,7 @@ func AdmittedKeys(client dynamic.Interface) *KeyIndex {
 
 // Lookup returns the objects by key. The map is not written to again.
 func (x *KeyIndex) Lookup(ctx context.Context, keys ...string) (map[string]*unstructured.Unstructured, error) {
-	now := time.Now()
-	if x.Now != nil {
-		now = x.Now()
-	}
+	now := clock(x.Now)
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	age := now.Sub(x.listed)
@@ -146,10 +143,7 @@ func (d *NetworkDocuments) proven(w http.ResponseWriter, request documentRequest
 		writeError(w, http.StatusBadRequest, "public_key must be a WireGuard public key")
 		return false
 	}
-	now := time.Now()
-	if d.Now != nil {
-		now = d.Now()
-	}
+	now := clock(d.Now)
 	challenge, _ := base64.StdEncoding.DecodeString(request.Challenge)
 	proof, _ := base64.StdEncoding.DecodeString(request.Proof)
 	proven := false

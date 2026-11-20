@@ -61,11 +61,11 @@ func TestKubernetesClusterRegistryLoadsOnlyOwnedCurrentRegistration(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		registered := reader.(registeredReader).cluster
-		if registered.Registration.Namespace != "station-system" || registered.Registration.ServiceAccount != "station-agent" || registered.Registration.ServiceAccountUID != "service-account-uid" || registered.Registration.Audience != "station.rlark.io" {
-			t.Fatalf("unexpected registration: %#v", registered.Registration)
+		registered := reader.(registeredReader)
+		if registered.registration.Namespace != "station-system" || registered.registration.ServiceAccount != "station-agent" || registered.registration.ServiceAccountUID != "service-account-uid" || registered.registration.Audience != "station.rlark.io" {
+			t.Fatalf("unexpected registration: %#v", registered.registration)
 		}
-		if registered.Client == nil {
+		if registered.client == nil {
 			t.Fatal("registered reader is missing member client")
 		}
 	}

@@ -63,7 +63,7 @@ func TestHTTPObservationAuthenticatesAndReturnsGenericFailures(t *testing.T) {
 	sink := &testObservationSink{}
 	now := time.Unix(2000, 0)
 	api := &API{Registry: testRegistry{readers: map[string]IdentityReader{"c": reader}}, Observations: sink, Now: func() time.Time { return now }}
-	body := `{"cluster_id":"c","observation":{` + testAgent + `,"systemUUID":"uuid","roles":["worker"],"wireguard":{"interface":"st-wg0"},"probes":[{"target":"nas:445","ok":true}]}}`
+	body := `{"cluster_id":"c","observation":{` + testAgent + `,"systemUUID":"uuid","wireguard":{"interface":"st-wg0"},"probes":[{"target":"nas:445","ok":true}]}}`
 	if w := apiRequest(api, http.MethodPost, "/v1/observations", body, ""); w.Code != 401 {
 		t.Fatalf("missing auth status=%d", w.Code)
 	}
@@ -77,7 +77,6 @@ func TestHTTPObservationAuthenticatesAndReturnsGenericFailures(t *testing.T) {
 		t.Fatalf("unknown field status=%d", w.Code)
 	}
 	for _, invalid := range []string{
-		`{"cluster_id":"c","observation":{` + testAgent + `,"roles":["worker","worker"]}}`,
 		`{"cluster_id":"c","observation":{` + testAgent + `,"wireguard":{}}}`,
 		`{"cluster_id":"c","observation":{` + testAgent + `,"wireguard":{"interface":"st-wg0","privateKey":"secret"}}}`,
 		`{"cluster_id":"c","observation":{` + testAgent + `,"wireguard":{"interface":"st-wg0","publicKey":"not-a-wireguard-key"}}}`,
@@ -138,13 +137,13 @@ func TestHTTPReadinessIsSeparateFromLiveness(t *testing.T) {
 func TestHTTPObservationRateLimitRunsAfterIdentityAndBeforePersistence(t *testing.T) {
 	reader := &fakeReader{evidence: validEvidence()}
 	sink := &testObservationSink{}
-	limiter := NewTokenBucketObservationLimiter(1, 1, 8, time.Minute)
+	limiter := &NodeLimiter{Rate: 1, Burst: 1}
 	now := time.Unix(5000, 0)
 	api := &API{
 		Registry:     testRegistry{readers: map[string]IdentityReader{"c": reader}},
 		Observations: sink, ObservationLimiter: limiter, Now: func() time.Time { return now },
 	}
-	body := `{"cluster_id":"c","observation":{` + testAgent + `,"roles":["worker"]}}`
+	body := `{"cluster_id":"c","observation":{` + testAgent + `}}`
 	if got := apiRequest(api, http.MethodPost, "/v1/observations", body, "token"); got.Code != http.StatusAccepted {
 		t.Fatalf("initial observation status=%d %s", got.Code, got.Body.String())
 	}
@@ -221,4 +220,17 @@ func TestProgramObservationValidation(t *testing.T) {
 	if w := apiRequest(api, http.MethodPost, "/v1/observations", `{"cluster_id":"c","observation":{"gateway":{"documentLevel":1,"digest":"`+digest+`","image":"x"}}}`, "token"); w.Code != http.StatusBadRequest {
 		t.Fatalf("a field the gateway does not state was accepted: %d", w.Code)
 	}
+}
+
+type fakeReader struct {
+	evidence Evidence
+	err      error
+}
+
+func (f *fakeReader) Authenticate(context.Context, string) (Evidence, error) {
+	return f.evidence, f.err
+}
+
+func validEvidence() Evidence {
+	return Evidence{ClusterID: "c", NodeName: "node", NodeUID: "n"}
 }

@@ -1,16 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -57,10 +55,6 @@ func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address
 	if address == "" || credentialsNamespace == "" || certFile == "" || keyFile == "" {
 		return errors.New("listener, credential namespace and TLS certificate paths are required")
 	}
-	if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
-		return errors.New("load Station API TLS certificate")
-	}
-
 	config, err := kubeConfig.BuildRestConfig()
 	if err != nil {
 		return errors.New("load management API credentials")
@@ -83,7 +77,7 @@ func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address
 	api := &stationidentity.API{
 		Registry:           registry,
 		Documents:          documents,
-		ObservationLimiter: stationidentity.NewTokenBucketObservationLimiter(1, 5, 10000, 10*time.Minute),
+		ObservationLimiter: &stationidentity.NodeLimiter{Rate: 1, Burst: 5},
 		Observations: &stationidentity.KubernetesObservationSink{
 			Client: management, Namespaces: stationidentity.KubernetesClusterNamespaceResolver{Client: management}, Enrolled: enrolled,
 			Admitted: documents.Admitted, Declared: &stationidentity.DeclaredKeys{Client: management},
@@ -91,7 +85,7 @@ func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address
 		Enrollments: &stationidentity.KubernetesNetworkEnroller{
 			Client: management, Namespaces: stationidentity.KubernetesClusterNamespaceResolver{Client: management},
 		},
-		EnrollmentLimiter: stationidentity.NewTokenBucketObservationLimiter(1, 5, 10000, 10*time.Minute),
+		EnrollmentLimiter: &stationidentity.NodeLimiter{Rate: 1, Burst: 5},
 		Ready: func(readyCtx context.Context) error {
 			_, err := management.Resource(rlarkClusterGVR).List(readyCtx, metav1.ListOptions{Limit: 1})
 			return err
@@ -107,7 +101,10 @@ func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address
 	}
 	if gatewayCredentialFile != "" {
 		api.NetworkSummary = &stationidentity.NodeNetworkSummaryReader{Registry: registry, Client: management, Namespaces: stationidentity.KubernetesClusterNamespaceResolver{Client: management}}
-		api.GatewayCredential = func() ([]byte, error) { return readGatewayCredential(gatewayCredentialFile) }
+		api.GatewayCredential = func() ([]byte, error) {
+			token, err := os.ReadFile(gatewayCredentialFile)
+			return bytes.TrimSpace(token), err
+		}
 	}
 	server := &http.Server{
 		Addr: address, Handler: api,
@@ -118,43 +115,20 @@ func run(ctx context.Context, kubeConfig configs.KubernetesClientConfig, address
 		MaxHeaderBytes:    32 << 10,
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
 	}
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return errors.New("bind Station API listener")
-	}
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- server.ServeTLS(listener, certFile, keyFile) }()
-	select {
-	case err := <-serveErr:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return errors.New("Station API listener stopped")
-	case <-ctx.Done():
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			return errors.New("shut down Station API listener")
-		}
-		return nil
+		_ = server.Shutdown(shutdownCtx)
+	}()
+	if err := server.ListenAndServeTLS(certFile, keyFile); !errors.Is(err, http.ErrServerClosed) {
+		return err
 	}
-}
-
-func readGatewayCredential(path string) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, 4097))
-	if err != nil {
-		return nil, err
-	}
-	token := strings.TrimSpace(string(data))
-	if len(token) < 32 || len(token) > 4096 || strings.ContainsAny(token, " \t\r\n") {
-		return nil, errors.New("invalid gateway credential")
-	}
-	return []byte(token), nil
+	// Serve returns as soon as Shutdown starts; requests in flight have until it ends.
+	<-drained
+	return nil
 }
 
 var rlarkClusterGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "clusters"}

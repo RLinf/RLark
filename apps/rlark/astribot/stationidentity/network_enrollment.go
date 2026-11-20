@@ -72,7 +72,7 @@ func (a *API) enroll(w http.ResponseWriter, r *http.Request, token string) {
 			return
 		}
 	}
-	if a.EnrollmentLimiter != nil && !a.EnrollmentLimiter.Allow(e, a.now()) {
+	if a.EnrollmentLimiter != nil && !a.EnrollmentLimiter.Allow(e, clock(a.Now)) {
 		w.Header().Set("Retry-After", "1")
 		writeError(w, http.StatusTooManyRequests, "enrollment rate limit exceeded")
 		return

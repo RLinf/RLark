@@ -131,15 +131,6 @@ func (d *Driver) DeleteVolume(_ context.Context, request *csi.DeleteVolumeReques
 	return &csi.DeleteVolumeResponse{}, nil
 }
 
-func (d *Driver) ValidateVolumeCapabilities(_ context.Context, request *csi.ValidateVolumeCapabilitiesRequest) (*csi.ValidateVolumeCapabilitiesResponse, error) {
-	for _, capability := range request.GetVolumeCapabilities() {
-		if capability.GetBlock() != nil {
-			return &csi.ValidateVolumeCapabilitiesResponse{Message: "block volumes are not supported"}, nil
-		}
-	}
-	return &csi.ValidateVolumeCapabilitiesResponse{Confirmed: &csi.ValidateVolumeCapabilitiesResponse_Confirmed{VolumeCapabilities: request.GetVolumeCapabilities()}}, nil
-}
-
 func (d *Driver) NodeGetInfo(context.Context, *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {
 	return &csi.NodeGetInfoResponse{NodeId: d.NodeID}, nil
 }

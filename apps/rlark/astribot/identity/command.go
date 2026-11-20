@@ -3,7 +3,6 @@ package identity
 import (
 	"context"
 	"fmt"
-	"os"
 	"slices"
 	"time"
 
@@ -196,9 +195,6 @@ func (o *identityOptions) run(ctx context.Context, act identityAction) error {
 }
 
 func clusterClient(path string) (kubernetes.Interface, error) {
-	if _, err := os.Stat(path); err != nil {
-		return nil, err
-	}
 	config, err := clientcmd.BuildConfigFromFlags("", path)
 	if err != nil {
 		return nil, err

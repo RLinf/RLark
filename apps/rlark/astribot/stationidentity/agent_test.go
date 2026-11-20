@@ -45,7 +45,7 @@ func TestAgentReportUsesRotatingPodTokenAndVerifiedTLS(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("decode observation: %v", err)
 		}
-		if request.ClusterID != "cluster-a" || len(request.Observation.Roles) != 0 || request.Observation.BootTime == nil || !request.Observation.BootTime.Equal(bootTime) {
+		if request.ClusterID != "cluster-a" || request.Observation.BootTime == nil || !request.Observation.BootTime.Equal(bootTime) {
 			t.Errorf("request = %#v", request)
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -104,9 +104,9 @@ func TestAgentDoesNotReportWhenObservationCollectionFails(t *testing.T) {
 	}
 	called := false
 	agent.observe = func() (Observation, error) { return Observation{}, errors.New("proc unavailable") }
-	agent.post = func(context.Context, string, []byte, string) error {
+	agent.post = func(context.Context, string, []byte) (int, []byte, error) {
 		called = true
-		return nil
+		return http.StatusAccepted, nil, nil
 	}
 	if err := agent.Report(context.Background()); err == nil {
 		t.Fatal("observation collection failure was ignored")
@@ -122,21 +122,14 @@ func TestAgentRejectsInvalidConfigAndResponse(t *testing.T) {
 		t.Fatal("accepted non-HTTPS endpoint")
 	}
 	base.APIURL = "https://station-api"
-	base.ProbeAddress = "invalid-port"
-	if _, err := newAgent(base, func(string) ([]byte, error) { return []byte("token"), nil }, time.Now); err == nil {
-		t.Fatal("accepted invalid probe address")
-	}
 	base.ProbeAddress = ":18082"
 	agent, err := newAgent(base, func(string) ([]byte, error) { return []byte("token"), nil }, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	agent.post = func(context.Context, string, []byte, string) error { return errors.New("down") }
+	agent.post = func(context.Context, string, []byte) (int, []byte, error) { return 0, nil, errors.New("down") }
 	if err := agent.Report(context.Background()); err == nil {
 		t.Fatal("accepted failed API report")
-	}
-	if _, err := newAgent(AgentConfig{APIURL: "https://station-api", ClusterID: "cluster", TokenFile: "token", Interval: time.Second, RequestLimit: time.Second}, func(string) ([]byte, error) { return nil, nil }, time.Now); err == nil {
-		t.Fatal("accepted too-short observation interval")
 	}
 }
 

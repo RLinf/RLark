@@ -144,7 +144,7 @@ func TestKubernetesNetworkEnrollerStoresRequestAndReturnsItsAnswer(t *testing.T)
 
 	// Another cluster cannot take over the object.
 	foreign := validEvidence()
-	foreign.ClusterID, foreign.RegisteredClusterID = "d", "d"
+	foreign.ClusterID = "d"
 	if _, err := (&KubernetesNetworkEnroller{Client: client, Namespaces: observationNamespaceMap{"d": "agent-c"}}).Enroll(context.Background(), foreign, request); err == nil {
 		t.Fatal("foreign cluster took over an enrollment")
 	}
