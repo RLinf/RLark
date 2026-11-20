@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { AlertTriangle, Fingerprint, Power, ShieldCheck, X } from "lucide-react";
 import type { StationItem } from "../api";
 import type { ClusterSummary } from "../../types";
+import { NodeCameras } from "../components/NodeCameras";
 import { formatChinaDateTime } from "../../utils/time.js";
 import { CopyButton } from "../components/CopyButton";
 import { NodeName, type NodeRef } from "../components/NodeName";
@@ -118,6 +119,7 @@ export function StationDrawer({ station, cluster, node, labels, now, zh, power, 
           </div>
           {power.message && <small role="status">{power.message}</small>}
         </section>}
+        <NodeCameras node={station.metadata.name} namespace={station.metadata.namespace} labels={labels} zh={zh} />
 
         <section className="node-detail-section station-drawer-section">
           <span className="node-detail-label"><ShieldCheck size={14} />{zh ? "健康条件" : "Conditions"}</span>
