@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -25,8 +24,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
-	"github.com/rlinf/rlark/apps/rlark/astribot/rollout"
-	"github.com/rlinf/rlark/apps/rlark/astribot/storageref"
 	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
 )
@@ -120,17 +117,10 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 		targetPhase = rlarkv1alpha1.AddonPhaseUpgrading
 	}
 
+	// Render manifests
 	manifests, err := r.rendered(ctx, &mgmtAddon)
 	if errors.Is(err, errPackageMissing) {
-		// Nothing of the Addon is touched. Where nothing new was asked of it (the agent was replaced, the
-		// Addon is as it was), its workloads are still what its status says; a new revision that cannot be
-		// rendered has failed.
-		phase := mgmtAddon.Status.Phase
-		if phase == "" || mgmtAddon.Status.ObservedGeneration != mgmtAddon.Generation {
-			phase = rlarkv1alpha1.AddonPhaseFailed
-		}
-		r.updateStatus(ctx, &mgmtAddon, phase, err.Error())
-		return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
+		return r.packageMissing(ctx, &mgmtAddon, err)
 	}
 	if err != nil {
 		r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("render error: %v", err))
@@ -138,25 +128,21 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 	}
 
 	// Apply each manifest
-	var storageViews []storageref.View
+	prepare := r.preparer(ctx)
 	for i, m := range manifests {
-		objs, err := parseManifest(m)
+		objs, err := parseManifest(m.Raw)
 		if err != nil {
 			r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("parse manifest %d: %v", i, err))
 			return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
 		}
 		for _, obj := range objs {
-			if err := r.resolveStorage(ctx, obj, apis.Namespace, &storageViews); err != nil {
-				r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("storage: %v", err))
-				return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
-			}
-			if err := rollDaemonSet(obj); err != nil {
-				r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("%s/%s: %v", obj.GetKind(), obj.GetName(), err))
+			if err := prepare(obj); err != nil {
+				r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, err.Error())
 				return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
 			}
 			injectLabels(obj, mgmtAddon.Name, string(mgmtAddon.UID))
 			obj.SetAnnotations(mergeMaps(obj.GetAnnotations(), map[string]string{
-				AddonGenerationAnnotation: strconv.FormatInt(mgmtAddon.Generation, 10),
+				AddonGenerationAnnotation: addonGeneration(&mgmtAddon),
 			}))
 			if err := r.applyObject(ctx, obj, &mgmtAddon); err != nil {
 				r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("apply %s/%s: %v", obj.GetKind(), obj.GetName(), err))
@@ -226,39 +212,15 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 		return nil
 	}
 
-	// Never adopt a same-named object belonging to a different Addon instance.
-	labels := existing.GetLabels()
-	if labels[addons.LabelAddonName] != mgmtAddon.Name || labels[addons.LabelAddonUID] != string(mgmtAddon.UID) || mgmtAddon.UID == "" {
-		return fmt.Errorf("ownership conflict for %s/%s", gvk.Kind, key)
-	}
-	// The annotation identifies the rendered revision, but does not prove that
-	// the live fields still match it. Check desired fields on each reconciliation.
-	existingAnnotations := existing.GetAnnotations()
-	sameGeneration := existingAnnotations != nil && existingAnnotations[AddonGenerationAnnotation] == strconv.FormatInt(mgmtAddon.Generation, 10)
-	ready, _, _ := unstructured.NestedInt64(existing.Object, "status", "readyReplicas")
-	pods, _, _ := unstructured.NestedInt64(existing.Object, "status", "replicas")
-	if gvk.Kind == "DaemonSet" {
-		ready, _, _ = unstructured.NestedInt64(existing.Object, "status", "numberReady")
-		pods, _, _ = unstructured.NestedInt64(existing.Object, "status", "desiredNumberScheduled")
-	}
-	if sameGeneration && ready == pods {
-		// The credentials given by image name are not a reason to replace the ready Pods of an Addon that has not
-		// changed (a credential that comes to match, or is deleted): they are taken with the Addon's next change,
-		// or at once while a Pod is not ready, which may be waiting for the very credential.
-		if pulls, found, _ := unstructured.NestedFieldCopy(existing.Object, "spec", "template", "spec", "imagePullSecrets"); found {
-			_ = unstructured.SetNestedField(obj.Object, pulls, "spec", "template", "spec", "imagePullSecrets")
-		} else {
-			unstructured.RemoveNestedField(obj.Object, "spec", "template", "spec", "imagePullSecrets")
-		}
-	}
-	if sameGeneration && desiredFieldsMatch(obj, existing) {
-		return nil
+	// Exists — update unless it is this Addon's and still as rendered
+	if applied, err := alreadyApplied(obj, existing, mgmtAddon); applied || err != nil {
+		return err
 	}
 
 	logger.Info("updating resource")
 	mergedLabels := mergeMaps(existing.GetLabels(), obj.GetLabels())
 	mergedAnnotations := mergeMaps(existing.GetAnnotations(), obj.GetAnnotations())
-	mergedAnnotations[AddonGenerationAnnotation] = strconv.FormatInt(mgmtAddon.Generation, 10)
+	mergedAnnotations[AddonGenerationAnnotation] = addonGeneration(mgmtAddon)
 
 	existing.SetLabels(mergedLabels)
 	existing.SetAnnotations(mergedAnnotations)
@@ -280,11 +242,8 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 }
 
 func (r *pullReconciler) cleanupAddon(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon) error {
-	if r.c.LocalKubeClient == nil {
-		return errors.New("local Kubernetes client unavailable during addon cleanup")
-	}
-	if mgmtAddon.UID == "" {
-		return errors.New("cannot clean up addon without UID")
+	if err := r.cleanupPossible(mgmtAddon); err != nil {
+		return err
 	}
 
 	labelSelector := client.MatchingLabels{
@@ -309,7 +268,7 @@ func (r *pullReconciler) cleanupAddon(ctx context.Context, mgmtAddon *rlarkv1alp
 		&storagev1.StorageClassList{},
 	}
 
-	pending := false
+	var pending error
 	for _, list := range resources {
 		if err := r.c.LocalKubeClient.List(ctx, list, labelSelector); err != nil {
 			return fmt.Errorf("list addon resources %T: %w", list, err)
@@ -319,24 +278,13 @@ func (r *pullReconciler) cleanupAddon(ctx context.Context, mgmtAddon *rlarkv1alp
 			continue
 		}
 		for _, item := range items {
-			uid := item.GetUID()
-			version := item.GetResourceVersion()
-			if uid == "" || version == "" {
-				return fmt.Errorf("addon resource %s/%s has no UID or resourceVersion", item.GetNamespace(), item.GetName())
+			if err := r.deleteOwned(ctx, item, &pending); err != nil {
+				return err
 			}
-			if err := r.c.LocalKubeClient.Delete(ctx, item, client.Preconditions{UID: &uid, ResourceVersion: &version}); err != nil {
-				if client.IgnoreNotFound(err) == nil {
-					continue
-				}
-				return fmt.Errorf("delete addon resource %s/%s: %w", item.GetNamespace(), item.GetName(), err)
-			}
-			pending = true
 		}
 	}
-	if pending {
-		return errAddonCleanupPending
-	}
-	return nil
+
+	return pending
 }
 
 func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon) (bool, string, error) {
@@ -355,15 +303,7 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: deployments found", "count", len(depList.Items))
 	for _, d := range depList.Items {
 		foundWorkloads = true
-		// Pods of an older template (a rollout stuck on an image pull, say) do not count.
-		if d.Status.ObservedGeneration < d.Generation || d.Status.UpdatedReplicas < *d.Spec.Replicas || d.Status.Replicas > d.Status.UpdatedReplicas || d.Status.ReadyReplicas < *d.Spec.Replicas {
-			msg := fmt.Sprintf("Deployment %s: %d/%d updated, %d ready", d.Name, d.Status.UpdatedReplicas, *d.Spec.Replicas, d.Status.ReadyReplicas)
-			if why := r.podState(ctx, d.Namespace, d.Spec.Selector.MatchLabels); why != "" {
-				msg += "; " + why
-			}
-			if label := d.Annotations[NotReadyMessageAnnotation]; label != "" {
-				msg = label + ": " + msg
-			}
+		if msg := r.deploymentNotReady(ctx, &d); msg != "" {
 			return false, msg, nil
 		}
 	}
@@ -376,34 +316,8 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: daemonsets found", "count", len(dsList.Items), "labels", labels)
 	for _, ds := range dsList.Items {
 		foundWorkloads = true
-		if ds.Status.ObservedGeneration < ds.Generation {
-			return false, fmt.Sprintf("DaemonSet %s: not yet observed", ds.Name), nil
-		}
-		// A DaemonSet meant for one class of nodes (a robot's, say) is fine on a
-		// cluster without such nodes; one meant for every node is not.
-		pod := ds.Spec.Template.Spec
-		if ds.Status.DesiredNumberScheduled == 0 && len(pod.NodeSelector) == 0 && (pod.Affinity == nil || pod.Affinity.NodeAffinity == nil) {
-			return false, fmt.Sprintf("DaemonSet %s: no nodes scheduled", ds.Name), nil
-		}
-		if rollout.Rolled(&ds) {
-			waiting, err := r.rolledDaemonSetWaitingOn(ctx, &ds)
-			if err != nil {
-				return false, "", err
-			}
-			if waiting != "" {
-				return false, fmt.Sprintf("DaemonSet %s: waiting on %s", ds.Name, waiting), nil
-			}
-			continue
-		}
-		// Under OnDelete the Pods take a new template only when someone replaces them (csi-driver-rclone keeps
-		// a node's mounts that way), so not-yet-updated Pods are what was asked for, not an unfinished rollout.
-		rolling := ds.Spec.UpdateStrategy.Type != appsv1.OnDeleteDaemonSetStrategyType
-		if (rolling && ds.Status.UpdatedNumberScheduled < ds.Status.DesiredNumberScheduled) || ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {
-			waiting, err := r.daemonSetWaitingOn(ctx, &ds)
-			if err != nil {
-				return false, "", err
-			}
-			return false, fmt.Sprintf("DaemonSet %s: %d/%d ready%s", ds.Name, ds.Status.NumberReady, ds.Status.DesiredNumberScheduled, waiting), nil
+		if msg, err := r.daemonSetNotReady(ctx, &ds); msg != "" || err != nil {
+			return false, msg, err
 		}
 	}
 
