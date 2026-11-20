@@ -13,7 +13,7 @@
 | `astribot/csi-rclone-ks3/` | rclone CSI 节点插件的 KS3 补丁和构建脚本 |
 | `astribot/release/` | 构建（`build.sh`、`run.sh`）、发布文件（`releases/`）、环境（`environments/live.yaml`）、控制面 compose、镜像清单 |
 | `astribot/docs/` | 本目录的文档；`swagger.yaml` 是我们加的接口（叠在官方 `apps/rlark/docs/api/swagger.yaml` 上，`apps/rlark/pkg/gateway/astribot_swagger_test.go` 检查） |
-| `apps/rlark/astribot/` | 要和官方程序链接在一起的 Go 包：`release`、`rlarkctl`（release、registry、image、station 命令）、`identity`、`idlerelay`、`inuse`、`nodeagent`、`nodepath`、`nodessh`、`resident`、`rollout`、`stationidentity`、`stationmember`、`storageref`；程序 `cmd/station-api`、`cmd/station-agent`、`cmd/csi-nodepath` |
+| `apps/rlark/astribot/` | 要和官方程序链接在一起的 Go 包：`release`、`rlarkctl`（release、station 命令）、`identity`、`idlerelay`、`inuse`、`nodeagent`、`nodepath`、`nodessh`、`resident`、`rollout`、`stationidentity`、`stationmember`、`storageref`；程序 `cmd/station-api`、`cmd/station-agent`、`cmd/csi-nodepath` |
 | `apps/rlark-ui/src/astribot/` | 控制台我们的页面；测试 `apps/rlark-ui/tests/astribot-*.test.mjs` |
 | `apps/rlark/pkg/addons/catalog/` | 我们加的 Addon：`csi-driver-nodepath`、`nvidia-gpu`、`package-proxy`、`registry-trust`、`s1u-robot`、`site-registry` |
 

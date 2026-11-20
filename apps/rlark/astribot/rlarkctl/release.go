@@ -1,3 +1,4 @@
+// Package rlarkctl holds our rlarkctl commands: release and station.
 package rlarkctl
 
 import (
@@ -22,6 +23,11 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/astribot/release"
 	"github.com/rlinf/rlark/apps/rlark/pkg/addons"
 )
+
+// Commands are our rlarkctl commands, added to its root.
+func Commands() []*cobra.Command {
+	return []*cobra.Command{releaseCommand(), stationCommand()}
+}
 
 // releaseCommand is what makes a release and brings an environment to it.
 func releaseCommand() *cobra.Command {
@@ -302,19 +308,13 @@ func (a *registryAccess) client(ctx context.Context) (*release.RegistryClient, e
 
 func sourceCommand() *cobra.Command {
 	var access registryAccess
-	var repository, branch, file string
+	var repository, branch string
 	push := &cobra.Command{
 		Use:   "push",
-		Short: "Push the tree of a branch's head (a git archive of the commit) to the registry.",
+		Short: "Push the tree of a branch's head (a git archive of the commit, on standard input) to the registry.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			var archive []byte
-			var err error
-			if file == "-" {
-				archive, err = io.ReadAll(cmd.InOrStdin())
-			} else {
-				archive, err = os.ReadFile(file)
-			}
+			archive, err := io.ReadAll(cmd.InOrStdin())
 			if err != nil {
 				return err
 			}
@@ -322,18 +322,17 @@ func sourceCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			source, err := client.PushSource(cmd.Context(), repository, branch, archive)
+			commit, err := client.PushSource(cmd.Context(), repository, branch, archive)
 			if err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pushed %s:%s (%s, %d bytes)\n", repository, source.Commit, branch, len(archive))
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "pushed %s:%s (%s, %d bytes)\n", repository, commit, branch, len(archive))
 			return nil
 		},
 	}
 	access.flags(push)
 	push.Flags().StringVar(&repository, "repository", "", "The repository the trees go to (fleet/source)")
 	push.Flags().StringVar(&branch, "branch", "", "The branch whose head the tree is")
-	push.Flags().StringVar(&file, "file", "-", "The git archive of the commit; - is standard input")
 	for _, flag := range []string{"repository", "branch"} {
 		_ = push.MarkFlagRequired(flag)
 	}
@@ -473,11 +472,7 @@ ends. No administrator's kubeconfig is kept on the machine for it.`,
 			if err != nil {
 				return err
 			}
-			management, err := clientcmd.BuildConfigFromFlags("", environment.Management.Kubeconfig)
-			if err != nil {
-				return err
-			}
-			core, err := kubernetes.NewForConfig(management)
+			core, _, err := managementClients(environment)
 			if err != nil {
 				return err
 			}

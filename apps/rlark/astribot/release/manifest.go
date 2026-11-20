@@ -194,17 +194,21 @@ func (e Environment) Compose(tree Tree) *ComposeFile {
 func (e Environment) Desired(r Release, clusters map[string][]string) State {
 	images := r.Images
 	state := State{
-		ControlPlane: map[string]string{
-			"rlark-server":             e.pulledAs(images["rlark-server"]),
-			"rlark-controller-manager": e.pulledAs(images["rlark-controller-manager"]),
-			"rlark-gateway":            e.pulledAs(images["rlark-gateway"]),
-			"rlark-ui":                 e.pulledAs(images["rlark-ui"]),
-		},
+		ControlPlane:      map[string]string{},
 		StationAPI:        images["station-api"],
 		StationController: images["station-controller"],
 		Installer:         images["installer-"+e.Name],
 		Clusters:          map[string]ClusterState{},
 		AddonsAfter:       map[string][]string{},
+	}
+	for service := range composeVariables {
+		// An image as the control plane's machine names it.
+		repository, digest, _ := strings.Cut(images[service], "@")
+		if local, mapped := e.ControlPlane.Images[repository]; mapped {
+			state.ControlPlane[service] = local + "@" + digest
+		} else {
+			state.ControlPlane[service] = images[service]
+		}
 	}
 	for name, addon := range r.Addons {
 		if len(addon.After) > 0 {
@@ -226,13 +230,4 @@ func (e Environment) Desired(r Release, clusters map[string][]string) State {
 		state.Clusters[name] = desired
 	}
 	return state
-}
-
-// pulledAs is an image as the control plane's machine names it.
-func (e Environment) pulledAs(image string) string {
-	repository, digest, _ := strings.Cut(image, "@")
-	if local, mapped := e.ControlPlane.Images[repository]; mapped {
-		return local + "@" + digest
-	}
-	return image
 }

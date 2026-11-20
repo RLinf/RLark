@@ -55,24 +55,34 @@ func (c Compose) running(ctx context.Context, format string) (map[string]string,
 	return read, nil
 }
 
+// env is the env file's variables, the services' images among them.
+func (c Compose) env() (map[string]string, error) {
+	data, err := os.ReadFile(c.Env)
+	if err != nil {
+		return nil, err
+	}
+	variables := map[string]string{}
+	for line := range strings.Lines(string(data)) {
+		if key, value, found := strings.Cut(strings.TrimSpace(line), "="); found && !strings.HasPrefix(key, "#") {
+			variables[key] = value
+		}
+	}
+	return variables, nil
+}
+
 func (c Compose) Compose(context.Context) (*ComposeFile, error) {
 	file, err := os.ReadFile(c.File)
 	if err != nil {
 		return nil, err
 	}
-	env, err := os.ReadFile(c.Env)
+	variables, err := c.env()
 	if err != nil {
 		return nil, err
 	}
-	compose := &ComposeFile{File: string(file), Variables: map[string]string{}}
-	images := slices.Collect(maps.Values(composeVariables))
-	for line := range strings.Lines(string(env)) {
-		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
-		if found && !strings.HasPrefix(key, "#") && !slices.Contains(images, key) {
-			compose.Variables[key] = value
-		}
+	for _, image := range composeVariables {
+		delete(variables, image)
 	}
-	return compose, nil
+	return &ComposeFile{File: string(file), Variables: variables}, nil
 }
 
 // Hashes writes compose and images where the compose file is not, and reads every service's hash of them.
@@ -110,15 +120,14 @@ func (c Compose) Hashes(ctx context.Context, compose ComposeFile, images map[str
 }
 
 func (c Compose) Write(_ context.Context, compose ComposeFile) error {
-	env, err := os.ReadFile(c.Env)
+	env, err := c.env()
 	if err != nil {
 		return err
 	}
 	variables := maps.Clone(compose.Variables)
-	for line := range strings.Lines(string(env)) {
-		key, value, _ := strings.Cut(strings.TrimSpace(line), "=")
-		if slices.Contains(slices.Collect(maps.Values(composeVariables)), key) {
-			variables[key] = value
+	for _, image := range composeVariables {
+		if value, set := env[image]; set {
+			variables[image] = value
 		}
 	}
 	if err := replaceFile(c.File, []byte(compose.File), 0o644); err != nil {
@@ -153,27 +162,12 @@ func (c Compose) Pull(ctx context.Context, image string) error {
 }
 
 func (c Compose) Set(ctx context.Context, service, image string) error {
-	data, err := os.ReadFile(c.Env)
+	variables, err := c.env()
 	if err != nil {
 		return err
 	}
-	variable, found := composeVariables[service]
-	if !found {
-		return fmt.Errorf("%s is not a service of the control plane", service)
-	}
-	var lines []string
-	set := false
-	for line := range strings.Lines(string(data)) {
-		line = strings.TrimRight(line, "\n")
-		if strings.HasPrefix(line, variable+"=") {
-			line, set = variable+"="+image, true
-		}
-		lines = append(lines, line)
-	}
-	if !set {
-		lines = append(lines, variable+"="+image)
-	}
-	if err := replaceFile(c.Env, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+	variables[composeVariables[service]] = image
+	if err := replaceFile(c.Env, envFile(variables), 0o600); err != nil {
 		return err
 	}
 	compose := []string{"compose", "-p", c.Project, "-f", c.File, "--env-file", c.Env}

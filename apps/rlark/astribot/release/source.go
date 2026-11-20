@@ -30,36 +30,16 @@ const (
 	sourceLayerSize = 1 << 20
 )
 
-// Source is a tree pushed for a build.
-type Source struct {
-	Commit string
-	Branch string
-}
-
-// TreeCommit is the commit a `git archive` names in its header.
-func TreeCommit(archive []byte) (string, error) {
-	header, err := tar.NewReader(bytes.NewReader(archive)).Next()
-	if err != nil {
-		return "", err
-	}
-	if header.Typeflag != tar.TypeXGlobalHeader || header.PAXRecords["comment"] == "" {
-		return "", errors.New("the archive names no commit in its header: it is not what `git archive <commit>` writes")
-	}
-	return header.PAXRecords["comment"], nil
-}
-
 type treeEntry struct {
 	header tar.Header
 	data   []byte
 }
 
-// PushSource writes the tree of a branch's head under repository:<commit>.
-func (r *RegistryClient) PushSource(ctx context.Context, repository, branch string, archive []byte) (Source, error) {
-	commit, err := TreeCommit(archive)
-	if err != nil {
-		return Source{}, err
-	}
+// PushSource writes the tree of a branch's head (a `git archive` of the commit, which its header names) under
+// repository:<commit>, and returns the commit.
+func (r *RegistryClient) PushSource(ctx context.Context, repository, branch string, archive []byte) (string, error) {
 	reader := tar.NewReader(bytes.NewReader(archive))
+	var commit string
 	var entries []treeEntry
 	for {
 		header, err := reader.Next()
@@ -67,16 +47,20 @@ func (r *RegistryClient) PushSource(ctx context.Context, repository, branch stri
 			break
 		}
 		if err != nil {
-			return Source{}, err
+			return "", err
 		}
 		if header.Typeflag == tar.TypeXGlobalHeader {
+			commit = header.PAXRecords["comment"]
 			continue
 		}
 		data, err := io.ReadAll(reader)
 		if err != nil {
-			return Source{}, err
+			return "", err
 		}
 		entries = append(entries, treeEntry{header: *header, data: data})
+	}
+	if commit == "" {
+		return "", errors.New("the archive names no commit in its header: it is not what `git archive <commit>` writes")
 	}
 	// By name, whatever order the archive has them in: the same files are the same layers.
 	slices.SortFunc(entries, func(a, b treeEntry) int { return strings.Compare(a.header.Name, b.header.Name) })
@@ -86,17 +70,17 @@ func (r *RegistryClient) PushSource(ctx context.Context, repository, branch stri
 	config := []byte("{}")
 	configDigest, err := r.pushBlob(ctx, repository, config)
 	if err != nil {
-		return Source{}, err
+		return "", err
 	}
 	var layers []map[string]any
 	for _, group := range groups {
 		data, err := treeLayer(group)
 		if err != nil {
-			return Source{}, err
+			return "", err
 		}
 		digest, err := r.pushBlob(ctx, repository, data)
 		if err != nil {
-			return Source{}, err
+			return "", err
 		}
 		layers = append(layers, map[string]any{"mediaType": sourceLayer, "digest": digest, "size": len(data)})
 	}
@@ -109,9 +93,9 @@ func (r *RegistryClient) PushSource(ctx context.Context, repository, branch stri
 		"annotations":   map[string]string{"org.opencontainers.image.created": time.Now().UTC().Format(time.RFC3339), branchNote: branch, commitNote: commit},
 	})
 	if err != nil {
-		return Source{}, err
+		return "", err
 	}
-	return Source{Commit: commit, Branch: branch}, r.putManifest(ctx, repository, commit, ociImage, manifest)
+	return commit, r.putManifest(ctx, repository, commit, ociImage, manifest)
 }
 
 // splitTree groups the entries below depth: all of them when they are small enough, each directory's otherwise, and

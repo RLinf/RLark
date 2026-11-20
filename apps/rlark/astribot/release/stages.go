@@ -19,7 +19,6 @@ var StagesYAML []byte
 type Stage struct {
 	Name     string      `json:"name"`
 	Requires []string    `json:"requires,omitempty"`
-	Changes  []string    `json:"changes,omitempty"`
 	Gate     []Condition `json:"gate,omitempty"`
 	Check    []Condition `json:"check,omitempty"`
 	Note     string      `json:"note,omitempty"`

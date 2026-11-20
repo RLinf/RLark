@@ -312,8 +312,8 @@ func TestSourcePush(t *testing.T) {
 	ctx := context.Background()
 	commit := strings.Repeat("1", 40)
 	data, _ := os.ReadFile(writeTar(t, commit, map[string]string{"README.md": commit}))
-	if source, err := client.PushSource(ctx, "fleet/source", "main", data); err != nil || source.Commit != commit || source.Branch != "main" {
-		t.Fatalf("%v %v", source, err)
+	if pushed, err := client.PushSource(ctx, "fleet/source", "main", data); err != nil || pushed != commit {
+		t.Fatalf("%v %v", pushed, err)
 	}
 	manifest := served.manifests["/v2/fleet/source/manifests/"+commit]
 	if !strings.Contains(manifest, `"rlark.io/branch":"main"`) || !strings.Contains(manifest, `"rlark.io/commit":"`+commit+`"`) || !strings.Contains(manifest, sourceArtifact) {
