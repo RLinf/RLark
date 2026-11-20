@@ -16,6 +16,10 @@ import (
 // Evidence is what a verified Pod-bound token says of its caller: the Node its Pod runs on.
 type Evidence struct {
 	ClusterID, NodeName, NodeUID string
+	// SystemUUID is the Node's (status.nodeInfo.systemUUID, the kubelet's
+	// reading of the machine's firmware): it tells a reinstalled machine from
+	// another one, and is evidence only.
+	SystemUUID string
 	// NodePressures are the pressure conditions that are True on that Node.
 	NodePressures []string
 }
@@ -91,9 +95,9 @@ func Authenticate(ctx context.Context, client kubernetes.Interface, reg Registra
 		pod.DeletionTimestamp != nil || sa.DeletionTimestamp != nil || node.DeletionTimestamp != nil {
 		return Evidence{}, errors.New("the token is not of a current Pod of the registered ServiceAccount on a current Node")
 	}
-	// The Node is in hand for its UID; its pressure is stored with the report
-	// it vouches for, so no agent is given a way to read or to state it.
-	e := Evidence{ClusterID: reg.ClusterID, NodeName: node.Name, NodeUID: string(node.UID), NodePressures: []string{}}
+	// The Node is in hand for its UID; its system UUID and pressure are stored
+	// with the report it vouches for, so no agent is given a way to read or to state them.
+	e := Evidence{ClusterID: reg.ClusterID, NodeName: node.Name, NodeUID: string(node.UID), SystemUUID: node.Status.NodeInfo.SystemUUID, NodePressures: []string{}}
 	for _, condition := range node.Status.Conditions {
 		if condition.Status == corev1.ConditionTrue && slices.Contains([]corev1.NodeConditionType{corev1.NodeDiskPressure, corev1.NodeMemoryPressure, corev1.NodePIDPressure}, condition.Type) {
 			e.NodePressures = append(e.NodePressures, string(condition.Type))

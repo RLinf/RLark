@@ -475,12 +475,15 @@ paths:
                         problem: {type: string, description: "What is wrong with the machine, as CredentialRejected; absent when nothing is"}
                         message: {type: string}
                         serial: {type: string}
+                        inspected_at: {type: string, format: date-time, description: "When RLark last logged in to the machine's entry device and reached the computer behind it; absent until it has, and again when the machine shows up changed"}
+                        node_host_key_fingerprint: {type: string, description: The host key of the computer behind the entry device, read through it}
                         address: {type: string}
-                        mac: {type: string}
+                        mac: {type: string, description: The hardware address of the entry device the machine was last seen through}
                         last_seen: {type: string, format: date-time}
                         cluster_id: {type: string}
                         node_name: {type: string}
-                        admissible: {type: boolean, description: Whether the machine can be admitted now}
+                        admissible: {type: boolean, description: "Whether the machine can be admitted now: one that is not a node, was read (serial, inspected_at, node_host_key_fingerprint) and has no problem, or one whose join stopped; never one that is joining"}
+                        joining: {type: boolean, description: "An administrator's request for the machine is being acted on, from when it is written until the join it starts succeeds or stops; it is not admitted again meanwhile"}
                         requested_by: {type: string}
                         requested_at: {type: string, format: date-time}
                         admit_cluster_id: {type: string, description: The cluster the machine was admitted to}
@@ -504,7 +507,8 @@ paths:
       description: >-
         Writes the decision on each Machine with who made it and when. station-controller gives each machine
         the next name of its class, a NodeAdmission and the NodeOperation that joins it over SSH; nobody types
-        anything at the machine. Each machine is answered for by itself.
+        anything at the machine. Each machine is answered for by itself; one that is being joined already (joining in
+        the list) is refused, with the cluster, who asked and when.
       requestBody:
         required: true
         content:

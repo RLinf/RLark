@@ -26,10 +26,13 @@ import {
   classPasswordLabel,
   machineClassAccess,
   machineLabelChoices,
+  machineNotTickable,
+  machineReach,
   machineStateLabel,
   machineUnseen,
   parseLabelLines,
   parseTaintLines,
+  reachLabel,
   robotIDOfNode,
   robotTaint,
   s1uRobotLabels,
@@ -39,7 +42,9 @@ import {
   unseenFor,
   type AdmittedMachine,
   type IssuedNodeAdmission,
+  type Machine,
   type MachineList,
+  type Reach,
   type NodeClassAccess,
 } from "../lib/siteNodeDisplay";
 import "./JoinNode.css";
@@ -180,6 +185,19 @@ function JoinProgress({ zh, progress }: { zh: boolean; progress: MachineJoinProg
   </section>;
 }
 
+// Whether RLark got through to one computer of a machine: the reason and when it last looked on hover, the reason
+// beside it when it did not.
+function ReachCell({ zh, reach, machine, now }: { zh: boolean; reach: Reach; machine: Machine; now: number }) {
+  const looked = machine.inspected_at ? (zh ? `检查于 ${seenTime(machine.inspected_at, now)}` : `checked ${seenTime(machine.inspected_at, now)}`) : "";
+  const title = [reach.reason, reach.state === "fail" ? machine.message : "", looked].filter(Boolean).join(zh ? "；" : "; ");
+  const pill = { ok: "status-online", fail: "status-failed", checking: "status-pending", unknown: "" }[reach.state];
+  return <td title={title}>
+    {pill ? <span className={`status ${pill}`}><i />{reachLabel(reach.state, zh)}</span> : <span className="muted">{reachLabel(reach.state, zh)}</span>}
+    {reach.state !== "ok" && <small className={reach.state === "fail" ? "join-missing join-reach-reason" : "muted join-reach-reason"}>{reach.reason}</small>}
+    {reach.state === "ok" && looked && <small className="muted join-reach-reason">{looked}</small>}
+  </td>;
+}
+
 // The machines the hubs of the sites have found and that are not nodes yet:
 // ticking them is all it takes. RLark names each one, logs in to it with the
 // accounts of its class and joins it; nobody types anything at the machine.
@@ -207,7 +225,7 @@ function UnjoinedMachines({ zh, clusterID }: { zh: boolean; clusterID: string })
     };
   }, [joining]);
 
-  const machines = unjoinedMachines(list?.items ?? []);
+  const machines = unjoinedMachines(list?.items ?? [], clusterID);
   const chosen = machines.filter((machine) => machine.admissible && ticked.includes(machine.name));
   const choices = machineLabelChoices(chosen, list?.classes ?? {});
   const admissible = machines.filter((machine) => machine.admissible).map((machine) => machine.name);
@@ -241,16 +259,23 @@ function UnjoinedMachines({ zh, clusterID }: { zh: boolean; clusterID: string })
           <tr>
             <th><input type="checkbox" aria-label={zh ? "全选" : "Select all"} checked={admissible.length > 0 && admissible.every((name) => ticked.includes(name))} disabled={admissible.length === 0 || pending}
               onChange={(event) => setTicked(event.target.checked ? admissible : [])} /></th>
-            <th>{zh ? "序列号" : "Serial"}</th><th>{zh ? "机型" : "Class"}</th><th>{zh ? "场地 / 地址" : "Site / address"}</th><th>{zh ? "发现于" : "Seen"}</th><th>{zh ? "状态" : "State"}</th>
+            <th>{zh ? "序列号" : "Serial"}</th><th>MAC</th><th>{zh ? "机型" : "Class"}</th><th>{zh ? "场地 / 地址" : "Site / address"}</th>
+            <th>Orin</th><th>x86</th><th>{zh ? "发现于" : "Seen"}</th><th>{zh ? "状态" : "State"}</th>
           </tr>
         </thead>
         <tbody>
-          {machines.map((machine) => <tr key={machine.name} className={machine.admissible ? "" : "is-disabled"}>
-            <td><input type="checkbox" aria-label={machine.serial || machine.name} checked={ticked.includes(machine.name)} disabled={!machine.admissible || pending}
+          {machines.map((machine) => {
+            const reach = machineReach(machine, zh);
+            const why = machineNotTickable(machine, zh);
+            return <tr key={machine.name} className={machine.admissible ? "" : "is-disabled"}>
+            <td><input type="checkbox" aria-label={machine.serial || machine.name} title={why || undefined} checked={ticked.includes(machine.name)} disabled={!machine.admissible || pending}
               onChange={(event) => setTicked((current) => event.target.checked ? [...current, machine.name] : current.filter((name) => name !== machine.name))} /></td>
             <td><code className="inline-code">{machine.serial || "—"}</code></td>
+            <td><code className="inline-code">{machine.mac || "—"}</code></td>
             <td>{machine.node_class}</td>
             <td>{machine.site} · {machine.address}</td>
+            <ReachCell zh={zh} reach={reach.orin} machine={machine} now={now} />
+            <ReachCell zh={zh} reach={reach.x86} machine={machine} now={now} />
             <td>
               {seenTime(machine.last_seen, now)}
               {machineUnseen(machine, now) && <small className="join-missing"> {unseenFor(machine.last_seen, now, zh)}</small>}
@@ -258,8 +283,11 @@ function UnjoinedMachines({ zh, clusterID }: { zh: boolean; clusterID: string })
             <td title={machine.message}>
               <span className={machine.problem ? "status status-failed" : "status status-pending"}><i />{machineStateLabel(machine, zh)}</span>
               {machine.node_name && <small className="muted"> {machine.node_name}</small>}
+              {why ? <small className="muted join-reach-reason">{zh ? `不能勾选：${why}` : `Cannot be ticked: ${why}`}</small>
+                : machine.phase === "Admitted" && <small className="muted join-reach-reason">{zh ? "入网停住了，勾选它再点加入，重新入网" : "Its join stopped: tick it and add it again to join it anew"}</small>}
             </td>
-          </tr>)}
+          </tr>;
+          })}
         </tbody>
       </table></div>}
     </div>

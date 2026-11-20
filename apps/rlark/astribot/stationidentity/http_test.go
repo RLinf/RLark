@@ -63,14 +63,14 @@ func TestHTTPObservationAuthenticatesAndReturnsGenericFailures(t *testing.T) {
 	sink := &testObservationSink{}
 	now := time.Unix(2000, 0)
 	api := &API{Registry: testRegistry{readers: map[string]IdentityReader{"c": reader}}, Observations: sink, Now: func() time.Time { return now }}
-	body := `{"cluster_id":"c","observation":{` + testAgent + `,"systemUUID":"uuid","wireguard":{"interface":"st-wg0"},"probes":[{"target":"nas:445","ok":true}]}}`
+	body := `{"cluster_id":"c","observation":{` + testAgent + `,"wireguard":{"interface":"st-wg0"},"probes":[{"target":"nas:445","ok":true}]}}`
 	if w := apiRequest(api, http.MethodPost, "/v1/observations", body, ""); w.Code != 401 {
 		t.Fatalf("missing auth status=%d", w.Code)
 	}
 	if w := apiRequest(api, http.MethodPost, "/v1/observations", body, "token"); w.Code != 202 {
 		t.Fatalf("valid status=%d body=%s", w.Code, w.Body.String())
 	}
-	if sink.evidence[0].NodeUID != "n" || sink.items[0].SystemUUID != "uuid" {
+	if sink.evidence[0].NodeUID != "n" || string(sink.items[0].Wireguard) != `{"interface":"st-wg0"}` {
 		t.Fatal("stored observation was not attributed to validated subject")
 	}
 	if w := apiRequest(api, http.MethodPost, "/v1/observations", `{"cluster_id":"c","unexpected":true}`, "token"); w.Code != 400 {

@@ -36,10 +36,9 @@ type ClusterRegistry interface {
 }
 
 type Observation struct {
-	SystemUUID string          `json:"systemUUID,omitempty"`
-	BootTime   *time.Time      `json:"bootTime,omitempty"`
-	Wireguard  json.RawMessage `json:"wireguard,omitempty"`
-	Probes     []Probe         `json:"probes,omitempty"`
+	BootTime  *time.Time      `json:"bootTime,omitempty"`
+	Wireguard json.RawMessage `json:"wireguard,omitempty"`
+	Probes    []Probe         `json:"probes,omitempty"`
 	// Gateway is what the node's station-gateway states of itself in its
 	// observation file (none while it is not reconciling), Agent the
 	// station-agent that sends the report.
@@ -228,7 +227,7 @@ func clock(now func() time.Time) time.Time {
 }
 
 func validateObservation(o Observation, now time.Time) error {
-	if len(o.SystemUUID) > 128 || len(o.Probes) > 256 || len(o.Wireguard) > wireguardObservationBytes {
+	if len(o.Probes) > 256 || len(o.Wireguard) > wireguardObservationBytes {
 		return errors.New("observation exceeds limits")
 	}
 	for _, probe := range o.Probes {

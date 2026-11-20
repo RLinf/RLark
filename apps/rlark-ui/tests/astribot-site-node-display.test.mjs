@@ -9,6 +9,8 @@ import {
   machineClassAccess,
   machineLabelChoices,
   machineModel,
+  machineNotTickable,
+  machineReach,
   machineStateLabel,
   parseLabelLines,
   parseTaintLines,
@@ -62,8 +64,12 @@ test("the add-node list shows the machines that are not nodes, the ones that can
     machine("joined", "Joined", undefined, false, "2027-01-15T08:00:40Z"),
     machine("newer", "Discovered", undefined, true, "2027-01-15T08:00:20Z"),
     machine("stopped", "Admitted", "JoinBlocked", true, "2027-01-15T08:00:10Z"),
-  ]);
-  assert.deepEqual(listed.map((one) => one.name), ["newer", "stopped", "older", "refused"]);
+    // Being joined to this cluster: it is in the join progress, not here; to another cluster, it is here and cannot be ticked.
+    { ...machine("ticked", "Discovered", undefined, false, "2027-01-15T08:00:50Z"), joining: true, admit_cluster_id: "robots" },
+    { ...machine("elsewhere", "Admitted", undefined, false, "2027-01-15T08:00:05Z"), joining: true, admit_cluster_id: "office", requested_by: "bob" },
+  ], "robots");
+  assert.deepEqual(listed.map((one) => one.name), ["newer", "stopped", "older", "refused", "elsewhere"]);
+  assert.equal(machineNotTickable(listed[4], true), "正在加入集群 office（bob 提交）");
   // A machine whose password was changed cannot be ticked, and the list says why.
   assert.equal(listed[3].admissible, false);
   assert.equal(machineStateLabel(listed[3], true), "口令不符");
@@ -78,7 +84,7 @@ test("a class whose x86 password is not entered says so, and its machines cannot
   const before = { s1u: { labels: {}, access: { entry: password("password", true), node: password("x86_password", false) } }, gpu: { labels: {} },
     arm: { access: { entry: password("password", true), node: password("arm_password", true, "alice") } } };
   // What the Gateway lists while the password is missing: the machine has the problem and is not admissible.
-  const waiting = unjoinedMachines([{ name: "lab-01", site: "lab", node_class: "s1u", source: "Discovery", phase: "Discovered", problem: "AccessUnconfigured", admissible: false }]);
+  const waiting = unjoinedMachines([{ name: "lab-01", site: "lab", node_class: "s1u", source: "Discovery", phase: "Discovered", problem: "AccessUnconfigured", admissible: false }], "robots");
   assert.equal(waiting[0].admissible, false);
   assert.equal(machineStateLabel(waiting[0], true), "该机型的 x86 口令未配置");
   // The classes that declare access, the one waiting for its password first; a class without access is not shown.
@@ -88,9 +94,30 @@ test("a class whose x86 password is not entered says so, and its machines cannot
   assert.equal(classPasswordLabel(shown[0].access.node, true), "未配置");
   assert.equal(classPasswordLabel(shown[1].access.node, true), "已配置（来自 fleet-orin-access，alice 录入）");
   // Once it is saved, the machine can be ticked.
-  const after = unjoinedMachines([{ name: "lab-01", site: "lab", node_class: "s1u", source: "Discovery", phase: "Discovered", serial: "1794925030610", admissible: true }]);
+  const after = unjoinedMachines([{ name: "lab-01", site: "lab", node_class: "s1u", source: "Discovery", phase: "Discovered", serial: "1794925030610", admissible: true }], "robots");
   assert.equal(after[0].admissible, true);
   assert.equal(machineStateLabel(after[0], true), "未加入");
+});
+
+test("the list says whether RLark got through to each machine's Orin and x86, and why one cannot be ticked", () => {
+  const read = { name: "m", phase: "Discovered", serial: "1794925030610", inspected_at: "2027-01-15T07:58:00Z", node_host_key_fingerprint: "SHA256:x86", admissible: true, joining: false };
+  const states = (machine) => { const { orin, x86 } = machineReach(machine, true); return [orin.state, x86.state]; };
+  assert.deepEqual(states(read), ["ok", "ok"]);
+  assert.equal(machineNotTickable(read, true), "");
+  // Not read yet, or read again after a fault that is not the machine's.
+  assert.deepEqual(states({ ...read, inspected_at: undefined, admissible: false }), ["checking", "checking"]);
+  assert.equal(machineNotTickable({ ...read, inspected_at: undefined, admissible: false }, true), "等 RLark 登录读取完");
+  assert.deepEqual(states({ ...read, problem: "InspectFailed", admissible: false }), ["checking", "checking"]);
+  // The Orin is not reached: nothing is known of the x86.
+  for (const problem of ["EntryUnreachable", "HubUnreachable", "CredentialRejected", "HostKeyChanged"]) {
+    assert.deepEqual(states({ ...read, problem, admissible: false }), ["fail", "unknown"], problem);
+  }
+  assert.equal(machineNotTickable({ ...read, problem: "CredentialRejected", admissible: false }, true), "Orin 不通：口令不符");
+  // The Orin answers, the x86 behind it does not.
+  assert.deepEqual(states({ ...read, problem: "NodeUnreachable", node_host_key_fingerprint: undefined, admissible: false }), ["ok", "fail"]);
+  assert.equal(machineNotTickable({ ...read, problem: "NodeUnreachable", admissible: false }, true), "x86 不通：Orin 通，x86 不通");
+  // Both answer, and something else holds it back.
+  assert.equal(machineNotTickable({ ...read, problem: "DuplicateSerial", admissible: false }, true), "序列号重复");
 });
 
 test("labels can be replaced for ticked machines of one class only", () => {

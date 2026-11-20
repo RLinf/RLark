@@ -14,8 +14,9 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 )
 
+// handlerMachine is a Machine RLark has read: its entry device let it in and the computer behind it answered.
 func handlerMachine(name, phase, problem, serial string) *unstructured.Unstructured {
-	status := map[string]interface{}{"phase": phase, "serial": serial,
+	status := map[string]interface{}{"phase": phase, "serial": serial, "inspectedAt": "2027-01-15T07:58:00Z", "nodeHostKeyFingerprint": "SHA256:x86",
 		"entry": map[string]interface{}{"address": "192.168.31.56", "mac": "48:b0:2d:5c:9a:11", "lastSeen": "2027-01-15T08:00:" + name[len(name)-2:] + "Z"}}
 	if problem != "" {
 		status["problem"] = problem
@@ -51,11 +52,14 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 	}
 	// An earlier request's join, which made a node removed since, is not this request's.
 	blockedJoin, spentJoin := join("join-s1u-02-x86-2", "2", "Blocked", "Preflight"), join("join-s1u-02-x86-1", "1", "Succeeded", "RotateEntryHostKey")
+	// lab-05 was seen again since it was read last: it is read anew before it can be admitted.
+	unread := handlerMachine("lab-05", "Discovered", "", "1794925031001")
+	unstructured.RemoveNestedField(unread.Object, "status", "inspectedAt")
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		stationClusterGVR: "ClusterList", nodeAdmissionGVR: "NodeAdmissionList", machineGVR: "MachineList", nodeClassGVR: "NodeClassList", nodeOperationGVR: "NodeOperationList",
 	}, stationHandlerCluster("cluster-a", "agent-a"), class, earlier, blockedJoin, spentJoin,
 		handlerMachine("lab-01", "Discovered", "", "1794925030610"), handlerMachine("lab-02", "Discovered", "CredentialRejected", "1794925029733"),
-		blocked, handlerMachine("lab-04", "Joined", "", "1794925031000"))
+		blocked, handlerMachine("lab-04", "Joined", "", "1794925031000"), unread)
 	g := &Gateway{astribotState: astribotState{stationClient: client}}
 
 	status, body := nodeAdmissionCall(t, g.handleListMachines, "GET", "/api/v1/station/machines?phase=Discovered", "", "")
@@ -64,8 +68,9 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 		Classes map[string]machineClass `json:"classes"`
 	}
 	_ = json.Unmarshal(body, &listed)
-	if status != 200 || len(listed.Items) != 2 || listed.Items[0].Name != "lab-02" || listed.Items[0].Admissible || !listed.Items[1].Admissible ||
-		listed.Items[1].Serial != "1794925030610" || listed.Classes["s1u"].Labels["rlark.io/robot-body"] != "s1u" {
+	if status != 200 || len(listed.Items) != 3 || listed.Items[0].Name != "lab-05" || listed.Items[0].Admissible || listed.Items[1].Name != "lab-02" || listed.Items[1].Admissible ||
+		!listed.Items[2].Admissible || listed.Items[2].Serial != "1794925030610" || listed.Items[2].NodeHostKeyFingerprint != "SHA256:x86" ||
+		listed.Classes["s1u"].Labels["rlark.io/robot-body"] != "s1u" {
 		t.Fatalf("list %d: %s", status, body)
 	}
 	// An admitted machine is listed with where its join stands.
@@ -100,6 +105,18 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 	refused, _ := client.Resource(machineGVR).Namespace("station-system").Get(context.Background(), "lab-02", metav1.GetOptions{})
 	if _, written, _ := unstructured.NestedMap(refused.Object, "spec", "admit"); written {
 		t.Fatal("a machine that refuses its class's account was admitted")
+	}
+
+	// Until station-controller has acted on it, lab-01 is being joined: it is listed so and not admitted twice.
+	status, body = nodeAdmissionCall(t, g.handleListMachines, "GET", "/api/v1/station/machines?phase=Discovered", "", "")
+	_ = json.Unmarshal(body, &listed)
+	if status != 200 || listed.Items[2].Name != "lab-01" || !listed.Items[2].Joining || listed.Items[2].Admissible {
+		t.Fatalf("a machine whose admission is being acted on %d: %s", status, body)
+	}
+	status, body = nodeAdmissionCall(t, g.handleAdmitMachines, "POST", "/api/v1/station/machines/admit", "", `{"cluster_id":"cluster-a","machines":["lab-01"]}`)
+	_ = json.Unmarshal(body, &answer)
+	if status != 200 || answer.Machines[0].Admitted || !strings.Contains(answer.Machines[0].Error, "being joined to cluster cluster-a already, as alice asked at") {
+		t.Fatalf("the same machine admitted twice: %d %s", status, body)
 	}
 
 	// A label the class does not declare is nobody's to set here.

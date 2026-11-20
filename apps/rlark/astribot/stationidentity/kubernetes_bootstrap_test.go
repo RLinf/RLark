@@ -22,7 +22,7 @@ func TestHTTPObservationMakesTheNodesRecord(t *testing.T) {
 	member := k8sfake.NewSimpleClientset(
 		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "station-agent", Namespace: "station-system", UID: "service-account-uid"}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "agent-pod", Namespace: "station-system", UID: "pod-uid"}, Spec: corev1.PodSpec{ServiceAccountName: "station-agent", NodeName: "node-a"}},
-		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: "node-uid"}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: "node-uid"}, Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{SystemUUID: "system-a"}}},
 	)
 	member.PrependReactor("create", "tokenreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 		request := action.(ktesting.CreateAction).GetObject().(*authv1.TokenReview)
@@ -55,7 +55,7 @@ func TestHTTPObservationMakesTheNodesRecord(t *testing.T) {
 	if response := apiRequest(api, http.MethodPost, "/v1/network/enrollments", enrollmentBody, "pod-token"); response.Code != http.StatusConflict {
 		t.Fatalf("enrollment before the first report: status=%d body=%s", response.Code, response.Body.String())
 	}
-	observationBody := `{"cluster_id":"cluster-a","observation":{"systemUUID":"system-a",` + testAgent + `}}`
+	observationBody := `{"cluster_id":"cluster-a","observation":{` + testAgent + `}}`
 	record := func() map[string]interface{} {
 		t.Helper()
 		if response := apiRequest(api, http.MethodPost, "/v1/observations", observationBody, "pod-token"); response.Code != http.StatusAccepted {

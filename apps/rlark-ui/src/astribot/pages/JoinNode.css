@@ -213,6 +213,15 @@
   color: var(--muted);
 }
 
+/* Why a machine's Orin or x86 is not reached, or why it cannot be ticked:
+   a line under its pill. */
+.join-reach-reason {
+  display: block;
+  max-width: 260px;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
 .join-machines-empty {
   padding: 28px 16px;
   text-align: center;

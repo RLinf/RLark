@@ -126,11 +126,21 @@ export interface Machine {
   problem?: string;
   message?: string;
   serial?: string;
+  // When RLark last logged in to its entry device (the Orin) and reached the computer behind it (the x86), whose
+  // host key it read.
+  inspected_at?: string;
+  node_host_key_fingerprint?: string;
   address?: string;
+  // The hardware address of the entry device it was last seen through: what tells one's robots from others on the
+  // same network.
+  mac?: string;
   last_seen?: string;
   cluster_id?: string;
   node_name?: string;
+  // It can be ticked: it was read and has no problem, or its join stopped.
   admissible: boolean;
+  // An administrator's request for it is being acted on, until the join it starts succeeds or stops.
+  joining: boolean;
   // The administrator's decision that it is to be a node: who, when, of which cluster.
   requested_by?: string;
   requested_at?: string;
@@ -191,11 +201,63 @@ export function machineStateLabel(machine: Pick<Machine, "phase" | "problem">, z
   return zh ? "未加入" : "Not joined";
 }
 
-// The machines the "add node" list shows: every one that is not a node yet,
-// those that can be ticked first, and among them the newest sighting first.
-export function unjoinedMachines(machines: Machine[]): Machine[] {
-  return machines.filter((machine) => machine.phase !== "Joined").sort((a, b) =>
+// The machines the "add node" list of a cluster shows: every one that is not a node yet and is not being joined to
+// this cluster (those are in its join progress), the ones that can be ticked first, and among them the newest
+// sighting first.
+export function unjoinedMachines(machines: Machine[], clusterID: string): Machine[] {
+  return machines.filter((machine) => machine.phase !== "Joined" && !(machine.joining && machine.admit_cluster_id === clusterID)).sort((a, b) =>
     Number(b.admissible) - Number(a.admissible) || (b.last_seen ?? "").localeCompare(a.last_seen ?? ""));
+}
+
+export type ReachState = "ok" | "fail" | "checking" | "unknown";
+
+// Whether RLark got through to one computer of a machine, and why not.
+export interface Reach {
+  state: ReachState;
+  reason: string;
+}
+
+// The problems that say RLark did not get in to the entry device: it does not answer, from its site's hub either;
+// the hub does not; the device refused the class's account or shows another key.
+const entryFaults = ["EntryUnreachable", "HubUnreachable", "CredentialRejected", "HostKeyChanged"];
+
+// Whether RLark got through to a machine's Orin (its serial was read) and, through it, to the x86 behind it (its
+// host key was read), as the last login found. Nothing is known of the x86 while the Orin is not reached.
+export function machineReach(machine: Machine, zh: boolean): { orin: Reach; x86: Reach } {
+  const problem = machine.problem ?? "";
+  const label = machineStateLabel(machine, zh);
+  const checking: Reach = {
+    state: "checking",
+    reason: problem === "InspectFailed" ? `${label}${zh ? "，RLark 自动再试" : "; RLark tries again"}` : zh ? "RLark 还没登录读取" : "Not read by RLark yet",
+  };
+  let orin: Reach;
+  if (entryFaults.includes(problem)) orin = { state: "fail", reason: label };
+  else if (problem === "InspectFailed" || !machine.inspected_at || !machine.serial) orin = checking;
+  else orin = { state: "ok", reason: zh ? `读到序列号 ${machine.serial}` : `Serial ${machine.serial} read` };
+  let x86: Reach;
+  if (orin.state === "fail") x86 = { state: "unknown", reason: zh ? "Orin 不通，到不了 x86" : "Not reached: the entry device is not" };
+  else if (problem === "NodeUnreachable") x86 = { state: "fail", reason: label };
+  else if (orin.state === "checking") x86 = checking;
+  else if (machine.node_host_key_fingerprint) x86 = { state: "ok", reason: zh ? `读到主机密钥 ${machine.node_host_key_fingerprint}` : `Host key ${machine.node_host_key_fingerprint} read` };
+  else x86 = { state: "unknown", reason: problem ? label : (zh ? "没读到主机密钥" : "No host key read") };
+  return { orin, x86 };
+}
+
+export function reachLabel(state: ReachState, zh: boolean): string {
+  return { ok: zh ? "通" : "OK", fail: zh ? "不通" : "Unreachable", checking: zh ? "检查中" : "Checking", unknown: "—" }[state];
+}
+
+// Why a machine of the "add node" list cannot be ticked; empty when it can.
+export function machineNotTickable(machine: Machine, zh: boolean): string {
+  if (machine.admissible) return "";
+  if (machine.joining) {
+    return zh ? `正在加入集群 ${machine.admit_cluster_id}（${machine.requested_by} 提交）` : `Being joined to cluster ${machine.admit_cluster_id} (asked by ${machine.requested_by})`;
+  }
+  const { orin, x86 } = machineReach(machine, zh);
+  if (orin.state === "fail") return `Orin ${reachLabel("fail", zh)}${zh ? "：" : ": "}${orin.reason}`;
+  if (x86.state === "fail") return `x86 ${reachLabel("fail", zh)}${zh ? "：" : ": "}${x86.reason}`;
+  if (orin.state === "checking") return zh ? "等 RLark 登录读取完" : "Waiting for RLark to read it";
+  return machineStateLabel(machine, zh);
 }
 
 // The classes whose passwords the "add node" list shows: those that declare

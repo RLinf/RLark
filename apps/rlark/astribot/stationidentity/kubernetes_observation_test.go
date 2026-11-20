@@ -44,14 +44,14 @@ func TestKubernetesObservationSinkWritesOnlyTheObservationOfTheNodesRecord(t *te
 	evidence := validEvidence()
 	evidence.ClusterID = "cluster-a"
 	evidence.NodeName = "node-a"
+	evidence.SystemUUID = "system-a"
 	evidence.NodePressures = []string{"DiskPressure"}
 	observation := Observation{
-		SystemUUID: "system-a",
-		BootTime:   &receivedAt,
-		Wireguard:  json.RawMessage(`{"interface":"st-wg0","addresses":["10.254.240.10/32"]}`),
-		Probes:     []Probe{{Target: "nas:445", OK: true}},
-		Gateway:    &GatewayProgram{DocumentLevel: 2, Digest: strings.Repeat("ab", 32)},
-		Agent:      AgentProgram{Digest: strings.Repeat("cd", 32)},
+		BootTime:  &receivedAt,
+		Wireguard: json.RawMessage(`{"interface":"st-wg0","addresses":["10.254.240.10/32"]}`),
+		Probes:    []Probe{{Target: "nas:445", OK: true}},
+		Gateway:   &GatewayProgram{DocumentLevel: 2, Digest: strings.Repeat("ab", 32)},
+		Agent:     AgentProgram{Digest: strings.Repeat("cd", 32)},
 	}
 	resource := client.Resource(networkEnrollmentGVR).Namespace("agent-a")
 	store := func(e Evidence, o Observation) map[string]interface{} {

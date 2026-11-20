@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strconv"
@@ -33,15 +34,22 @@ type machine struct {
 	Problem string `json:"problem,omitempty"`
 	Message string `json:"message,omitempty"`
 	Serial  string `json:"serial,omitempty"`
-	Address string `json:"address,omitempty"`
-	MAC     string `json:"mac,omitempty"`
+	// InspectedAt is when RLark last logged in to the machine's entry device
+	// and reached the computer behind it, whose host key is NodeHostKeyFingerprint.
+	InspectedAt            string `json:"inspected_at,omitempty"`
+	NodeHostKeyFingerprint string `json:"node_host_key_fingerprint,omitempty"`
+	Address                string `json:"address,omitempty"`
+	MAC                    string `json:"mac,omitempty"`
 	// LastSeen is when a hub of its site last saw the machine.
 	LastSeen  string `json:"last_seen,omitempty"`
 	ClusterID string `json:"cluster_id,omitempty"`
 	NodeName  string `json:"node_name,omitempty"`
 	// Admissible says whether the machine can be admitted now: one that is
-	// not a node and has no problem, or one whose join stopped.
-	Admissible  bool   `json:"admissible"`
+	// not a node, was read and has no problem, or one whose join stopped.
+	Admissible bool `json:"admissible"`
+	// Joining says that an administrator's request for the machine is being
+	// acted on: it is not admitted again until its join succeeds or stops.
+	Joining     bool   `json:"joining"`
 	RequestedBy string `json:"requested_by,omitempty"`
 	RequestedAt string `json:"requested_at,omitempty"`
 	// AdmitClusterID is the cluster an administrator admitted the machine to.
@@ -88,7 +96,9 @@ type admittedMachine struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func machineView(object *unstructured.Unstructured) machine {
+// machineView is a Machine as the list shows it, with the join of its
+// present request among joins (machineJoins).
+func machineView(object *unstructured.Unstructured, joins map[string]*machineJoin) machine {
 	text := func(fields ...string) string {
 		value, _, _ := unstructured.NestedString(object.Object, fields...)
 		return value
@@ -96,12 +106,35 @@ func machineView(object *unstructured.Unstructured) machine {
 	view := machine{
 		Name: object.GetName(), Site: text("spec", "site"), NodeClass: text("spec", "nodeClass"), Source: text("spec", "source"),
 		Phase: text("status", "phase"), Problem: text("status", "problem"), Message: text("status", "message"), Serial: text("status", "serial"),
+		InspectedAt: text("status", "inspectedAt"), NodeHostKeyFingerprint: text("status", "nodeHostKeyFingerprint"),
 		Address: text("status", "entry", "address"), MAC: text("status", "entry", "mac"), LastSeen: text("status", "entry", "lastSeen"),
 		ClusterID: text("status", "clusterID"), NodeName: text("status", "nodeName"),
 		RequestedBy: text("spec", "admit", "requestedBy"), RequestedAt: text("spec", "admit", "requestedAt"), AdmitClusterID: text("spec", "admit", "clusterID"),
+		Join: joins[object.GetName()+"/"+strconv.FormatInt(object.GetGeneration(), 10)],
 	}
-	view.Admissible = view.Serial != "" && (view.Phase == "Discovered" && view.Problem == "" || view.Phase == "Admitted" && view.Problem != "")
+	// A request is acted on from when it is written until the join it starts succeeds or stops; station-controller
+	// may first read the machine, and retries a fault that is not the machine's.
+	view.Joining = view.Phase != "Joined" && view.AdmitClusterID != "" && (view.Join == nil || view.Join.Phase != "Succeeded" && view.Join.Phase != "Blocked" && view.Join.Phase != "Failed")
+	// Read means its entry device let RLark in and the computer behind it answered.
+	view.Admissible = view.Serial != "" && !view.Joining && (view.Phase == "Discovered" && view.Problem == "" && view.InspectedAt != "" && view.NodeHostKeyFingerprint != "" ||
+		view.Phase == "Admitted" && view.Problem != "")
 	return view
+}
+
+// machineJoins are the NodeOperations that join Machines, by the Machine and
+// the generation of the request each was started for.
+func (g *Gateway) machineJoins(ctx context.Context) (map[string]*machineJoin, error) {
+	joins, err := g.stationClient.Resource(nodeOperationGVR).Namespace("").List(ctx, metav1.ListOptions{LabelSelector: machineOperationLabel})
+	if err != nil {
+		return nil, err
+	}
+	joinOf := map[string]*machineJoin{}
+	for i := range joins.Items {
+		phase, _, _ := unstructured.NestedString(joins.Items[i].Object, "status", "phase")
+		stage, _, _ := unstructured.NestedString(joins.Items[i].Object, "status", "stage")
+		joinOf[joins.Items[i].GetLabels()[machineOperationLabel]+"/"+joins.Items[i].GetAnnotations()[machineRequestAnnotation]] = &machineJoin{Phase: phase, Stage: stage}
+	}
+	return joinOf, nil
 }
 
 // handleListMachines answers GET /api/v1/station/machines?site=&phase=: the
@@ -118,22 +151,15 @@ func (g *Gateway) handleListMachines(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "NodeClass request failed"})
 		return
 	}
-	joins, err := g.stationClient.Resource(nodeOperationGVR).Namespace("").List(ctx, metav1.ListOptions{LabelSelector: machineOperationLabel})
+	joins, err := g.machineJoins(ctx)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "NodeOperation request failed"})
 		return
 	}
-	joinOf := map[string]*machineJoin{}
-	for i := range joins.Items {
-		phase, _, _ := unstructured.NestedString(joins.Items[i].Object, "status", "phase")
-		stage, _, _ := unstructured.NestedString(joins.Items[i].Object, "status", "stage")
-		joinOf[joins.Items[i].GetLabels()[machineOperationLabel]+"/"+joins.Items[i].GetAnnotations()[machineRequestAnnotation]] = &machineJoin{Phase: phase, Stage: stage}
-	}
 	site, phase := c.Query("site"), c.Query("phase")
 	items := make([]machine, 0, len(list.Items))
 	for i := range list.Items {
-		if view := machineView(&list.Items[i]); (site == "" || view.Site == site) && (phase == "" || view.Phase == phase) {
-			view.Join = joinOf[view.Name+"/"+strconv.FormatInt(list.Items[i].GetGeneration(), 10)]
+		if view := machineView(&list.Items[i], joins); (site == "" || view.Site == site) && (phase == "" || view.Phase == phase) {
 			items = append(items, view)
 		}
 	}
@@ -180,6 +206,11 @@ func (g *Gateway) handleAdmitMachines(c *gin.Context) {
 	if _, err := g.stationNamespace(c, request.ClusterID); err != nil {
 		return
 	}
+	joins, err := g.machineJoins(ctx)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "NodeOperation request failed"})
+		return
+	}
 	classes := map[string]map[string]string{}
 	resource := g.stationClient.Resource(machineGVR).Namespace(machineNamespace)
 	actor, now := c.GetString(authSubjectKey), time.Now().UTC().Format(time.RFC3339)
@@ -187,12 +218,18 @@ func (g *Gateway) handleAdmitMachines(c *gin.Context) {
 	for _, name := range request.Machines {
 		answer := admittedMachine{Name: name}
 		object, err := resource.Get(ctx, name, metav1.GetOptions{})
+		var view machine
+		if err == nil {
+			view = machineView(object, joins)
+		}
 		switch {
 		case apierrors.IsNotFound(err):
 			answer.Error = "no such machine"
 		case err != nil:
 			answer.Error = "Machine request failed"
-		case !machineView(object).Admissible:
+		case view.Joining:
+			answer.Error = "the machine is being joined to cluster " + view.AdmitClusterID + " already, as " + view.RequestedBy + " asked at " + view.RequestedAt
+		case !view.Admissible:
 			answer.Error = "the machine cannot be admitted as it is"
 		}
 		if answer.Error == "" {

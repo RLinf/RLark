@@ -129,7 +129,7 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 		_, err = resource.Create(ctx, &unstructured.Unstructured{Object: map[string]interface{}{
 			"apiVersion": stationGroup + "/" + stationVersion, "kind": "NetworkEnrollment",
 			"metadata": map[string]interface{}{"name": evidence.NodeName, "namespace": namespace},
-			"spec":     map[string]interface{}{"clusterID": evidence.ClusterID, "nodeUID": evidence.NodeUID, "systemUUID": observation.SystemUUID},
+			"spec":     map[string]interface{}{"clusterID": evidence.ClusterID, "nodeUID": evidence.NodeUID, "systemUUID": evidence.SystemUUID},
 		}}, metav1.CreateOptions{})
 		if err != nil && !apierrors.IsAlreadyExists(err) {
 			return fmt.Errorf("create NetworkEnrollment: %w", err)
@@ -147,7 +147,7 @@ func observationStatus(evidence Evidence, observation Observation, members map[s
 	status := map[string]interface{}{
 		"reportedAt": receivedAt.UTC().Format(time.RFC3339Nano),
 		"nodeUID":    evidence.NodeUID,
-		"systemUUID": observation.SystemUUID,
+		"systemUUID": evidence.SystemUUID,
 		"bootTime":   nil,
 		"wireguard":  nil,
 		"probes":     append([]Probe{}, observation.Probes...),
