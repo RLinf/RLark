@@ -1269,35 +1269,3 @@ func TestStationDaemonSetsArePlacedAsTheTreeStates(t *testing.T) {
 		t.Errorf("station-agent-host is placed on %s", got)
 	}
 }
-
-// What a site of a build before had and this one's Station does not take is gone after the run: the DaemonSet of the
-// nodes without a gateway, and the controller's --enable-node-operations, which this build's would not start with.
-func TestTheRetiredAgentAndArgumentAreTakenAway(t *testing.T) {
-	s := newFakeSite(t)
-	_, environment, release := writeFiles(t)
-	ctx := context.Background()
-	office := s.members["office"]
-	s.create(office, &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Namespace: stationNamespace, Name: retiredStationAgent}})
-	controller, err := office.AppsV1().Deployments(stationNamespace).Get(ctx, stationController, metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	controller.Spec.Template.Spec.Containers[0].Args = []string{"--enable-node-operations=true", "--site-network-name=default"}
-	if err := office.Tracker().Update(schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}, controller, stationNamespace); err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	if err := newRun(t, s, environment, environment.Desired(release, testClusters), &out).Apply(ctx); err != nil {
-		t.Fatalf("%v\n%s", err, out.String())
-	}
-	if !strings.Contains(out.String(), "office DaemonSet station-agent: nodes without a gateway -> deleted") {
-		t.Errorf("the plan does not say the agent goes:\n%s", out.String())
-	}
-	if _, err := office.AppsV1().DaemonSets(stationNamespace).Get(ctx, retiredStationAgent, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
-		t.Errorf("station-agent is still there: %v", err)
-	}
-	controller, _ = office.AppsV1().Deployments(stationNamespace).Get(ctx, stationController, metav1.GetOptions{})
-	if args := controller.Spec.Template.Spec.Containers[0].Args; !slices.Equal(args, []string{"--site-network-name=default"}) {
-		t.Errorf("station-controller is started with %v", args)
-	}
-}

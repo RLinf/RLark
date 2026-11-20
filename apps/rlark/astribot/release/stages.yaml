@@ -41,7 +41,7 @@ stages:
     check:
       - gateways-understand: 2
     recreates: [station-system/station-agent*]
-    note: A node runs the one Station agent its station.rlark.io/network label calls for. Two agents on one node write the node's one observation by turns, and the controller's gate reads the gateway's level from it. A release only set images on a DaemonSet the cluster had; it places them now, before the controller, and the check is the controller's gate. Going back leaves the placement, which was never right before. The DaemonSet station-agent, the agent of nodes without a gateway, is no longer Station's (station-agent.yaml states two); a cluster that has it loses it here, and going back does not bring it back.
+    note: A node runs the one Station agent its station.rlark.io/network label calls for. Two agents on one node write the node's one observation by turns, and the controller's gate reads the gateway's level from it. A release only set images on a DaemonSet the cluster had; it places them now, before the controller, and the check is the controller's gate. Going back leaves the placement, which was never right before.
 
   - name: gateway
     requires: [crds-rbac]
@@ -63,7 +63,7 @@ stages:
       - gateways-understand: 2
     check: [documents-unchanged, enrollments-enrolled, network-connected]
     recreates: [station-system/station-controller]
-    note: A gateway refuses a document with a field it does not know. The level is that of the document this build's controller writes, DocumentLevel in astribot/station/network, and the commit that raises that raises it here. The controller no longer takes --enable-node-operations (node operations always run) and would not start with it, so the Deployment loses the argument with the image; a build before this one runs no node operations without it, so going back past this release means giving it back by hand.
+    note: A gateway refuses a document with a field it does not know. The level is that of the document this build's controller writes, DocumentLevel in astribot/station/network, and the commit that raises that raises it here.
 
   - name: cluster-agents
     requires: [controller]

@@ -123,13 +123,6 @@ func (r *Run) changes(ctx context.Context, stage string, current State) ([]Chang
 			changes = append(changes, Change{Stage: stage, What: daemonSet.cluster + " DaemonSet " + daemonSet.current.Name + " placement",
 				From: placement(daemonSet.current.Spec.Template.Spec.Affinity), To: placement(daemonSet.want)})
 		}
-		retired, err := r.retiredStationAgents(ctx)
-		if err != nil {
-			return nil, err
-		}
-		for _, cluster := range retired {
-			changes = append(changes, Change{Stage: stage, What: cluster + " DaemonSet " + retiredStationAgent, From: "nodes without a gateway", To: "deleted"})
-		}
 		return changes, nil
 	case "images":
 		missing, err := r.missingImages(ctx)
@@ -424,15 +417,6 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 				return fmt.Errorf("cluster %s: %w", daemonSet.cluster, err)
 			}
 		}
-		retired, err := r.retiredStationAgents(ctx)
-		if err != nil {
-			return err
-		}
-		for _, cluster := range retired {
-			if err := site.Members[cluster].AppsV1().DaemonSets(stationNamespace).Delete(ctx, retiredStationAgent, metav1.DeleteOptions{}); err != nil {
-				return fmt.Errorf("cluster %s: %w", cluster, err)
-			}
-		}
 	case "crds-rbac":
 		if err := applyDefinitions(ctx, site.Management, r.Tree.Definitions, ""); err != nil {
 			return err
@@ -476,15 +460,12 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 			}
 		}
 	case "controller":
-		// Node operations always run: the controller has no --enable-node-operations, and a Deployment started
-		// with it loses it with the image that would not start with it.
 		deployment, err := site.Members[site.Environment.Station.Cluster].AppsV1().Deployments(stationNamespace).Get(ctx, stationController, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
 		container := &deployment.Spec.Template.Spec.Containers[0]
 		container.Image = desired.StationController
-		container.Args = slices.DeleteFunc(container.Args, func(arg string) bool { return strings.HasPrefix(arg, "--enable-node-operations") })
 		deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: site.Environment.Station.PullSecret}}
 		_, err = site.Members[site.Environment.Station.Cluster].AppsV1().Deployments(stationNamespace).Update(ctx, deployment, metav1.UpdateOptions{})
 		return err
@@ -996,29 +977,6 @@ func (r *Run) misplacedStationDaemonSets(ctx context.Context) ([]misplacedStatio
 		}
 	}
 	return misplaced, nil
-}
-
-// retiredStationAgent was the agent of the nodes without a gateway. Station has none now: every node it knows runs a
-// gateway, and a cluster that still has the DaemonSet loses it where the others are placed.
-const retiredStationAgent = "station-agent"
-
-// retiredStationAgents are the clusters that still have it; none for a run without a tree.
-func (r *Run) retiredStationAgents(ctx context.Context) ([]string, error) {
-	if r.Tree == nil {
-		return nil, nil
-	}
-	var clusters []string
-	for _, cluster := range slices.Sorted(maps.Keys(r.Site.Members)) {
-		_, err := r.Site.Members[cluster].AppsV1().DaemonSets(stationNamespace).Get(ctx, retiredStationAgent, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("cluster %s: %w", cluster, err)
-		}
-		clusters = append(clusters, cluster)
-	}
-	return clusters, nil
 }
 
 // placement is a node affinity in a line: its required terms' expressions.
