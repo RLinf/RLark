@@ -593,45 +593,6 @@
   background: #f8f9fc;
 }
 
-.registry-password-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.registry-password-row strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.registry-password-actions {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-  gap: 2px;
-  margin-left: auto;
-}
-
-.registry-password-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-
-.registry-password-button:hover,
-.registry-password-button:focus-visible {
-  background: rgba(128, 128, 128, 0.14);
-}
-
 .storage-detail-info-grid .muted {
   color: var(--muted);
   font-size: 10px;

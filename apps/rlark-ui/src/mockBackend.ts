@@ -1,31 +1,11 @@
 import {
   clusters,
-  storageClasses as mockStorageClasses,
   type StorageClass,
-} from "./data.js";
+} from "./data";
+import { astribotMockRoute, mockStorageClasses, mockStorageFields, withMockDisplayName } from "./astribot/mockBackend";
 import type { CRDDomain, NodeEventEntry } from "./types";
 import type { CRDJob, CRDWorkflow } from "./crdModels";
-import { buildMockCRDNodes } from "./utils/nodes.js";
-import { displayNameError } from "./astribot/lib/displayName.js";
-
-const mockClusterProvisions = [
-  {
-    apiVersion: "rlinf.io/v1alpha1",
-    kind: "ClusterProvision",
-    metadata: { name: "rlark-baidu-gpu" },
-    spec: { site: "baidu", machine: { address: "1.2.3.4", port: 22, user: "root" } },
-    status: {
-      phase: "Failed",
-      stage: "control-plane",
-      stages: [
-        { name: "precheck", state: "Done", readback: "bd-gpu-1, Ubuntu 22.04.5 LTS, kernel 6.8.0; 8 × NVIDIA RTX PRO 6000; /var/lib 3500 GiB free; private address 192.168.0.10" },
-        { name: "bundle", state: "Done", readback: "installer sha256 f8528e6d0aa1…; tunnel public key K1aR…=" },
-        { name: "declare", state: "Done", readback: "site baidu; cp.rlark-baidu-gpu.rlark.internal → 10.254.240.20; Pod 10.200.0.0/16, Service 10.201.0.0/16" },
-        { name: "control-plane", state: "Failed", message: "the management plane does not reach the API at 10.254.240.20:6443 through the tunnel (is UDP 51820 open to 1.2.3.4?)" },
-      ],
-    },
-  },
-];
+import { buildMockCRDNodes } from "./utils/nodes";
 
 const nodes = buildMockCRDNodes();
 const clusterNames = [
@@ -338,21 +318,12 @@ const json = (body: unknown, status = 200) =>
     headers: { "Content-Type": "application/json" },
   });
 
-// The mock's cluster IDs are the demo clusters' names; a display name set
-// through PUT …/display-name is kept here, by cluster ID.
-const clusterDisplayNames = new Map<string, string>();
-
 function clusterPayload() {
-  return clusters.map((cluster) => {
-    const displayName = clusterDisplayNames.get(cluster.name);
-    return {
-      ...cluster,
-      id: cluster.name,
-      name: displayName || cluster.name,
-      displayName,
-      agentNamespace: cluster.name,
-    };
-  });
+  return clusters.map((cluster) => ({
+    ...cluster,
+    id: cluster.name,
+    name: cluster.name,
+  })).map(withMockDisplayName);
 }
 
 const sshUserKeys = [
@@ -372,27 +343,11 @@ export function installMockBackend() {
     if (!url.pathname.startsWith("/api/")) return nativeFetch(input, init);
     const method = request.method.toUpperCase();
     const path = url.pathname;
+    const astribot = await astribotMockRoute(method, path, request, { clusterPayload, nodes, imageRegistries });
+    if (astribot) return astribot;
 
     if (method === "GET" && path === "/api/v1/clusters")
       return json({ data: clusterPayload() });
-    if (path.startsWith("/api/v1/station/") || path.startsWith("/api/v1/site-nodes"))
-      return json({ error: "Station is unavailable in mock mode" }, 503);
-    if (method === "PUT" && /^\/api\/v1\/clusters\/[^/]+\/display-name$/.test(path)) {
-      const id = decodeURIComponent(path.split("/")[4]);
-      if (!clusters.some((cluster) => cluster.name === id))
-        return json({ code: "RESOURCE_NOT_FOUND", message: "not found" }, 404);
-      const { displayName = "" } = await request.json();
-      const error = displayNameError(
-        displayName,
-        id,
-        clusterPayload().map((cluster) => ({ id: cluster.id, name: cluster.id, displayName: cluster.displayName })),
-      );
-      if (error)
-        return json({ code: error.status === 409 ? "RESOURCE_CONFLICT" : "INVALID_REQUEST", message: error.message }, error.status);
-      if (displayName.trim()) clusterDisplayNames.set(id, displayName.trim());
-      else clusterDisplayNames.delete(id);
-      return json({ data: clusterPayload().find((cluster) => cluster.id === id) });
-    }
     if (method === "GET" && path.startsWith("/api/v1/clusters/")) {
       const id = decodeURIComponent(path.split("/").pop()!);
       const cluster = clusterPayload().find((item) => item.id === id);
@@ -414,25 +369,6 @@ export function installMockBackend() {
       const name = decodeURIComponent(path.split("/").pop()!);
       const node = nodes.find((item) => item.metadata.name === name);
       return node ? json(node) : json({ error: "not found" }, 404);
-    }
-    if (method === "PUT" && /^\/api\/v1\/rlinf\.io\/v1alpha1\/nodes\/[^/]+\/display-name$/.test(path)) {
-      const name = decodeURIComponent(path.split("/")[6]);
-      const node = nodes.find((item) => item.metadata.name === name);
-      if (!node) return json({ code: "RESOURCE_NOT_FOUND", message: "not found" }, 404);
-      const { displayName = "" } = await request.json();
-      const error = displayNameError(
-        displayName,
-        `${node.metadata.namespace}/${name}`,
-        nodes.map((item) => ({
-          id: `${item.metadata.namespace}/${item.metadata.name}`,
-          name: item.metadata.name,
-          displayName: item.spec.displayName,
-        })),
-      );
-      if (error)
-        return json({ code: error.status === 409 ? "RESOURCE_CONFLICT" : "INVALID_REQUEST", message: error.message }, error.status);
-      node.spec.displayName = displayName.trim() || undefined;
-      return json(node);
     }
     if (
       method === "PATCH" &&
@@ -609,28 +545,18 @@ export function installMockBackend() {
           payload.clusters ||
           storageClasses.find((item) => item.name === name)?.clusters ||
           [],
-        type: payload.type === "smb" ? "smb" : "s3",
-        provider: payload.type === "smb" ? "" : payload.provider || "MinIO",
+        provider: payload.provider || "MinIO",
         endpoint: payload.endpoint || "",
-        mount_endpoint: payload.mount_endpoint || "",
-        prefix: payload.prefix || "",
-        mount_profile: payload.mount_profile || "default",
-        mount_options: payload.mount_options || [],
-        vfs_cache_mode: payload.vfs_cache_mode === "off" ? "off" : "writes",
         region: payload.region || "",
         bucket: payload.bucket || "",
         accessKeyId: payload.access_key_id || payload.accessKeyId || "",
         pathStyle: Boolean(payload.path_style ?? payload.pathStyle),
-        host: payload.host || "",
-        share: payload.share || "",
-        subPath: payload.sub_path || payload.subPath || "",
-        username: payload.username || "",
-        domain: payload.domain || "",
         description: payload.description || "",
         createdAt:
           storageClasses.find((item) => item.name === name)?.createdAt ||
           new Date().toISOString(),
       };
+      Object.assign(next, mockStorageFields(payload));
       const index = storageClasses.findIndex(
         (item) => item.name === name || item.id === name,
       );
@@ -664,19 +590,10 @@ export function installMockBackend() {
       return json(item, 201);
     }
     if (path.startsWith("/api/v1/image-registries/")) {
-      const segments = path.split("/");
-      const id = decodeURIComponent(segments[4] || "");
+      const id = decodeURIComponent(path.split("/").pop() || "");
       const index = imageRegistries.findIndex((item) => item.id === id);
       if (index < 0)
         return json({ code: "RESOURCE_NOT_FOUND", message: "not found" }, 404);
-      if (method === "GET" && segments[5] === "password")
-        return json({ password: "example-password" });
-      if (method === "GET" && segments[5] === "repositories")
-        return json({ items: ["example/image"], next: "" });
-      if (method === "GET" && segments[5] === "tags")
-        return json({ items: ["demo"], next: "" });
-      if (method === "GET" && segments[5] === "manifest")
-        return json({ digest: `sha256:${"a".repeat(64)}` });
       if (method === "GET") return json(imageRegistries[index]);
       if (method === "PUT") {
         const payload = await request.json();
@@ -740,8 +657,8 @@ export function installMockBackend() {
       return json({ data: [] });
     if (method === "GET" && path === "/api/v1/installed-addons")
       return json({ data: [] });
-    if (method === "GET" && path === "/api/v1/cluster-provisions")
-      return json({ success: true, data: mockClusterProvisions });
+    if (method === "GET" && path === "/api/v1/certificates/agent")
+      return json([]);
     if (["POST", "PUT", "PATCH", "DELETE"].includes(method))
       return json({ data: {}, mock: true });
     return json({ error: `No mock route for ${method} ${path}` }, 404);

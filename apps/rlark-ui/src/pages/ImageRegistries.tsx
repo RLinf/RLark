@@ -1,10 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import {
   ChevronLeft,
   Database,
-  Copy as CopyIcon,
-  Eye,
-  EyeOff,
   Image as ImageIcon,
   Lock,
   Pencil,
@@ -15,7 +12,7 @@ import {
 import type { Copy } from "../i18n";
 import { PageToolbar, RefreshOverlay } from "../components/shared";
 import { RegistryBrowser } from "../astribot/pages/RegistryBrowser";
-import { copyText } from "../utils/clipboard";
+import { RegistryPassword } from "../astribot/components/RegistryPassword";
 import { registryClusterOption } from "../astribot/lib/clusterOptions";
 
 type ClusterSelectionMode = "None" | "Selected" | "All";
@@ -414,37 +411,6 @@ function ImageRegistryDetailPage({
   onEdit: () => void;
 }) {
   const zh = c.nav.overview === "总览";
-  const [password, setPassword] = useState<string | null>(null);
-  const [passwordStatus, setPasswordStatus] = useState("");
-  const [passwordLoading, setPasswordLoading] = useState(false);
-  const passwordRequest = useRef<AbortController | null>(null);
-  useEffect(() => {
-    setPassword(null);
-    setPasswordStatus("");
-    setPasswordLoading(false);
-    return () => passwordRequest.current?.abort();
-  }, [item.id]);
-  const revealPassword = async () => {
-    if (password !== null) {
-      setPassword(null);
-      setPasswordStatus("");
-      return;
-    }
-    setPasswordLoading(true);
-    const controller = new AbortController();
-    passwordRequest.current = controller;
-    try {
-      const result = await imageRegistriesApi.password(item.id, controller.signal);
-      if (!controller.signal.aborted) {
-        setPassword(result.password);
-        setPasswordStatus("");
-      }
-    } catch {
-      if (!controller.signal.aborted) setPasswordStatus(zh ? "无法读取密码" : "Unable to read password");
-    } finally {
-      if (!controller.signal.aborted) setPasswordLoading(false);
-    }
-  };
   return (
     <div className="page-content resource-page storage-detail-page">
       <div className="section-heading storage-detail-hero">
@@ -504,16 +470,7 @@ function ImageRegistryDetailPage({
             </div>
             <div>
               <span className="muted">{zh ? "密码" : "Password"}</span>
-              <div className="registry-password-row">
-                <strong>{password ?? "••••••••"}</strong>
-                <div className="registry-password-actions">
-                  <button type="button" className="registry-password-button" disabled={passwordLoading} onClick={() => void revealPassword()} aria-label={password !== null ? (zh ? "隐藏密码" : "Hide password") : (zh ? "显示密码" : "Show password")} title={password !== null ? (zh ? "隐藏密码" : "Hide password") : (zh ? "显示密码" : "Show password")}>
-                    {password !== null ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                  {password !== null && <button type="button" className="registry-password-button" aria-label={zh ? "复制密码" : "Copy password"} title={zh ? "复制密码" : "Copy password"} onClick={() => void copyText(password).then(ok => setPasswordStatus(ok ? (zh ? "已复制" : "Copied") : (zh ? "复制失败" : "Copy failed"))).catch(() => setPasswordStatus(zh ? "复制失败" : "Copy failed"))}><CopyIcon size={16} /></button>}
-                </div>
-              </div>
-              {passwordStatus && <span role="status">{passwordStatus}</span>}
+              <RegistryPassword registryID={item.id} zh={zh} />
             </div>
             <div>
               <span className="muted">

@@ -3,10 +3,10 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ApiError } from "../dist/test/api.js";
-import { clustersApi, nodesApi } from "../dist/test/backend.js";
+import { displayNameApi } from "../dist/test/astribot/api.js";
 import { ClusterName } from "../dist/test/astribot/components/ClusterName.js";
 import { NodeName } from "../dist/test/astribot/components/NodeName.js";
-import { installMockBackend } from "../dist/test/mockBackend.js";
+import { astribotMockRoute, withMockDisplayName } from "../dist/test/astribot/mockBackend.js";
 import {
   clusterLabel,
   displayNameError,
@@ -81,8 +81,8 @@ test("display names are set through their own endpoints, keyed by the real names
       headers: { "Content-Type": "application/json" },
     });
   };
-  assert.deepEqual(await clustersApi.setDisplayName("rlark-baidu-gpu", "百度GPU"), { id: "rlark-baidu-gpu" });
-  await nodesApi.setDisplayName("instance-gt4l6j5v-1", "rlark-baidu-gpu", "");
+  assert.deepEqual(await displayNameApi.cluster("rlark-baidu-gpu", "百度GPU"), { id: "rlark-baidu-gpu" });
+  await displayNameApi.node("instance-gt4l6j5v-1", "rlark-baidu-gpu", "");
   assert.deepEqual(calls, [
     { input: "/api/v1/clusters/rlark-baidu-gpu/display-name", method: "PUT", body: JSON.stringify({ displayName: "百度GPU" }) },
     {
@@ -95,38 +95,44 @@ test("display names are set through their own endpoints, keyed by the real names
 
 test("the mock refuses a display name as the Gateway does, and the console says why in its language", async () => {
   globalThis.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
-  globalThis.window = globalThis;
-  globalThis.location = { origin: "http://console.test" };
-  installMockBackend();
+  globalThis.window = { dispatchEvent() {} };
+  const east = "云训练集群 East-A";
+  const north = "云评测集群 North-B";
+  // The mock's state as mockBackend.ts hands it over: its clusters by name, and two nodes.
+  const state = {
+    clusterPayload: () => [east, north].map((name) => withMockDisplayName({ id: name, name })),
+    nodes: ["gpu-cloud-01", "gpu-cloud-03"].map((name) => ({ metadata: { name, namespace: east }, spec: {} })),
+    imageRegistries: [],
+  };
   // Node has no page to resolve the console's relative paths against.
-  const mock = globalThis.fetch;
-  globalThis.fetch = (input, init) => mock(new URL(String(input), location.origin), init);
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(new URL(String(input), "http://console.test"), init);
+    return astribotMockRoute(request.method, new URL(request.url).pathname, request, state);
+  };
   const refused = async (save) => {
     const error = await save().then(() => assert.fail("saved"), (e) => e);
     return displayNameRefusal(error);
   };
 
-  const east = "云训练集群 East-A";
-  const north = "云评测集群 North-B";
-  assert.equal((await clustersApi.setDisplayName(east, "训练A")).name, "训练A");
-  const usedCluster = await refused(() => clustersApi.setDisplayName(north, "训练A"));
+  assert.equal((await displayNameApi.cluster(east, "训练A")).name, "训练A");
+  const usedCluster = await refused(() => displayNameApi.cluster(north, "训练A"));
   assert.deepEqual(usedCluster, { status: 409, usedBy: east });
   assert.equal(displayNameMessage(usedCluster, "cluster", true), `该名称已被集群 ${east} 使用（作为显示名或 ID）`);
-  const badCluster = await refused(() => clustersApi.setDisplayName(north, "bad name"));
+  const badCluster = await refused(() => displayNameApi.cluster(north, "bad name"));
   assert.equal(badCluster.status, 400);
   assert.equal(displayNameMessage(badCluster, "cluster", false), "Invalid name: at most 64 Chinese/English letters, digits, -, _ and .");
-  assert.equal((await clustersApi.setDisplayName(east, "")).name, east);
+  assert.equal((await displayNameApi.cluster(east, "")).name, east);
 
-  assert.equal((await nodesApi.setDisplayName("gpu-cloud-01", east, "GPU-1")).spec.displayName, "GPU-1");
-  const usedNode = await refused(() => nodesApi.setDisplayName("gpu-cloud-03", east, "GPU-1"));
+  assert.equal((await displayNameApi.node("gpu-cloud-01", east, "GPU-1")).spec.displayName, "GPU-1");
+  const usedNode = await refused(() => displayNameApi.node("gpu-cloud-03", east, "GPU-1"));
   assert.deepEqual(usedNode, { status: 409, usedBy: `${east}/gpu-cloud-01` });
   assert.equal(displayNameMessage(usedNode, "node", true), `该名称已被节点 ${east}/gpu-cloud-01 使用（作为显示名或 Kubernetes 名）`);
-  assert.deepEqual(await refused(() => nodesApi.setDisplayName("gpu-cloud-03", east, "gpu-cloud-01")), {
+  assert.deepEqual(await refused(() => displayNameApi.node("gpu-cloud-03", east, "gpu-cloud-01")), {
     status: 409,
     usedBy: `${east}/gpu-cloud-01`,
   });
-  assert.equal((await refused(() => nodesApi.setDisplayName("gpu-cloud-03", east, "bad name"))).status, 400);
-  assert.equal((await nodesApi.setDisplayName("gpu-cloud-01", east, "")).spec.displayName, undefined);
+  assert.equal((await refused(() => displayNameApi.node("gpu-cloud-03", east, "bad name"))).status, 400);
+  assert.equal((await displayNameApi.node("gpu-cloud-01", east, "")).spec.displayName, undefined);
 });
 
 test("only the Gateway's 400 and 409 are display-name refusals", () => {

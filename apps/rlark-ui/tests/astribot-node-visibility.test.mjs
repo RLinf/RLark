@@ -20,7 +20,8 @@ test("shows explicitly managed control-plane nodes with workload resources", () 
 });
 
 test("a cluster's control plane is the node its Kubernetes role says, with its InternalIP", async () => {
-  const { controlPlanesOf, isControlPlaneLabels } = await import("../dist/test/utils/nodeVisibility.js");
+  const { isControlPlaneLabels } = await import("../dist/test/utils/nodeVisibility.js");
+  const { controlPlanesOf } = await import("../dist/test/astribot/lib/controlPlanes.js");
   const node = (name, namespace, labels, addresses) => ({ metadata: { name, namespace, labels }, spec: {}, status: { addresses } });
   const nodes = [
     node("cailiang", "rlark-local-dev-gpu", { "node-role.kubernetes.io/control-plane": "" }, [{ type: "Hostname", address: "cailiang" }, { type: "InternalIP", address: "10.11.14.128" }]),

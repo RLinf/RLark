@@ -1320,48 +1320,6 @@
   position: relative;
 }
 
-.image-picker-input {
-  position: relative;
-}
-
-.image-picker-heading {
-  padding: 8px 12px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.image-picker-browse {
-  margin-top: 8px;
-}
-
-.image-picker-browser {
-  display: grid;
-  gap: 8px;
-  margin-top: 8px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-
-.image-picker-browser label {
-  display: grid;
-  gap: 6px;
-}
-
-.image-picker-browser p {
-  margin: 0;
-}
-
-.image-picker-results {
-  max-height: 224px;
-  overflow-y: auto;
-}
-
-.image-picker-pagination {
-  display: flex;
-  gap: 8px;
-}
-
 .image-picker-list {
   position: absolute;
   z-index: 20;

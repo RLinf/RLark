@@ -1,8 +1,10 @@
 import { request, requestJson, withQuery, type LoginResponse } from "./api.js";
 import type {
+  AgentCertListItem,
   CRDDomain,
   CRDNode,
   CRDPod,
+  SignAgentCertResponse,
 } from "./types.js";
 import type { CRDJob, CRDTask, CRDWorkflow } from "./crdModels.js";
 
@@ -25,6 +27,24 @@ export interface SystemConfigResponse {
       accessKeyId?: string;
       accessKeySecret?: string;
     };
+  };
+  deployment?: DeploymentConfig;
+}
+
+export interface DeploymentConfig {
+  apiVersion?: string;
+  kind?: string;
+  plane?: "data";
+  controlPlaneAddress?: string;
+  sshAddress?: string;
+  insecureSkipTlsVerify?: boolean;
+  kubernetes?: {
+    kubeconfig?: string;
+    agentImage?: string;
+    image?: string;
+    imagePullPolicy?: "" | "Always" | "IfNotPresent" | "Never";
+    imagePullSecrets?: string[];
+    containerdSocket?: string;
   };
 }
 
@@ -115,14 +135,6 @@ export const clustersApi = {
       { method: "POST" },
     );
   },
-  // An empty displayName clears it; the cluster ID never changes.
-  async setDisplayName<T = unknown>(id: string, displayName: string) {
-    const response = await requestJson<DataResponse<T>>(
-      `/api/v1/clusters/${encodeURIComponent(id)}/display-name`,
-      { method: "PUT", body: { displayName } },
-    );
-    return response.data;
-  },
 };
 
 function resourceApi<T>(resource: string) {
@@ -157,16 +169,7 @@ function resourceApi<T>(resource: string) {
   };
 }
 
-export const nodesApi = {
-  ...resourceApi<CRDNode>("nodes"),
-  // An empty displayName clears it; metadata.name never changes.
-  setDisplayName(name: string, namespace: string, displayName: string) {
-    return requestJson<CRDNode>(
-      withQuery(`${resourcePath("nodes", name)}/display-name`, { namespace }),
-      { method: "PUT", body: { displayName } },
-    );
-  },
-};
+export const nodesApi = resourceApi<CRDNode>("nodes");
 export const tasksApi = resourceApi<CRDTask>("tasks");
 export const podsApi = {
   ...resourceApi<CRDPod>("pods"),
@@ -263,6 +266,23 @@ export const sshKeysApi = {
   },
 };
 
+export const certificatesApi = {
+  list() {
+    return requestJson<AgentCertListItem[]>("/api/v1/certificates/agent");
+  },
+  sign(clusterId: string) {
+    return requestJson<SignAgentCertResponse>("/api/v1/certificates/agent", {
+      method: "POST",
+      body: { cluster_id: clusterId },
+    });
+  },
+  get(clusterId: string) {
+    return requestJson<SignAgentCertResponse>(
+      `/api/v1/certificates/agent/${encodeURIComponent(clusterId)}`,
+    );
+  },
+};
+
 export const imagesApi = {
   async list<T = unknown>() {
     const response = await requestJson<ItemList<T>>("/api/v1/images");
@@ -271,9 +291,6 @@ export const imagesApi = {
 };
 
 export const imageRegistriesApi = {
-  password(id: string, signal?: AbortSignal) {
-    return requestJson<{ password: string }>(`/api/v1/image-registries/${encodeURIComponent(id)}/password`, { signal });
-  },
   list(signal?: AbortSignal) {
     return requestJson<ImageRegistryItem[]>("/api/v1/image-registries", { signal });
   },

@@ -4,7 +4,7 @@ import type { DAGNode, DAGEdge, RoleResource } from "../types";
 export function makeDefaultRoleResources(
   type: JobType,
   roles: string[],
-  clusterNames: string[] = [],
+  clusterDisplayNames: string[] = [],
 ): Record<string, RoleResource> {
   const rr: Record<string, RoleResource> = {};
   roles.forEach((role, index) => {
@@ -20,7 +20,7 @@ export function makeDefaultRoleResources(
     ];
     rr[role] = {
       role,
-      cluster: clusterNames[0] ?? "",
+      cluster: clusterDisplayNames[0] ?? "",
       nodeSelector: "",
       replicas: 0,
       cpu: "",

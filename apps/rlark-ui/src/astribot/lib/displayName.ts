@@ -17,6 +17,20 @@ export function clusterLabel(clusters: ClusterSummary[], namespace: string) {
   return clusterForStation(clusters, namespace)?.name ?? namespace;
 }
 
+// A Job's clusters as shown: job.cluster is its Tasks' cluster IDs, joined by ", ".
+export function clusterIDsLabel(clusters: ClusterSummary[], ids: string) {
+  return ids
+    .split(", ")
+    .map((id) => clusters.find((cluster) => cluster.id === id)?.name ?? id)
+    .join(", ");
+}
+
+// What a Job's worker's node is shown as: its Node's display name once read.
+export function workerNodeLabel(nodes: Array<{ metadata: { name: string; namespace?: string }; spec?: { displayName?: string } }>, worker: { node: string; cluster?: string }) {
+  const node = nodes.find((item) => item.metadata.name === worker.node && item.metadata.namespace === worker.cluster);
+  return node ? nodeLabel(node) : worker.node;
+}
+
 // The names a node is found by in a search: its Kubernetes name, its display
 // name, its cluster's namespace and the name that cluster is shown as.
 export function nodeSearchNames(

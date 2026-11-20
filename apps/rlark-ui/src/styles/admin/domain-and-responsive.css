@@ -231,6 +231,38 @@
   overflow-y: auto;
 }
 
+.cert-yaml-block {
+  margin-top: 16px;
+}
+
+.cert-yaml-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 12px;
+}
+
+.cert-yaml-head strong {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.cert-yaml-block pre {
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
 .cert-list {
   display: flex;
   flex-direction: column;
@@ -277,6 +309,15 @@
 .cert-list-date {
   font-size: 12px;
   color: var(--soft);
+}
+
+.cert-list-chevron {
+  color: var(--soft);
+  transition: transform 0.2s;
+}
+
+.cert-list-chevron.rotated {
+  transform: rotate(90deg);
 }
 
 @media (max-width: 1300px) {

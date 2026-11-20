@@ -1,5 +1,6 @@
 import type { Job, JobTag, JobType, MountType, Phase } from "../data";
 import type { CRDJob, CRDJobTask, CRDVolume, CRDWorkflow } from "../crdModels";
+import { STORAGE_DRIVER, storageMount } from "../astribot/lib/storageVolume.js";
 
 // 生成稳定的 tag id：用 key:value 组合哈希，保证同一 CRD 多次转换得到相同 id。
 function tagId(key: string, value: string): string {
@@ -24,9 +25,6 @@ type JobMount = {
   rawVolume?: CRDVolume;
 };
 
-/** The CSI driver name with which a volume names an RLark storage. */
-export const STORAGE_DRIVER = "storage.rlark.io";
-
 // 把 Pod 模板里的一个 volume 映射成表单可消费的挂载项。
 // 表单只能编辑 hostPath 与按名字引用 RLark 存储（csi driver storage.rlark.io）两类卷；
 // 其余卷源（emptyDir、configMap、secret、PVC、写死 StorageClass 的 ephemeral 等）
@@ -36,16 +34,7 @@ export function toJobMount(
   vol: CRDVolume | undefined,
   mountPath: string,
 ): JobMount {
-  if (vol?.csi?.driver === STORAGE_DRIVER) {
-    return {
-      type: "storage",
-      objectStorage: vol.csi.volumeAttributes?.storage ?? "",
-      mountPath,
-      hostPath: "",
-      profile: vol.csi.volumeAttributes?.profile ?? "",
-      readOnly: vol.csi.readOnly ?? false,
-    };
-  }
+  if (vol?.csi?.driver === STORAGE_DRIVER) return storageMount(vol.csi, mountPath);
   if (vol?.hostPath) {
     return {
       type: "host",
@@ -74,7 +63,7 @@ export function toJobMount(
     mountPath,
     hostPath: "",
     profile: "",
-      readOnly: false,
+    readOnly: false,
   };
 }
 

@@ -1,7 +1,6 @@
 import type { Activity, LayoutDashboard } from "lucide-react";
 import type { JobType, MountType, PullProgressEntry } from "./data";
 import type { CRDVolume } from "./crdModels";
-import type { KubernetesVersions } from "./astribot/lib/kubernetesVersion";
 
 export type Page =
   | "overview"
@@ -31,9 +30,7 @@ export interface ResourceRow {
 export interface ClusterSummary {
   id: string;
   agentNamespace: string;
-  // displayName when set, else id.
   name: string;
-  displayName?: string;
   type: "Cloud" | "Embodied" | "Hybrid" | string;
   region: string;
   location: string;
@@ -56,10 +53,6 @@ export interface ClusterSummary {
   runningJobs: number;
   description: string;
   agentNamespaceConflict?: boolean;
-  // The cluster's control-plane nodes; empty for a managed control plane.
-  controlPlanes?: Array<{ name: string; displayName?: string; address: string }>;
-  // The Kubernetes versions the cluster's nodes carry, as station-controller last read them.
-  kubernetes?: KubernetesVersions;
 }
 
 export interface CRDPod {
@@ -158,6 +151,20 @@ export interface CRDNodeLite {
     allocatable?: Record<string, string>;
     used?: Record<string, string>;
   };
+}
+
+export interface SignAgentCertResponse {
+  cluster_id: string;
+  ca_cert: string;
+  agent_cert: string;
+  agent_key: string;
+  server_addr: string;
+}
+
+export interface AgentCertListItem {
+  cluster_id: string;
+  created_at: string;
+  server_addr: string;
 }
 
 export type NodeCategory = "cloud" | "edge" | "robot" | "unknown";

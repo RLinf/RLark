@@ -1,4 +1,5 @@
 import type { Copy } from "../../i18n";
+import { storageCopy } from "../i18n";
 import type { StorageClassFormState } from "../lib/storageClass";
 
 type SmbStorageFormFields = Pick<StorageClassFormState, "host" | "share" | "sub_path" | "domain" | "username" | "password">;
@@ -17,12 +18,13 @@ export function SmbStorageFields({
   value: SmbStorageFormFields;
   onChange: (patch: Partial<SmbStorageFormFields>) => void;
 }) {
+  const s = storageCopy(c);
   return (
     <div className="form-section">
-      <strong>{c.storageClass.connection}</strong>
+      <strong>{s.connection}</strong>
       <div className="form-grid">
         <label>
-          {c.storageClass.host} *
+          {s.host} *
           <input
             required
             value={value.host}
@@ -31,7 +33,7 @@ export function SmbStorageFields({
           />
         </label>
         <label>
-          {c.storageClass.share} *
+          {s.share} *
           <input
             required
             value={value.share}
@@ -40,7 +42,7 @@ export function SmbStorageFields({
           />
         </label>
         <label>
-          {c.storageClass.subPath}
+          {s.subPath}
           <input
             value={value.sub_path}
             onChange={(e) => onChange({ sub_path: e.target.value })}
@@ -48,7 +50,7 @@ export function SmbStorageFields({
           />
         </label>
         <label>
-          {c.storageClass.domain}
+          {s.domain}
           <input
             value={value.domain}
             onChange={(e) => onChange({ domain: e.target.value })}
@@ -58,7 +60,7 @@ export function SmbStorageFields({
           />
         </label>
         <label>
-          {c.storageClass.username} *
+          {s.username} *
           <input
             required
             autoComplete="off"
@@ -67,7 +69,7 @@ export function SmbStorageFields({
           />
         </label>
         <label>
-          {c.storageClass.password} *
+          {s.password} *
           <input
             required={!isEdit}
             type="password"
@@ -84,7 +86,7 @@ export function SmbStorageFields({
           />
         </label>
       </div>
-      <p className="muted">{c.storageClass.smbHint}</p>
+      <p className="muted">{s.smbHint}</p>
     </div>
   );
 }

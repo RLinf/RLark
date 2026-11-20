@@ -7,7 +7,6 @@ import {
   MoreHorizontal,
   MapPin,
   Network,
-  Pencil,
   Server,
 } from "lucide-react";
 import type { Copy } from "../i18n";
@@ -20,8 +19,6 @@ import {
   hasNodeCategory,
   isBusinessWorkerNode,
 } from "../utils/nodes";
-import { controlPlanesOf } from "../utils/nodeVisibility";
-import { kubernetesVersionsOf, kubernetesVersionText } from "../astribot/lib/kubernetesVersion";
 import {
   ColumnFilterButton,
   MetricCard,
@@ -32,9 +29,7 @@ import {
 } from "../components/shared";
 import { ColumnFilterPopover } from "../components/ColumnFilterPopover";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
-import { NodeName } from "../astribot/components/NodeName";
 import { clustersApi, nodesApi } from "../backend";
-import { displayNameError, displayNameMessage, displayNameRefusal } from "../astribot/lib/displayName";
 
 type ClusterAction =
   "cordon" | "uncordon" | "drain" | "undrain" | "delist" | "restore" | "delete";
@@ -139,10 +134,6 @@ function aggregateClusterNodes(
     runningJobs: clusterNodes.filter((node) =>
       Boolean(node.metadata.labels?.["rlark.io/embodied-task-name"]),
     ).length,
-    controlPlanes: cluster.agentNamespaceConflict
-      ? undefined
-      : controlPlanesOf(nodes, cluster.agentNamespace),
-    kubernetes: kubernetesVersionsOf(clusterNodes),
   };
 }
 
@@ -187,32 +178,10 @@ function normalizeClusterSummary(
     gpuModels: cluster.gpuModels ?? nodeAggregate?.gpuModels ?? [],
     robotModels: cluster.robotModels ?? nodeAggregate?.robotModels ?? [],
     runningJobs: nodeAggregate?.runningJobs ?? cluster.runningJobs ?? 0,
-    controlPlanes: nodeAggregate?.controlPlanes,
-    kubernetes: nodeAggregate?.kubernetes,
     region: cluster.region ?? "",
     location: cluster.location ?? "",
     description: cluster.description ?? "",
   };
-}
-
-// Where a cluster's control plane runs: its node and address, or "managed"
-// when no node of it is one (a Kingsoft KCE cluster's).
-function ClusterControlPlane({ cluster, zh }: { cluster: ClusterSummary; zh: boolean }) {
-  if (!cluster.controlPlanes) return <span className="muted">—</span>;
-  if (cluster.controlPlanes.length === 0)
-    return <span className="cluster-control-plane muted">{zh ? "托管" : "Managed"}</span>;
-  return (
-    <span className="cluster-control-plane">
-      {cluster.controlPlanes.map((node) => (
-        <span key={node.name}>
-          <strong>
-            <NodeName node={{ metadata: { name: node.name }, spec: { displayName: node.displayName } }} />
-          </strong>
-          {node.address && <small>{node.address}</small>}
-        </span>
-      ))}
-    </span>
-  );
 }
 
 function ClusterStatus({ phase, zh }: { phase: string; zh: boolean }) {
@@ -264,10 +233,6 @@ export function ClusterManagementPage({
   }>();
   const [actionPending, setActionPending] = useState(false);
   const [error, setError] = useState("");
-  // The rename dialog's draft; undefined while it is closed.
-  const [renameDraft, setRenameDraft] = useState<string>();
-  const [renameError, setRenameError] = useState("");
-  const [renamePending, setRenamePending] = useState(false);
   const { openKey, anchorRect, openFor, close } = useColumnFilter();
 
   const fetchClusters = async (isInitial = true) => {
@@ -425,33 +390,6 @@ export function ClusterManagementPage({
 
   if (selectedClusterID && selectedCluster) {
     const visibleDetailNodes = detailNodes;
-    const saveClusterName = async (draft: string) => {
-      const invalid = displayNameError(
-        draft,
-        selectedCluster.id,
-        clusters.map((cluster) => ({
-          id: cluster.id,
-          name: cluster.id,
-          displayName: cluster.displayName,
-        })),
-      );
-      if (invalid) {
-        setRenameError(displayNameMessage(invalid, "cluster", zh));
-        return;
-      }
-      setRenamePending(true);
-      setRenameError("");
-      try {
-        await clustersApi.setDisplayName(selectedCluster.id, draft.trim());
-        await fetchClusters(false);
-        setRenameDraft(undefined);
-      } catch (e) {
-        const refusal = displayNameRefusal(e);
-        setRenameError(refusal ? displayNameMessage(refusal, "cluster", zh) : e instanceof Error ? e.message : String(e));
-      } finally {
-        setRenamePending(false);
-      }
-    };
     const onlineRate = selectedCluster.totalNodes
       ? Math.round(
           (selectedCluster.onlineNodes / selectedCluster.totalNodes) * 100,
@@ -481,9 +419,6 @@ export function ClusterManagementPage({
             <div>
               <small>{selectedCluster.type || (zh ? "集群" : "Cluster")}</small>
               <h2>{selectedCluster.name}</h2>
-              {selectedCluster.name !== selectedCluster.id && (
-                <code className="real-name">{selectedCluster.id}</code>
-              )}
               <p>
                 <MapPin size={13} />
                 {[selectedCluster.region, selectedCluster.location]
@@ -493,110 +428,8 @@ export function ClusterManagementPage({
               </p>
             </div>
           </div>
-          <div className="cluster-detail-hero-actions">
-            {adminMode && (
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  setRenameDraft(selectedCluster.displayName ?? "");
-                  setRenameError("");
-                }}
-              >
-                <Pencil size={14} />
-                {zh ? "重命名" : "Rename"}
-              </button>
-            )}
-            <ClusterStatus phase={selectedCluster.phase} zh={zh} />
-          </div>
+          <ClusterStatus phase={selectedCluster.phase} zh={zh} />
         </section>
-        {renameDraft !== undefined && (
-          // A form: the backdrop does not dismiss it.
-          <div className="modal-backdrop cluster-rename-backdrop">
-            <div
-              className="modal"
-              style={{ maxWidth: 480 }}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="cluster-rename-title"
-            >
-              <div className="modal-head">
-                <div>
-                  <span className="eyebrow">
-                    {zh ? "集群显示名" : "Cluster display name"}
-                  </span>
-                  <h2 id="cluster-rename-title">
-                    {zh ? "重命名集群" : "Rename cluster"}
-                  </h2>
-                </div>
-                <button
-                  className="icon-button"
-                  disabled={renamePending}
-                  onClick={() => setRenameDraft(undefined)}
-                  aria-label={zh ? "关闭" : "Close"}
-                >
-                  ×
-                </button>
-              </div>
-              <div className="modal-body">
-                <div className="form-section">
-                  <div className="form-section-head">
-                    <small>{zh ? "集群 ID（不变）" : "Cluster ID (never changes)"}</small>
-                  </div>
-                  <code className="real-name">{selectedCluster.id}</code>
-                </div>
-                <div className="form-section">
-                  <div className="form-section-head">
-                    <small>{zh ? "显示名" : "Display name"}</small>
-                  </div>
-                  <input
-                    value={renameDraft}
-                    maxLength={64}
-                    autoFocus
-                    disabled={renamePending}
-                    placeholder={selectedCluster.id}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void saveClusterName(renameDraft);
-                    }}
-                  />
-                  <small className="muted" style={{ display: "block", marginTop: 4 }}>
-                    {zh
-                      ? "留空则显示 ID。最多 64 个字符，支持中英文、数字以及-_."
-                      : "Leave empty to show the ID. At most 64 Chinese/English letters, digits, -, _ and ."}
-                  </small>
-                </div>
-                {renameError && (
-                  <div className="cert-error" role="alert" style={{ marginBottom: 12 }}>
-                    {renameError}
-                  </div>
-                )}
-                <div className="step-actions">
-                  <button
-                    className="secondary-button"
-                    disabled={renamePending}
-                    onClick={() => setRenameDraft(undefined)}
-                  >
-                    {zh ? "取消" : "Cancel"}
-                  </button>
-                  <button
-                    className="primary-button"
-                    disabled={renamePending}
-                    onClick={() => void saveClusterName(renameDraft)}
-                  >
-                    {renamePending
-                      ? zh
-                        ? "保存中…"
-                        : "Saving…"
-                      : zh
-                        ? "保存"
-                        : "Save"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
         <section className="cluster-detail-metrics">
           <MetricCard
@@ -648,7 +481,6 @@ export function ClusterManagementPage({
           </div>
           <NodeResourceBrowser
             nodes={visibleDetailNodes}
-            clusters={clusters}
             copy={c}
             onRefresh={handleRefresh}
             refreshing={refreshing}
@@ -699,8 +531,6 @@ export function ClusterManagementPage({
         <div className="cluster-management-table-head">
           <span>{zh ? "集群名称" : "Cluster"}</span>
           <span>{zh ? "类型" : "Type"}</span>
-          <span>{zh ? "控制面" : "Control plane"}</span>
-          <span>Kubernetes</span>
           <span>{zh ? "节点数" : "Nodes"}</span>
           <span>{zh ? "在线" : "Online"}</span>
           <span>{zh ? "离线" : "Offline"}</span>
@@ -750,20 +580,12 @@ export function ClusterManagementPage({
                     </i>
                     <span>
                       <strong>{cluster.name}</strong>
-                      {cluster.name !== cluster.id && (
-                        <code className="real-name">{cluster.id}</code>
-                      )}
-                      {cluster.region && <small>{cluster.region}</small>}
                     </span>
                   </span>
                   <span className="cluster-type-chip">
                     {clusterTypeLabel(cluster.type, zh)}
                     {cluster.agentNamespaceConflict &&
                       (zh ? " · 命名空间冲突" : " · Namespace conflict")}
-                  </span>
-                  <ClusterControlPlane cluster={cluster} zh={zh} />
-                  <span className="cluster-kubernetes-version">
-                    {kubernetesVersionText(cluster.kubernetes, zh)}
                   </span>
                   <strong>{cluster.totalNodes}</strong>
                   <span>{cluster.onlineNodes}</span>

@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
+import "./astribot/styles.css";
 import { isMockMode } from "./config";
 import { installMockBackend } from "./mockBackend";
 

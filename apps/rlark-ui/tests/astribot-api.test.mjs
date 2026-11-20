@@ -69,7 +69,7 @@ test("registry browse API encodes parameters and forwards cancellation", async (
   await imageRegistriesApi.list(controller.signal);
   await registryBrowseApi.repositories("id/a", "a/b", controller.signal);
   await registryBrowseApi.tags("id/a", "a/b", "v1", controller.signal);
-  await imageRegistriesApi.password("id/a", controller.signal);
+  await registryBrowseApi.password("id/a", controller.signal);
   assert.equal(
     calls[1].input,
     "/api/v1/image-registries/id%2Fa/repositories?last=a%2Fb",

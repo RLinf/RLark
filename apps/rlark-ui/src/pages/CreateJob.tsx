@@ -1,4 +1,3 @@
-import { StorageMountOptions } from "../astribot/components/StorageMountOptions";
 import { useEffect, useRef, useState } from "react";
 
 type ImageUsage = {
@@ -7,14 +6,39 @@ type ImageUsage = {
   lastUsedAt: string;
 };
 
+function formatImageUsage(usedAt: string, useCount: number, zh: boolean) {
+  const seconds = Math.max(
+    0,
+    Math.floor((Date.now() - Date.parse(usedAt)) / 1000),
+  );
+  const relative =
+    seconds < 60
+      ? zh
+        ? "刚刚"
+        : "just now"
+      : seconds < 3600
+        ? zh
+          ? `${Math.floor(seconds / 60)} 分钟前`
+          : `${Math.floor(seconds / 60)}m ago`
+        : seconds < 86400
+          ? zh
+            ? `${Math.floor(seconds / 3600)} 小时前`
+            : `${Math.floor(seconds / 3600)}h ago`
+          : zh
+            ? `${Math.floor(seconds / 86400)} 天前`
+            : `${Math.floor(seconds / 86400)}d ago`;
+  return zh
+    ? `${relative}使用 · ${useCount} 次`
+    : `${relative} · used ${useCount} times`;
+}
 import { Check, ChevronDown, Plus, Trash2, X } from "lucide-react";
 import {
-  storageClasses as mockStorageClasses,
   type Cluster,
   clusters,
   type Job,
   type JobType,
 } from "../data";
+import { mockStorageClasses } from "../astribot/mockBackend";
 import type { Copy } from "../i18n";
 import type { RoleResource } from "../types";
 import type { JobTag } from "../data";
@@ -35,6 +59,8 @@ import { useNodeLabels } from "../utils/nodes";
 import { imageReferenceHasWhitespace } from "../utils/imageReference";
 import { RoleNameInput } from "../components/create";
 import { RegistryImagePicker } from "../astribot/components/RegistryImagePicker";
+import { StorageMountOptions } from "../astribot/components/StorageMountOptions";
+import { RealName } from "../astribot/components/NodeName";
 import { CodeEditorField } from "../components/CodeEditor";
 import { TagEditor } from "../components/TagEditor";
 import { ResourcePlacementPicker } from "../components/ResourcePlacementPicker";
@@ -101,10 +127,7 @@ function ClusterSelect({
 
   const optionContent = (cluster: Cluster) => (
     <>
-      <strong>
-        {cluster.name}
-        {cluster.name !== cluster.id && <span className="real-name"> · {cluster.id}</span>}
-      </strong>
+      <strong><RealName label={cluster.name} name={cluster.id} /></strong>
       <span className="worker-cluster-type">{typeLabel(cluster)}</span>
       <span className={`worker-cluster-state ${cluster.phase.toLowerCase()}`}>
         <i aria-hidden="true" />
@@ -262,7 +285,7 @@ export function CreateJobModal({
   const [reclaimableResources, setReclaimableResources] =
     useState<ReclaimableResources>({});
   const {
-    clusterNames,
+    clusterDisplayNames,
     nodes: allNodes,
     loading: nodesLoading,
   } = useNodeLabels();
@@ -466,7 +489,7 @@ export function CreateJobModal({
     roles.forEach((entry, index) => {
       defaultRoleResources[entry.id] = {
         role: entry.name,
-        cluster: clusterNames[0] ?? "",
+        cluster: clusterDisplayNames[0] ?? "",
         nodeSelector: "",
         replicas: 0,
         cpu: "",
@@ -551,13 +574,13 @@ export function CreateJobModal({
   }, [availableClusters]);
 
   useEffect(() => {
-    if (clusterNames.length === 0) return;
+    if (clusterDisplayNames.length === 0) return;
     setRoleResources((prev) => {
       let changed = false;
       const next: Record<string, RoleResource> = {};
       for (const [k, v] of Object.entries(prev)) {
-        if (!v.cluster && clusterNames[0]) {
-          next[k] = { ...v, cluster: clusterNames[0] };
+        if (!v.cluster && clusterDisplayNames[0]) {
+          next[k] = { ...v, cluster: clusterDisplayNames[0] };
           changed = true;
         } else {
           next[k] = v;
@@ -565,7 +588,7 @@ export function CreateJobModal({
       }
       return changed ? next : prev;
     });
-  }, [clusterNames]);
+  }, [clusterDisplayNames]);
 
   useEffect(() => {
     if (inferenceDoneRef.current || allNodes.length === 0 || !clustersLoaded)
@@ -635,7 +658,7 @@ export function CreateJobModal({
     templateEntries.forEach((entry, index) => {
       newRR[entry.id] = roleResources[entry.id] ?? {
         role: entry.name,
-        cluster: clusterNames[0] ?? "",
+        cluster: clusterDisplayNames[0] ?? "",
         nodeSelector: "",
         replicas: 0,
         cpu: "",
@@ -659,7 +682,7 @@ export function CreateJobModal({
       ...prev,
       [id]: {
         role: "",
-        cluster: clusterNames[0] ?? "",
+        cluster: clusterDisplayNames[0] ?? "",
         nodeSelector: "",
         replicas: 0,
         cpu: "",
@@ -1319,11 +1342,7 @@ export function CreateJobModal({
                             zh={zh}
                             value={rr.image}
                             onChange={(image) => updateRR(role, "image", image)}
-                            disabled={false}
-                            recentImages={recentImages.map((item) => ({
-                              ...item,
-                              lastUsedAt: new Date(item.lastUsedAt),
-                            }))}
+                            recentImages={recentImages}
                           />
                           {imageHasWhitespace && (
                             <small

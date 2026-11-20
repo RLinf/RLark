@@ -22,8 +22,8 @@ import {
   getNodeDeviceModel,
   getNodeGPUModel,
   getNodeLocation,
-  useClusters,
 } from "../utils/nodes";
+import { useClusters } from "../astribot/components/useClusters";
 import { nodeLabel } from "../astribot/lib/displayName";
 import { NodeName } from "../astribot/components/NodeName";
 import { ClusterName } from "../astribot/components/ClusterName";
@@ -35,8 +35,8 @@ import {
 } from "../utils/nodeBatchMetadata";
 import { useAutoRefresh } from "../hooks";
 import { MetricCard, RefreshOverlay, StatusBadge } from "../components/shared";
-import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
-import { ClusterDetailReal, NodeDetailReal } from "../pages/Clusters";
+import { NodeResourceBrowser } from "../astribot/components/NodeResourceBrowser";
+import { ClusterDetailReal, NodeDetailReal } from "../astribot/pages/Clusters";
 
 const NODE_FREE_TEXT_KEYS = [
   "rlark.io/city",
@@ -399,9 +399,7 @@ export function NodeCategoryColumn({
                 onClick={() => onSelectNode(node.metadata.name)}
               >
                 <span className={"node-status-ring " + phase.toLowerCase()} />
-                <span className="node-row-name">
-                  <NodeName node={node} />
-                </span>
+                <span className="node-row-name"><NodeName node={node} /></span>
                 <StatusBadge phase={phase} copy={c} />
               </div>
             );
@@ -490,11 +488,7 @@ export function NodeDetailPanel({
         </div>
       </div>
 
-      <NodeDetailReal
-        node={node}
-        copy={c}
-        onDisplayNameSaved={ctx.onDisplayNameSaved}
-      />
+      <NodeDetailReal node={node} copy={c} onDisplayNameSaved={ctx.onDisplayNameSaved} />
 
       <section className="admin-node-labels node-insight-section">
         <div className="node-insight-section-head">
@@ -947,7 +941,6 @@ export function AdminPage({
   const [newLabelValue, setNewLabelValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [cordoningNode, setCordoningNode] = useState<string | null>(null);
-  const [removingNode, setRemovingNode] = useState<CRDNode | null>(null);
   const [selectedNodeKeys, setSelectedNodeKeys] = useState<Set<string>>(
     new Set(),
   );
@@ -1360,15 +1353,7 @@ export function AdminPage({
     onUpdateLabel: updateLabel,
     onNewLabelKey: setNewLabelKey,
     onNewLabelValue: setNewLabelValue,
-    onDisplayNameSaved: (saved: CRDNode) =>
-      setNodes((current) =>
-        current.map((n) =>
-          n.metadata.namespace === saved.metadata.namespace &&
-          n.metadata.name === saved.metadata.name
-            ? saved
-            : n,
-        ),
-      ),
+    onDisplayNameSaved: (saved: CRDNode) => setNodes((current) => current.map((n) => (n.metadata.namespace === saved.metadata.namespace && n.metadata.name === saved.metadata.name ? saved : n))),
   };
 
   const selectedNodeObj =
@@ -1837,7 +1822,7 @@ export function AdminPage({
           refreshing={refreshing}
           onSelectNode={(name) => onNavigate(name)}
           onToggleScheduling={toggleCordon}
-          onRemoveNode={setRemovingNode}
+          removable
           updatingNode={cordoningNode}
           selectedNodeKeys={selectedNodeKeys}
           onSelectionChange={setSelectedNodeKeys}
@@ -1847,16 +1832,7 @@ export function AdminPage({
           onClearSelection={() => setSelectedNodeKeys(new Set())}
         />
       )}
-      {removingNode && (
-        <RemoveNodeDialog
-          zh={zh}
-          node={removingNode}
-          onClose={() => setRemovingNode(null)}
-          onRemoved={() => void handleRefresh()}
-        />
-      )}
     </div>
   );
 }
 import { nodesApi } from "../backend";
-import { RemoveNodeDialog } from "../astribot/pages/RemoveNodeDialog";

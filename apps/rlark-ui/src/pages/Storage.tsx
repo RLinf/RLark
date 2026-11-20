@@ -21,11 +21,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import {
-  type StorageClass,
-  type StorageProvider,
-  type StorageType,
-} from "../data";
+import { type StorageClass, type StorageProvider } from "../data";
 import { copy, type Copy } from "../i18n";
 import {
   ColumnFilterButton,
@@ -35,20 +31,20 @@ import {
   useColumnFilter,
 } from "../components/shared";
 import { ColumnFilterPopover } from "../components/ColumnFilterPopover";
-import { SmbStorageFields } from "../astribot/components/SmbStorageFields";
-import {
-  smbLocation,
-  storageLocation,
-  storageProviderLabel,
-} from "../astribot/lib/smbStorage";
-import {
-  normalizeStorageClass,
-  storageClassPayload,
-  storageClassToForm,
-  storageVolumeExample,
-  type StorageClassFormState,
-} from "../astribot/lib/storageClass";
 import { formatChinaDateTime } from "../utils/time";
+
+type StorageClassFormState = {
+  name: string;
+  clusters: string[];
+  provider: StorageProvider;
+  endpoint: string;
+  region: string;
+  bucket: string;
+  access_key_id: string;
+  access_key_secret: string;
+  path_style: boolean;
+  description: string;
+};
 
 type ProviderOption = {
   name: string;
@@ -64,10 +60,6 @@ const storageClassFieldLabels: Record<string, { zh: string; en: string }> = {
   name: { zh: "名称", en: "Name" },
   bucket: { zh: "存储桶", en: "Bucket" },
   access_key_secret: { zh: "Access Key Secret", en: "Access Key Secret" },
-  host: { zh: "服务器地址", en: "Server" },
-  share: { zh: "共享名", en: "Share" },
-  username: { zh: "用户名", en: "Username" },
-  password: { zh: "密码", en: "Password" },
 };
 
 function storageClassSubmissionError(
@@ -98,8 +90,44 @@ function storageClassSubmissionError(
   return errorMessage(error.body) || error.message || fallback;
 }
 
+function normalizeStorageClass(raw: any): StorageClass {
+  const name = raw?.name ?? raw?.id ?? "";
+  return {
+    id: raw?.id ?? name,
+    name,
+    namespace: raw?.namespace ?? "default",
+    clusters: Array.isArray(raw?.clusters) ? raw.clusters : [],
+    provider: (raw?.provider ?? "") as StorageProvider,
+    endpoint: raw?.endpoint ?? "",
+    region: raw?.region ?? "",
+    bucket: raw?.bucket ?? "",
+    accessKeyId: raw?.accessKeyId ?? raw?.access_key_id ?? "",
+    pathStyle: Boolean(raw?.pathStyle ?? raw?.path_style),
+    description: raw?.description ?? "",
+    createdAt: raw?.createdAt ?? raw?.created_at ?? "",
+  };
+}
+
 function isMaskedAccessKeyID(value: string): boolean {
   return /^.{2}\*+.{2}$/.test(value);
+}
+
+function storageClassToForm(
+  storageClass?: StorageClass,
+): StorageClassFormState {
+  const accessKeyID = storageClass?.accessKeyId ?? "";
+  return {
+    name: storageClass?.name ?? "",
+    clusters: storageClass?.clusters ?? [],
+    provider: storageClass?.provider ?? "",
+    endpoint: storageClass?.endpoint ?? "",
+    region: storageClass?.region ?? "",
+    bucket: storageClass?.bucket ?? "",
+    access_key_id: accessKeyID,
+    access_key_secret: "",
+    path_style: storageClass?.pathStyle ?? false,
+    description: storageClass?.description ?? "",
+  };
 }
 
 export function StorageClassesPage({
@@ -190,16 +218,13 @@ export function StorageClassesPage({
     const query = search.toLowerCase();
     const matchesSearch =
       sc.name.toLowerCase().includes(query) ||
-      storageProviderLabel(sc).toLowerCase().includes(query) ||
-      storageLocation(sc).toLowerCase().includes(query);
+      sc.provider.toLowerCase().includes(query) ||
+      sc.bucket.toLowerCase().includes(query);
     const providerHit =
-      providerFilter.length === 0 ||
-      providerFilter.includes(storageProviderLabel(sc));
+      providerFilter.length === 0 || providerFilter.includes(sc.provider);
     return matchesSearch && providerHit;
   });
-  const providers = Array.from(
-    new Set(realClasses.map((sc) => storageProviderLabel(sc))),
-  );
+  const providers = Array.from(new Set(realClasses.map((sc) => sc.provider)));
   // 列表页列不再支持排序，按名称做稳定 tiebreak 即可
   const sortedClasses = [...filtered].sort((a, b) =>
     a.name.localeCompare(b.name, zh ? "zh-CN" : "en", { numeric: true }),
@@ -325,12 +350,10 @@ export function StorageClassesPage({
                   </button>
                 </td>
                 <td>
-                  <span className="storage-provider-chip">
-                    {storageProviderLabel(sc)}
-                  </span>
+                  <span className="storage-provider-chip">{sc.provider}</span>
                 </td>
                 <td>
-                  <code className="inline-code">{storageLocation(sc)}</code>
+                  <code className="inline-code">{sc.bucket}</code>
                 </td>
                 <td>
                   <span className="storage-description">
@@ -339,18 +362,16 @@ export function StorageClassesPage({
                 </td>
                 <td className="storage-actions-col">
                   <div className="row-actions">
-                    {sc.type === "s3" && (
-                      <button
-                        className="icon-button"
-                        title={c.files.eyebrow}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onBrowseFiles(sc.id);
-                        }}
-                      >
-                        <FolderOpen size={14} />
-                      </button>
-                    )}
+                    <button
+                      className="icon-button"
+                      title={c.files.eyebrow}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onBrowseFiles(sc.id);
+                      }}
+                    >
+                      <FolderOpen size={14} />
+                    </button>
                     <button
                       className="icon-button"
                       title={zh ? "编辑存储类" : "Edit storage class"}
@@ -442,23 +463,18 @@ export function StorageClassDetailPage({
           </span>
           <h2>{storageClass.name}</h2>
           <p>
-            {storageProviderLabel(storageClass)} ·{" "}
-            {storageLocation(storageClass)}
+            {storageClass.provider} · {storageClass.bucket}
           </p>
           <div className="storage-detail-badges">
             <span>{storageClass.namespace}</span>
             <span>
-              {storageClass.type === "hostpath"
-                ? c.storageClass.typeHostPath
-                : storageClass.type === "smb"
-                ? "SMB / NAS"
-                : storageClass.pathStyle
-                  ? zh
-                    ? "Path Style 已启用"
-                    : "Path Style enabled"
-                  : zh
-                    ? "标准访问模式"
-                    : "Standard access"}
+              {storageClass.pathStyle
+                ? zh
+                  ? "Path Style 已启用"
+                  : "Path Style enabled"
+                : zh
+                  ? "标准访问模式"
+                  : "Standard access"}
             </span>
           </div>
         </div>
@@ -477,42 +493,16 @@ export function StorageClassDetailPage({
           <div className="node-detail-grid storage-detail-info-grid">
             <div>
               <span className="muted">{c.storageClass.provider}</span>
-              <strong>{storageProviderLabel(storageClass)}</strong>
+              <strong>{storageClass.provider}</strong>
             </div>
-            {storageClass.type === "hostpath" ? (
-              <>
-                <div>
-                  <span className="muted">{c.storageClass.hostPath}</span>
-                  <strong>{storageClass.path || "—"}</strong>
-                </div>
-                <div>
-                  <span className="muted">{c.storageClass.fsType}</span>
-                  <strong>{storageClass.fs_type || "—"}</strong>
-                </div>
-              </>
-            ) : storageClass.type === "smb" ? (
-              <>
-                <div>
-                  <span className="muted">{c.storageClass.share}</span>
-                  <strong>{smbLocation(storageClass)}</strong>
-                </div>
-                <div>
-                  <span className="muted">{c.storageClass.username}</span>
-                  <strong>{storageClass.username || "—"}</strong>
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <span className="muted">{c.storageClass.bucket}</span>
-                  <strong>{storageClass.bucket}</strong>
-                </div>
-                <div>
-                  <span className="muted">{c.storageClass.region}</span>
-                  <strong>{storageClass.region || "—"}</strong>
-                </div>
-              </>
-            )}
+            <div>
+              <span className="muted">{c.storageClass.bucket}</span>
+              <strong>{storageClass.bucket}</strong>
+            </div>
+            <div>
+              <span className="muted">{c.storageClass.region}</span>
+              <strong>{storageClass.region || "—"}</strong>
+            </div>
             <div>
               <span className="muted">{c.storageClass.createdAt}</span>
               <strong>{storageClass.createdAt || "—"}</strong>
@@ -528,122 +518,25 @@ export function StorageClassDetailPage({
             {zh ? "访问端点与连接方式" : "Endpoint and connection mode"}
           </p>
           <div className="node-detail-grid storage-detail-info-grid">
-            {storageClass.type === "hostpath" ? (
-              <div>
-                <span className="muted">{zh ? "集群" : "Clusters"}</span>
-                <strong>{storageClass.clusters.join(", ") || "—"}</strong>
-              </div>
-            ) : storageClass.type === "smb" ? (
-              <>
-                <div>
-                  <span className="muted">{c.storageClass.host}</span>
-                  <strong>{storageClass.host || "—"}</strong>
-                </div>
-                <div>
-                  <span className="muted">{c.storageClass.domain}</span>
-                  <strong>{storageClass.domain || "—"}</strong>
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <span className="muted">{c.storageClass.endpoint}</span>
-                  <strong>{storageClass.endpoint || "—"}</strong>
-                </div>
-                <div>
-                  <span className="muted">{c.storageClass.mountEndpoint}</span>
-                  <strong>
-                    {storageClass.mount_endpoint ||
-                      storageClass.endpoint ||
-                      "—"}
-                  </strong>
-                </div>
-                {Object.entries(storageClass.cluster_mount_endpoints ?? {})
-                  .length > 0 && (
-                  <div>
-                    <span className="muted">
-                      {c.storageClass.clusterEndpoints}
-                    </span>
-                    <pre>
-                      {Object.entries(storageClass.cluster_mount_endpoints ?? {})
-                        .map(([cluster, endpoint]) => `${cluster}: ${endpoint}`)
-                        .join("\n")}
-                    </pre>
-                  </div>
-                )}
-                <div>
-                  <span className="muted">{c.storageClass.pathStyle}</span>
-                  <strong>
-                    {storageClass.pathStyle
-                      ? zh
-                        ? "启用"
-                        : "Enabled"
-                      : zh
-                        ? "禁用"
-                        : "Disabled"}
-                  </strong>
-                </div>
-                <div>
-                  <span className="muted">{c.storageClass.prefix}</span>
-                  <strong>{storageClass.prefix || "—"}</strong>
-                </div>
-                <div>
-                  <span className="muted">{c.storageClass.vfsCacheMode}</span>
-                  <strong>{storageClass.vfs_cache_mode || "writes"}</strong>
-                </div>
-                <div>
-                  <span className="muted">
-                    {zh ? "挂载配置" : "Mount profile"}
-                  </span>
-                  <strong>{storageClass.mount_profile || "default"}</strong>
-                </div>
-                <div>
-                  <span className="muted">
-                    {zh
-                      ? "生效选项（新挂载）"
-                      : "Effective options (new mounts)"}
-                  </span>
-                  <pre>
-                    {[
-                      ...(storageClass.effective_mount_options || []),
-                      ...Object.entries(
-                        storageClass.effective_backend_options || {},
-                      ).map(([key, value]) => `${key}=${value}`),
-                    ].join("\n")}
-                  </pre>
-                </div>
-              </>
-            )}
+            <div>
+              <span className="muted">{c.storageClass.endpoint}</span>
+              <strong>{storageClass.endpoint || "—"}</strong>
+            </div>
+            <div>
+              <span className="muted">{c.storageClass.pathStyle}</span>
+              <strong>
+                {storageClass.pathStyle
+                  ? zh
+                    ? "启用"
+                    : "Enabled"
+                  : zh
+                    ? "禁用"
+                    : "Disabled"}
+              </strong>
+            </div>
             <div>
               <span className="muted">{c.storageClass.description}</span>
               <strong>{storageClass.description || "—"}</strong>
-            </div>
-          </div>
-        </section>
-        <section className="node-detail-section storage-detail-panel">
-          <span className="node-detail-label">
-            <HardDrive size={15} />
-            {c.storageClass.usage}
-          </span>
-          <p className="storage-detail-section-copy">
-            {c.storageClass.usageHint}
-          </p>
-          <div className="node-detail-grid storage-detail-info-grid">
-            <div>
-              <span className="muted">{c.storageClass.profiles}</span>
-              <pre>
-                {Object.entries(storageClass.profiles ?? {})
-                  .map(
-                    ([profile, className]) =>
-                      `${profile}${profile === storageClass.default_profile ? " *" : ""}: ${className}`,
-                  )
-                  .join("\n") ||
-                  (storageClass.type === "hostpath" ? "default, read" : "—")}
-              </pre>
-            </div>
-            <div>
-              <span className="muted">YAML</span>
-              <pre>{storageVolumeExample(storageClass.name)}</pre>
             </div>
           </div>
         </section>
@@ -754,29 +647,20 @@ export function StorageClassCreatePage({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [clustersMenuOpen, onBack, submitting]);
 
-  const isSMB = form.type === "smb";
-  const isHostPath = form.type === "hostpath";
-
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!isEdit && form.type === "s3" && !form.access_key_secret.trim()) {
+    if (!isEdit && !form.access_key_secret.trim()) {
       setError(
         zh ? "Access Key Secret 不能为空。" : "Access Key Secret is required.",
       );
       return;
     }
-    if (!isEdit && isSMB && !form.password) {
-      setError(zh ? "密码不能为空。" : "Password is required.");
-      return;
-    }
     setSubmitting(true);
     setError("");
-    // 只提交当前类型用到的字段，避免把另一类型的空值写进存储类。
-    const payload = storageClassPayload(form);
     try {
       if (isEdit)
-        await storageClassesApi.update(initialStorageClass!.name, payload);
-      else await storageClassesApi.create(payload);
+        await storageClassesApi.update(initialStorageClass!.name, form);
+      else await storageClassesApi.create(form);
       onCreated?.();
       onBack();
     } catch (err) {
@@ -834,59 +718,36 @@ export function StorageClassCreatePage({
                 {c.storageClass.name} *
                 <input
                   required
+                  disabled={isEdit}
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="ks3"
+                  placeholder={zh ? "my-storage-class" : "my-storage-class"}
                 />
-                {isEdit && (
-                  <span className="muted">{c.storageClass.renameHint}</span>
-                )}
               </label>
               <label>
-                {c.storageClass.type} *
+                {c.storageClass.provider} *
                 <select
                   required
-                  disabled={isEdit}
-                  value={form.type}
+                  value={form.provider}
                   onChange={(e) =>
-                    setForm({ ...form, type: e.target.value as StorageType })
+                    setForm({
+                      ...form,
+                      provider: e.target.value as StorageProvider,
+                    })
                   }
                 >
-                  <option value="s3">{c.storageClass.typeS3}</option>
-                  <option value="smb">{c.storageClass.typeSMB}</option>
-                  <option value="hostpath">
-                    {c.storageClass.typeHostPath}
-                  </option>
+                  <option value="">{zh ? "请选择" : "Select"}</option>
+                  {providerOptions.map((p, index) => (
+                    <option key={`${p.value}-${index}`} value={p.value}>
+                      {p.name}
+                    </option>
+                  ))}
+                  {form.provider &&
+                    !providerOptions.some((p) => p.value === form.provider) && (
+                      <option value={form.provider}>{form.provider}</option>
+                    )}
                 </select>
               </label>
-              {form.type === "s3" && (
-                <label>
-                  {c.storageClass.provider} *
-                  <select
-                    required
-                    value={form.provider}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        provider: e.target.value as StorageProvider,
-                      })
-                    }
-                  >
-                    <option value="">{zh ? "请选择" : "Select"}</option>
-                    {providerOptions.map((p, index) => (
-                      <option key={`${p.value}-${index}`} value={p.value}>
-                        {p.name}
-                      </option>
-                    ))}
-                    {form.provider &&
-                      !providerOptions.some(
-                        (p) => p.value === form.provider,
-                      ) && (
-                        <option value={form.provider}>{form.provider}</option>
-                      )}
-                  </select>
-                </label>
-              )}
             </div>
           </div>
           <div className="form-section">
@@ -961,249 +822,87 @@ export function StorageClassCreatePage({
               )}
             </div>
           </div>
-          {isSMB && (
-            <SmbStorageFields
-              copy={c}
-              zh={zh}
-              isEdit={isEdit}
-              value={form}
-              onChange={(patch) => setForm({ ...form, ...patch })}
-            />
-          )}
-          {isHostPath && (
-            <div className="form-section">
-              <strong>{c.storageClass.connection}</strong>
-              <div className="form-grid">
-                <label>
-                  {c.storageClass.hostPath} *
-                  <input
-                    required
-                    value={form.path}
-                    onChange={(e) => setForm({ ...form, path: e.target.value })}
-                    placeholder="/mnt/xc_kpfs/regular/post_train"
-                  />
-                  <span className="muted">{c.storageClass.hostPathHint}</span>
-                </label>
-                <label className="field">
-                  {c.storageClass.fsType}
-                  <input
-                    value={form.fs_type}
-                    onChange={(e) =>
-                      setForm({ ...form, fs_type: e.target.value })
-                    }
-                    placeholder="kingstorage"
-                  />
-                  <span className="muted">{c.storageClass.fsTypeHint}</span>
-                </label>
-              </div>
+          <div className="form-section">
+            <strong>{c.storageClass.connection}</strong>
+            <div className="form-grid">
+              <label>
+                {c.storageClass.endpoint} *
+                <input
+                  required
+                  value={form.endpoint}
+                  onChange={(e) =>
+                    setForm({ ...form, endpoint: e.target.value })
+                  }
+                  placeholder="https://s3.amazonaws.com"
+                />
+              </label>
+              <label>
+                {c.storageClass.region} *
+                <input
+                  required
+                  value={form.region}
+                  onChange={(e) => setForm({ ...form, region: e.target.value })}
+                  placeholder="us-east-1"
+                />
+              </label>
+              <label>
+                {c.storageClass.bucket} *
+                <input
+                  required
+                  value={form.bucket}
+                  onChange={(e) => setForm({ ...form, bucket: e.target.value })}
+                  placeholder="my-bucket"
+                />
+              </label>
+              <label>
+                {c.storageClass.pathStyle}
+                <input
+                  type="checkbox"
+                  checked={form.path_style}
+                  onChange={(e) =>
+                    setForm({ ...form, path_style: e.target.checked })
+                  }
+                />
+              </label>
+              <label>
+                {c.storageClass.accessKeyId} *
+                <input
+                  required={!isEdit}
+                  autoComplete="off"
+                  value={form.access_key_id}
+                  onChange={(e) =>
+                    setForm({ ...form, access_key_id: e.target.value })
+                  }
+                  placeholder={
+                    isEdit
+                      ? zh
+                        ? "留空则保持原 Access Key ID"
+                        : "Leave blank to keep the existing Access Key ID"
+                      : "AKIAIOSFODNN7EXAMPLE"
+                  }
+                />
+              </label>
+              <label>
+                {c.storageClass.accessKeySecret} *
+                <input
+                  required={!isEdit}
+                  type="password"
+                  autoComplete="new-password"
+                  value={form.access_key_secret}
+                  onChange={(e) =>
+                    setForm({ ...form, access_key_secret: e.target.value })
+                  }
+                  placeholder={
+                    isEdit
+                      ? zh
+                        ? "留空则保持原密钥"
+                        : "Leave blank to keep the existing secret"
+                      : "••••••••••••"
+                  }
+                />
+              </label>
             </div>
-          )}
-          {form.type === "s3" && (
-            <div className="form-section">
-              <strong>{c.storageClass.connection}</strong>
-              <div className="form-grid">
-                <label>
-                  {c.storageClass.endpoint} *
-                  <input
-                    required
-                    value={form.endpoint}
-                    onChange={(e) =>
-                      setForm({ ...form, endpoint: e.target.value })
-                    }
-                    placeholder="https://s3.amazonaws.com"
-                  />
-                </label>
-                <label>
-                  {c.storageClass.mountEndpoint}
-                  <input
-                    value={form.mount_endpoint}
-                    onChange={(e) =>
-                      setForm({ ...form, mount_endpoint: e.target.value })
-                    }
-                    placeholder={form.endpoint || "https://s3.amazonaws.com"}
-                  />
-                  <span className="muted">
-                    {c.storageClass.mountEndpointHint}
-                  </span>
-                </label>
-                {form.clusters.length > 0 && (
-                  <fieldset className="field">
-                    <legend>{c.storageClass.clusterEndpoints}</legend>
-                    {form.clusters.map((cluster) => (
-                      <label key={cluster}>
-                        {cluster}
-                        <input
-                          aria-label={`${c.storageClass.clusterEndpoints} ${cluster}`}
-                          value={form.cluster_mount_endpoints[cluster] ?? ""}
-                          onChange={(e) =>
-                            setForm({
-                              ...form,
-                              cluster_mount_endpoints: {
-                                ...form.cluster_mount_endpoints,
-                                [cluster]: e.target.value,
-                              },
-                            })
-                          }
-                          placeholder={
-                            form.mount_endpoint ||
-                            form.endpoint ||
-                            "https://s3.amazonaws.com"
-                          }
-                        />
-                      </label>
-                    ))}
-                    <span className="muted">
-                      {c.storageClass.clusterEndpointsHint}
-                    </span>
-                  </fieldset>
-                )}
-                <label>
-                  {c.storageClass.region} *
-                  <input
-                    required
-                    value={form.region}
-                    onChange={(e) =>
-                      setForm({ ...form, region: e.target.value })
-                    }
-                    placeholder="us-east-1"
-                  />
-                </label>
-                <label>
-                  {c.storageClass.bucket} *
-                  <input
-                    required
-                    value={form.bucket}
-                    onChange={(e) =>
-                      setForm({ ...form, bucket: e.target.value })
-                    }
-                    placeholder="my-bucket"
-                  />
-                </label>
-                <label>
-                  {c.storageClass.prefix}
-                  <input
-                    value={form.prefix}
-                    onChange={(e) =>
-                      setForm({ ...form, prefix: e.target.value })
-                    }
-                    placeholder="ks3-regular"
-                  />
-                  <span className="muted">{c.storageClass.prefixHint}</span>
-                </label>
-                <label className="field">
-                  {zh ? "挂载配置" : "Mount profile"}
-                  <select
-                    value={form.mount_profile}
-                    onChange={(e) => {
-                      const profile = e.target.value as
-                        "default" | "read" | "archive";
-                      setForm({
-                        ...form,
-                        mount_profile: profile,
-                        vfs_cache_mode:
-                          profile === "archive" ? "off" : form.vfs_cache_mode,
-                      });
-                    }}
-                  >
-                    <option value="default">
-                      {zh ? "默认（兼容现有配置）" : "Default (compatible)"}
-                    </option>
-                    <option value="read">{zh ? "只读" : "Read only"}</option>
-                    <option value="archive">
-                      {zh ? "归档（关闭写缓存）" : "Archive (write cache off)"}
-                    </option>
-                  </select>
-                </label>
-                <label className="field">
-                  {zh
-                    ? "挂载选项覆盖（每行一项）"
-                    : "Mount option overrides (one per line)"}
-                  <textarea
-                    value={form.mount_options.join("\n")}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        mount_options: e.target.value.split("\n"),
-                      })
-                    }
-                    placeholder={"tpslimit=2\nlow-level-retries=10"}
-                  />
-                  <span className="muted">
-                    {zh
-                      ? "仅新挂载生效；支持的选项由服务端校验。"
-                      : "Applies to new mounts; supported options are validated by the server."}
-                  </span>
-                </label>
-                <label>
-                  {c.storageClass.vfsCacheMode}
-                  <select
-                    value={form.vfs_cache_mode}
-                    disabled={form.mount_profile === "archive"}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        vfs_cache_mode: e.target.value as "off" | "writes",
-                      })
-                    }
-                  >
-                    <option value="off">
-                      {c.storageClass.vfsCacheModeOff}
-                    </option>
-                    <option value="writes">
-                      {c.storageClass.vfsCacheModeWrites}
-                    </option>
-                  </select>
-                </label>
-                <label>
-                  {c.storageClass.pathStyle}
-                  <input
-                    type="checkbox"
-                    checked={form.path_style}
-                    onChange={(e) =>
-                      setForm({ ...form, path_style: e.target.checked })
-                    }
-                  />
-                </label>
-                <label>
-                  {c.storageClass.accessKeyId} *
-                  <input
-                    required={!isEdit}
-                    autoComplete="off"
-                    value={form.access_key_id}
-                    onChange={(e) =>
-                      setForm({ ...form, access_key_id: e.target.value })
-                    }
-                    placeholder={
-                      isEdit
-                        ? zh
-                          ? "留空则保持原 Access Key ID"
-                          : "Leave blank to keep the existing Access Key ID"
-                        : "AKIAIOSFODNN7EXAMPLE"
-                    }
-                  />
-                </label>
-                <label>
-                  {c.storageClass.accessKeySecret} *
-                  <input
-                    required={!isEdit}
-                    type="password"
-                    autoComplete="new-password"
-                    value={form.access_key_secret}
-                    onChange={(e) =>
-                      setForm({ ...form, access_key_secret: e.target.value })
-                    }
-                    placeholder={
-                      isEdit
-                        ? zh
-                          ? "留空则保持原密钥"
-                          : "Leave blank to keep the existing secret"
-                        : "••••••••••••"
-                    }
-                  />
-                </label>
-              </div>
-            </div>
-          )}
+          </div>
           <div className="form-section">
             <label>
               {c.storageClass.description}

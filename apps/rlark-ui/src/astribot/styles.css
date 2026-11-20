@@ -1,0 +1,9 @@
+/* Styles our hooks in RLark's pages use; main.tsx loads them after RLark's own. */
+
+/* The real name (cluster ID, Kubernetes Node name) beside a display name. */
+.real-name {
+  color: var(--muted);
+  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  font-weight: 400;
+}

@@ -1,4 +1,32 @@
-import type { StorageClass, StorageProvider, StorageType } from "../../data";
+import type { StorageClass as OfficialStorageClass, StorageProvider } from "../../data";
+
+/** "s3" 为 S3 兼容对象存储；"smb" 为 SMB/CIFS 共享（NAS）。 */
+export type StorageType = "s3" | "smb" | "hostpath";
+
+/** A storage as our Gateway lists it: the official fields and ours. */
+export interface StorageClass extends OfficialStorageClass {
+  type: StorageType;
+  mount_endpoint?: string;
+  /** A cluster's own mount endpoint, for example a cloud's internal address. */
+  cluster_mount_endpoints?: Record<string, string>;
+  prefix?: string;
+  vfs_cache_mode?: "off" | "writes";
+  mount_profile?: "default" | "read" | "archive";
+  mount_options?: string[];
+  /** Mount profile → StorageClass a volume choosing it gets. */
+  profiles?: Record<string, string>;
+  default_profile?: string;
+  /** Host-path storage: the directory the selected nodes have mounted. */
+  path?: string;
+  fs_type?: string;
+  effective_mount_options?: string[];
+  effective_backend_options?: Record<string, string>;
+  host: string;
+  share: string;
+  subPath: string;
+  username: string;
+  domain: string;
+}
 
 export type StorageClassFormState = {
   name: string;

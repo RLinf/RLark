@@ -103,6 +103,7 @@
 }
 
 .cluster-enrollment-card,
+.cluster-enrollment-result,
 .signed-clusters-panel {
   width: 100%;
   min-width: 0;
@@ -169,130 +170,72 @@
   justify-content: center;
 }
 
-.new-cluster-form {
+.cluster-enrollment-notes {
+  display: flex;
   flex-wrap: wrap;
-}
-
-.new-cluster-form label {
-  flex: 1 1 160px;
-}
-
-.provision-stages {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 16px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.provision-stage {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  color: var(--soft);
-}
-
-.provision-stage div {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.provision-stage small {
-  color: var(--muted);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.provision-stage-icon {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  flex: none;
-  border: 1px solid var(--line-strong);
-  border-radius: 50%;
-}
-
-.provision-stage-done,
-.provision-stage-running {
-  color: inherit;
-}
-
-.provision-stage-done .provision-stage-icon {
-  border-color: var(--green);
-  color: var(--green);
-}
-
-.provision-stage-running .provision-stage-icon {
-  border-color: var(--blue);
-  color: var(--blue);
-}
-
-.provision-stage-skipped .provision-stage-icon {
-  border-style: dashed;
-  color: var(--muted);
-}
-
-.provision-stage-skip {
-  margin-left: 8px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.provision-stage-failed {
-  color: var(--red);
-}
-
-.provision-stage-failed .provision-stage-icon {
-  border-color: var(--red);
-}
-
-.provision-stage-failed .provision-stage-message {
-  color: var(--red);
-}
-
-.provision-retry {
-  margin-top: 16px;
-}
-
-/* Taking a making away: what it does on a line of its own, then the password or "machine gone" and the button. */
-.provision-clear {
-  margin-top: 20px;
-  padding-top: 16px;
+  gap: 9px;
+  margin-top: 15px;
+  padding-top: 14px;
   border-top: 1px solid var(--line);
+}
+
+.cluster-enrollment-notes span {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.provision-clear > small {
-  color: var(--muted);
-  line-height: 1.6;
-}
-
-.provision-clear .cert-form {
-  flex-wrap: wrap;
-}
-
-.cert-form label.provision-clear-gone {
-  flex-direction: row;
   align-items: center;
   gap: 8px;
-  align-self: center;
+  color: var(--muted);
+  font-size: 11px;
 }
 
-.cert-form label.provision-clear-gone input {
-  padding: 0;
-  width: 16px;
-  height: 16px;
+.cluster-enrollment-notes svg {
+  color: #7042d8;
 }
 
-.cert-form label.provision-clear-gone span {
-  font-weight: 400;
+.cluster-enrollment-result {
+  min-width: 0;
+  margin-top: 0;
+  padding: 18px 20px 20px;
+}
+
+.cluster-enrollment-result .cert-result-header {
+  padding: 0 2px 16px;
+}
+
+.cluster-yaml-card {
+  overflow: hidden;
+  margin-top: 16px;
+  border: 1px solid #202b3d;
+  border-radius: 14px;
+  background: #0b1320;
+}
+
+.cluster-yaml-card .cert-yaml-head {
+  margin: 0;
+  padding: 11px 13px;
+  border-bottom: 1px solid #253247;
+  background: #111c2c;
+}
+
+.cluster-yaml-card .cert-yaml-head > div,
+.cert-yaml-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.cluster-yaml-card .cert-yaml-head strong,
+.cluster-yaml-card .cert-yaml-head svg {
+  color: #cbd5e1;
+}
+
+.cluster-yaml-card pre {
+  width: 100%;
+  max-height: 560px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  color: #b9c7da;
+  background: transparent;
 }
 
 .signed-clusters-panel {
@@ -353,6 +296,41 @@
   background: rgba(112, 66, 216, 0.045);
 }
 
+.signed-cluster-detail {
+  padding: 14px;
+  background: rgba(35, 42, 60, 0.025);
+}
+
+.signed-cluster-yaml {
+  margin-top: 0;
+}
+
+.signed-cluster-yaml pre {
+  max-height: 460px;
+}
+
+.signed-cluster-loading {
+  min-height: 86px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  color: var(--muted);
+  background: var(--canvas);
+  font-size: 12px;
+}
+
+.signed-cluster-loading span {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(112, 66, 216, 0.2);
+  border-top-color: #7042d8;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 .cert-list-icon {
   display: grid;
   place-items: center;
@@ -366,8 +344,13 @@
 
 .theme-dark .system-config-overview > div,
 .theme-dark .cluster-enrollment-card,
+.theme-dark .cluster-enrollment-result,
 .theme-dark .signed-clusters-panel {
   background: #151d2b;
+}
+
+.theme-dark .signed-cluster-detail {
+  background: rgba(0, 0, 0, 0.12);
 }
 
 @media (max-width: 900px) {
@@ -389,6 +372,7 @@
     grid-template-columns: 1fr !important;
   }
 
+  .cluster-enrollment-result .cert-result-header,
   .signed-clusters-heading {
     align-items: flex-start;
     flex-direction: column;

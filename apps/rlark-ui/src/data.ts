@@ -207,41 +207,17 @@ export interface Domain {
  */
 export type StorageProvider = string;
 
-/** "s3" 为 S3 兼容对象存储；"smb" 为 SMB/CIFS 共享（NAS）。 */
-export type StorageType = "s3" | "smb" | "hostpath";
-
 export interface StorageClass {
   id: string;
   name: string;
   namespace: string;
   clusters: string[];
-  type: StorageType;
   provider: StorageProvider;
   endpoint: string;
-  mount_endpoint?: string;
-  /** A cluster's own mount endpoint, for example a cloud's internal address. */
-  cluster_mount_endpoints?: Record<string, string>;
-  prefix?: string;
-  vfs_cache_mode?: "off" | "writes";
-  mount_profile?: "default" | "read" | "archive";
-  mount_options?: string[];
-  /** Mount profile → StorageClass a volume choosing it gets. */
-  profiles?: Record<string, string>;
-  default_profile?: string;
-  /** Host-path storage: the directory the selected nodes have mounted. */
-  path?: string;
-  fs_type?: string;
-  effective_mount_options?: string[];
-  effective_backend_options?: Record<string, string>;
   region: string;
   bucket: string;
   accessKeyId: string;
   pathStyle: boolean;
-  host: string;
-  share: string;
-  subPath: string;
-  username: string;
-  domain: string;
   description: string;
   createdAt: string;
 }
@@ -251,23 +227,11 @@ export interface StorageClassCreateRequest {
   namespace: string;
   provider: StorageProvider;
   endpoint: string;
-  mount_endpoint?: string;
-  prefix: string;
-  vfs_cache_mode: "off" | "writes";
-  mount_profile?: "default" | "read" | "archive";
-  mount_options?: string[];
   region: string;
   bucket: string;
   access_key_id: string;
   access_key_secret: string;
   path_style: boolean;
-  type: StorageType;
-  host: string;
-  share: string;
-  sub_path: string;
-  username: string;
-  password: string;
-  domain: string;
   description: string;
 }
 
@@ -352,18 +316,12 @@ export const storageClasses: StorageClass[] = [
     name: "training-datasets",
     namespace: "default",
     clusters: ["cloud-east-a"],
-    type: "s3",
     provider: "MinIO",
     endpoint: "https://minio.mock.local",
     region: "local",
     bucket: "rlark-training",
     accessKeyId: "mock-access-key",
     pathStyle: true,
-    host: "",
-    share: "",
-    subPath: "",
-    username: "",
-    domain: "",
     description: "用于训练数据集的 Mock 对象存储",
     createdAt: "2026-08-01T08:00:00Z",
   },
@@ -372,40 +330,14 @@ export const storageClasses: StorageClass[] = [
     name: "evaluation-results",
     namespace: "default",
     clusters: ["cloud-east-a"],
-    type: "s3",
     provider: "AWS S3",
     endpoint: "https://s3.mock.local",
     region: "cn-east-1",
     bucket: "rlark-evaluation",
     accessKeyId: "mock-access-key",
     pathStyle: false,
-    host: "",
-    share: "",
-    subPath: "",
-    username: "",
-    domain: "",
     description: "用于评估产物的 Mock 对象存储",
     createdAt: "2026-08-02T08:00:00Z",
-  },
-  {
-    id: "lab-nas",
-    name: "lab-nas",
-    namespace: "default",
-    clusters: ["cloud-east-a"],
-    type: "smb",
-    provider: "",
-    endpoint: "",
-    region: "",
-    bucket: "",
-    accessKeyId: "",
-    pathStyle: false,
-    host: "10.0.0.10",
-    share: "shared",
-    subPath: "datasets",
-    username: "mock-user",
-    domain: "",
-    description: "用于共享数据集的 Mock SMB 存储",
-    createdAt: "2026-08-03T08:00:00Z",
   },
 ];
 
