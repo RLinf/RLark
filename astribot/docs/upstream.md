@@ -20,8 +20,17 @@
 | rlarkadm（`pkg/rlarkadm`） | 不再建节点 agent 的 DaemonSet；去掉 `containerd-socket`；`image-pull-credentials` 在 agent 之前放进 `rlark-system` | 节点 agent 改由 Cluster 声明 |
 | 其他 Go | `pkg/distribution`、`pkg/gateway/addon_catalog_handler.go`（目录接口读 `addons.Catalog`：`pkg/addons/catalog.go` 保持官方原样，它的 `Registry` 只剩官方测试和比对测试在读，现网渲染走 `Item.Render`；版本化的包、目录文件夹、`requiredWith` 都在 `pkg/addons/astribot_*.go`）、`pkg/rlarktools/raylauncher`（无 head 的 Job 不等 Ray）、`pkg/network/nodeserver`、`pkg/common`、`apps/rlark/go.mod`、`go.sum` | 随上面的行为 |
 | 内嵌 Addon | `pkg/addons/catalog/csi-driver-rclone/` 的 `addon.yaml` 和三个清单 | `nodeUpdateStrategy`、`nodeImagePullPolicy`、`controllerNodeSelector`、`nodeTpsLimit` |
-| 控制台 | 官方页面里的显示名、按名字引用存储、SMB 和挂载档位、Job 编辑器选镜像、仓库口令、节点表的 WireGuard 地址，及相应的 `i18n.ts`、`mockBackend.ts`、样式和测试；删掉了 `src/admin/CreateCluster.tsx`、`src/utils/deployYaml.ts`、`tests/deploy-yaml.test.mjs` | 新建集群改走 Gateway |
+| 控制台 | 官方页面里的显示名、按名字引用存储、SMB 和挂载档位、Job 编辑器选镜像、仓库口令、节点表的 WireGuard 地址，及相应的 `i18n.ts`、`mockBackend.ts`、样式和测试 | 见 [architecture.md](architecture.md) |
 | 可执行示例 | `apps/rlark/docs/examples/` 的 `deploy-data-plane.yaml`（去掉 `containerd-socket`）、`quickstart-cp.sh`、`update-kcp-crds.sh`（读 kcp Pod 本次启动写的 `/.kcp/admin.kubeconfig`） | 随行为改 |
+
+## 有意删除的官方文件
+
+| 文件 | 为什么 |
+|---|---|
+| `apps/rlark-ui/src/admin/CreateCluster.tsx` | 官方“创建集群”页生成一份部署 YAML 让人手工执行；我们新建集群走 Gateway 的 ClusterProvision（控制台“新建集群”页），这个页面不恢复 |
+| `apps/rlark-ui/src/utils/deployYaml.ts`、`apps/rlark-ui/tests/deploy-yaml.test.mjs` | 只给上面那个页面用 |
+
+合入官方新版本时，官方对这三个文件的改动不合进来（`git apply -3` 会报它们不存在，直接丢掉这几处）。
 
 Gateway 用我们的镜像时必须带 Station API 和仓库浏览的参数（[architecture.md](architecture.md)）。官方 rlarkadm 部署的 Gateway 和 `apps/rlark/docs/examples/docker-compose.yml` 不带，起不来；只有 `astribot/release/control-plane/rlark.compose.yaml` 带。
 
