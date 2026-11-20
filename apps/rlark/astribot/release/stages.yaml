@@ -36,13 +36,6 @@ stages:
     requires: [prewarm]
     note: A new station-api lists objects the old RBAC forbids, so the RBAC is there before it starts. The tree is the release's own commit (git archive), so its definitions are not an older tree's. Going back leaves them. A field or value a release's definitions dropped is then no longer accepted from the older build (pruned, or refused where it is an enum value), so a run does not go back past such a release with objects of that kind in flight.
 
-  - name: station-placement
-    requires: [crds-rbac]
-    check:
-      - gateways-understand: 2
-    recreates: [station-system/station-agent*]
-    note: A node runs the one Station agent its station.rlark.io/network label calls for. Two agents on one node write the node's one observation by turns, and the controller's gate reads the gateway's level from it. A release only set images on a DaemonSet the cluster had; it places them now, before the controller, and the check is the controller's gate. Going back leaves the placement, which was never right before.
-
   - name: gateway
     requires: [crds-rbac]
     back: true
@@ -57,7 +50,7 @@ stages:
     note: The installer holds the site registry's CA, so it is the environment's, not the release's. Read back by what Station API serves (its SHA-256); the earlier installer's file stays beside it.
 
   - name: controller
-    requires: [station-api, station-placement]
+    requires: [station-api]
     back: true
     gate:
       - gateways-understand: 2
@@ -86,7 +79,7 @@ stages:
     timeoutFactor: 3
     check: [observations-fresh, enrollments-enrolled, links-connected, documents-unchanged, network-connected, nodes-unpressured]
     recreates: [station-system/station-agent*]
-    note: The cluster agent replaces their Pods (OnDelete, rlark.io/rollout), a node at a time, a robot only when it is idle; a gateway that is a host service is replaced by the keeper.
+    note: A Station DaemonSet a cluster has is made what the tree's station-agent.yaml states, the whole spec but its selector, with the release's images in the same write, so that a template never runs another commit's binary. A release only set the images, and a DaemonSet kept every other field as it was first made (live 11-20, a volume of a ConfigMap the tree no longer had, and a Pod made anew could not mount it; before that the placement, two agents on one node writing the node's one observation by turns). The plan names each field that differs, compared with what the cluster's API server makes of the stated one (a dry run), so what it fills in is no difference. The cluster agent replaces their Pods (OnDelete, rlark.io/rollout), a node at a time, a robot only when it is idle, so the agents that roll them come first; a gateway that is a host service is replaced by the keeper. Going back (no tree) sets the images back and leaves the rest of the template, as crds-rbac leaves the definitions, so a run does not go back past a release whose template the older binaries do not start with.
 
   - name: server
     requires: [station-agents]

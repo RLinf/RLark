@@ -20,6 +20,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -69,6 +70,8 @@ type fakeSite struct {
 	uid     int
 	// stuck is a Deployment ("<cluster>/<name>") whose new Pods never get ready.
 	stuck string
+	// unrolled is a DaemonSet ("<cluster>/<name>") whose Pods the cluster agent does not come to replace.
+	unrolled string
 	// resets is how many Addon writes the management plane fails as one that is busy fails them.
 	resets int
 	// alsoRecreate is a Pod owner that a write of the cluster agent also
@@ -186,10 +189,32 @@ func newFakeSite(t *testing.T) *fakeSite {
 			return true, deployment, nil
 		})
 		member.PrependReactor("update", "daemonsets", func(action k8stesting.Action) (bool, runtime.Object, error) {
-			daemonSet := action.(k8stesting.UpdateAction).GetObject().(*appsv1.DaemonSet)
+			update := action.(k8stesting.UpdateActionImpl)
+			daemonSets := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}
+			daemonSet := update.GetObject().(*appsv1.DaemonSet).DeepCopy()
+			// What an API server makes of the one it is given: it fills in what is not stated, and a template that
+			// is not the one it holds is the next generation.
+			daemonSet.Spec.Template.Spec.SchedulerName = corev1.DefaultSchedulerName
+			for i := range daemonSet.Spec.Template.Spec.Containers {
+				daemonSet.Spec.Template.Spec.Containers[i].TerminationMessagePath = corev1.TerminationMessagePathDefault
+			}
+			object, _ := member.Tracker().Get(daemonSets, daemonSet.Namespace, daemonSet.Name)
+			held := object.(*appsv1.DaemonSet)
+			daemonSet.Generation = held.Generation
+			if !equality.Semantic.DeepEqual(held.Spec.Template, daemonSet.Spec.Template) {
+				daemonSet.Generation++
+				metav1.SetMetaDataAnnotation(&daemonSet.ObjectMeta, appsv1.DeprecatedTemplateGeneration, fmt.Sprint(daemonSet.Generation))
+			}
+			// A dry run answers what the object would be and writes nothing.
+			if len(update.UpdateOptions.DryRun) > 0 {
+				return true, daemonSet, nil
+			}
+			daemonSet.Status.ObservedGeneration = daemonSet.Generation
 			s.writes = append(s.writes, fmt.Sprintf("%s daemonset %s %s", cluster, daemonSet.Name, daemonSet.Spec.UpdateStrategy.Type))
-			_ = member.Tracker().Update(schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "daemonsets"}, daemonSet, daemonSet.Namespace)
-			s.rollDaemonSet(cluster, daemonSet)
+			_ = member.Tracker().Update(daemonSets, daemonSet, daemonSet.Namespace)
+			if cluster+"/"+daemonSet.Name != s.unrolled {
+				s.rollDaemonSet(cluster, daemonSet)
+			}
 			return true, daemonSet, nil
 		})
 	}
@@ -216,7 +241,7 @@ func (s *fakeSite) addon(cluster, name, version string, values map[string]string
 }
 
 // pod replaces the Pods of an owner with one of the given containers.
-func (s *fakeSite) pod(cluster, namespace, owner, kind, ownerObject string, containers ...corev1.Container) {
+func (s *fakeSite) pod(cluster, namespace, owner, kind, ownerObject string, containers ...corev1.Container) *corev1.Pod {
 	member := s.members[cluster]
 	// The tracker, not the client: this runs inside the client's reactors.
 	listed, _ := member.Tracker().List(schema.GroupVersionResource{Version: "v1", Resource: "pods"}, schema.GroupVersionKind{Version: "v1", Kind: "Pod"}, namespace)
@@ -238,6 +263,7 @@ func (s *fakeSite) pod(cluster, namespace, owner, kind, ownerObject string, cont
 		Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: ready}}},
 	}
 	s.create(member, pod)
+	return pod
 }
 
 func cmpOr(a, b string) string {
@@ -258,7 +284,9 @@ func (s *fakeSite) rollDeployment(cluster string, deployment *appsv1.Deployment)
 }
 
 func (s *fakeSite) rollDaemonSet(cluster string, daemonSet *appsv1.DaemonSet) {
-	s.pod(cluster, daemonSet.Namespace, daemonSet.Name, "DaemonSet", "", daemonSet.Spec.Template.Spec.Containers...)
+	pod := s.pod(cluster, daemonSet.Namespace, daemonSet.Name, "DaemonSet", "", daemonSet.Spec.Template.Spec.Containers...)
+	pod.Labels[templateGenerationLabel] = daemonSet.Annotations[appsv1.DeprecatedTemplateGeneration]
+	_ = s.members[cluster].Tracker().Update(schema.GroupVersionResource{Version: "v1", Resource: "pods"}, pod, pod.Namespace)
 }
 
 func (s *fakeSite) Images(context.Context) (map[string]string, error) {
@@ -518,7 +546,6 @@ func TestApplyWalksTheStagesInOrderAndReadsBack(t *testing.T) {
 			t.Errorf("%s is not before %s: %v", pair[0], pair[1], s.writes)
 		}
 	}
-
 	current, err := run.Site.Read(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -949,7 +976,7 @@ func TestEveryMemberClusterGetsTheTreesMemberDefinitions(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, line := range []string{"crds-rbac        lab ClusterRole /station-node-operator", "crds-rbac        lab Role rlark-system/station-node-reset",
-		"crds-rbac        office ClusterRole /station-node-operator: differs at .rules[0].verbs", "crds-rbac        office Role rlark-system/station-node-reset"} {
+		"crds-rbac        office ClusterRole /station-node-operator: differs at rules[0].verbs", "crds-rbac        office Role rlark-system/station-node-reset"} {
 		if !strings.Contains(out.String(), line) {
 			t.Errorf("the plan lacks %q:\n%s", line, out.String())
 		}
@@ -1233,39 +1260,76 @@ func TestTheControlPlaneRunsTheTreesComposeFile(t *testing.T) {
 	}
 }
 
-// A Station DaemonSet a cluster has is placed as the tree states it (station-agent.yaml), before the controller.
-func TestStationDaemonSetsArePlacedAsTheTreeStates(t *testing.T) {
+// A Station DaemonSet a cluster has is made what the tree states (station-agent.yaml) by the stage that sets its
+// images: one that kept what the tree dropped (live 11-20, the wireguard-config ConfigMap's volume, its mount and
+// STATION_GATEWAY_CONFIG) loses it, the plan names each field, one that is as stated (what the API server fills in
+// aside) is no change, and the stage waits for the Pods of the template before.
+func TestStationDaemonSetsAreMadeWhatTheTreeStates(t *testing.T) {
 	s := newFakeSite(t)
 	_, environment, release := writeFiles(t)
 	desired := environment.Desired(release, testClusters)
 	ctx := context.Background()
-	everyNode := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{
-		MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "station.rlark.io/network", Operator: corev1.NodeSelectorOpExists}}}}}}}
-	daemonSets := s.members["office"].AppsV1().DaemonSets(stationNamespace)
-	agent, err := daemonSets.Get(ctx, "station-agent-host", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	agent.Spec.Template.Spec.Affinity = everyNode
-	if _, err := daemonSets.Update(ctx, agent, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
 	var out bytes.Buffer
-	run := newRun(t, s, environment, desired, &out)
-	current, _ := run.Site.Read(ctx)
-	plan, err := run.Plan(ctx, current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "station-placement office DaemonSet station-agent-host placement: station.rlark.io/network Exists [] -> station.rlark.io/network In [host]"
-	if !slices.ContainsFunc(plan, func(change Change) bool { return strings.Join(strings.Fields(change.String()), " ") == want }) {
-		t.Errorf("the plan lacks %q: %v", want, plan)
-	}
-	if err := run.Apply(ctx); err != nil {
+	if err := newRun(t, s, environment, desired, &out).Apply(ctx); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	placed, _ := daemonSets.Get(ctx, "station-agent-host", metav1.GetOptions{})
-	if got := placement(placed.Spec.Template.Spec.Affinity); got != "station.rlark.io/network In [host]" {
-		t.Errorf("station-agent-host is placed on %s", got)
+	daemonSets := s.members["lab"].AppsV1().DaemonSets(stationNamespace)
+	stated, _ := daemonSets.Get(ctx, "station-agent-network", metav1.GetOptions{})
+	if stated.Spec.UpdateStrategy.Type != appsv1.OnDeleteDaemonSetStrategyType || stated.Annotations[rolloutAnnotation] != "{}" || stated.Spec.Template.Spec.Affinity == nil ||
+		stated.Spec.Template.Spec.Containers[1].Image != wg || len(stated.Spec.Template.Spec.Volumes) != 7 {
+		t.Fatalf("station-agent-network is not as the tree states it: %+v", stated)
+	}
+	plan := func() []string {
+		run := newRun(t, s, environment, desired, &out)
+		current, _ := run.Site.Read(ctx)
+		changes, err := run.Plan(ctx, current)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var lines []string
+		for _, change := range changes {
+			lines = append(lines, strings.Join(strings.Fields(change.String()), " "))
+		}
+		return lines
+	}
+	if lines := plan(); len(lines) > 0 {
+		t.Fatalf("a site as the release states has changes: %v", lines)
+	}
+
+	kept := stated.DeepCopy()
+	kept.Spec.Template.Spec.Volumes = append(kept.Spec.Template.Spec.Volumes, corev1.Volume{Name: "wireguard-config",
+		VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "station-wireguard-config"}}}})
+	wireguard := &kept.Spec.Template.Spec.Containers[1]
+	wireguard.VolumeMounts = append(wireguard.VolumeMounts, corev1.VolumeMount{Name: "wireguard-config", MountPath: "/etc/station"})
+	wireguard.Env = append(wireguard.Env, corev1.EnvVar{Name: "STATION_GATEWAY_CONFIG", Value: "/etc/station/config.json"})
+	if _, err := daemonSets.Update(ctx, kept, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"station-agents lab DaemonSet station-agent-network spec.template.spec.containers[wireguard].env[STATION_GATEWAY_CONFIG]: {\"name\":\"STATION_GATEWAY_CONFIG\",\"value\":\"/etc/station/config.json\"} -> (none)",
+		"station-agents lab DaemonSet station-agent-network spec.template.spec.containers[wireguard].volumeMounts[wireguard-config]: {\"mountPath\":\"/etc/station\",\"name\":\"wireguard-config\"} -> (none)",
+		"station-agents lab DaemonSet station-agent-network spec.template.spec.volumes[wireguard-config]: {\"configMap\":{\"name\":\"station-wireguard-config\"},\"name\":\"wireguard-config\"} -> (none)",
+	}
+	if lines := plan(); !slices.Equal(lines, want) {
+		t.Fatalf("the plan is\n%s", strings.Join(lines, "\n"))
+	}
+	out.Reset()
+	if err := newRun(t, s, environment, desired, &out).Apply(ctx); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if lines := plan(); len(lines) > 0 {
+		t.Errorf("after the run: %v", lines)
+	}
+	if made, _ := daemonSets.Get(ctx, "station-agent-network", metav1.GetOptions{}); !equality.Semantic.DeepEqual(made.Spec, stated.Spec) {
+		t.Errorf("station-agent-network is not as the tree states it again: %+v", made.Spec)
+	}
+
+	// The cluster agent has not come to replace the Pods of the template before: the stage is not done.
+	if _, err := daemonSets.Update(ctx, kept, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	s.unrolled = "lab/station-agent-network"
+	if err := newRun(t, s, environment, desired, &out).Apply(ctx); err == nil || !strings.Contains(err.Error(), "station-system/station-agent-network not yet replaced and ready on lab-1") {
+		t.Errorf("a run whose Station agents were not replaced: %v", err)
 	}
 }

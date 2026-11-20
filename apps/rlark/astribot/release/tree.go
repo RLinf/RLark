@@ -237,8 +237,12 @@ func definitionChanges(ctx context.Context, plane dynamic.Interface, definitions
 		case err != nil:
 			return nil, fmt.Errorf("%s: %w", what, err)
 		}
-		if differs := differences(jsonValue(current.Object), jsonValue(stated(definition))); len(differs) > 0 {
-			out = append(out, Change{Stage: "crds-rbac", What: what, From: "differs at " + strings.Join(differs, "; "), To: "as in " + short(commit)})
+		if differs := differences(jsonValue(current.Object), jsonValue(stated(definition)), false); len(differs) > 0 {
+			var at []string
+			for _, differs := range differs[:min(3, len(differs))] {
+				at = append(at, fmt.Sprintf("%s: %s, %s stated", differs.path, short(differs.from), short(differs.to)))
+			}
+			out = append(out, Change{Stage: "crds-rbac", What: what, From: "differs at " + strings.Join(at, "; "), To: "as in " + short(commit)})
 		}
 	}
 	return out, nil

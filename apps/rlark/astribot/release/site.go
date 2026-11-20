@@ -28,6 +28,10 @@ const (
 	stationController = "station-controller"
 	// rolloutAnnotation hands a DaemonSet's rollout to the cluster agent.
 	rolloutAnnotation = "rlark.io/rollout"
+	// templateGenerationLabel is the label the DaemonSet controller gives each Pod, the template generation it was
+	// made from (the DaemonSet's is its appsv1.DeprecatedTemplateGeneration annotation); the agent's rollout
+	// (astribot/rollout) replaces Pods by the same pair.
+	templateGenerationLabel = "pod-template-generation"
 )
 
 // StationDaemonSets are Station's DaemonSets in every member cluster;

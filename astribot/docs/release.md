@@ -86,13 +86,12 @@ rlarkctl release apply -e environments/live.yaml -r releases/<名字>.yaml --tre
 | `images` | 发布里办公室仓库缺的镜像，从金山云仓库按摘要拷进来 | 逐个读回 |
 | `prewarm` | 控制面的镜像预先拉到管理机 | `nodes-unpressured` |
 | `crds-rbac` | `rlinf.io`、`station.rlark.io` 的 CRD；station-api / controller 的管理面 RBAC；各成员集群的 Station RBAC | — |
-| `station-placement` | 各成员集群 Station DaemonSet 的节点亲和 | `gateways-understand: 2` |
 | `gateway` | 控制面 gateway 容器（和 compose、env 文件） | `clusters-online`、`addons-ready` |
 | `station-api` | Deployment station-api；安装器放到 Station API 的机器上 | `enrollments-enrolled`、`observations-fresh` |
 | `controller` | Deployment station-controller（先等所有网关认得新文档级别） | `documents-unchanged`、`enrollments-enrolled`、`network-connected` |
 | `cluster-agents` | 每个集群的 agent，一个集群一个集群来 | `clusters-online`、`addons-ready`、`nodes-ready`、`nodes-unpressured` |
 | `node-agents` | 每个集群的节点 agent（Cluster `spec.nodeAgents.image`） | `clusters-online`、`nodes-ready`、`nodes-unpressured` |
-| `station-agents` | 三个 Station DaemonSet 的镜像 | `observations-fresh`、`enrollments-enrolled`、`links-connected`、`documents-unchanged`、`network-connected`、`nodes-unpressured` |
+| `station-agents` | 各成员集群已有的 Station DaemonSet 改成这棵树的 `station-agent.yaml` 写的样子（整个 `spec`，selector 除外），镜像和拉取账号在同一次写入里换成发布的，模板和它启动的二进制始终出自同一个提交。计划里逐个字段列出差异（和集群 API server 对这份清单 dry-run 的结果比，补的默认值不算差异）。DaemonSet 是 OnDelete，由集群 agent 按 `rlark.io/rollout` 换 Pod，这个阶段等它们换完。不带树的运行（`--back`、`--to`）只改镜像和拉取账号，模板其余部分不退回 | `observations-fresh`、`enrollments-enrolled`、`links-connected`、`documents-unchanged`、`network-connected`、`nodes-unpressured` |
 | `server` | rlark-server、rlark-controller-manager 容器 | `clusters-online`、`nodes-ready` |
 | `console` | rlark-ui 容器 | — |
 | `addons` | 版本或取值和发布不同的 Addon，按 `after` 顺序 | `clusters-online`、`nodes-ready` |

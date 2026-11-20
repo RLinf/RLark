@@ -180,42 +180,86 @@ func Merged(current, stated AddonState) AddonState {
 	return AddonState{Version: stated.Version, Values: values}
 }
 
-// differences are the paths (at most three) where actual does not hold what desired states (every field it states
-// has that value in actual: lists element by element, objects key by key); none when it holds them all.
-func differences(actual, desired any) []string {
-	var paths []string
-	differ(actual, desired, "", &paths)
-	return paths
+// difference is one place a JSON value is not what another states, and what each has there ("" for nothing).
+type difference struct{ path, from, to string }
+
+// differences are where actual is not what desired states: a field by its name, an item of a list of named items
+// (containers, env, volumes, mounts, a CRD's versions) by its name, of another list by its place. With exact a field
+// only actual has is one too; without, actual may hold more than desired states (what an API server fills in).
+func differences(actual, desired any, exact bool) []difference {
+	var out []difference
+	differ("", actual, desired, exact, &out)
+	return out
 }
 
-func differ(actual, desired any, at string, paths *[]string) {
-	if len(*paths) >= 3 {
-		return
-	}
-	switch want := desired.(type) {
+func differ(path string, actual, desired any, exact bool, into *[]difference) {
+	switch desired := desired.(type) {
 	case map[string]any:
-		have, ok := actual.(map[string]any)
-		if !ok {
-			*paths = append(*paths, at+" absent")
+		if actual, both := actual.(map[string]any); both {
+			keys := maps.Clone(desired)
+			if exact {
+				maps.Copy(keys, actual)
+			}
+			for _, key := range slices.Sorted(maps.Keys(keys)) {
+				differ(strings.TrimPrefix(path+"."+key, "."), actual[key], desired[key], exact, into)
+			}
 			return
-		}
-		for _, key := range slices.Sorted(maps.Keys(want)) {
-			differ(have[key], want[key], at+"."+key, paths)
 		}
 	case []any:
-		have, _ := actual.([]any)
-		if len(have) != len(want) {
-			*paths = append(*paths, fmt.Sprintf("%s: %d items, %d stated", at, len(have), len(want)))
+		actual, both := actual.([]any)
+		actualNames, actualItems := namedItems(actual)
+		names, items := namedItems(desired)
+		switch {
+		case both && actualItems != nil && items != nil:
+			for _, name := range actualNames {
+				differ(path+"["+name+"]", actualItems[name], items[name], exact, into)
+			}
+			added := slices.DeleteFunc(slices.Clone(names), func(name string) bool { return slices.Contains(actualNames, name) })
+			for _, name := range added {
+				differ(path+"["+name+"]", nil, items[name], exact, into)
+			}
+			// The same items in another order (a container's env refers to the ones before it).
+			if kept := slices.DeleteFunc(slices.Clone(actualNames), func(name string) bool { return !slices.Contains(names, name) }); len(added) == 0 && len(kept) == len(names) && !slices.Equal(kept, names) {
+				*into = append(*into, difference{path + " order", strings.Join(actualNames, ","), strings.Join(names, ",")})
+			}
+			return
+		case both && len(actual) == len(desired):
+			for i := range desired {
+				differ(fmt.Sprintf("%s[%d]", path, i), actual[i], desired[i], exact, into)
+			}
 			return
 		}
-		for i := range want {
-			differ(have[i], want[i], fmt.Sprintf("%s[%d]", at, i), paths)
-		}
-	default:
-		if !reflect.DeepEqual(actual, desired) {
-			*paths = append(*paths, fmt.Sprintf("%s: %v, %v stated", at, short(fmt.Sprint(actual)), short(fmt.Sprint(desired))))
-		}
 	}
+	if !reflect.DeepEqual(actual, desired) {
+		*into = append(*into, difference{path, jsonLine(actual), jsonLine(desired)})
+	}
+}
+
+// namedItems are a list's items by their names, and the names in the list's order; nothing where an item has none or
+// two have one.
+func namedItems(list []any) ([]string, map[string]any) {
+	var names []string
+	items := map[string]any{}
+	for _, item := range list {
+		fields, _ := item.(map[string]any)
+		name, named := fields["name"].(string)
+		if _, twice := items[name]; !named || twice {
+			return nil, nil
+		}
+		names, items[name] = append(names, name), item
+	}
+	return names, items
+}
+
+func jsonLine(value any) string {
+	switch value := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return value
+	}
+	data, _ := json.Marshal(value)
+	return string(data)
 }
 
 // changedService is a control plane service's image, and its definition where the image is the same.

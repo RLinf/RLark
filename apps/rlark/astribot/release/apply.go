@@ -19,7 +19,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -113,15 +112,32 @@ func (r *Run) Plan(ctx context.Context, current State) ([]Change, error) {
 
 func (r *Run) changes(ctx context.Context, stage string, current State) ([]Change, error) {
 	switch stage {
-	case "station-placement":
-		misplaced, err := r.misplacedStationDaemonSets(ctx)
-		if err != nil {
-			return nil, err
+	case "station-agents":
+		changes := Changes(stage, current, r.Desired)
+		if r.Tree == nil {
+			return changes, nil
 		}
-		var changes []Change
-		for _, daemonSet := range misplaced {
-			changes = append(changes, Change{Stage: stage, What: daemonSet.cluster + " DaemonSet " + daemonSet.current.Name + " placement",
-				From: placement(daemonSet.current.Spec.Template.Spec.Affinity), To: placement(daemonSet.want)})
+		for _, cluster := range slices.Sorted(maps.Keys(r.Desired.Clusters)) {
+			for _, name := range StationDaemonSets {
+				has, made, err := r.stationDaemonSet(ctx, cluster, name)
+				if err != nil {
+					return nil, err
+				}
+				if has == nil {
+					continue
+				}
+				// What the cluster's API server makes of it, so that what it fills in is no difference.
+				served, err := r.Site.Members[cluster].AppsV1().DaemonSets(stationNamespace).Update(ctx, made, metav1.UpdateOptions{DryRun: []string{metav1.DryRunAll}})
+				if err != nil {
+					return nil, fmt.Errorf("cluster %s: DaemonSet %s as the tree states it: %w", cluster, name, err)
+				}
+				for _, differs := range differences(stationDaemonSetView(has), stationDaemonSetView(served), true) {
+					// The images and the pull account are the lines above.
+					if !strings.HasSuffix(differs.path, "].image") && !strings.Contains(differs.path, ".imagePullSecrets") {
+						changes = append(changes, Change{Stage: stage, What: cluster + " DaemonSet " + name + " " + differs.path, From: differs.from, To: differs.to})
+					}
+				}
+			}
 		}
 		return changes, nil
 	case "images":
@@ -406,17 +422,6 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 				r.log.printf("prewarm: %s pulled onto the control plane's machine", short(image))
 			}
 		}
-	case "station-placement":
-		misplaced, err := r.misplacedStationDaemonSets(ctx)
-		if err != nil {
-			return err
-		}
-		for _, daemonSet := range misplaced {
-			daemonSet.current.Spec.Template.Spec.Affinity = daemonSet.want
-			if _, err := site.Members[daemonSet.cluster].AppsV1().DaemonSets(stationNamespace).Update(ctx, daemonSet.current, metav1.UpdateOptions{}); err != nil {
-				return fmt.Errorf("cluster %s: %w", daemonSet.cluster, err)
-			}
-		}
 	case "crds-rbac":
 		if err := applyDefinitions(ctx, site.Management, r.Tree.Definitions, ""); err != nil {
 			return err
@@ -509,7 +514,15 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 	case "station-agents":
 		for _, name := range slices.Sorted(maps.Keys(desired.Clusters)) {
 			for _, daemonSet := range StationDaemonSets {
-				if err := setStationDaemonSet(ctx, site.Members[name], daemonSet, desired.Clusters[name]); err != nil {
+				// The DaemonSet's controller writes its status meanwhile: a write that conflicts reads it anew.
+				if err := r.retryWrite(ctx, func() error {
+					has, made, err := r.stationDaemonSet(ctx, name, daemonSet)
+					if err != nil || has == nil {
+						return err
+					}
+					_, err = site.Members[name].AppsV1().DaemonSets(stationNamespace).Update(ctx, made, metav1.UpdateOptions{})
+					return err
+				}); err != nil {
 					return fmt.Errorf("cluster %s: %w", name, err)
 				}
 			}
@@ -627,21 +640,6 @@ func (r *Run) settled(ctx context.Context, stage Stage, baseline Snapshot) (stri
 		}
 	}
 	switch stage.Name {
-	case "station-placement":
-		for _, cluster := range slices.Sorted(maps.Keys(site.Members)) {
-			for _, name := range StationDaemonSets {
-				daemonSet, err := site.Members[cluster].AppsV1().DaemonSets(stationNamespace).Get(ctx, name, metav1.GetOptions{})
-				if apierrors.IsNotFound(err) {
-					continue
-				}
-				if err != nil {
-					return "", err
-				}
-				if daemonSet.Status.ObservedGeneration < daemonSet.Generation || daemonSet.Status.NumberMisscheduled > 0 {
-					left = append(left, fmt.Sprintf("%s %s: %d Pods on nodes it does not take", cluster, name, daemonSet.Status.NumberMisscheduled))
-				}
-			}
-		}
 	case "station-api", "controller":
 		name := map[string]string{"station-api": stationAPI, "controller": stationController}[stage.Name]
 		image := map[string]string{"station-api": desired.StationAPI, "controller": desired.StationController}[stage.Name]
@@ -807,34 +805,50 @@ func setAgent(ctx context.Context, member kubernetes.Interface, want ClusterStat
 	return deployment.Name, err
 }
 
-// setStationDaemonSet gives one of Station's DaemonSets its images and hands its rollout to the cluster agent (OnDelete,
-// rlark.io/rollout); one the cluster does not run is left so.
-func setStationDaemonSet(ctx context.Context, member kubernetes.Interface, name string, want ClusterState) error {
-	daemonSet, err := member.AppsV1().DaemonSets(stationNamespace).Get(ctx, name, metav1.GetOptions{})
+// stationDaemonSet is one of Station's DaemonSets as a cluster has it and as the run makes it; neither where the
+// cluster does not run it. A run with a tree makes it what the tree's station-agent.yaml states, the whole spec but
+// the selector (which a DaemonSet keeps), with the release's images: the template and the binaries it starts are one
+// commit's and are written at once. A run without one (going back, or to a record) sets its images only. Either
+// hands its rollout to the cluster agent (OnDelete, rlark.io/rollout).
+func (r *Run) stationDaemonSet(ctx context.Context, cluster, name string) (has, made *appsv1.DaemonSet, err error) {
+	has, err = r.Site.Members[cluster].AppsV1().DaemonSets(stationNamespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	for i, container := range daemonSet.Spec.Template.Spec.Containers {
-		if image, ours := stationContainers[container.Name]; ours {
-			daemonSet.Spec.Template.Spec.Containers[i].Image = image(want)
+	want := r.Desired.Clusters[cluster]
+	made = has.DeepCopy()
+	if r.Tree != nil {
+		stated, err := stationDaemonSet(r.Tree.Files["station-agent.yaml"], name, want)
+		if err != nil {
+			return nil, nil, err
+		}
+		made.Spec = stated.Spec
+		made.Spec.Selector = has.Spec.Selector
+	} else {
+		for i, container := range made.Spec.Template.Spec.Containers {
+			if image, ours := stationContainers[container.Name]; ours {
+				made.Spec.Template.Spec.Containers[i].Image = image(want)
+			}
 		}
 	}
-	// The cluster's account of the site's registry is the one it pulls with, and no other.
+	// The cluster's account of the site's registry is the one it pulls with, and no other; none stated leaves it.
+	made.Spec.Template.Spec.ImagePullSecrets = has.Spec.Template.Spec.ImagePullSecrets
 	if want.StationPullSecret != "" {
-		daemonSet.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: want.StationPullSecret}}
+		made.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: want.StationPullSecret}}
 	}
-	daemonSet.Spec.UpdateStrategy = appsv1.DaemonSetUpdateStrategy{Type: appsv1.OnDeleteDaemonSetStrategyType}
-	if daemonSet.Annotations == nil {
-		daemonSet.Annotations = map[string]string{}
+	made.Spec.UpdateStrategy = appsv1.DaemonSetUpdateStrategy{Type: appsv1.OnDeleteDaemonSetStrategyType}
+	if _, set := made.Annotations[rolloutAnnotation]; !set {
+		metav1.SetMetaDataAnnotation(&made.ObjectMeta, rolloutAnnotation, "{}")
 	}
-	if _, set := daemonSet.Annotations[rolloutAnnotation]; !set {
-		daemonSet.Annotations[rolloutAnnotation] = "{}"
-	}
-	_, err = member.AppsV1().DaemonSets(stationNamespace).Update(ctx, daemonSet, metav1.UpdateOptions{})
-	return err
+	return has, made, nil
+}
+
+// stationDaemonSetView is what a run compares of a Station DaemonSet, as JSON has it.
+func stationDaemonSetView(daemonSet *appsv1.DaemonSet) any {
+	return jsonValue(map[string]any{"metadata": map[string]any{"annotations": map[string]string{rolloutAnnotation: daemonSet.Annotations[rolloutAnnotation]}}, "spec": daemonSet.Spec})
 }
 
 // deploymentSettled: every replica is of the current template, runs image
@@ -856,8 +870,8 @@ func deploymentSettled(ctx context.Context, member kubernetes.Interface, namespa
 	return "", nil
 }
 
-// daemonSetSettled: on every node in service the DaemonSet's Pod runs the images (container name -> image; "" is
-// every container) and is ready. A node out of service (cordoned, or not Ready) holds nobody up.
+// daemonSetSettled: the DaemonSet has no Pod on a node it does not take, and on every node in service its Pod is of
+// its current template, runs the images (container name -> image; "" is every container) and is ready. A node out of service (cordoned, or not Ready) holds nobody up.
 func daemonSetSettled(ctx context.Context, member kubernetes.Interface, namespace, name string, images map[string]string) (string, error) {
 	daemonSet, err := member.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
 	switch {
@@ -869,6 +883,12 @@ func daemonSetSettled(ctx context.Context, member kubernetes.Interface, namespac
 	}
 	if err != nil {
 		return "", err
+	}
+	switch status := daemonSet.Status; {
+	case status.ObservedGeneration < daemonSet.Generation:
+		return fmt.Sprintf("%s/%s: generation %d not yet observed", namespace, name, daemonSet.Generation), nil
+	case status.NumberMisscheduled > 0:
+		return fmt.Sprintf("%s/%s: %d Pods on nodes it does not take", namespace, name, status.NumberMisscheduled), nil
 	}
 	selector, err := metav1.LabelSelectorAsSelector(daemonSet.Spec.Selector)
 	if err != nil {
@@ -891,7 +911,8 @@ func daemonSetSettled(ctx context.Context, member kubernetes.Interface, namespac
 		if !inService[pod.Spec.NodeName] {
 			continue
 		}
-		current := podReady(pod)
+		// The DaemonSet controller's own marks, which the cluster agent's rollout replaces Pods by.
+		current := podReady(pod) && pod.Labels[templateGenerationLabel] == daemonSet.Annotations[appsv1.DeprecatedTemplateGeneration]
 		for _, container := range pod.Spec.Containers {
 			if image, named := images[container.Name]; named || images[""] != "" {
 				if !named {
@@ -942,57 +963,6 @@ func (r *Run) missingImages(ctx context.Context) ([]siteImage, error) {
 		}
 	}
 	return missing, nil
-}
-
-// misplacedStationDaemonSet is a Station DaemonSet of a cluster whose node affinity is not the tree's (want).
-type misplacedStationDaemonSet struct {
-	cluster string
-	current *appsv1.DaemonSet
-	want    *corev1.Affinity
-}
-
-// misplacedStationDaemonSets are the Station DaemonSets the clusters have whose node affinity is not as the release's
-// tree states it; none for a run without a tree.
-func (r *Run) misplacedStationDaemonSets(ctx context.Context) ([]misplacedStationDaemonSet, error) {
-	if r.Tree == nil {
-		return nil, nil
-	}
-	var misplaced []misplacedStationDaemonSet
-	for _, cluster := range slices.Sorted(maps.Keys(r.Site.Members)) {
-		for _, name := range StationDaemonSets {
-			current, err := r.Site.Members[cluster].AppsV1().DaemonSets(stationNamespace).Get(ctx, name, metav1.GetOptions{})
-			if apierrors.IsNotFound(err) {
-				continue
-			}
-			if err != nil {
-				return nil, fmt.Errorf("cluster %s: %w", cluster, err)
-			}
-			stated, err := stationDaemonSet(r.Tree.Files["station-agent.yaml"], name, r.Desired.Clusters[cluster])
-			if err != nil {
-				return nil, err
-			}
-			if want := stated.Spec.Template.Spec.Affinity; !equality.Semantic.DeepEqual(current.Spec.Template.Spec.Affinity, want) {
-				misplaced = append(misplaced, misplacedStationDaemonSet{cluster: cluster, current: current, want: want})
-			}
-		}
-	}
-	return misplaced, nil
-}
-
-// placement is a node affinity in a line: its required terms' expressions.
-func placement(affinity *corev1.Affinity) string {
-	if affinity == nil || affinity.NodeAffinity == nil || affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
-		return "every node"
-	}
-	var terms []string
-	for _, term := range affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
-		var expressions []string
-		for _, expression := range term.MatchExpressions {
-			expressions = append(expressions, fmt.Sprintf("%s %s %v", expression.Key, expression.Operator, expression.Values))
-		}
-		terms = append(terms, strings.Join(expressions, " and "))
-	}
-	return strings.Join(terms, " or ")
 }
 
 var leaseGVR = schema.GroupVersionResource{Group: "coordination.k8s.io", Version: "v1", Resource: "leases"}
