@@ -7,3 +7,12 @@
   font-size: 0.85em;
   font-weight: 400;
 }
+
+/* The node page's header draws every span of its line as a 3px dot (RLark's separator); the cluster name there is ours. */
+.node-insight-identity p .cluster-name,
+.node-insight-identity p .cluster-name span {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none;
+}
