@@ -3,6 +3,7 @@ package gateway
 import (
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,7 +44,28 @@ type machine struct {
 	Admissible  bool   `json:"admissible"`
 	RequestedBy string `json:"requested_by,omitempty"`
 	RequestedAt string `json:"requested_at,omitempty"`
+	// AdmitClusterID is the cluster an administrator admitted the machine to.
+	AdmitClusterID string `json:"admit_cluster_id,omitempty"`
+	// Join is where the NodeOperation of the administrator's present request
+	// stands: why it stopped, when it did, is the machine's Message; one that
+	// succeeded while the machine is Discovered again made a node removed since,
+	// and the request is spent.
+	Join *machineJoin `json:"join,omitempty"`
 }
+
+type machineJoin struct {
+	Phase string `json:"phase,omitempty"`
+	// Stage is the last stage it completed.
+	Stage string `json:"stage,omitempty"`
+}
+
+// machineOperationLabel is on the NodeOperation that joins a Machine and names
+// it, machineRequestAnnotation the Machine's generation it was started for
+// (station-controller, MachineLabel and machineRequestAnnotation).
+const (
+	machineOperationLabel    = "station.rlark.io/machine"
+	machineRequestAnnotation = "station.rlark.io/machine-generation"
+)
 
 // machineClass is what the list shows of a NodeClass: the labels a machine of
 // it gets, whose values an administrator may replace for one machine, and
@@ -76,7 +98,7 @@ func machineView(object *unstructured.Unstructured) machine {
 		Phase: text("status", "phase"), Problem: text("status", "problem"), Message: text("status", "message"), Serial: text("status", "serial"),
 		Address: text("status", "entry", "address"), MAC: text("status", "entry", "mac"), LastSeen: text("status", "entry", "lastSeen"),
 		ClusterID: text("status", "clusterID"), NodeName: text("status", "nodeName"),
-		RequestedBy: text("spec", "admit", "requestedBy"), RequestedAt: text("spec", "admit", "requestedAt"),
+		RequestedBy: text("spec", "admit", "requestedBy"), RequestedAt: text("spec", "admit", "requestedAt"), AdmitClusterID: text("spec", "admit", "clusterID"),
 	}
 	view.Admissible = view.Serial != "" && (view.Phase == "Discovered" && view.Problem == "" || view.Phase == "Admitted" && view.Problem != "")
 	return view
@@ -96,10 +118,22 @@ func (g *Gateway) handleListMachines(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "NodeClass request failed"})
 		return
 	}
+	joins, err := g.stationClient.Resource(nodeOperationGVR).Namespace("").List(ctx, metav1.ListOptions{LabelSelector: machineOperationLabel})
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "NodeOperation request failed"})
+		return
+	}
+	joinOf := map[string]*machineJoin{}
+	for i := range joins.Items {
+		phase, _, _ := unstructured.NestedString(joins.Items[i].Object, "status", "phase")
+		stage, _, _ := unstructured.NestedString(joins.Items[i].Object, "status", "stage")
+		joinOf[joins.Items[i].GetLabels()[machineOperationLabel]+"/"+joins.Items[i].GetAnnotations()[machineRequestAnnotation]] = &machineJoin{Phase: phase, Stage: stage}
+	}
 	site, phase := c.Query("site"), c.Query("phase")
 	items := make([]machine, 0, len(list.Items))
 	for i := range list.Items {
 		if view := machineView(&list.Items[i]); (site == "" || view.Site == site) && (phase == "" || view.Phase == phase) {
+			view.Join = joinOf[view.Name+"/"+strconv.FormatInt(list.Items[i].GetGeneration(), 10)]
 			items = append(items, view)
 		}
 	}

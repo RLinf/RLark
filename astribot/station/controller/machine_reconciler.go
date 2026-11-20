@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -210,25 +211,32 @@ func (r *MachineReconciler) reconcile(ctx context.Context, machine *stationv1alp
 	}
 
 	// A machine with a problem is looked at again when it is asked for anew, not at every sighting; one
-	// that waits for another machine with its serial to go, or for its class's passwords, at every sighting.
+	// that waits for another machine with its serial to go, for its class's passwords, or for a fault
+	// that is not its own to pass, at every sighting.
 	if status.InspectedAt == nil || r.now().Sub(status.InspectedAt.Time) >= machineInspectEvery ||
-		status.Problem == stationv1alpha1.MachineDuplicateSerial || status.Problem == stationv1alpha1.MachineAccessUnconfigured ||
+		slices.Contains([]string{stationv1alpha1.MachineDuplicateSerial, stationv1alpha1.MachineAccessUnconfigured, stationv1alpha1.MachineHubUnreachable, stationv1alpha1.MachineInspectFailed}, status.Problem) ||
 		machine.Spec.Admit != nil && status.Problem != "" && status.InspectedAt.Before(&machine.Spec.Admit.RequestedAt) {
 		seen, err := r.Inspector.Inspect(ctx, class.Name, MachineAddress{Entry: status.Entry.Address, EntryHostKey: status.Entry.HostKeyFingerprint, Via: status.Entry.Via, NodeHostKey: status.NodeHostKeyFingerprint})
 		if seen.Serial != "" {
 			status.Serial = seen.Serial
 		}
-		// A fault that is not the machine's is tried again; the machine has not been looked at.
-		if err != nil && machineProblem(err) == "" {
-			return reconcile.Result{}, fmt.Errorf("inspect Machine %s: %w", machine.Name, err)
+		if err != nil {
+			problem, message := machineProblem(err), fmt.Sprintf("%v; a hub last saw the machine at %s", err, status.Entry.LastSeen.UTC().Format(time.RFC3339))
+			// A fault that is not the machine's is said and tried again; the machine has not been looked at. It is
+			// said when it starts: a write queues the Machine again at once, past the backoff, and the text of a
+			// dial's fault differs at each try.
+			if problem == "" || problem == stationv1alpha1.MachineHubUnreachable {
+				if problem = cmp.Or(problem, stationv1alpha1.MachineInspectFailed); status.Problem != problem {
+					status.Problem, status.Message = problem, message
+				}
+				return reconcile.Result{}, fmt.Errorf("inspect Machine %s: %w", machine.Name, err)
+			}
+			now := metav1.NewTime(r.now())
+			status.Phase, status.Problem, status.Message, status.InspectedAt = stationv1alpha1.MachineDiscovered, problem, message, &now
+			return reconcile.Result{RequeueAfter: machineInspectEvery}, nil
 		}
 		now := metav1.NewTime(r.now())
 		status.InspectedAt = &now
-		if err != nil {
-			problem := machineProblem(err)
-			status.Phase, status.Problem, status.Message = stationv1alpha1.MachineDiscovered, problem, err.Error()
-			return reconcile.Result{RequeueAfter: machineInspectEvery}, nil
-		}
 		status.NodeHostKeyFingerprint, status.Problem, status.Message = seen.NodeHostKey, "", ""
 		if done, result, err := r.settle(ctx, machine, class, seen, factoryKey); done {
 			return result, err
@@ -442,7 +450,7 @@ func (r *MachineReconciler) follow(ctx context.Context, machine *stationv1alpha1
 				continue
 			}
 			status.Message = condition.Message
-			if slices.Contains([]string{stationv1alpha1.MachineCredentialRejected, stationv1alpha1.MachineHostKeyChanged, stationv1alpha1.MachineEntryUnreachable, stationv1alpha1.MachineNodeUnreachable}, condition.Reason) {
+			if slices.Contains([]string{stationv1alpha1.MachineCredentialRejected, stationv1alpha1.MachineHostKeyChanged, stationv1alpha1.MachineEntryUnreachable, stationv1alpha1.MachineNodeUnreachable, stationv1alpha1.MachineHubUnreachable}, condition.Reason) {
 				status.Problem = condition.Reason
 			}
 		}

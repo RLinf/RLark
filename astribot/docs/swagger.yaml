@@ -483,6 +483,13 @@ paths:
                         admissible: {type: boolean, description: Whether the machine can be admitted now}
                         requested_by: {type: string}
                         requested_at: {type: string, format: date-time}
+                        admit_cluster_id: {type: string, description: The cluster the machine was admitted to}
+                        join:
+                          type: object
+                          description: Where the NodeOperation of the present request stands; why it stopped, when it did, is the message. Succeeded while the machine is Discovered again means its node was removed since and the request is spent
+                          properties:
+                            phase: {type: string, enum: [Pending, Running, Blocked, Succeeded, Failed]}
+                            stage: {type: string, description: The last stage it completed}
                   classes:
                     type: object
                     additionalProperties:

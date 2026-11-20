@@ -77,8 +77,14 @@ const (
 	MachineHostKeyChanged = "HostKeyChanged"
 	// The entry device answers; the computer behind it does not.
 	MachineNodeUnreachable = "NodeUnreachable"
-	// The entry device does not answer.
+	// The entry device does not answer, from the hub of its site either.
 	MachineEntryUnreachable = "EntryUnreachable"
+	// The hub of the machine's site does not answer: nothing of the site's
+	// network is reached. It is the site's fault, and is tried again.
+	MachineHubUnreachable = "HubUnreachable"
+	// RLark could not log in to the machine to read what it is, for a fault
+	// that is not the machine's; Status.Message says which. It is tried again.
+	MachineInspectFailed = "InspectFailed"
 	// Another machine that is on the network now reports the same serial.
 	MachineDuplicateSerial = "DuplicateSerial"
 	// The machine is a node already, of a cluster or under a name RLark has

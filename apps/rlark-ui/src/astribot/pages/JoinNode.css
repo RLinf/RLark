@@ -97,12 +97,6 @@
   word-break: break-all;
 }
 
-.join-node-admitted {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .join-class-access {
   display: grid;
   gap: 12px;
@@ -166,4 +160,89 @@
 
 .join-ssh-records .provision-progress {
   padding: 4px 12px 14px;
+}
+
+/* The admitted machines' joins: a bar of how many joined (green) and stopped
+   (red), then a row each with its step dots. */
+.join-progress {
+  overflow: hidden;
+}
+
+.join-progress-bar {
+  display: flex;
+  height: 6px;
+  margin: 0 16px 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.join-progress-bar > i {
+  display: block;
+  transition: width 0.18s ease;
+}
+
+.join-progress-joined {
+  background: var(--green);
+}
+
+.join-progress-failed {
+  background: var(--red);
+}
+
+.join-progress-rows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.join-progress-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.join-progress-row > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.join-progress-row > div > small:last-child {
+  overflow-wrap: anywhere;
+}
+
+.join-progress-steps {
+  display: flex;
+  gap: 4px;
+}
+
+.join-progress-steps > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+
+.join-progress-steps > i.is-done {
+  background: var(--green);
+}
+
+.join-progress-steps > i.is-running {
+  background: var(--orange);
+}
+
+.join-progress-steps > i.is-failed {
+  background: var(--red);
+}
+
+@media (max-width: 620px) {
+  .join-progress-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

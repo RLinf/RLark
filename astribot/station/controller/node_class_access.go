@@ -146,8 +146,8 @@ func sudoPassword(ctx context.Context, client *ssh.Client, password []byte) []by
 	return password
 }
 
-// machineProblem names what a failed login says of the machine; empty for a
-// fault that is not the machine's.
+// machineProblem names what a failed login says of the machine, or that its
+// site's hub does not answer; empty for any other fault.
 func machineProblem(err error) string {
 	var mismatch *SSHHostKeyMismatchError
 	switch {
@@ -157,8 +157,10 @@ func machineProblem(err error) string {
 		return stationv1alpha1.MachineCredentialRejected
 	case errors.As(err, &mismatch):
 		return stationv1alpha1.MachineHostKeyChanged
-	case errors.Is(err, ErrSSHJumpUnreachable):
+	case errors.Is(err, ErrSSHJumpUnreachable), errors.Is(err, ErrSSHSiteHostUnreachable):
 		return stationv1alpha1.MachineEntryUnreachable
+	case errors.Is(err, ErrSSHRelayUnreachable):
+		return stationv1alpha1.MachineHubUnreachable
 	case errors.Is(err, ErrSSHTargetUnreachable):
 		return stationv1alpha1.MachineNodeUnreachable
 	}

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -318,21 +319,71 @@ func TestAMachineIsLookedAtOnceItIsKnownWhereAndAgainAfterAFaultOfTheDial(t *tes
 	if err := c.Status().Update(ctx, machine); err != nil {
 		t.Fatal(err)
 	}
-	// The relay does not answer: nothing was learned of the machine, and the next pass logs in again.
-	inspections.refused[address] = fmt.Errorf("connect to the site's relay: timeout")
+	// The relay does not answer: nothing was learned of the machine, which says so, and the next pass logs in again.
+	inspections.refused[address] = fmt.Errorf("%w: connect to its relay 10.254.240.5:7022: timeout", ErrSSHRelayUnreachable)
 	if _, err := reconciler.Reconcile(ctx, machineRequest(machine)); err == nil {
 		t.Fatal("a fault of the dial was not returned")
 	}
-	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), machine); err != nil || machine.Status.InspectedAt != nil || machine.Status.Problem != "" {
-		t.Fatalf("a fault of the dial was taken for a look at the machine: %+v, %v", machine.Status, err)
+	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), machine); err != nil || machine.Status.InspectedAt != nil ||
+		machine.Status.Problem != stationv1alpha1.MachineHubUnreachable || !strings.Contains(machine.Status.Message, "last saw the machine at "+seen.UTC().Format(time.RFC3339)) {
+		t.Fatalf("a fault of the dial was taken for a look at the machine, or not said: %+v, %v", machine.Status, err)
+	}
+	// The same fault again, in other words: the Machine's status does not change, so it is not queued again past the backoff.
+	said := machine.Status
+	inspections.refused[address] = fmt.Errorf("%w: its relay 10.254.240.5:7022 answered \"\": read tcp 10.0.0.1:44897->10.254.240.5:7022: connection reset by peer", ErrSSHRelayUnreachable)
+	if _, err := reconciler.Reconcile(ctx, machineRequest(machine)); err == nil {
+		t.Fatal("a fault of the dial was not returned")
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), machine); err != nil || !reflect.DeepEqual(machine.Status, said) {
+		t.Fatalf("the same fault was written again: %+v, %v", machine.Status, err)
+	}
+	// Any other fault is said too.
+	inspections.refused[address] = fmt.Errorf("remote command failed")
+	if _, err := reconciler.Reconcile(ctx, machineRequest(machine)); err == nil {
+		t.Fatal("a fault of the dial was not returned")
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), machine); err != nil || machine.Status.InspectedAt != nil || machine.Status.Problem != stationv1alpha1.MachineInspectFailed {
+		t.Fatalf("a fault of the dial was not said: %+v, %v", machine.Status, err)
 	}
 	delete(inspections.refused, address)
 	inspections.seen[address] = MachineInspection{Serial: "1794925030610", NodeHostKey: "SHA256:node"}
 	if _, err := reconciler.Reconcile(ctx, machineRequest(machine)); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), machine); err != nil || machine.Status.Phase != stationv1alpha1.MachineDiscovered || machine.Status.Serial != "1794925030610" {
+	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), machine); err != nil || machine.Status.Phase != stationv1alpha1.MachineDiscovered || machine.Status.Serial != "1794925030610" ||
+		machine.Status.Problem != "" || machine.Status.Message != "" {
 		t.Fatalf("the machine was not read after the fault: %+v, %v", machine.Status, err)
+	}
+}
+
+// The hub no longer reaches an admitted machine: the Machine says so, with when a hub last saw it, and the machine
+// is joined once it is reached again.
+func TestAnAdmittedMachineTheHubCannotReachSaysSoAndJoinsOnceReached(t *testing.T) {
+	ctx := context.Background()
+	machine := discoveredMachine(1, true)
+	lastSeen := metav1.NewTime(time.Date(2026, 11, 18, 3, 53, 0, 0, time.UTC))
+	machine.Status.Entry.LastSeen = &lastSeen
+	address := machine.Status.Entry.Address
+	reconciler, c, inspections := machineFixture(t, machine)
+	now := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
+	reconciler.Now = func() time.Time { return now }
+	inspections.refused[address] = fmt.Errorf("%w: %s:22, through relay 10.254.240.5:7022", ErrSSHSiteHostUnreachable, address)
+	if _, err := reconciler.Reconcile(ctx, machineRequest(machine)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), machine); err != nil || machine.Status.Problem != stationv1alpha1.MachineEntryUnreachable ||
+		machine.Status.Phase != stationv1alpha1.MachineDiscovered || !strings.Contains(machine.Status.Message, "a hub last saw the machine at 2026-11-18T03:53:00Z") {
+		t.Fatalf("an admitted machine the hub cannot reach: %+v, %v", machine.Status, err)
+	}
+	delete(inspections.refused, address)
+	inspections.seen[address] = MachineInspection{Serial: "1794925030610", NodeHostKey: "SHA256:node"}
+	now = now.Add(machineInspectEvery)
+	if _, err := reconciler.Reconcile(ctx, machineRequest(machine)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), machine); err != nil || machine.Status.Problem != "" || machine.Status.Message != "" ||
+		machine.Status.Phase != stationv1alpha1.MachineAdmitted || machine.Status.Operation == "" {
+		t.Fatalf("the machine reached again was not joined: %+v, %v", machine.Status, err)
 	}
 }
 
