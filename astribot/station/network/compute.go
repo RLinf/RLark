@@ -72,7 +72,8 @@ const DiscoveryRelayPort = 18022
 // lets the management plane reach there. Two sites may use the same prefix;
 // a connection is to an address of one hub's site, not to a prefix.
 type Discovery struct {
-	// Ranges are the IPv4 prefixes to look in.
+	// Ranges are the IPv4 prefixes to look in besides the networks the hub
+	// is attached to.
 	Ranges          []string `json:"ranges"`
 	IntervalSeconds int      `json:"intervalSeconds"`
 	// Ports are the SSH ports to look at; HostKeys the fingerprints of the
@@ -80,9 +81,10 @@ type Discovery struct {
 	// one is reported; no host is asked to authenticate anybody.
 	Ports    []int    `json:"ports"`
 	HostKeys []string `json:"hostKeys"`
-	// RelayPort is where the hub relays connections to Ranges and Ports,
-	// RelayFrom the one tunnel address it relays for: that of the node the
-	// management plane's station-controller dials from.
+	// RelayPort is where the hub relays connections to Ports of Ranges and
+	// of the networks it is attached to, RelayFrom the one tunnel address it
+	// relays for: that of the node the management plane's
+	// station-controller dials from.
 	RelayPort int    `json:"relayPort"`
 	RelayFrom string `json:"relayFrom"`
 }

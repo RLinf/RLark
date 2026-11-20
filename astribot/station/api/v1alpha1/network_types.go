@@ -205,15 +205,17 @@ type SiteNetworkLeafUplink struct {
 // one a NodeClass declares as its factory's. A hub reads the key and asks for
 // nothing else. RLark logs in to what was found from the management plane,
 // where the accounts are kept: each hub relays, on its tunnel address,
-// connections to the SSH ports of Ranges and to nothing else. Two sites may
-// use the same prefix.
+// connections to the SSH ports of Ranges and of the networks it is attached
+// to, and to nothing else. Two sites may use the same prefix.
 type SiteNetworkDiscovery struct {
 	Enabled bool `json:"enabled"`
 	// From is the node the management plane's station-controller dials
 	// from. The hubs relay for its tunnel address and for no other peer.
 	From SiteNetworkDiscoverySource `json:"from"`
 	// Ranges are the IPv4 prefixes of the site's network to look in, each
-	// /22 or smaller.
+	// /22 or smaller, besides the private networks each hub is attached to
+	// itself (the /22 around its address on a wider one; not its tunnel,
+	// container or cluster networks).
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=8
 	// +listType=set

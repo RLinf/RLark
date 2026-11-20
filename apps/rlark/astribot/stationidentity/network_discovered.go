@@ -96,11 +96,16 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		return 0, fmt.Errorf("read the SiteNetwork: %w", err)
 	}
 	declared := false
+	var interval time.Duration
 	sites, _, _ := unstructured.NestedSlice(network.Object, "spec", "sites")
 	for _, entry := range sites {
 		entry, _ := entry.(map[string]interface{})
 		enabled, _, _ := unstructured.NestedBool(entry, "discovery", "enabled")
-		declared = declared || entry["name"] == site && enabled
+		if entry["name"] == site && enabled {
+			declared = true
+			seconds, _, _ := unstructured.NestedInt64(entry, "discovery", "intervalSeconds")
+			interval = time.Duration(seconds) * time.Second
+		}
 	}
 	if !declared || text(hub, "status", "role") != "Hub" || tunnel == "" {
 		return http.StatusForbidden, nil
@@ -146,6 +151,16 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		if class == "" && (apierrors.IsNotFound(err) || err == nil && text(machine, "status", "entry", "hostKeyFingerprint") != host.HostKey) {
 			continue
 		}
+		via := net.JoinHostPort(tunnel, strconv.Itoa(discoveryRelayPort))
+		// Hubs on one network all see its machines. A machine stays with the
+		// hub that has it until that hub has not seen it for three intervals,
+		// when station-controller would call a silent hub stale; it is not
+		// handed between them and looked at anew on every report.
+		if err == nil && text(machine, "status", "entry", "via") != via {
+			if seen, err := time.Parse(time.RFC3339, text(machine, "status", "entry", "lastSeen")); err == nil && now.Sub(seen) <= 3*interval {
+				continue
+			}
+		}
 		if apierrors.IsNotFound(err) {
 			machine, err = machines.Create(ctx, &unstructured.Unstructured{Object: map[string]interface{}{
 				"apiVersion": stationGroup + "/" + stationVersion, "kind": "Machine",
@@ -157,7 +172,7 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 			return 0, fmt.Errorf("keep Machine %s: %w", name, err)
 		}
 		entry := map[string]interface{}{"address": host.Address, "mac": host.MAC, "hostKeyFingerprint": host.HostKey,
-			"via": net.JoinHostPort(tunnel, strconv.Itoa(discoveryRelayPort)), "lastSeen": now.UTC().Format(time.RFC3339)}
+			"via": via, "lastSeen": now.UTC().Format(time.RFC3339)}
 		// A machine that shows up changed is looked at anew.
 		for _, field := range []string{"address", "hostKeyFingerprint", "via"} {
 			if text(machine, "status", "entry", field) != entry[field] {

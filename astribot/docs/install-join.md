@@ -33,7 +33,7 @@
 
 - 入网码只回答一次；NodeAdmission 只存它的 SHA-256，记发码人和时间。
 - 命令先下载 Station API 的 CA 并核对摘要，再 `curl https://<Station API>/b/<码> | sudo sh`。机器在自带上联设备后面（NodeClass 的 `uplink.setup`，如机器人的 Orin）时，命令先 SSH 到那台设备放行。
-- 扫到的机器：场站声明了 `discovery` 时，枢纽的网关在站点网段里找认得出的机器，报给 Station API，成为 `Machine`；它的转发口让管理面 SSH 过去。
+- 扫到的机器：场站声明了 `discovery` 时，枢纽的网关在声明的 `ranges` 和枢纽自己接着的每个私有 IPv4 网段（如办公网 10.11.12.0/22、Wi-Fi，比 /22 大的只扫自己地址所在的 /22；不含公网、隧道、容器和集群网络）里找认得出的机器，报给 Station API，成为 `Machine`；它的转发口让管理面 SSH 过去（同样只到这些网段）。机器人插上枢纽所在的任何网都能被扫到，不用先把网段写进 `ranges`。
 - SSH 入网在机器上以 systemd 单元 `rlark-join` 运行，日志 `/var/log/rlark-join.log`；Gateway 断开不影响它。
 
 ## 安装器做什么
