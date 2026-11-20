@@ -67,21 +67,27 @@ func TestKubeconfigNodeReaderUsesVerifiedTLSAndRefreshesRotatedCredentials(t *te
 	}
 	source := &mutableKubeconfigSource{data: data}
 	reader := NewKubeconfigNodeReader(source)
-	uid, systemUUID, exists, err := reader.VerifyNode(context.Background(), "cluster-a", "agent-a", "node-a")
-	if err != nil || !exists || uid != "node-uid-a" || systemUUID != "system-a" {
-		t.Fatalf("verify returned uid=%q systemUUID=%q exists=%t err=%v", uid, systemUUID, exists, err)
+	nodeUID := func() (string, error) {
+		member, err := reader.Client(context.Background(), "cluster-a")
+		if err != nil {
+			return "", err
+		}
+		node, err := member.CoreV1().Nodes().Get(context.Background(), "node-a", metav1.GetOptions{})
+		if err != nil {
+			return "", err
+		}
+		return string(node.UID), nil
+	}
+	if uid, err := nodeUID(); err != nil || uid != "node-uid-a" {
+		t.Fatalf("read returned uid=%q err=%v", uid, err)
 	}
 	currentUID = "node-uid-recreated"
-	uid, _, exists, err = reader.VerifyNode(context.Background(), "cluster-a", "agent-a", "node-a")
-	if err != nil || !exists || uid != currentUID {
-		t.Fatalf("reader returned stale Node UID %q, exists=%t err=%v", uid, exists, err)
+	if uid, err := nodeUID(); err != nil || uid != currentUID {
+		t.Fatalf("reader returned stale Node UID %q, err=%v", uid, err)
 	}
 	source.data = []byte("invalid kubeconfig")
-	if _, _, _, err := reader.VerifyNode(context.Background(), "cluster-a", "agent-a", "node-a"); err == nil {
+	if _, err := nodeUID(); err == nil {
 		t.Fatal("accepted malformed rotated kubeconfig")
-	}
-	if _, _, _, err := reader.VerifyNode(context.Background(), "cluster-a", "", "node-a"); err == nil {
-		t.Fatal("accepted missing cluster identity")
 	}
 }
 

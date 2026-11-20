@@ -270,7 +270,7 @@ echo cleared=yes
 // handleClearNodeJoin answers POST /api/v1/station/node-joins/:name/clear: a join that is not running is taken away,
 // with what it left. Before its code's line ran: its declaration as a hub, and with the password the tunnel it
 // started on the machine. After: the node's name is removed as a removal by name does (a NodeOperation Remove), which
-// retires its Station and deletes its admission or its Node. It answers what it did, a line a step.
+// retires its site node record and deletes its admission or its Node. It answers what it did, a line a step.
 func (g *Gateway) handleClearNodeJoin(c *gin.Context) {
 	var request nodeJoinRequest
 	if !decodeOneJSON(c, maxNodeAdmissionRequestBytes, &request, true) {
@@ -373,7 +373,7 @@ func (g *Gateway) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.Node
 
 // removeJoinedName removes the node's name as the console's "start over" of an admission does: a NodeOperation
 // Remove without a UID, which station-controller carries out (the Node its cluster has, or what RLark keeps of the
-// name: Station, admission).
+// name: the site node record, the admission).
 func (g *Gateway) removeJoinedName(ctx context.Context, namespace string, j *rlarkv1alpha1.NodeJoin, actor string) ([]string, error) {
 	requestID := "clear-" + j.Spec.NodeName + "-" + strconv.FormatInt(time.Now().Unix(), 36)
 	name := nodeOperationName(j.Spec.ClusterID, requestID)
@@ -383,5 +383,5 @@ func (g *Gateway) removeJoinedName(ctx context.Context, namespace string, j *rla
 	if _, err := g.stationClient.Resource(nodeOperationGVR).Namespace(namespace).Create(ctx, operation, metav1.CreateOptions{}); err != nil {
 		return nil, fmt.Errorf("提交删除节点 %s：%w", j.Spec.NodeName, err)
 	}
-	return []string{fmt.Sprintf("提交删除节点 %s（%s）：集群里有这个节点就删掉它；没有就退役它的场站、删掉入网记录，放出公钥和隧道地址", j.Spec.NodeName, name)}, nil
+	return []string{fmt.Sprintf("提交删除节点 %s（%s）：集群里有这个节点就删掉它；没有就退役它的场站节点记录、删掉入网许可，放出公钥和隧道地址", j.Spec.NodeName, name)}, nil
 }

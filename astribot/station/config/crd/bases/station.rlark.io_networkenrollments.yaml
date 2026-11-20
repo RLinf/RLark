@@ -29,14 +29,21 @@ spec:
     - jsonPath: .status.address
       name: Address
       type: string
+    - jsonPath: .status.node.state
+      name: State
+      type: string
+    - jsonPath: .status.observation.reportedAt
+      name: Reported
+      type: date
     name: v1alpha1
     schema:
       openAPIV3Schema:
         description: |-
-          NetworkEnrollment is one node's request to join the SiteNetwork and the
-          answer to it. station-api writes spec from the node's verified identity and
-          its report; station-controller writes status. Its name is the Node name in
-          the namespace mapped to the cluster.
+          NetworkEnrollment is the record of one node: its identity, its latest
+          report and its place in the SiteNetwork. Its name is the Node name in the
+          namespace mapped to the cluster. station-api writes spec and
+          status.observation; station-controller writes the rest of status, and
+          spec.nodeUID, systemUUID and retired when the name passes to another Node.
         properties:
           apiVersion:
             description: |-
@@ -66,10 +73,6 @@ spec:
                   type: string
                 maxItems: 8
                 type: array
-              bindingVersion:
-                format: int64
-                minimum: 1
-                type: integer
               clusterID:
                 maxLength: 128
                 minLength: 1
@@ -87,21 +90,22 @@ spec:
               publicKey:
                 description: |-
                   PublicKey is the node's WireGuard public key; the private key never
-                  leaves the node. Empty for a node that runs no tunnel.
+                  leaves the node. Empty for a node that is not in the tunnel.
                 maxLength: 44
                 type: string
-              stationUID:
+              retired:
                 description: |-
-                  StationUID and BindingVersion are the identity the request was verified
-                  against; the controller rejects the enrollment when they are no longer current.
+                  Retired marks the record of a node that was removed. It has no place
+                  in the tunnel until a machine is admitted under the name again.
+                type: boolean
+              systemUUID:
+                description: 'SystemUUID is evidence only: it tells a reinstalled
+                  machine from another one.'
                 maxLength: 128
-                minLength: 1
                 type: string
             required:
-            - bindingVersion
             - clusterID
             - nodeUID
-            - stationUID
             type: object
           status:
             properties:
@@ -138,7 +142,7 @@ spec:
                       description: |-
                         LatestHandshake is the last handshake the Hub completed with the Leaf,
                         kept while the link is Unanswered or Silent. A Connected link has a new
-                        one every two minutes, in the Hub's StationObservation.
+                        one every two minutes, in the Hub's status.observation.
                       format: date-time
                       type: string
                     observedAt:
@@ -174,6 +178,252 @@ spec:
                 x-kubernetes-list-map-keys:
                 - hub
                 x-kubernetes-list-type: map
+              node:
+                description: Node is the node reconciler's alone.
+                properties:
+                  bootTime:
+                    description: BootTime is the node's latest reported boot time.
+                    format: date-time
+                    type: string
+                  conditions:
+                    items:
+                      description: Condition contains details for one aspect of the
+                        current state of this API Resource.
+                      properties:
+                        lastTransitionTime:
+                          description: |-
+                            lastTransitionTime is the last time the condition transitioned from one status to another.
+                            This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                          format: date-time
+                          type: string
+                        message:
+                          description: |-
+                            message is a human readable message indicating details about the transition.
+                            This may be an empty string.
+                          maxLength: 32768
+                          type: string
+                        observedGeneration:
+                          description: |-
+                            observedGeneration represents the .metadata.generation that the condition was set based upon.
+                            For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                            with respect to the current state of the instance.
+                          format: int64
+                          minimum: 0
+                          type: integer
+                        reason:
+                          description: |-
+                            reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                            Producers of specific condition types may define expected values and meanings for this field,
+                            and whether the values are considered a guaranteed API.
+                            The value should be a CamelCase string.
+                            This field may not be empty.
+                          maxLength: 1024
+                          minLength: 1
+                          pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                          type: string
+                        status:
+                          description: status of the condition, one of True, False,
+                            Unknown.
+                          enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                          type: string
+                        type:
+                          description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                          maxLength: 316
+                          pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                          type: string
+                      required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - type
+                    x-kubernetes-list-type: map
+                  lastSeenTime:
+                    format: date-time
+                    type: string
+                  reboots:
+                    description: Reboots counts the boots seen since the record was
+                      made or taken over by another Node.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  state:
+                    enum:
+                    - Bound
+                    - Offline
+                    - Conflict
+                    - Retired
+                    type: string
+                type: object
+              observation:
+                description: 'Observation is station-api''s alone: it patches this
+                  block and nothing else of status.'
+                properties:
+                  agent:
+                    description: Agent is the station-agent that sent this report.
+                    properties:
+                      digest:
+                        description: Digest is the sha256 of the program's file.
+                        pattern: ^[0-9a-f]{64}$
+                        type: string
+                    required:
+                    - digest
+                    type: object
+                  bootTime:
+                    format: date-time
+                    type: string
+                  gateway:
+                    description: |-
+                      Gateway is the station-gateway of the node, as that program states it
+                      with every good pass. A node without it runs a gateway that is not
+                      reconciling.
+                    properties:
+                      digest:
+                        description: Digest is the sha256 of the program's file.
+                        pattern: ^[0-9a-f]{64}$
+                        type: string
+                      documentLevel:
+                        description: |-
+                          DocumentLevel is the newest configuration document the program
+                          understands; it understands every one before it.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    required:
+                    - digest
+                    - documentLevel
+                    type: object
+                  nodeUID:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  pressures:
+                    description: |-
+                      Pressures are the DiskPressure, MemoryPressure and PIDPressure
+                      conditions that are True on the member Node, read by station-api when
+                      it verified the report. The list is written with every report, so an
+                      empty one says the Node is under none and a missing one that the report
+                      was stored by a station-api from before the field.
+                    items:
+                      enum:
+                      - DiskPressure
+                      - MemoryPressure
+                      - PIDPressure
+                      type: string
+                    maxItems: 3
+                    type: array
+                    x-kubernetes-list-type: set
+                  probes:
+                    items:
+                      properties:
+                        ok:
+                          type: boolean
+                        rttMs:
+                          format: int64
+                          maximum: 600000
+                          minimum: 0
+                          type: integer
+                        target:
+                          description: Target is a configured probe label or host:port,
+                            bounded by API policy.
+                          maxLength: 256
+                          minLength: 1
+                          type: string
+                        via:
+                          description: Via identifies the observed route label.
+                          maxLength: 256
+                          type: string
+                      required:
+                      - ok
+                      - target
+                      type: object
+                    maxItems: 256
+                    type: array
+                  reportedAt:
+                    description: ReportedAt is server receipt time, never a client-provided
+                      timestamp.
+                    format: date-time
+                    type: string
+                  roles:
+                    items:
+                      maxLength: 64
+                      type: string
+                    maxItems: 32
+                    type: array
+                    x-kubernetes-list-type: set
+                  systemUUID:
+                    description: SystemUUID is evidence only and must not be used
+                      to authorize a binding.
+                    type: string
+                  wireguard:
+                    properties:
+                      addresses:
+                        items:
+                          maxLength: 64
+                          type: string
+                        maxItems: 16
+                        type: array
+                        x-kubernetes-list-type: set
+                      interface:
+                        description: Interface is the observed interface name, not
+                          a desired configuration.
+                        maxLength: 15
+                        minLength: 1
+                        type: string
+                      peers:
+                        description: |-
+                          Peers are the node's WireGuard peers that are enrolled members, as the
+                          node's kernel counts them. A Hub's entry for a Leaf is the only account
+                          of a Leaf that has dropped off.
+                        items:
+                          properties:
+                            latestHandshake:
+                              format: date-time
+                              type: string
+                            name:
+                              description: |-
+                                Name is the peer's member id, "<clusterID>/<nodeName>". station-api
+                                assigns it from the public key the node reported: it is that of the
+                                Enrolled NetworkEnrollment with this key.
+                              maxLength: 128
+                              minLength: 1
+                              type: string
+                            receivedBytes:
+                              format: int64
+                              minimum: 0
+                              type: integer
+                            sentBytes:
+                              format: int64
+                              minimum: 0
+                              type: integer
+                          required:
+                          - name
+                          type: object
+                        maxItems: 1024
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      publicKey:
+                        description: PublicKey is the public key of the observed interface;
+                          private keys are never reported.
+                        maxLength: 64
+                        type: string
+                    required:
+                    - interface
+                    type: object
+                required:
+                - agent
+                - nodeUID
+                - reportedAt
+                type: object
               observedGeneration:
                 format: int64
                 type: integer

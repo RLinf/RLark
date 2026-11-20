@@ -49,27 +49,6 @@ func TestManagementClusterResolverUsesAgentNamespaceAndRejectsDuplicates(t *test
 	}
 }
 
-func TestManagementClusterResolverListsUniqueRegisteredClusterIDs(t *testing.T) {
-	clusterA := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "rlinf.io/v1alpha1", "kind": "Cluster",
-		"metadata": map[string]interface{}{"name": "cluster-a"},
-		"spec":     map[string]interface{}{"agentNamespace": "agent-a"},
-	}}
-	clusterB := clusterA.DeepCopy()
-	clusterB.SetName("cluster-b")
-	clusterB.Object["spec"] = map[string]interface{}{"agentNamespace": "agent-b"}
-	resolver := ManagementClusterResolver{Reader: newManagementReader(t, clusterA, clusterB).Build()}
-	ids, err := resolver.ClusterIDs(context.Background())
-	if err != nil || len(ids) != 2 || ids[0] != "cluster-a" || ids[1] != "cluster-b" {
-		t.Fatalf("ids=%v err=%v", ids, err)
-	}
-	clusterB.Object["spec"] = map[string]interface{}{"agentNamespace": "agent-a"}
-	resolver.Reader = newManagementReader(t, clusterA, clusterB).Build()
-	if _, err := resolver.ClusterIDs(context.Background()); err == nil {
-		t.Fatal("accepted duplicate namespace registrations")
-	}
-}
-
 func TestManagementNodeReadinessUsesConditionAndScope(t *testing.T) {
 	node := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "rlinf.io/v1alpha1", "kind": "Node",

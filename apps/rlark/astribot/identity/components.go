@@ -109,7 +109,7 @@ var releaseRules = []rbacv1.PolicyRule{
 	{APIGroups: []string{""}, Resources: []string{"serviceaccounts", "namespaces"}, Verbs: []string{"get", "list", "create", "update", "patch"}},
 	{APIGroups: []string{"rlinf.io"}, Resources: []string{"clusters", "addons", "jobs"}, Verbs: []string{"get", "list", "watch", "create", "update"}},
 	{APIGroups: []string{"rlinf.io"}, Resources: []string{"nodes"}, Verbs: read},
-	{APIGroups: []string{"station.rlark.io"}, Resources: []string{"sitenetworks", "networkenrollments", "stationobservations"}, Verbs: read},
+	{APIGroups: []string{"station.rlark.io"}, Resources: []string{"sitenetworks", "networkenrollments"}, Verbs: read},
 	// Addon Packages and the record of the release the site runs (rlark-system/rlark-release-current).
 	{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "create", "update"}},
 	// The release's credentials for the member clusters (rlark-release-member-credentials).
@@ -125,5 +125,5 @@ var gatewayRules = []rbacv1.PolicyRule{
 	{APIGroups: []string{""}, Resources: []string{"secrets", "configmaps"}, Verbs: append(rw, "deletecollection")},
 	// The namespaces of the member clusters' credentials a new cluster's are written into.
 	{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "create"}},
-	{APIGroups: []string{"station.rlark.io"}, Resources: []string{"stations", "stationobservations", "networkenrollments", "stationrebinds", "nodeoperations", "nodeadmissions", "nodeclasses", "machines", "sitenetworks"}, Verbs: rw},
+	{APIGroups: []string{"station.rlark.io"}, Resources: []string{"networkenrollments", "nodeoperations", "nodeadmissions", "nodeclasses", "machines", "sitenetworks"}, Verbs: rw},
 }

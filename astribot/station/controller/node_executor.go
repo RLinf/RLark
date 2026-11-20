@@ -24,6 +24,13 @@ type JoinedNodeReadiness interface {
 	Ready(context.Context, string, string, string, string) (bool, error)
 }
 
+// NodeWireGuardPeerCleaner takes a removed node out of the tunnel: Check
+// before drain, Remove until it is done.
+type NodeWireGuardPeerCleaner interface {
+	Check(context.Context, *stationv1alpha1.NodeOperation) error
+	Remove(context.Context, *stationv1alpha1.NodeOperation) (bool, error)
+}
+
 type NodeLifecycleExecutor struct {
 	Members     NodeMemberClientSource
 	ResetDriver NodeResetDriver
@@ -150,6 +157,13 @@ func (e *NodeLifecycleExecutor) Execute(ctx context.Context, op *stationv1alpha1
 			listed.SetNamespace(op.Namespace)
 			listed.SetName(op.Spec.NodeName)
 			if err := e.Management.Get(ctx, client.ObjectKeyFromObject(listed), listed); apierrors.IsNotFound(err) {
+				// The node's record goes last: nothing of the node is left to report under it.
+				if stage == "VerifyRemoval" {
+					enrollment := &stationv1alpha1.NetworkEnrollment{ObjectMeta: metav1.ObjectMeta{Namespace: op.Namespace, Name: op.Spec.NodeName}}
+					if err := e.Management.Delete(ctx, enrollment); err != nil && !apierrors.IsNotFound(err) {
+						return false, "", fmt.Errorf("delete the node's NetworkEnrollment: %w", err)
+					}
+				}
 				return true, op.Spec.NodeUID, nil
 			} else if err != nil {
 				return false, "", fmt.Errorf("read the management plane's Node: %w", err)

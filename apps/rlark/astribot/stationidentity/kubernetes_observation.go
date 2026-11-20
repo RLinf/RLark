@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -17,24 +16,12 @@ import (
 )
 
 const (
-	stationObservationGroup      = "station.rlark.io"
-	stationObservationVersion    = "v1alpha1"
-	stationObservationResource   = "stationobservations"
-	stationResource              = "stations"
-	rlarkClusterResource         = "clusters"
-	observationClusterIDKey      = "station.rlark.io/cluster-id"
-	observationNodeUIDKey        = "station.rlark.io/node-uid"
-	observationStationUIDKey     = "station.rlark.io/station-uid"
-	observationBindingVersionKey = "station.rlark.io/binding-version"
-	observationRetries           = 6
+	stationGroup         = "station.rlark.io"
+	stationVersion       = "v1alpha1"
+	rlarkClusterResource = "clusters"
 )
 
-var (
-	stationObservationGVR           = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: stationObservationResource}
-	stationGVR                      = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: stationResource}
-	rlarkClusterGVR                 = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: rlarkClusterResource}
-	ErrObservationOwnershipConflict = errors.New("StationObservation ownership conflict")
-)
+var rlarkClusterGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: rlarkClusterResource}
 
 // ObservationNamespaceResolver maps a trusted RLark cluster ID to its
 // management-plane agentNamespace. Implementations must reject ambiguous scope.
@@ -88,8 +75,9 @@ func (r KubernetesClusterNamespaceResolver) ResolveObservationNamespace(ctx cont
 	return namespace, nil
 }
 
-// KubernetesObservationSink stores only the latest validated snapshot. It
-// uses the uncached dynamic API client and writes through the status subresource.
+// KubernetesObservationSink stores the latest validated report of a node in
+// status.observation of its NetworkEnrollment, which the node's first report
+// creates. It writes nothing else of the status: the rest is station-controller's.
 type KubernetesObservationSink struct {
 	Client     dynamic.Interface
 	Namespaces ObservationNamespaceResolver
@@ -105,7 +93,7 @@ type KubernetesObservationSink struct {
 func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence, observation Observation) error {
 	namespace, err := s.Namespaces.ResolveObservationNamespace(ctx, evidence.ClusterID)
 	if err != nil {
-		return fmt.Errorf("resolve Station observation namespace: %w", err)
+		return fmt.Errorf("resolve observation namespace: %w", err)
 	}
 	if namespace == "" || evidence.NodeName == "" || evidence.NodeUID == "" {
 		return errors.New("verified observation has incomplete namespace or identity")
@@ -151,151 +139,30 @@ func (s *KubernetesObservationSink) Store(ctx context.Context, evidence Evidence
 	}
 	status, err := observationStatus(evidence, observation, members, s.now())
 	if err != nil {
-		return fmt.Errorf("encode Station observation status: %w", err)
+		return fmt.Errorf("encode observation: %w", err)
 	}
-	resource := s.Client.Resource(stationObservationGVR).Namespace(namespace)
-	for attempt := 0; attempt < observationRetries; attempt++ {
-		current, getErr := resource.Get(ctx, evidence.NodeName, metav1.GetOptions{})
-		if apierrors.IsNotFound(getErr) {
-			annotations := map[string]interface{}{
-				observationClusterIDKey: evidence.ClusterID,
-				observationNodeUIDKey:   evidence.NodeUID,
-			}
-			if evidence.StationUID != "" {
-				annotations[observationStationUIDKey] = evidence.StationUID
-				annotations[observationBindingVersionKey] = strconv.FormatInt(evidence.Generation, 10)
-			}
-			candidate := &unstructured.Unstructured{Object: map[string]interface{}{
-				"apiVersion": stationObservationGroup + "/" + stationObservationVersion,
-				"kind":       "StationObservation",
-				"metadata": map[string]interface{}{
-					"name": evidence.NodeName, "namespace": namespace,
-					"annotations": annotations,
-				},
-				"spec": map[string]interface{}{},
-			}}
-			if _, createErr := resource.Create(ctx, candidate, metav1.CreateOptions{}); apierrors.IsAlreadyExists(createErr) || apierrors.IsConflict(createErr) {
-				continue
-			} else if createErr != nil {
-				return fmt.Errorf("create StationObservation: %w", createErr)
-			}
-			continue
-		}
-		if getErr != nil {
-			return fmt.Errorf("read StationObservation: %w", getErr)
-		}
-		annotations := current.GetAnnotations()
-		if annotations[observationClusterIDKey] == evidence.ClusterID && annotations[observationNodeUIDKey] != evidence.NodeUID && evidence.StationUID == "" {
-			// The member API server has just vouched for this Node under this
-			// name and it is bound to no Station, so the Node the stored
-			// snapshot belongs to is gone. Its snapshot goes with it; nothing
-			// of it is carried over. This is what lets a machine that replaced
-			// a node be observed at all: its Station then shows Conflict and
-			// can be rebound. A bound identity with another Node UID is not
-			// this case: it is a verified rebind or a conflict, decided below.
-			uid := current.GetUID()
-			if err := resource.Delete(ctx, evidence.NodeName, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
-				return fmt.Errorf("replace StationObservation of a previous Node: %w", err)
-			}
-			continue
-		}
-		storedStationUID := annotations[observationStationUIDKey]
-		storedNodeUID := annotations[observationNodeUIDKey]
-		storedBindingVersion, versionErr := strconv.ParseInt(annotations[observationBindingVersionKey], 10, 64)
-		reboundIdentity := evidence.StationUID != "" && storedStationUID == evidence.StationUID && storedNodeUID != evidence.NodeUID && versionErr == nil && storedBindingVersion > 0 && evidence.Generation > storedBindingVersion
-		if annotations[observationClusterIDKey] != evidence.ClusterID || storedNodeUID != evidence.NodeUID && !reboundIdentity || storedStationUID != "" && storedStationUID != evidence.StationUID || evidence.StationUID == "" && storedStationUID != "" {
-			return ErrObservationOwnershipConflict
-		}
-		metadataPatch := map[string]interface{}{}
-		if reboundIdentity {
-			oldStatus, found, nestedErr := unstructured.NestedMap(current.Object, "status")
-			if nestedErr != nil {
-				return fmt.Errorf("read previous observation status: %w", nestedErr)
-			}
-			hasOldSnapshot := false
-			if found {
-				for _, field := range []string{"systemUUID", "bootTime", "roles", "probes", "wireguard", "gateway", "pressures"} {
-					if _, exists := oldStatus[field]; exists {
-						hasOldSnapshot = true
-						break
-					}
-				}
-			}
-			if hasOldSnapshot {
-				clearStatus, marshalErr := json.Marshal(map[string]interface{}{
-					"metadata": map[string]interface{}{"resourceVersion": current.GetResourceVersion()},
-					// nodeUID, reportedAt and agent are required by the CRD schema. Keep
-					// their old values until the fresh snapshot replaces them.
-					"status": map[string]interface{}{"systemUUID": nil, "bootTime": nil, "roles": nil, "probes": nil, "wireguard": nil, "gateway": nil, "pressures": nil},
-				})
-				if marshalErr != nil {
-					return marshalErr
-				}
-				if _, patchErr := resource.Patch(ctx, evidence.NodeName, types.MergePatchType, clearStatus, metav1.PatchOptions{}, "status"); apierrors.IsConflict(patchErr) {
-					continue
-				} else if patchErr != nil {
-					return fmt.Errorf("clear previous Node identity observation: %w", patchErr)
-				}
-				continue
-			}
-			metadataPatch[observationNodeUIDKey] = evidence.NodeUID
-		}
-		if evidence.StationUID != "" && storedStationUID == "" {
-			metadataPatch[observationStationUIDKey] = evidence.StationUID
-		}
-		if evidence.StationUID != "" && annotations[observationBindingVersionKey] != strconv.FormatInt(evidence.Generation, 10) {
-			// Do not make an older snapshot appear to belong to the new binding
-			// while the metadata and status subresources are updated separately.
-			if _, found, nestedErr := unstructured.NestedFieldNoCopy(current.Object, "status", "wireguard"); nestedErr != nil {
-				return fmt.Errorf("read previous WireGuard observation: %w", nestedErr)
-			} else if found {
-				clear, marshalErr := json.Marshal(map[string]interface{}{"metadata": map[string]interface{}{"resourceVersion": current.GetResourceVersion()}, "status": map[string]interface{}{"wireguard": nil}})
-				if marshalErr != nil {
-					return marshalErr
-				}
-				if _, patchErr := resource.Patch(ctx, evidence.NodeName, types.MergePatchType, clear, metav1.PatchOptions{}, "status"); apierrors.IsConflict(patchErr) {
-					continue
-				} else if patchErr != nil {
-					return fmt.Errorf("clear previous binding observation: %w", patchErr)
-				}
-				continue
-			}
-			metadataPatch[observationBindingVersionKey] = strconv.FormatInt(evidence.Generation, 10)
-		}
-		if len(metadataPatch) > 0 {
-			metadataBody, marshalErr := json.Marshal(map[string]interface{}{
-				"metadata": map[string]interface{}{
-					"resourceVersion": current.GetResourceVersion(),
-					"annotations":     metadataPatch,
-				},
-			})
-			if marshalErr != nil {
-				return fmt.Errorf("encode StationObservation ownership patch: %w", marshalErr)
-			}
-			if _, patchErr := resource.Patch(ctx, evidence.NodeName, types.MergePatchType, metadataBody, metav1.PatchOptions{}); apierrors.IsConflict(patchErr) {
-				continue
-			} else if patchErr != nil {
-				return fmt.Errorf("patch StationObservation ownership metadata: %w", patchErr)
-			}
-			continue
-		}
-		patch, err := json.Marshal(map[string]interface{}{
-			"metadata": map[string]interface{}{"resourceVersion": current.GetResourceVersion()},
-			"status":   status,
-		})
-		if err != nil {
-			return fmt.Errorf("encode StationObservation patch: %w", err)
+	patch, err := json.Marshal(map[string]interface{}{"status": map[string]interface{}{"observation": status}})
+	if err != nil {
+		return fmt.Errorf("encode the observation patch: %w", err)
+	}
+	resource := s.Client.Resource(networkEnrollmentGVR).Namespace(namespace)
+	_, err = resource.Patch(ctx, evidence.NodeName, types.MergePatchType, patch, metav1.PatchOptions{}, "status")
+	if apierrors.IsNotFound(err) {
+		// The node's first report: the record is of the Node that was verified.
+		_, err = resource.Create(ctx, &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": stationGroup + "/" + stationVersion, "kind": "NetworkEnrollment",
+			"metadata": map[string]interface{}{"name": evidence.NodeName, "namespace": namespace},
+			"spec":     map[string]interface{}{"clusterID": evidence.ClusterID, "nodeUID": evidence.NodeUID, "systemUUID": observation.SystemUUID},
+		}}, metav1.CreateOptions{})
+		if err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("create NetworkEnrollment: %w", err)
 		}
 		_, err = resource.Patch(ctx, evidence.NodeName, types.MergePatchType, patch, metav1.PatchOptions{}, "status")
-		if apierrors.IsConflict(err) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("patch StationObservation status: %w", err)
-		}
-		return nil
 	}
-	return errors.New("StationObservation remained contended after bounded retries")
+	if err != nil {
+		return fmt.Errorf("patch the observation of NetworkEnrollment: %w", err)
+	}
+	return nil
 }
 
 func (s *KubernetesObservationSink) now() time.Time {

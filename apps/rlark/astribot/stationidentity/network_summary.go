@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -23,8 +22,8 @@ type NodeNetworkSummary struct {
 	ReportedAt *time.Time `json:"reportedAt,omitempty"`
 }
 
-type currentNodeBindingReader interface {
-	CurrentNodeBinding(context.Context, string) (Binding, error)
+type currentNodeReader interface {
+	CurrentNodeUID(context.Context, string) (string, error)
 }
 
 type NodeNetworkSummaryReader struct {
@@ -34,20 +33,18 @@ type NodeNetworkSummaryReader struct {
 	Now        func() time.Time
 }
 
-// Read fails closed when any current identity or ownership evidence is absent.
+// Read answers from the report of the Node that is in the cluster now: a
+// record of another Node UID, or of a removed node, is no report of it.
 func (s *NodeNetworkSummaryReader) Read(ctx context.Context, clusterID, nodeName string) (NodeNetworkSummary, error) {
 	reader, err := s.Registry.Reader(ctx, clusterID)
 	if err != nil {
 		return NodeNetworkSummary{}, err
 	}
-	current, ok := reader.(currentNodeBindingReader)
+	current, ok := reader.(currentNodeReader)
 	if !ok {
 		return NodeNetworkSummary{}, ErrIdentityUnavailable
 	}
-	binding, err := current.CurrentNodeBinding(ctx, nodeName)
-	if errors.Is(err, ErrStationBindingNotFound) {
-		return NodeNetworkSummary{State: "unreported"}, nil
-	}
+	nodeUID, err := current.CurrentNodeUID(ctx, nodeName)
 	if err != nil {
 		return NodeNetworkSummary{}, err
 	}
@@ -55,22 +52,20 @@ func (s *NodeNetworkSummaryReader) Read(ctx context.Context, clusterID, nodeName
 	if err != nil {
 		return NodeNetworkSummary{}, err
 	}
-	observation, err := s.Client.Resource(stationObservationGVR).Namespace(namespace).Get(ctx, nodeName, metav1.GetOptions{})
+	enrollment, err := s.Client.Resource(networkEnrollmentGVR).Namespace(namespace).Get(ctx, nodeName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return NodeNetworkSummary{State: "unreported"}, nil
 	}
 	if err != nil {
-		return NodeNetworkSummary{}, fmt.Errorf("read Station observation: %w", err)
+		return NodeNetworkSummary{}, fmt.Errorf("read NetworkEnrollment: %w", err)
 	}
-	annotations := observation.GetAnnotations()
-	uid, _, uidErr := unstructured.NestedString(observation.Object, "status", "nodeUID")
-	if uidErr != nil || uid != binding.NodeUID || annotations[observationClusterIDKey] != clusterID || annotations[observationNodeUIDKey] != binding.NodeUID || annotations[observationStationUIDKey] != binding.StationUID || annotations[observationBindingVersionKey] != strconv.FormatInt(binding.Generation, 10) {
-		return NodeNetworkSummary{}, ErrObservationOwnershipConflict
+	observation, _, _ := unstructured.NestedMap(enrollment.Object, "status", "observation")
+	recorded, _, _ := unstructured.NestedString(enrollment.Object, "spec", "nodeUID")
+	retired, _, _ := unstructured.NestedBool(enrollment.Object, "spec", "retired")
+	if retired || recorded != nodeUID || observation["nodeUID"] != nodeUID {
+		return NodeNetworkSummary{State: "unreported"}, nil
 	}
-	reported, found, err := unstructured.NestedString(observation.Object, "status", "reportedAt")
-	if err != nil || !found {
-		return NodeNetworkSummary{}, errors.New("observation has no receipt time")
-	}
+	reported, _ := observation["reportedAt"].(string)
 	reportedAt, err := time.Parse(time.RFC3339Nano, reported)
 	if err != nil {
 		return NodeNetworkSummary{}, errors.New("invalid observation receipt time")
@@ -82,10 +77,7 @@ func (s *NodeNetworkSummaryReader) Read(ctx context.Context, clusterID, nodeName
 	if reportedAt.After(now.Add(5 * time.Second)) {
 		return NodeNetworkSummary{}, errors.New("observation receipt time is in the future")
 	}
-	raw, found, err := unstructured.NestedMap(observation.Object, "status", "wireguard")
-	if err != nil {
-		return NodeNetworkSummary{}, err
-	}
+	raw, found := observation["wireguard"].(map[string]interface{})
 	if !found {
 		return NodeNetworkSummary{State: "unreported", ReportedAt: &reportedAt}, nil
 	}

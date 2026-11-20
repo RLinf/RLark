@@ -14,7 +14,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 )
 
@@ -138,22 +137,16 @@ func (g *Gateway) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 	}
 	steps = append(steps, "删掉管理面到这个集群的凭据（Station、节点操作、发布、agent 证书）")
 	// What Station keeps of the cluster's nodes: a cluster made again under the name has nodes of the same names
-	// with other UIDs, which a Station bound to the earlier ones would hold in Conflict, and admissions hold keys
-	// and tunnel addresses.
-	stations, err := g.stationClient.Resource(stationRecordGVR).Namespace(p.Name).List(ctx, metav1.ListOptions{})
+	// with other UIDs, which the records of the earlier ones would hold in Conflict, and admissions hold keys and
+	// tunnel addresses.
+	records, err := g.stationClient.Resource(networkEnrollmentGVR).Namespace(p.Name).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return steps, fmt.Errorf("list the cluster's Stations: %w", err)
+		return steps, fmt.Errorf("list the cluster's site nodes: %w", err)
 	}
-	retired := 0
-	for i := range stations.Items {
-		station := &stations.Items[i]
-		if gone, _, _ := unstructured.NestedBool(station.Object, "spec", "retired"); gone {
-			continue
+	for i := range records.Items {
+		if err := g.stationClient.Resource(networkEnrollmentGVR).Namespace(p.Name).Delete(ctx, records.Items[i].GetName(), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return steps, fmt.Errorf("delete the site node %s: %w", records.Items[i].GetName(), err)
 		}
-		if _, err := g.stationClient.Resource(stationRecordGVR).Namespace(p.Name).Patch(ctx, station.GetName(), types.MergePatchType, []byte(`{"spec":{"retired":true}}`), metav1.PatchOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return steps, fmt.Errorf("retire Station %s: %w", station.GetName(), err)
-		}
-		retired++
 	}
 	admissions, err := g.stationClient.Resource(nodeAdmissionGVR).Namespace(p.Name).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -164,7 +157,7 @@ func (g *Gateway) clearProvision(ctx context.Context, p *rlarkv1alpha1.ClusterPr
 			return steps, fmt.Errorf("delete the node admission %s: %w", admissions.Items[i].GetName(), err)
 		}
 	}
-	steps = append(steps, fmt.Sprintf("退役这个集群的 %d 个场站节点，删掉它的入网记录（公钥和隧道地址放出）", retired))
+	steps = append(steps, fmt.Sprintf("删掉这个集群的 %d 条场站节点记录和它的入网许可（公钥和隧道地址放出）", len(records.Items)))
 	controlPlaneName := "cp." + p.Name + ".rlark.internal"
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		network, err := g.provisionNetwork(ctx)

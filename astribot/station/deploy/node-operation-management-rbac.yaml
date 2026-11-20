@@ -15,6 +15,10 @@ rules:
 - apiGroups: ["rlinf.io"]
   resources: ["nodes"]
   verbs: ["get", "patch", "delete"]
+# A removed node's record (retired with station-controller's own patch) is deleted once the node is gone.
+- apiGroups: ["station.rlark.io"]
+  resources: ["networkenrollments"]
+  verbs: ["delete"]
 # With --installer-bundle: a Machine an administrator admitted gets its
 # NodeAdmission and the NodeOperation that joins it; the join gives the
 # admission its code and writes down the entry device's new host key.

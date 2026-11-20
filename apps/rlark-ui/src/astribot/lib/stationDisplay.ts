@@ -6,18 +6,14 @@ export function clusterForStation(clusters: ClusterSummary[], namespace: string)
   return matches.length === 1 && !matches[0].agentNamespaceConflict ? matches[0] : undefined;
 }
 
-export function stationDisplayName(item: StationItem, clusters: ClusterSummary[]) {
-  const cluster = clusterForStation(clusters, item.metadata.namespace);
-  return cluster ? `${cluster.name}-${String(item.spec.sequence).padStart(4, "0")}` : item.spec.displayName;
-}
+export type StationPhase = "Bound" | "Offline" | "Conflict" | "Retired" | "Unknown";
 
-export type StationPhase = NonNullable<NonNullable<StationItem["status"]>["phase"]> | "Unknown";
-
+// Unknown until the node's first report; a removed node is Retired whatever it last reported.
 export function stationPhase(item: StationItem): StationPhase {
-  return item.status?.phase ?? "Unknown";
+  return item.spec.retired ? "Retired" : item.status?.node?.state ?? "Unknown";
 }
 
-// Maps a Station phase onto the shared `.status-*` pill variants.
+// Maps a site node's phase onto the shared `.status-*` pill variants.
 export function stationStatusClass(phase: StationPhase) {
   switch (phase) {
     case "Bound": return "status-online";
@@ -28,15 +24,14 @@ export function stationStatusClass(phase: StationPhase) {
 }
 
 export function stationPhaseLabel(phase: StationPhase, zh: boolean) {
-  return zh ? { Bound: "已绑定", Offline: "离线", Conflict: "冲突", Retired: "已退役", Unknown: "未知" }[phase] : phase;
+  return zh ? { Bound: "在线", Offline: "离线", Conflict: "冲突", Retired: "已移除", Unknown: "未上报" }[phase] : phase;
 }
 
 export type StationNetworkState = "verified" | "failed" | "unknown";
 
-// Network health is reported only through the NetworkVerified condition; the
-// Station API carries no IP or WireGuard data.
+// Whether the node reaches its peers through the tunnel: the NetworkVerified condition.
 export function stationNetworkState(item: StationItem): StationNetworkState {
-  const condition = item.status?.conditions?.find((entry) => entry.type === "NetworkVerified");
+  const condition = item.status?.node?.conditions?.find((entry) => entry.type === "NetworkVerified");
   if (condition?.status === "True") return "verified";
   if (condition?.status === "False") return "failed";
   return "unknown";

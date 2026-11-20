@@ -11,8 +11,6 @@ import (
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -75,27 +73,6 @@ type KubeconfigNodeReader struct {
 
 func NewKubeconfigNodeReader(source MemberKubeconfigSource) *KubeconfigNodeReader {
 	return &KubeconfigNodeReader{source: source, cache: make(map[string]cachedMemberClient)}
-}
-
-func (r *KubeconfigNodeReader) VerifyNode(ctx context.Context, clusterID, _ string, nodeName string) (string, string, bool, error) {
-	if clusterID == "" || nodeName == "" {
-		return "", "", false, errors.New("cluster ID and Node name are required")
-	}
-	memberClient, err := r.Client(ctx, clusterID)
-	if err != nil {
-		return "", "", false, err
-	}
-	node, err := memberClient.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return "", "", false, nil
-	}
-	if err != nil {
-		return "", "", false, fmt.Errorf("read target member Node: %w", err)
-	}
-	if node.DeletionTimestamp != nil {
-		return string(node.UID), node.Status.NodeInfo.SystemUUID, false, nil
-	}
-	return string(node.UID), node.Status.NodeInfo.SystemUUID, true, nil
 }
 
 // Client resolves a verified member API client and refreshes it on credential rotation.

@@ -10,16 +10,15 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-func peerObservation(namespace, name string, reportedAt time.Time, peers ...map[string]interface{}) *unstructured.Unstructured {
+// reportingHub is an enrolled hub whose latest report names the peers given.
+func reportingHub(namespace, name, key string, reportedAt time.Time, peers ...map[string]interface{}) *unstructured.Unstructured {
 	listed := make([]interface{}, len(peers))
 	for i, peer := range peers {
 		listed[i] = peer
 	}
-	return &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "station.rlark.io/v1alpha1", "kind": "StationObservation",
-		"metadata": map[string]interface{}{"namespace": namespace, "name": name},
-		"status":   map[string]interface{}{"reportedAt": reportedAt.UTC().Format(time.RFC3339Nano), "wireguard": map[string]interface{}{"interface": "st-wg0", "peers": listed}},
-	}}
+	hub := documentHolder("NetworkEnrollment", namespace, name, "Enrolled", key, "{}")
+	_ = unstructured.SetNestedField(hub.Object, map[string]interface{}{"reportedAt": reportedAt.UTC().Format(time.RFC3339Nano), "wireguard": map[string]interface{}{"interface": "st-wg0", "peers": listed}}, "status", "observation")
+	return hub
 }
 
 // A node that redeemed its code asks, with its own key, how far its key has reached the peers it dials: the peers'
@@ -31,10 +30,8 @@ func TestPropagationAnswersThePeersReportsOfTheNode(t *testing.T) {
 	document := `{"interface":"st-wg0","peers":[{"publicKey":"` + hub + `","endpoint":"1.2.3.4:51820","keepaliveSeconds":25},{"publicKey":"` + other + `","endpoint":"1.2.3.5:51820"},{"publicKey":"` + newDocumentNode(t).public() + `"}]}`
 	api, _ := testNetworkDocuments(t, &now,
 		documentHolder("NodeAdmission", "baidu", "gpu-2", "", node.public(), document),
-		documentHolder("NetworkEnrollment", "ksyun", "10-0-2-57", "Enrolled", hub, "{}"),
-		documentHolder("NetworkEnrollment", "office", "desk", "Enrolled", other, "{}"),
-		peerObservation("ksyun", "10-0-2-57", now.Add(-10*time.Second), map[string]interface{}{"name": "baidu/gpu-2", "latestHandshake": now.Add(-time.Second).UTC().Format(time.RFC3339Nano)}),
-		peerObservation("office", "desk", now),
+		reportingHub("ksyun", "10-0-2-57", hub, now.Add(-10*time.Second), map[string]interface{}{"name": "baidu/gpu-2", "latestHandshake": now.Add(-time.Second).UTC().Format(time.RFC3339Nano)}),
+		reportingHub("office", "desk", other, now),
 	)
 	ask := func(body map[string]any) (int, map[string]any) {
 		t.Helper()

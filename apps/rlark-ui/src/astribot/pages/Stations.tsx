@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { clustersApi, nodesApi } from "../../backend";
 import { nodeAdmissionsApi, selfHealApi, siteNodesApi, stationsApi, type StationItem } from "../api";
-import { stationDeleteAsked, stationDeleteRefusal, stationRetired, stationsOfPhase } from "../lib/nodeRemoval";
+import { stationDeletable, stationsOfPhase } from "../lib/nodeRemoval";
 import { PageToolbar, RefreshOverlay } from "../../components/shared";
 import { useAutoRefresh } from "../../hooks";
 import type { Copy } from "../../i18n";
@@ -26,7 +26,6 @@ import {
   clusterForStation,
   formatRelativeTime,
   shortUID,
-  stationDisplayName,
   stationNetworkState,
   stationPhase,
   stationPhaseLabel,
@@ -49,7 +48,7 @@ import {
   type SiteNode,
 } from "../lib/siteNodeDisplay";
 import { isControlPlaneLabels } from "../../utils/nodeVisibility";
-import { StationDrawer, type TrackedRebind } from "./StationDrawer";
+import { StationDrawer } from "./StationDrawer";
 import { AdmissionRecords, NodeOperations } from "./StationRecords";
 import "./Stations.css";
 
@@ -64,7 +63,7 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
   const zh = c.nav.stations === "场站节点";
   const [items, setItems] = useState<StationItem[]>([]);
   const [clusters, setClusters] = useState<ClusterSummary[]>([]);
-  // The Nodes by "<namespace>/<name>", for the display names of the Stations' nodes.
+  // The Nodes by "<namespace>/<name>", for the display names of the site nodes.
   const [nodesByKey, setNodesByKey] = useState<Record<string, CRDNode>>({});
   const [clusterID, setClusterID] = useState("");
   const [phase, setPhase] = useState("");
@@ -80,8 +79,7 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
   const [admissions, setAdmissions] = useState<NodeAdmission[]>([]);
   const [admissionError, setAdmissionError] = useState("");
   const [showNodeOperations, setShowNodeOperations] = useState(false);
-  const [tracked, setTracked] = useState<TrackedRebind>();
-  const [retiredPending, setRetiredPending] = useState("");
+  const [deletePending, setDeletePending] = useState("");
   const [powerPending, setPowerPending] = useState(false);
   const [powerMessage, setPowerMessage] = useState("");
   const [chosen, setChosen] = useState<Set<string>>(new Set());
@@ -156,45 +154,36 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
 
   // A namespace's Node by its name, or its name alone when the Node is gone.
   const nodeAt = (namespace: string, name: string) => nodesByKey[`${namespace}/${name}`] ?? { metadata: { name } };
-  const boundNode = (item: StationItem) => nodeAt(item.metadata.namespace, item.spec.binding.nodeName);
+  const nodeOf = (item: StationItem) => nodeAt(item.metadata.namespace, item.metadata.name);
   const keyOf = (item: StationItem) => `${item.metadata.namespace}/${item.metadata.name}`;
-  const siteNodeOf = (item: StationItem) => siteNodes[`${clusterForStation(clusters, item.metadata.namespace)?.id}/${item.spec.binding.nodeName}`];
+  const siteNodeOf = (item: StationItem) => siteNodes[`${clusterForStation(clusters, item.metadata.namespace)?.id}/${item.metadata.name}`];
 
-  // A retired Station is deleted when an administrator asks: station-controller deletes it once nothing stands on
-  // it, or writes on it why not, which the next refresh shows.
-  const removeRetired = async (item: StationItem, itemClusterID: string) => {
-    if (retiredPending || !window.confirm(zh
-      ? `删除已退役的场站节点 ${stationDisplayName(item, clusters)}（${item.spec.binding.nodeName}，节点 UID ${item.spec.binding.nodeUID.slice(0, 8)}）？它是已删除节点、或这个名字以前那个节点留下的记录；删除后不能恢复，留一条审计记录。`
-      : `Delete the retired Station ${stationDisplayName(item, clusters)} (${item.spec.binding.nodeName}, Node UID ${item.spec.binding.nodeUID.slice(0, 8)})? It is the record of a node that was removed, or of the earlier node of its name; it cannot be brought back, and an audit event stays.`)) return;
-    setRetiredPending(keyOf(item));
+  // The record of a removed node, of a node in Conflict or of a name no node reports under and RLark has no Node of
+  // is deleted when an administrator asks; a node that comes back registers again with its next report.
+  const removeRecord = async (item: StationItem, itemClusterID: string) => {
+    if (deletePending || !window.confirm(zh
+      ? `删除场站节点记录 ${item.metadata.name}（节点 UID ${item.spec.nodeUID.slice(0, 8)}）？删除后不能恢复；这个名字的节点如果还在上报，会按新机器重新登记。`
+      : `Delete the site node record ${item.metadata.name} (Node UID ${item.spec.nodeUID.slice(0, 8)})? It cannot be brought back; a node of the name that still reports registers again as a new machine.`)) return;
+    setDeletePending(keyOf(item));
     setError("");
     try {
       await selfHealApi.deleteStation(item.metadata.name, itemClusterID);
-      for (let tries = 0; tries < 15; tries++) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1000));
-        // Gone (the read fails) or refused: either way the list shows it now.
-        const current = await stationsApi.get(item.metadata.name, itemClusterID).catch(() => undefined);
-        if (!current || stationDeleteRefusal(current)) break;
-      }
       await load(false);
     } catch (reason) {
       setError((reason as Error).message);
     } finally {
-      setRetiredPending("");
+      setDeletePending("");
     }
   };
 
   const query = search.trim().toLocaleLowerCase();
   const visible = stationsOfPhase(items, phase).filter((item) => !query || [
-    item.spec.displayName,
-    stationDisplayName(item, clusters),
     clusterForStation(clusters, item.metadata.namespace)?.name ?? "",
     item.metadata.name,
     item.metadata.namespace,
-    item.spec.binding.nodeName,
-    nodeLabel(boundNode(item)),
-    item.spec.binding.nodeUID,
-    item.spec.binding.systemUUID ?? "",
+    nodeLabel(nodeOf(item)),
+    item.spec.nodeUID,
+    item.spec.systemUUID ?? "",
   ].some((value) => value.toLocaleLowerCase().includes(query)));
   const selected = items.find((item) => keyOf(item) === selectedID);
   const selectedLabels = selected && siteNodeOf(selected)?.labels;
@@ -217,15 +206,15 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
     await load(false);
   };
   // The robots of the list a batch may act on, and those chosen.
-  const robots = visible.map((item) => ({ key: keyOf(item), node: item.spec.binding.nodeName, namespace: item.metadata.namespace, labels: siteNodeOf(item)?.labels }));
+  const robots = visible.map((item) => ({ key: keyOf(item), node: item.metadata.name, namespace: item.metadata.namespace, labels: siteNodeOf(item)?.labels }));
   const powerRobots = robotPowerNodes(robots, new Set(robots.map((robot) => robot.key)));
   const chosenRobots = robotPowerNodes(robots, chosen);
   const pressBatch = (desired: RobotPowerDesired, label: string) =>
     setPower(chosenRobots.map((robot) => ({ node: robot.node, namespace: robot.namespace, desired })), label);
 
-  const count = (value: string) => items.filter((item) => item.status?.phase === value).length;
+  const count = (value: string) => stationsOfPhase(items, value).length;
   const phaseOptions = [
-    { value: "", label: zh ? "所有状态（不含已退役）" : "All phases (not retired)" },
+    { value: "", label: zh ? "所有状态（不含已移除）" : "All phases (not removed)" },
     ...(["Bound", "Offline", "Conflict", "Retired"] as const).map((value) => ({ value, label: stationPhaseLabel(value, zh) })),
   ];
 
@@ -235,18 +224,18 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
         <div>
           <span className="eyebrow"><MonitorSmartphone size={13} />{c.nav.stations}</span>
           <h2>{zh ? "场站节点" : "Site Nodes"}</h2>
-          <p>{zh ? "场站节点是一台机器在场站里的长期身份和入网记录，不是 Fleet Run 里的 Station（Run 的 Station 引用这里的节点）。查看各成员集群节点的身份、绑定与健康观测。数据来自 station-agent，每 30 秒刷新。" : "A site node is one machine's long-lived identity and network membership in the site. It is not a Station of a Fleet Run, which refers to a site node. Inspect identity, Node binding and health observations across member clusters. Data comes from station-agent and refreshes every 30 seconds."}</p>
+          <p>{zh ? "场站节点是一台节点在场站里的记录：身份、心跳和入网，按节点名一台一条，不是 Fleet Run 里的 Station（Run 的 Station 引用这里的节点）。数据来自 station-agent，每 30 秒刷新。" : "A site node is the record of one node in the site: identity, heartbeat and network membership, one per node name. It is not a Station of a Fleet Run, which refers to a site node. Data comes from station-agent and refreshes every 30 seconds."}</p>
         </div>
       </div>
 
       <section className="storage-overview-grid stations-overview-grid" aria-label={zh ? "场站节点概况" : "Site node overview"}>
         <div className="storage-overview-card purple">
           <span><Fingerprint size={18} /></span>
-          <div><small>{zh ? "场站节点总数" : "Site nodes"}</small><strong>{items.length}</strong><em>{zh ? "已加载的身份记录" : "loaded identities"}</em></div>
+          <div><small>{zh ? "场站节点总数" : "Site nodes"}</small><strong>{items.length}</strong><em>{zh ? "已加载的记录" : "loaded records"}</em></div>
         </div>
         <div className="storage-overview-card green">
           <span><ShieldCheck size={18} /></span>
-          <div><small>{zh ? "已绑定" : "Bound"}</small><strong>{count("Bound")}</strong><em>{zh ? "心跳正常" : "heartbeat fresh"}</em></div>
+          <div><small>{zh ? "在线" : "Bound"}</small><strong>{count("Bound")}</strong><em>{zh ? "心跳正常" : "heartbeat fresh"}</em></div>
         </div>
         <div className="storage-overview-card orange">
           <span><Unplug size={18} /></span>
@@ -254,13 +243,13 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
         </div>
         <div className="storage-overview-card red">
           <span><AlertTriangle size={18} /></span>
-          <div><small>{zh ? "冲突" : "Conflict"}</small><strong>{count("Conflict")}</strong><em>{zh ? "需要管理员确认重绑" : "needs rebind review"}</em></div>
+          <div><small>{zh ? "冲突" : "Conflict"}</small><strong>{count("Conflict")}</strong><em>{zh ? "节点 UID 变了，删除记录后重新登记" : "Node UID changed; delete the record"}</em></div>
         </div>
       </section>
 
       <div className="stations-toolbar">
         <PageToolbar
-          placeholder={zh ? "搜索场站节点、节点名或 UID" : "Search site node, Node or UID"}
+          placeholder={zh ? "搜索节点名或 UID" : "Search Node or UID"}
           value={search}
           onChange={setSearch}
           count={visible.length}
@@ -310,9 +299,8 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
           <table className="stations-table">
             <thead><tr>
               <th>{powerRobots.length > 0 && <input type="checkbox" aria-label={zh ? "全选机器人" : "Select every robot"} checked={chosenRobots.length === powerRobots.length} onChange={(event) => setChosen(event.target.checked ? new Set(powerRobots.map((robot) => robot.key)) : new Set())} />}</th>
-              <th>{zh ? "场站节点" : "Site node"}</th>
-              <th>{zh ? "集群" : "Cluster"}</th>
               <th>{zh ? "节点" : "Node"}</th>
+              <th>{zh ? "集群" : "Cluster"}</th>
               <th>{zh ? "状态" : "Phase"}</th>
               <th>{zh ? "网络" : "Network"}</th>
               <th>{zh ? "入网" : "Admission"}</th>
@@ -325,43 +313,39 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
             <tbody>
               {visible.map((item) => {
                 const key = keyOf(item);
-                const retired = stationRetired(item);
-                const itemPhase = retired ? "Retired" : stationPhase(item);
+                const itemPhase = stationPhase(item);
+                const retired = itemPhase === "Retired";
+                const deletable = stationDeletable(item, `${item.metadata.namespace}/${item.metadata.name}` in nodesByKey);
                 const itemCluster = clusterForStation(clusters, item.metadata.namespace);
                 const siteNode = siteNodeOf(item);
-                const admission = admissions.find((entry) => entry.cluster_id === itemCluster?.id && entry.node_name === item.spec.binding.nodeName);
+                const admission = admissions.find((entry) => entry.cluster_id === itemCluster?.id && entry.node_name === item.metadata.name);
                 const publicKey = siteNode?.network?.public_key ?? admission?.public_key;
                 return (
                   <tr key={key} className={`clickable-row${selectedID === key ? " selected" : ""}`} onClick={() => setSelectedID(key)}>
                     <td onClick={(event) => event.stopPropagation()}>
-                      {isRobotNode(siteNode?.labels) && <input type="checkbox" aria-label={zh ? `选中 ${nodeLabel(boundNode(item))}` : `Select ${nodeLabel(boundNode(item))}`} checked={chosen.has(key)} onChange={(event) => setChosen((before) => { const next = new Set(before); if (event.target.checked) next.add(key); else next.delete(key); return next; })} />}
+                      {isRobotNode(siteNode?.labels) && <input type="checkbox" aria-label={zh ? `选中 ${nodeLabel(nodeOf(item))}` : `Select ${nodeLabel(nodeOf(item))}`} checked={chosen.has(key)} onChange={(event) => setChosen((before) => { const next = new Set(before); if (event.target.checked) next.add(key); else next.delete(key); return next; })} />}
                     </td>
                     <td className="stations-name-cell">
                       <button type="button" className="stations-name" onClick={() => setSelectedID(key)}>
-                        <strong>{stationDisplayName(item, clusters)}</strong>
-                        <small className="muted">{item.metadata.name}</small>
+                        <strong><NodeName node={nodeOf(item)} /></strong>
                       </button>
+                      {isControlPlaneLabels(siteNode?.labels) && <span className="control-plane-badge" title={zh ? "这台是所在集群的控制面" : "This node is its cluster's control plane"}>{zh ? "控制面" : "Control plane"}</span>}
+                      <code className="inline-code" title={item.spec.nodeUID}>{shortUID(item.spec.nodeUID)}</code>
                     </td>
                     <td>{itemCluster?.name ?? <span className="muted">{zh ? "集群未确定" : "Cluster unresolved"}</span>}</td>
-                    <td>
-                      <span className="stations-node"><NodeName node={boundNode(item)} /></span>
-                      {isControlPlaneLabels(siteNode?.labels) && <span className="control-plane-badge" title={zh ? "这台是所在集群的控制面" : "This node is its cluster's control plane"}>{zh ? "控制面" : "Control plane"}</span>}
-                      <code className="inline-code" title={item.spec.binding.nodeUID}>{shortUID(item.spec.binding.nodeUID)}</code>
-                    </td>
-                    <td onClick={(event) => retired && event.stopPropagation()}>
+                    <td onClick={(event) => deletable && event.stopPropagation()}>
                       <span className={`status ${stationStatusClass(itemPhase)}`}><i />{stationPhaseLabel(itemPhase, zh)}</span>
-                      {retired && itemCluster && <button type="button" className="table-action-button danger station-retired-delete" onClick={() => void removeRetired(item, itemCluster.id)} disabled={!!retiredPending || stationDeleteAsked(item)}>
-                        {retiredPending === key || stationDeleteAsked(item) ? (zh ? "删除中…" : "Deleting…") : (zh ? "删除" : "Delete")}
+                      {deletable && itemCluster && <button type="button" className="table-action-button danger station-record-delete" onClick={() => void removeRecord(item, itemCluster.id)} disabled={!!deletePending}>
+                        {deletePending === key ? (zh ? "删除中…" : "Deleting…") : (zh ? "删除记录" : "Delete record")}
                       </button>}
-                      {retired && stationDeleteRefusal(item) && <small className="muted station-admission-step">{zh ? "没有删除：" : "Not deleted: "}{stationDeleteRefusal(item)}</small>}
                     </td>
                     <td>{retired ? <span className="muted">—</span> : <NetworkBadge state={stationNetworkState(item)} zh={zh} />}</td>
                     <td>{retired ? <span className="muted">—</span> : admission ? <span className={`status ${admissionStateClass(admission.state)}`} title={admission.reason}><i />{admissionStateLabel(admission.state, zh)}</span> : <span className="muted">{zh ? "未用入网码" : "no code"}</span>}</td>
                     <td>{publicKey ? <code className="inline-code" title={publicKey}>{keyFingerprint(publicKey)}</code> : <span className="muted">—</span>}</td>
                     <td>{machineModel(siteNode?.labels ?? admission?.labels) || <span className="muted">—</span>}</td>
-                    <td>{siteNode ? siteNode.reboots : <span className="muted">—</span>}</td>
-                    <td><small>{itemPhase === "Bound" ? stationUptime(item.status?.bootTime, now, zh) : "—"}</small></td>
-                    <td><small title={formatChinaDateTime(item.status?.lastSeenTime)}>{formatRelativeTime(item.status?.lastSeenTime, now, zh)}</small></td>
+                    <td>{item.status?.node?.reboots ?? <span className="muted">—</span>}</td>
+                    <td><small>{itemPhase === "Bound" ? stationUptime(item.status?.node?.bootTime, now, zh) : "—"}</small></td>
+                    <td><small title={formatChinaDateTime(item.status?.node?.lastSeenTime)}>{formatRelativeTime(item.status?.node?.lastSeenTime, now, zh)}</small></td>
                   </tr>
                 );
               })}
@@ -378,18 +362,15 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
         key={selectedID}
         station={selected}
         cluster={clusterForStation(clusters, selected.metadata.namespace)}
-        displayName={stationDisplayName(selected, clusters)}
+        node={nodeOf(selected)}
         labels={selectedLabels}
-        nodeAt={(name) => nodeAt(selected.metadata.namespace, name)}
         now={now}
         zh={zh}
         power={{
           pending: powerPending,
           message: powerMessage,
-          press: (action, label) => void setPower([{ node: selected.spec.binding.nodeName, namespace: selected.metadata.namespace, desired: robotPowerAfter(action, robotPowerDesired(selectedLabels)) }], label),
+          press: (action, label) => void setPower([{ node: selected.metadata.name, namespace: selected.metadata.namespace, desired: robotPowerAfter(action, robotPowerDesired(selectedLabels)) }], label),
         }}
-        tracked={tracked}
-        onRebind={setTracked}
         onClose={() => setSelectedID("")}
       />}
     </div>

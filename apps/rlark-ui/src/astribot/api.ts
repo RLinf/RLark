@@ -16,59 +16,29 @@ interface Condition {
 // A page of a Station API list: continue asks for the next.
 type Page<T> = { items: T[]; continue?: string };
 
+// A site node: the NetworkEnrollment of the node its name is, as GET /api/v1/station/stations lists it.
 export interface StationItem {
   apiVersion: string;
-  kind: "Station";
-  // annotations: station-controller's answer to a delete (station.rlark.io/delete-requested-by, delete-refused).
-  metadata: { name: string; namespace: string; uid?: string; creationTimestamp?: string; annotations?: Record<string, string> };
+  kind: "NetworkEnrollment";
+  metadata: { name: string; namespace: string; uid?: string; creationTimestamp?: string };
   spec: {
-    displayName: string;
-    sequence: number;
-    retired?: boolean;
-    binding: {
-      nodeName: string;
-      nodeUID: string;
-      systemUUID?: string;
-      version: number;
-      boundBy: string;
-    };
-  };
-  status?: {
-    phase?: "Bound" | "Offline" | "Conflict" | "Retired";
-    bootTime?: string;
-    lastSeenTime?: string;
-    conditions?: Condition[];
-  };
-}
-
-export interface StationObservationItem {
-  apiVersion: string;
-  kind: "StationObservation";
-  metadata: { name: string; namespace: string };
-  status: {
+    clusterID: string;
     nodeUID: string;
-    reportedAt: string;
     systemUUID?: string;
-    bootTime?: string;
-  };
-}
-
-export interface StationRebindOperation {
-  apiVersion: string;
-  kind: "StationRebind";
-  metadata: { name: string; namespace: string; uid?: string };
-  spec: {
-    requestID: string;
-    stationRef: { name: string; uid: string };
-    expectedBindingVersion: number;
-    targetNodeName: string;
-    targetNodeUID: string;
-    reason: string;
-    requestedBy: string;
+    publicKey?: string;
+    // The node was removed: the record stays until it is deleted or the node is admitted again.
+    retired?: boolean;
   };
   status?: {
-    phase?: "Accepted" | "Applied" | "Rejected";
-    conditions?: Condition[];
+    // The node's last report; nodeUID is the Node that made it.
+    observation?: { nodeUID: string; systemUUID?: string; reportedAt: string };
+    node?: {
+      state?: "Bound" | "Offline" | "Conflict" | "Retired";
+      bootTime?: string;
+      lastSeenTime?: string;
+      reboots?: number;
+      conditions?: Condition[];
+    };
   };
 }
 
@@ -134,25 +104,6 @@ export const stationsApi = {
   },
   get(name: string, clusterID: string, signal?: AbortSignal) {
     return requestJson<StationItem>(withQuery(`/api/v1/station/stations/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { signal });
-  },
-  observations(clusterID: string, signal?: AbortSignal) {
-    return requestJson<Page<StationObservationItem>>(withQuery("/api/v1/station/observations", { cluster_id: clusterID, limit: 500 }), { signal });
-  },
-  createRebind(input: {
-    cluster_id: string;
-    request_id: string;
-    station_name: string;
-    station_uid: string;
-    expected_binding_version: number;
-    target_node_name: string;
-    target_node_uid: string;
-    target_system_uuid?: string;
-    reason: string;
-  }) {
-    return requestJson<{ operation: StationRebindOperation }>("/api/v1/station/rebinds", { method: "POST", body: input });
-  },
-  getRebind(name: string, clusterID: string, signal?: AbortSignal) {
-    return requestJson<StationRebindOperation>(withQuery(`/api/v1/station/rebinds/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { signal });
   },
   listNodeOperations(clusterID: string, signal?: AbortSignal) {
     return requestJson<Page<NodeOperation>>(withQuery("/api/v1/station/node-operations", { cluster_id: clusterID, limit: 100 }), { signal });
@@ -273,7 +224,7 @@ export const machinesApi = {
 };
 
 // Joining again and starting over (astribot/docs/install-join.md): a node removed by its name, a cluster's
-// making cleared, a retired Station deleted.
+// making cleared, a site node's record deleted.
 export const selfHealApi = {
   // Removes whatever is under the name: the Node its cluster has (nodeUID names the instance RLark verified, when
   // it has one), or, when its cluster has none, what RLark keeps of the name.
@@ -291,9 +242,10 @@ export const selfHealApi = {
     );
     return response.steps ?? [];
   },
-  // Asks for a retired Station to be deleted; deleted says it is gone already.
+  // Deletes the record of a removed node, of a node in Conflict, or of a name no node reports under and RLark has
+  // no Node of.
   deleteStation(name: string, clusterID: string) {
-    return requestJson<{ deleted: boolean }>(withQuery(`/api/v1/station/stations/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { method: "DELETE" });
+    return request(withQuery(`/api/v1/station/stations/${encodeURIComponent(name)}`, { cluster_id: clusterID }), { method: "DELETE" });
   },
 };
 

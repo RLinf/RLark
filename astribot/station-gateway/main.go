@@ -502,11 +502,7 @@ func remove(path, what string) {
 }
 
 func main() {
-	defaultConfigPath := os.Getenv("STATION_GATEWAY_CONFIG")
-	if defaultConfigPath == "" {
-		defaultConfigPath = "/config/config.json"
-	}
-	configPath := flag.String("config", defaultConfigPath, "static configuration written by an administrator")
+	configPath := flag.String("config", "", "optional static configuration written by the installer, for a machine's own service")
 	computedPath := flag.String("computed-config", os.Getenv("STATION_GATEWAY_COMPUTED_CONFIG"), "optional configuration stored by station-agent from this node's enrollment; preferred over --config")
 	identityPath := flag.String("identity-file", os.Getenv("STATION_GATEWAY_IDENTITY_FILE"), "optional file to publish the public key in, for station-agent to enroll")
 	prune := flag.Bool("prune-routes", os.Getenv("STATION_GATEWAY_PRUNE_ROUTES") == "true", "remove this program's routes on its own interface when the configuration drops them")

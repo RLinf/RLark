@@ -64,22 +64,16 @@ rules:
 - apiGroups: ["rlinf.io"]
   resources: ["nodes"]
   verbs: ["patch"]
-- apiGroups: ["station.rlark.io"]
-  resources: ["stations"]
-  verbs: ["get", "list"]
-# delete: a machine that rejoins under a removed node's name drops that node's
-# snapshot before its first report is stored (kubernetes_observation.go).
-- apiGroups: ["station.rlark.io"]
-  resources: ["stationobservations"]
-  verbs: ["get", "create", "patch", "delete"]
-- apiGroups: ["station.rlark.io"]
-  resources: ["stationobservations/status"]
-  verbs: ["get", "patch"]
+# create: a node's first report makes its record; status: every report is
+# patched into status.observation (kubernetes_observation.go).
 # list: a node reports its peers by public key, and station-api stores each
 # under the member enrolled with that key.
 - apiGroups: ["station.rlark.io"]
   resources: ["networkenrollments"]
   verbs: ["get", "list", "create", "update"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["networkenrollments/status"]
+  verbs: ["patch"]
 - apiGroups: ["station.rlark.io"]
   resources: ["nodeadmissions"]
   # delete: a machine that redeems a new code clears what it left of a join it never finished.
@@ -150,35 +144,13 @@ rules:
 - apiGroups: ["rlinf.io"]
   resources: ["clusters", "nodes"]
   verbs: ["get", "list", "watch"]
-# delete: a retired Station an administrator asked to have deleted goes, with the observation of its node (StationRemovalReconciler).
-- apiGroups: ["station.rlark.io"]
-  resources: ["stationobservations"]
-  verbs: ["get", "list", "watch", "delete"]
-- apiGroups: ["station.rlark.io"]
-  resources: ["stations"]
-  verbs: ["get", "list", "watch", "create", "patch", "delete"]
-- apiGroups: ["station.rlark.io"]
-  resources: ["stations/status"]
-  verbs: ["get", "patch"]
-- apiGroups: ["station.rlark.io"]
-  resources: ["stationsequences"]
-  verbs: ["get", "create"]
-- apiGroups: ["station.rlark.io"]
-  resources: ["stationsequences/status"]
-  verbs: ["get", "patch"]
-- apiGroups: ["station.rlark.io"]
-  resources: ["stationrebinds"]
-  # create: a machine admitted again under its name gets its Station back (StationReconciler).
-  verbs: ["get", "list", "watch", "create"]
-- apiGroups: ["station.rlark.io"]
-  resources: ["stationrebinds/status"]
-  verbs: ["get", "patch"]
-- apiGroups: ["station.rlark.io"]
-  resources: ["stationauditevents"]
-  verbs: ["get", "create"]
 - apiGroups: ["station.rlark.io"]
   resources: ["sitenetworks", "networkenrollments", "nodeadmissions", "nodeclasses"]
   verbs: ["get", "list", "watch"]
+# A node's record passes to the Node a new admission let in under its name.
+- apiGroups: ["station.rlark.io"]
+  resources: ["networkenrollments"]
+  verbs: ["patch"]
 # The nodes of a NodeClass follow what the class declares now; an admission
 # says what RLark put right of the machine's earlier node by itself.
 - apiGroups: ["station.rlark.io"]

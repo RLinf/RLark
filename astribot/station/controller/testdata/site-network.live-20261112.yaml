@@ -1,8 +1,4 @@
-# The site of 2026-11-12 16:10 as a declaration: six nodes, three sites. Applied to
-# the management workspace, it makes station-controller compute for every node
-# a configuration that contains everything its hand-written
-# station-wireguard-config entry contains (network/compute_test.go,
-# TestComputeCoversLiveSite, checks this against the six entries).
+# The site of 2026-11-12 16:10 as a declaration: six nodes, three sites.
 #
 # The two cloud nodes cannot reach Station API until their tunnel is up. Until
 # they have enrolled once, or after one is reinstalled, add publicKey to their

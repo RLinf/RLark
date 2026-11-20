@@ -3,6 +3,7 @@ package stationidentity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -26,7 +27,7 @@ func (e *testEnroller) Enroll(_ context.Context, _ Evidence, request NetworkEnro
 	return e.answer, e.err
 }
 
-func TestHTTPEnrollmentRequiresVerifiedBoundIdentity(t *testing.T) {
+func TestHTTPEnrollmentRequiresVerifiedIdentityAndTheNodesOwnRecord(t *testing.T) {
 	reader := &fakeReader{evidence: validEvidence()}
 	enroller := &testEnroller{answer: NetworkEnrollmentAnswer{State: "enrolled", Address: "10.254.240.6", Config: json.RawMessage(`{"interface":"st-wg0"}`), ConfigHash: "h"}}
 	api := &API{Registry: testRegistry{readers: map[string]IdentityReader{"c": reader}}, Enrollments: enroller}
@@ -46,25 +47,21 @@ func TestHTTPEnrollmentRequiresVerifiedBoundIdentity(t *testing.T) {
 
 	for name, test := range map[string]struct {
 		body   string
-		mutate func(*Evidence)
 		status int
 	}{
-		"other cluster":  {`{"cluster_id":"other","public_key":"` + testPublicKey + `"}`, nil, http.StatusUnauthorized},
-		"not a key":      {`{"cluster_id":"c","public_key":"c2hvcnQ="}`, nil, http.StatusBadRequest},
-		"not an address": {`{"cluster_id":"c","public_key":"` + testPublicKey + `","addresses":["example.com"]}`, nil, http.StatusBadRequest},
-		"unknown field":  {`{"cluster_id":"c","public_key":"` + testPublicKey + `","role":"Hub"}`, nil, http.StatusBadRequest},
-		"station unbound": {body, func(e *Evidence) {
-			e.StationUID, e.RegisteredStationUID, e.Generation, e.RegisteredGeneration = "", "", 0, 0
-		}, http.StatusConflict},
+		"other cluster":  {`{"cluster_id":"other","public_key":"` + testPublicKey + `"}`, http.StatusUnauthorized},
+		"not a key":      {`{"cluster_id":"c","public_key":"c2hvcnQ="}`, http.StatusBadRequest},
+		"not an address": {`{"cluster_id":"c","public_key":"` + testPublicKey + `","addresses":["example.com"]}`, http.StatusBadRequest},
+		"unknown field":  {`{"cluster_id":"c","public_key":"` + testPublicKey + `","role":"Hub"}`, http.StatusBadRequest},
 	} {
-		reader.evidence = validEvidence()
-		if test.mutate != nil {
-			test.mutate(&reader.evidence)
-		}
 		before := len(enroller.requests)
 		if w := apiRequest(api, http.MethodPost, "/v1/network/enrollments", test.body, "token"); w.Code != test.status || len(enroller.requests) != before {
 			t.Errorf("%s: status %d, stored %d new requests", name, w.Code, len(enroller.requests)-before)
 		}
+	}
+	enroller.err = ErrNodeNotRecorded
+	if w := apiRequest(api, http.MethodPost, "/v1/network/enrollments", body, "token"); w.Code != http.StatusConflict {
+		t.Fatalf("a record that is not the Node's: status %d", w.Code)
 	}
 }
 
@@ -75,6 +72,18 @@ func TestKubernetesNetworkEnrollerStoresRequestAndReturnsItsAnswer(t *testing.T)
 	request := NetworkEnrollmentRequest{PublicKey: testPublicKey, Addresses: []string{"10.11.13.192"}, ObservedSource: "10.11.13.192"}
 	resource := client.Resource(networkEnrollmentGVR).Namespace("agent-c")
 
+	// The node's first report makes its record; until then there is nothing to enroll.
+	if _, err := enroller.Enroll(context.Background(), evidence, request); !errors.Is(err, ErrNodeNotRecorded) {
+		t.Fatalf("no record yet: %v", err)
+	}
+	record := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment",
+		"metadata": map[string]interface{}{"name": "node", "namespace": "agent-c", "generation": int64(1)},
+		"spec":     map[string]interface{}{"clusterID": "c", "nodeUID": "n", "systemUUID": "system-a"},
+	}}
+	if _, err := resource.Create(context.Background(), record, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	answer, err := enroller.Enroll(context.Background(), evidence, request)
 	if err != nil || answer.State != "pending" {
 		t.Fatalf("first request: %+v, %v", answer, err)
@@ -83,11 +92,8 @@ func TestKubernetesNetworkEnrollerStoresRequestAndReturnsItsAnswer(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key, _, _ := unstructured.NestedString(stored.Object, "spec", "publicKey"); key != testPublicKey || stored.GetAnnotations()[observationClusterIDKey] != "c" {
-		t.Fatalf("stored %v", stored.Object)
-	}
-	if uid, _, _ := unstructured.NestedString(stored.Object, "spec", "stationUID"); uid != "s" {
-		t.Fatalf("the enrollment is not tied to the verified Station: %v", stored.Object["spec"])
+	if spec := stored.Object["spec"].(map[string]interface{}); spec["publicKey"] != testPublicKey || spec["nodeUID"] != "n" || spec["systemUUID"] != "system-a" {
+		t.Fatalf("the request is written into the record, whose identity stays: %v", spec)
 	}
 
 	// station-controller answers this generation.
@@ -115,6 +121,25 @@ func TestKubernetesNetworkEnrollerStoresRequestAndReturnsItsAnswer(t *testing.T)
 	}
 	if answer, err = enroller.Enroll(context.Background(), evidence, request); err != nil || answer.State != "pending" {
 		t.Fatalf("status for the previous key must not be served: %+v, %v", answer, err)
+	}
+
+	// Another Node of the name, or the node once it is removed, changes nothing.
+	other := validEvidence()
+	other.NodeUID = "reinstalled"
+	if _, err := enroller.Enroll(context.Background(), other, NetworkEnrollmentRequest{PublicKey: testPublicKey}); !errors.Is(err, ErrNodeNotRecorded) {
+		t.Fatalf("another Node of the name: %v", err)
+	}
+	stored, _ = resource.Get(context.Background(), "node", metav1.GetOptions{})
+	_ = unstructured.SetNestedField(stored.Object, true, "spec", "retired")
+	if _, err := resource.Update(context.Background(), stored, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enroller.Enroll(context.Background(), evidence, NetworkEnrollmentRequest{PublicKey: testPublicKey}); !errors.Is(err, ErrNodeNotRecorded) {
+		t.Fatalf("a removed node: %v", err)
+	}
+	stored, _ = resource.Get(context.Background(), "node", metav1.GetOptions{})
+	if key, _, _ := unstructured.NestedString(stored.Object, "spec", "publicKey"); key != request.PublicKey {
+		t.Fatalf("a refused request changed the record: %v", stored.Object["spec"])
 	}
 
 	// Another cluster cannot take over the object.

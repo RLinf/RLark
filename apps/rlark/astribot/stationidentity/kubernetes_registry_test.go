@@ -19,8 +19,8 @@ import (
 
 func registryDynamic(objects ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		rlarkClusterGVR: "ClusterList",
-		stationListGVR:  "StationList",
+		rlarkClusterGVR:      "ClusterList",
+		networkEnrollmentGVR: "NetworkEnrollmentList",
 	}, objects...)
 }
 
@@ -29,18 +29,6 @@ func makeCluster(name, namespace string, delisted bool) *unstructured.Unstructur
 		"apiVersion": "rlinf.io/v1alpha1", "kind": "Cluster",
 		"metadata": map[string]interface{}{"name": name},
 		"spec":     map[string]interface{}{"agentNamespace": namespace, "delisted": delisted},
-	}}
-}
-
-func makeStation(name, namespace, nodeName, nodeUID, stationUID string, version int64, retired bool, phase string) *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "station.rlark.io/v1alpha1", "kind": "Station",
-		"metadata": map[string]interface{}{"name": name, "namespace": namespace, "uid": stationUID},
-		"spec": map[string]interface{}{
-			"retired": retired,
-			"binding": map[string]interface{}{"nodeName": nodeName, "nodeUID": nodeUID, "version": version},
-		},
-		"status": map[string]interface{}{"phase": phase},
 	}}
 }
 
@@ -77,8 +65,8 @@ func TestKubernetesClusterRegistryLoadsOnlyOwnedCurrentRegistration(t *testing.T
 		if registered.Registration.Namespace != "station-system" || registered.Registration.ServiceAccount != "station-agent" || registered.Registration.ServiceAccountUID != "service-account-uid" || registered.Registration.Audience != "station.rlark.io" {
 			t.Fatalf("unexpected registration: %#v", registered.Registration)
 		}
-		if registered.Bindings == nil || registered.Client == nil {
-			t.Fatal("registered reader is missing member client or binding resolver")
+		if registered.Client == nil {
+			t.Fatal("registered reader is missing member client")
 		}
 	}
 	if factoryCalls != 1 {
@@ -137,57 +125,6 @@ func TestKubernetesClusterRegistryRefreshesClientAfterSecretRotation(t *testing.
 	}
 	if factoryCalls != 2 {
 		t.Fatalf("member client factory calls = %d, want 2", factoryCalls)
-	}
-}
-
-func TestKubernetesStationBindingResolverRequiresUniqueCurrentBinding(t *testing.T) {
-	cluster := makeCluster("cluster-a", "agent-a", false)
-	valid := makeStation("station-a", "agent-a", "node-a", "node-uid-a", "station-uid-a", 2, false, "Bound")
-	resolver := KubernetesStationBindingResolver{Management: registryDynamic(cluster, valid)}
-	binding, err := resolver.Resolve(context.Background(), "cluster-a", "node-a", "node-uid-a")
-	if err != nil || binding.StationUID != "station-uid-a" || binding.Generation != 2 || binding.Inactive {
-		t.Fatalf("binding=%#v err=%v", binding, err)
-	}
-	for _, tc := range []struct {
-		name     string
-		stations []*unstructured.Unstructured
-		inactive bool
-		valid    bool
-	}{
-		{name: "retired", stations: []*unstructured.Unstructured{makeStation("station-a", "agent-a", "node-a", "node-uid-a", "station-uid-a", 2, true, "Retired")}, inactive: true},
-		{name: "a removed node's retired Station leaves the name to the machine that joined after it", stations: []*unstructured.Unstructured{makeStation("station-old", "agent-a", "node-a", "old-node-uid", "station-old-uid", 1, true, "Retired"), makeStation("station-new", "agent-a", "node-a", "node-uid-a", "station-new-uid", 1, false, "Bound")}, valid: true},
-		{name: "conflict with current UID remains observable", stations: []*unstructured.Unstructured{makeStation("station-a", "agent-a", "node-a", "node-uid-a", "station-uid-a", 2, false, "Conflict")}, valid: true},
-		{name: "ambiguous", stations: []*unstructured.Unstructured{valid, makeStation("station-b", "agent-a", "node-a", "node-uid-a", "station-uid-b", 3, false, "Bound")}},
-		{name: "same name changed UID", stations: []*unstructured.Unstructured{makeStation("station-a", "agent-a", "node-a", "new-node-uid", "station-uid-a", 2, false, "Bound")}},
-		{name: "same name replacement cannot bypass old binding", stations: []*unstructured.Unstructured{makeStation("station-old", "agent-a", "node-a", "old-node-uid", "station-old-uid", 1, false, "Conflict"), makeStation("station-new", "agent-a", "node-a", "node-uid-a", "station-new-uid", 1, false, "Bound")}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			objects := []runtime.Object{cluster}
-			for _, station := range tc.stations {
-				objects = append(objects, station)
-			}
-			r := KubernetesStationBindingResolver{Management: registryDynamic(objects...)}
-			got, err := r.Resolve(context.Background(), "cluster-a", "node-a", "node-uid-a")
-			if tc.inactive {
-				if err != nil || !got.Inactive {
-					t.Fatalf("inactive binding=%#v err=%v", got, err)
-				}
-				return
-			}
-			if tc.valid {
-				if err != nil || got.Inactive {
-					t.Fatalf("current conflicting binding is not observable: binding=%#v err=%v", got, err)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("accepted stale or ambiguous binding: %#v", got)
-			}
-		})
-	}
-	unbound := KubernetesStationBindingResolver{Management: registryDynamic(cluster)}
-	if _, err := unbound.Resolve(context.Background(), "cluster-a", "node-a", "node-uid-a"); !errors.Is(err, ErrStationBindingNotFound) {
-		t.Fatalf("unbound node error=%v", err)
 	}
 }
 

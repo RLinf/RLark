@@ -13,7 +13,7 @@ import (
 )
 
 // sources are the places a node's configuration can come from, in order of
-// preference. Only static is required; the other two belong to enrollment.
+// preference. A pod's gateway has no static file.
 type sources struct {
 	// computed is written by the station-agent container from Station API's
 	// answer to this node's enrollment.
@@ -22,9 +22,8 @@ type sources struct {
 	// reconciled, kept beside the private key so that a restart with Station
 	// API unreachable brings the same tunnel back.
 	lastApplied string
-	// static is the administrator's file. It bootstraps a node that cannot
-	// reach Station API without the tunnel, and it is what a node falls back
-	// to before its first enrollment.
+	// static is the installer's file on a machine whose service this is. It
+	// bootstraps a node that cannot reach Station API without the tunnel.
 	static string
 }
 

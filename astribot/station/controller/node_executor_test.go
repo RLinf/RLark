@@ -10,6 +10,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -96,7 +97,11 @@ func TestNodeLifecycleExecutorDeleteWaitsAndRejectsReplacement(t *testing.T) {
 	listed.SetGroupVersionKind(rlarkNodeGVK)
 	listed.SetNamespace(testNamespace)
 	listed.SetName("worker")
-	management := ctrlfake.NewClientBuilder().WithObjects(listed).Build()
+	scheme := runtime.NewScheme()
+	if err := stationv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	management := ctrlfake.NewClientBuilder().WithScheme(scheme).WithObjects(listed).Build()
 	executor := &NodeLifecycleExecutor{Members: member, Management: management}
 	op := &stationv1alpha1.NodeOperation{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}, Spec: stationv1alpha1.NodeOperationSpec{Action: "Remove", ClusterID: "cluster", NodeName: "worker", NodeUID: "uid"}}
 	if done, _, err := executor.Execute(ctx, op, "DeleteNode"); err != nil || done {

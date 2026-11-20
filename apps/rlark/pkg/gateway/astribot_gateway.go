@@ -121,18 +121,12 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 		station.GET("/:name", g.handleGetStation)
 		station.DELETE("/:name", g.handleDeleteStation)
 	}
-	stationRebinds := adminAPI.Group("/station/rebinds")
-	{
-		stationRebinds.POST("", g.handleCreateStationRebind)
-		stationRebinds.GET("/:name", g.handleGetStationRebind)
-	}
 	stationNodeOperations := adminAPI.Group("/station/node-operations")
 	{
 		stationNodeOperations.POST("", g.handleCreateNodeOperation)
 		stationNodeOperations.GET("", g.handleListNodeOperations)
 		stationNodeOperations.GET("/:name", g.handleGetNodeOperation)
 	}
-	adminAPI.GET("/station/observations", g.handleListStationObservations)
 	nodeAdmissions := adminAPI.Group("/station/node-admissions")
 	{
 		nodeAdmissions.GET("", g.handleListNodeAdmissions)

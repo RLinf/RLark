@@ -5,7 +5,7 @@ import type { SiteNodeLink } from "./nodeNetwork.js";
 export interface SiteNode {
   cluster_id: string;
   node_name: string;
-  site_node_id: string;
+  node_uid: string;
   phase: string;
   online: boolean;
   tunnel: "verified" | "failed" | "unknown";

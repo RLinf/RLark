@@ -13,10 +13,9 @@ type Evidence struct {
 	ServiceAccountNamespace, ServiceAccountName, RegisteredNamespace, RegisteredServiceAccount string
 	TokenServiceAccountUID, RegisteredServiceAccountUID, PodServiceAccountName                 string
 	TokenPodName, PodName, PodNodeName, NodeName                                               string
-	TokenPodUID, PodUID, NodeUID, RegisteredNodeUID, StationUID, RegisteredStationUID          string
+	TokenPodUID, PodUID, NodeUID                                                               string
 	TokenAudiences, RequiredAudiences                                                          []string
-	TokenAuthenticated, PodDeleted, NodeDeleted, BindingInactive                               bool
-	Generation, RegisteredGeneration                                                           int64
+	TokenAuthenticated, PodDeleted, NodeDeleted                                                bool
 	// NodePressures are the pressure conditions that are True on the Node the
 	// identity was verified against. They are no part of the identity.
 	NodePressures []string
@@ -38,13 +37,8 @@ func Validate(e Evidence) error {
 	if e.TokenPodName == "" || e.TokenPodName != e.PodName || e.TokenPodUID == "" || e.TokenPodUID != e.PodUID || e.PodDeleted || e.NodeDeleted {
 		return errors.New("pod identity is not current")
 	}
-	if e.PodNodeName == "" || e.PodNodeName != e.NodeName || e.NodeUID == "" || e.NodeUID != e.RegisteredNodeUID || e.BindingInactive {
+	if e.PodNodeName == "" || e.PodNodeName != e.NodeName || e.NodeUID == "" {
 		return errors.New("node binding mismatch")
-	}
-	stationUnbound := e.StationUID == "" && e.RegisteredStationUID == "" && e.Generation == 0 && e.RegisteredGeneration == 0
-	stationBound := e.StationUID != "" && e.StationUID == e.RegisteredStationUID && e.Generation > 0 && e.Generation == e.RegisteredGeneration
-	if !stationUnbound && !stationBound {
-		return errors.New("station binding mismatch")
 	}
 	if len(e.RequiredAudiences) == 0 || !audienceContainsAll(e.TokenAudiences, e.RequiredAudiences) {
 		return errors.New("token audience is not authorized")

@@ -17,8 +17,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-var machineGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "machines"}
-var siteNetworkGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "sitenetworks"}
+var machineGVR = schema.GroupVersionResource{Group: stationGroup, Version: stationVersion, Resource: "machines"}
+var siteNetworkGVR = schema.GroupVersionResource{Group: stationGroup, Version: stationVersion, Resource: "sitenetworks"}
 
 // discoveryRelayPort is DiscoveryRelayPort of astribot/station/network:
 // where a hub relays connections to the hosts it found.
@@ -151,7 +151,7 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		}
 		if apierrors.IsNotFound(err) {
 			machine, err = machines.Create(ctx, &unstructured.Unstructured{Object: map[string]interface{}{
-				"apiVersion": stationObservationGroup + "/" + stationObservationVersion, "kind": "Machine",
+				"apiVersion": stationGroup + "/" + stationVersion, "kind": "Machine",
 				"metadata": map[string]interface{}{"name": name, "namespace": "station-system"},
 				"spec":     map[string]interface{}{"site": site, "nodeClass": class, "source": "Discovery"},
 			}}, metav1.CreateOptions{})

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -15,6 +16,25 @@ var (
 	clusterListGVK = schema.GroupVersionKind{Group: "rlinf.io", Version: "v1alpha1", Kind: "ClusterList"}
 	rlarkNodeGVK   = schema.GroupVersionKind{Group: "rlinf.io", Version: "v1alpha1", Kind: "Node"}
 )
+
+// ErrInvalidRegistration indicates that a namespace is not mapped to the supplied cluster.
+var ErrInvalidRegistration = errors.New("invalid cluster registration")
+
+// ClusterRegistration is the trusted mapping from the agent namespace to a stable cluster ID.
+type ClusterRegistration struct {
+	ClusterID string
+	Namespace string
+}
+
+// ClusterResolver returns only trusted server-side registration data.
+type ClusterResolver interface {
+	ResolveNamespace(context.Context, string) (ClusterRegistration, error)
+}
+
+// NodeReadiness reads the RLark Node projection for the registered cluster.
+type NodeReadiness interface {
+	Ready(context.Context, string, string, string) (bool, error)
+}
 
 // ManagementClusterResolver maps exactly one Cluster.spec.agentNamespace to its
 // immutable Cluster object name. Duplicate claims fail closed.
@@ -45,31 +65,6 @@ func (r ManagementClusterResolver) ResolveNamespace(ctx context.Context, namespa
 		return ClusterRegistration{}, ErrInvalidRegistration
 	}
 	return registration, nil
-}
-
-// ClusterIDs lists the registered member-cluster identities after verifying
-// each has a unique, non-empty agent namespace.
-func (r ManagementClusterResolver) ClusterIDs(ctx context.Context) ([]string, error) {
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(clusterListGVK)
-	if err := r.Reader.List(ctx, list); err != nil {
-		return nil, fmt.Errorf("list RLark Clusters: %w", err)
-	}
-	ids := make([]string, 0, len(list.Items))
-	namespaces := make(map[string]string, len(list.Items))
-	for i := range list.Items {
-		item := &list.Items[i]
-		namespace, found, err := unstructured.NestedString(item.Object, "spec", "agentNamespace")
-		if err != nil || !found || namespace == "" {
-			return nil, fmt.Errorf("Cluster %q has invalid agentNamespace", item.GetName())
-		}
-		if prior := namespaces[namespace]; prior != "" {
-			return nil, fmt.Errorf("Clusters %q and %q share agent namespace %q", prior, item.GetName(), namespace)
-		}
-		namespaces[namespace] = item.GetName()
-		ids = append(ids, item.GetName())
-	}
-	return ids, nil
 }
 
 // ManagementNodeReadiness reads a namespaced RLark Node without trusting labels

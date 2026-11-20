@@ -63,28 +63,3 @@ subjects:
 - kind: ServiceAccount
   name: station-node-operator
   namespace: station-system
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: station-node-wireguard-config
-  namespace: station-system
-rules:
-- apiGroups: [""]
-  resources: ["configmaps"]
-  resourceNames: ["station-wireguard-config"]
-  verbs: ["get", "update"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: station-node-wireguard-config
-  namespace: station-system
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: station-node-wireguard-config
-subjects:
-- kind: ServiceAccount
-  name: station-node-operator
-  namespace: station-system

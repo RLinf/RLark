@@ -68,13 +68,9 @@ func main() {
 	reader, writer := manager.GetAPIReader(), manager.GetClient()
 	network := types.NamespacedName{Namespace: networkNamespace, Name: networkName}
 	registration := controller.ManagementClusterResolver{Reader: reader}
-	identityOps := controller.NewSerializedIdentityOperations()
 	readiness := controller.ManagementNodeReadiness{Reader: reader}
 	targetReader := controller.NewKubeconfigNodeReader(controller.SecretKubeconfigSource{Reader: reader, Namespace: credentialsNamespace})
-	audit := controller.NewKubernetesAuditSink(writer, reader)
-	must(controller.NewStationReconciler(writer, reader, registration, identityOps, readiness, controller.DefaultOfflineAfter, time.Now).SetupWithManager(manager), "register Station reconciler")
-	must(controller.NewRebindReconciler(writer, reader, registration, identityOps, targetReader, audit, time.Now).SetupWithManager(manager), "register Rebind reconciler")
-	must((&controller.StationRemovalReconciler{Client: writer, Reader: reader, Registrations: registration, IdentityOps: identityOps, Targets: targetReader}).SetupWithManager(manager), "register Station removal reconciler")
+	must(controller.NewNodeReconciler(writer, reader, readiness, controller.DefaultOfflineAfter, time.Now).SetupWithManager(manager), "register node reconciler")
 	// The Kubernetes version of each member and of its nodes' kubelets, on its RLark Nodes (the console's 集群管理).
 	must(manager.Add(&controller.KubernetesVersionReporter{Reader: reader, Writer: writer, Members: targetReader, Every: time.Minute}), "register Kubernetes version reporter")
 	memberCredentialNamespaces := []string{credentialsNamespace, releaseCredentialsNamespace}
@@ -82,10 +78,7 @@ func main() {
 		memberCredentialNamespaces = append(memberCredentialNamespaces, nodeOperationCredentialsNamespace)
 		members := controller.NewKubeconfigNodeReader(controller.SecretKubeconfigSource{Reader: reader, Namespace: nodeOperationCredentialsNamespace})
 		access := controller.NodeClassAccess{Reader: reader, Namespace: secretsNamespace}
-		peerCleaner := controller.NodePeerCleaners{
-			controller.ConfigMapNodeWireGuardPeerCleaner{Members: members, Clusters: registration, Observations: controller.ManagementNodeWireGuardEvidence{Reader: reader}},
-			controller.StationTunnelRelease{Reader: reader, Writer: writer, Network: network},
-		}
+		peerCleaner := controller.StationTunnelRelease{Reader: reader, Writer: writer, Members: members, Network: network}
 		executor := &controller.NodeLifecycleExecutor{
 			Members:         members,
 			ResetDriver:     controller.InClusterNodeReset{Members: members},

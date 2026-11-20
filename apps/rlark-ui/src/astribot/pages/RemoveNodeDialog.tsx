@@ -81,8 +81,8 @@ export function RemoveNodeDialog({ zh, node, onClose, onRemoved }: { zh: boolean
           ? `场地的 Hub 从 ${target.unseen} 起就没再扫到这台机器的入口：删除后它的隧道也会拆掉，RLark 再也到不了它，只能到现场重新入网。`
           : `No hub of its site has seen this machine's entry since ${target.unseen}: once removed, its tunnel goes too and RLark cannot reach it again; it can only join again from the machine itself.`}</div>}
         {target && !operation && !target.nodeUID && <p className="muted">{zh
-          ? "RLark 没有核实过的场站对应它（入网没走完，或场站还绑在这个名字以前的节点上）：按名字删除。集群里有这个节点就删它；没有就只清掉 RLark 里关于这个名字的记录（入网记录、场站、管理面节点），之后可以重新入网。"
-          : "No Station RLark verified stands for it (its join never finished, or its Station is bound to an earlier node of the name): it is removed by its name. The Node its cluster has is removed; if there is none, only what RLark keeps of the name is cleared (admission, Station, management Node), and it can join again."}</p>}
+          ? "RLark 没有核实过的场站节点记录对应它（入网没走完，或记录还属于这个名字以前的节点）：按名字删除。集群里有这个节点就删它；没有就只清掉 RLark 里关于这个名字的记录（入网记录、场站节点记录、管理面节点），之后可以重新入网。"
+          : "No site node record RLark verified stands for it (its join never finished, or the record is of an earlier node of the name): it is removed by its name. The Node its cluster has is removed; if there is none, only what RLark keeps of the name is cleared (admission, site node record, management Node), and it can join again."}</p>}
         {operation && <section>
           <strong>{phase === "Succeeded" ? (zh ? "已删除" : "Removed") : stopped ? (zh ? "已停下" : "Stopped") : (zh ? "删除中…" : "Removing…")}</strong>
           <ol className="remove-node-steps">

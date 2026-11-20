@@ -80,7 +80,7 @@ type fakeSite struct {
 
 var listKinds = map[schema.GroupVersionResource]string{
 	clusterGVR: "ClusterList", nodeGVR: "NodeList", addonGVR: "AddonList", siteNetworkGVR: "SiteNetworkList",
-	enrollmentGVR: "NetworkEnrollmentList", observationGVR: "StationObservationList", leaseGVR: "LeaseList",
+	enrollmentGVR: "NetworkEnrollmentList", leaseGVR: "LeaseList",
 	{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}: "CustomResourceDefinitionList",
 }
 

@@ -36,8 +36,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-var nodeAdmissionGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "nodeadmissions"}
-var nodeClassGVR = schema.GroupVersionResource{Group: stationObservationGroup, Version: stationObservationVersion, Resource: "nodeclasses"}
+var nodeAdmissionGVR = schema.GroupVersionResource{Group: stationGroup, Version: stationVersion, Resource: "nodeadmissions"}
+var nodeClassGVR = schema.GroupVersionResource{Group: stationGroup, Version: stationVersion, Resource: "nodeclasses"}
 var addonGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "addons"}
 var rlarkNodeGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "nodes"}
 

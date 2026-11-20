@@ -9,19 +9,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 )
 
-func TestHTTPObservationBootstrapsStationAndThenBindsObjectUID(t *testing.T) {
-	management := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		rlarkClusterGVR:       "ClusterList",
-		stationListGVR:        "StationList",
-		stationObservationGVR: "StationObservationList",
-	}, makeCluster("cluster-a", "agent-a", false))
+// A node's first report makes its record, a report of another Node of the
+// name is stored without taking the record, and neither Node enrolls until
+// the record is its own.
+func TestHTTPObservationMakesTheNodesRecord(t *testing.T) {
+	management := registryDynamic(makeCluster("cluster-a", "agent-a", false))
 	member := k8sfake.NewSimpleClientset(
 		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "station-agent", Namespace: "station-system", UID: "service-account-uid"}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "agent-pod", Namespace: "station-system", UID: "pod-uid"}, Spec: corev1.PodSpec{ServiceAccountName: "station-agent", NodeName: "node-a"}},
@@ -48,38 +45,49 @@ func TestHTTPObservationBootstrapsStationAndThenBindsObjectUID(t *testing.T) {
 	registry := NewKubernetesClusterRegistry(management, k8sfake.NewSimpleClientset(credentials), "station-member-credentials", func([]byte) (kubernetes.Interface, error) {
 		return member, nil
 	})
+	namespaces := KubernetesClusterNamespaceResolver{Client: management}
 	api := &API{
-		Registry: registry,
-		Observations: &KubernetesObservationSink{
-			Client: management, Namespaces: KubernetesClusterNamespaceResolver{Client: management},
-		},
+		Registry:     registry,
+		Observations: &KubernetesObservationSink{Client: management, Namespaces: namespaces},
+		Enrollments:  &KubernetesNetworkEnroller{Client: management, Namespaces: namespaces},
 	}
-	observationBody := `{"cluster_id":"cluster-a","observation":{` + testAgent + `}}`
-	if response := apiRequest(api, http.MethodPost, "/v1/observations", observationBody, "pod-token"); response.Code != http.StatusAccepted {
-		t.Fatalf("bootstrap report status=%d body=%s", response.Code, response.Body.String())
+	enrollmentBody := `{"cluster_id":"cluster-a","public_key":"` + testPublicKey + `"}`
+	if response := apiRequest(api, http.MethodPost, "/v1/network/enrollments", enrollmentBody, "pod-token"); response.Code != http.StatusConflict {
+		t.Fatalf("enrollment before the first report: status=%d body=%s", response.Code, response.Body.String())
 	}
-	bootstrap, err := management.Resource(stationObservationGVR).Namespace("agent-a").Get(context.Background(), "node-a", metav1.GetOptions{})
-	if err != nil {
+	observationBody := `{"cluster_id":"cluster-a","observation":{"systemUUID":"system-a",` + testAgent + `}}`
+	record := func() map[string]interface{} {
+		t.Helper()
+		if response := apiRequest(api, http.MethodPost, "/v1/observations", observationBody, "pod-token"); response.Code != http.StatusAccepted {
+			t.Fatalf("report status=%d body=%s", response.Code, response.Body.String())
+		}
+		stored, err := management.Resource(networkEnrollmentGVR).Namespace("agent-a").Get(context.Background(), "node-a", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stored.Object
+	}
+	first := record()
+	spec := first["spec"].(map[string]interface{})
+	if spec["nodeUID"] != "node-uid" || spec["systemUUID"] != "system-a" || spec["clusterID"] != "cluster-a" ||
+		first["status"].(map[string]interface{})["observation"].(map[string]interface{})["nodeUID"] != "node-uid" {
+		t.Fatalf("the record of a first report: %v", first)
+	}
+	if response := apiRequest(api, http.MethodPost, "/v1/network/enrollments", enrollmentBody, "pod-token"); response.Code != http.StatusOK {
+		t.Fatalf("enrollment of the recorded Node: status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	// The machine is reinstalled: the name's Node has another UID.
+	if err := member.Tracker().Update(corev1.SchemeGroupVersion.WithResource("nodes"), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: "node-uid-again"}}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got := bootstrap.GetAnnotations()[observationNodeUIDKey]; got != "node-uid" {
-		t.Fatalf("bootstrap Node UID annotation=%q", got)
+	again := record()
+	spec = again["spec"].(map[string]interface{})
+	if spec["nodeUID"] != "node-uid" || spec["publicKey"] != testPublicKey ||
+		again["status"].(map[string]interface{})["observation"].(map[string]interface{})["nodeUID"] != "node-uid-again" {
+		t.Fatalf("a report of another Node of the name: %v", again)
 	}
-	if got := bootstrap.GetAnnotations()[observationStationUIDKey]; got != "" {
-		t.Fatalf("bootstrap unexpectedly claimed Station UID %q", got)
-	}
-	station := makeStation("station-a", "agent-a", "node-a", "node-uid", "station-object-uid", 1, false, "Bound")
-	if _, err := management.Resource(stationListGVR).Namespace("agent-a").Create(context.Background(), station, metav1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	if response := apiRequest(api, http.MethodPost, "/v1/observations", observationBody, "pod-token"); response.Code != http.StatusAccepted {
-		t.Fatalf("bound report status=%d body=%s", response.Code, response.Body.String())
-	}
-	bound, err := management.Resource(stationObservationGVR).Namespace("agent-a").Get(context.Background(), "node-a", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := bound.GetAnnotations()[observationStationUIDKey]; got != "station-object-uid" {
-		t.Fatalf("bound Station UID annotation=%q", got)
+	if response := apiRequest(api, http.MethodPost, "/v1/network/enrollments", enrollmentBody, "pod-token"); response.Code != http.StatusConflict {
+		t.Fatalf("enrollment of a Node the record is not of: status=%d body=%s", response.Code, response.Body.String())
 	}
 }

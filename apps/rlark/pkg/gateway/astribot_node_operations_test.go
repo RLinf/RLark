@@ -122,7 +122,7 @@ func TestARemovalLogsInNowhere(t *testing.T) {
 	if spec["ssh"] != nil || spec["nodeUID"] != "node-uid" || spec["requestedBy"] != "admin" {
 		t.Fatalf("spec %#v", spec)
 	}
-	// A name RLark never verified a Node of (no Station) is removed by its name.
+	// A name RLark never verified a Node of (no site node record) is removed by its name.
 	byName := request
 	byName.RequestID, byName.NodeName, byName.NodeUID = "remove-cailiang-desktop", "cailiang-desktop", ""
 	if got := nodeOperationCall(gateway, byName); got.Code != http.StatusAccepted {

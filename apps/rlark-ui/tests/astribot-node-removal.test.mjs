@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { podsToStop, removalStagesDone, verifiedNodeUID } from "../dist/test/astribot/lib/nodeRemoval.js";
+import { podsToStop, removalStagesDone, stationDeletable, stationsOfPhase, verifiedNodeUID } from "../dist/test/astribot/lib/nodeRemoval.js";
 
-test("the node removed is the one RLark verified: its unretired Station's, else the name's", () => {
-  const station = (namespace, nodeName, nodeUID, retired, phase) => ({ metadata: { name: nodeUID, namespace }, spec: { retired, binding: { nodeName, nodeUID } }, status: { phase } });
-  const stations = [station("office", "nb260706069", "old", true), station("office", "nb260706069", "a36766cc", false, "Bound"), station("robots", "nb260706069", "other", false, "Bound"),
-    station("office", "reset-by-hand", "gone", false, "Conflict")];
+const station = (namespace, name, nodeUID, retired, state) => ({ metadata: { name, namespace }, spec: { nodeUID, retired }, status: { node: { state } } });
+
+test("the node removed is the one RLark verified: its record's, else the name's", () => {
+  const stations = [station("office", "removed", "old", true, "Bound"), station("office", "nb260706069", "a36766cc", false, "Bound"), station("robots", "nb260706069", "other", false, "Bound"),
+    station("office", "reinstalled", "gone", false, "Conflict")];
   assert.equal(verifiedNodeUID(stations, "office", "nb260706069"), "a36766cc");
-  // No Station, or one bound to a Node of the name that is gone: removed by name.
+  // No record, a removed node's, or one another Node reports under: removed by name.
   assert.equal(verifiedNodeUID(stations, "office", "cailiang-desktop"), "");
-  assert.equal(verifiedNodeUID(stations, "office", "reset-by-hand"), "");
+  assert.equal(verifiedNodeUID(stations, "office", "removed"), "");
+  assert.equal(verifiedNodeUID(stations, "office", "reinstalled"), "");
 });
 
 test("the pods that stop are the running ones on this node of this cluster", () => {
@@ -24,15 +26,11 @@ test("a removal counts the stages up to the one its operation completed", () => 
   assert.equal(removalStagesDone("RemovePeer"), 4);
 });
 
-test("retired Stations are left out of the list unless asked for, and can be deleted", async () => {
-  const { stationRetired, stationsOfPhase, stationDeleteAsked, stationDeleteRefusal } = await import("../dist/test/astribot/lib/nodeRemoval.js");
-  const station = (name, phase, retired, annotations) => ({ metadata: { name, namespace: "office", annotations }, spec: { retired, binding: { nodeName: name, nodeUID: name } }, status: { phase } });
-  // Station-0002: retired, its status still the last one from before.
-  const items = [station("bound", "Bound", false), station("offline", "Offline", false), station("stale", "Offline", true), station("retired", "Retired", true, { "station.rlark.io/delete-refused": "its node is in the cluster" })];
-  assert.deepEqual(stationsOfPhase(items, "").map((item) => item.metadata.name), ["bound", "offline"]);
+test("removed nodes are left out of the list unless asked for, and a record no node stands on can be deleted", () => {
+  const items = [station("office", "bound", "a", false, "Bound"), station("office", "offline", "b", false, "Offline"), station("office", "removed", "c", true, "Offline"), station("office", "conflict", "d", false, "Conflict")];
+  assert.deepEqual(stationsOfPhase(items, "").map((item) => item.metadata.name), ["bound", "offline", "conflict"]);
   assert.deepEqual(stationsOfPhase(items, "Offline").map((item) => item.metadata.name), ["offline"]);
-  assert.deepEqual(stationsOfPhase(items, "Retired").map((item) => item.metadata.name), ["stale", "retired"]);
-  assert.equal(stationRetired(items[2]), true);
-  assert.equal(stationDeleteRefusal(items[3]), "its node is in the cluster");
-  assert.equal(stationDeleteAsked(station("asked", "Retired", true, { "station.rlark.io/delete-requested-by": "alice" })), true);
+  assert.deepEqual(stationsOfPhase(items, "Retired").map((item) => item.metadata.name), ["removed"]);
+  assert.deepEqual(items.map((item) => stationDeletable(item, true)), [false, false, true, true]);
+  assert.deepEqual(items.map((item) => stationDeletable(item, false)), [false, true, true, true]);
 });

@@ -118,8 +118,8 @@ func newJoinScene(t *testing.T, network *unstructured.Unstructured, rlark ...run
 	s := &joinScene{t: t, reach: map[string]bool{}, follow: "10:00:00 loading the installer\n10:00:02 admitted as box in cluster-a\n10:01:00 joined\n" + sshJoinExit + "0"}
 	s.bootstrap = &fakeStationBootstrap{}
 	station := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		siteNetworkGVR: "SiteNetworkList", nodeAdmissionGVR: "NodeAdmissionList", stationRecordGVR: "StationList", stationClusterGVR: "ClusterList",
-		networkEnrollmentGVR: "NetworkEnrollmentList", stationObservationGVR: "StationObservationList", nodeOperationGVR: "NodeOperationList", nodeClassGVR: "NodeClassList",
+		siteNetworkGVR: "SiteNetworkList", nodeAdmissionGVR: "NodeAdmissionList", stationClusterGVR: "ClusterList",
+		networkEnrollmentGVR: "NetworkEnrollmentList", nodeOperationGVR: "NodeOperationList", nodeClassGVR: "NodeClassList",
 	}, network, stationHandlerCluster("cluster-a", "agent-a"))
 	s.g = &Gateway{kubeClient: clientset.NewSimpleClientset(rlark...), rawClient: kubefake.NewSimpleClientset(provisionTestRecord()), astribotState: astribotState{stationClient: station, stationBootstrap: s.bootstrap}}
 	s.g.config.KubeClientConfig.Namespace = "default"
@@ -360,25 +360,23 @@ func tunnelScene(t *testing.T, step time.Duration) (*joinScene, func(peers ...ma
 	s := newJoinScene(t, joinNetwork(nil, []interface{}{map[string]interface{}{"clusterID": "cluster-a", "nodeName": "box", "config": boxDocument}}))
 	s.precheck = "bundle=" + sha256Hex(fakeInstaller) + "\n"
 	ctx := context.Background()
-	if _, err := s.g.stationClient.Resource(networkEnrollmentGVR).Namespace("ksyun").Create(ctx, &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment", "metadata": map[string]interface{}{"name": "10-0-2-57", "namespace": "ksyun"},
-		"spec": map[string]interface{}{"clusterID": "rlark-ksyun-gpu"}, "status": map[string]interface{}{"phase": "Enrolled", "publicKey": hubKey},
-	}}, metav1.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	observations := s.g.stationClient.Resource(stationObservationGVR).Namespace("ksyun")
+	enrollments := s.g.stationClient.Resource(networkEnrollmentGVR).Namespace("ksyun")
 	report := func(peers ...map[string]interface{}) {
 		listed := []interface{}{}
 		for _, peer := range peers {
 			listed = append(listed, peer)
 		}
-		observation := &unstructured.Unstructured{Object: map[string]interface{}{
-			"apiVersion": "station.rlark.io/v1alpha1", "kind": "StationObservation", "metadata": map[string]interface{}{"name": "10-0-2-57", "namespace": "ksyun"},
+		hub := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment", "metadata": map[string]interface{}{"name": "10-0-2-57", "namespace": "ksyun"},
+			"spec": map[string]interface{}{"clusterID": "rlark-ksyun-gpu"},
 			// Reported now, as far as the wait's clock goes.
-			"status": map[string]interface{}{"reportedAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), "wireguard": map[string]interface{}{"interface": "st-wg0", "peers": listed}},
+			"status": map[string]interface{}{"phase": "Enrolled", "publicKey": hubKey, "observation": map[string]interface{}{
+				"reportedAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), "wireguard": map[string]interface{}{"interface": "st-wg0", "peers": listed}}},
 		}}
-		if _, err := observations.Update(ctx, observation, metav1.UpdateOptions{}); apierrors.IsNotFound(err) {
-			_, _ = observations.Create(ctx, observation, metav1.CreateOptions{})
+		if _, err := enrollments.Update(ctx, hub, metav1.UpdateOptions{}); apierrors.IsNotFound(err) {
+			if _, err := enrollments.Create(ctx, hub, metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	report()

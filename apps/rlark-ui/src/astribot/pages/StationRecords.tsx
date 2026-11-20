@@ -133,8 +133,8 @@ export function AdmissionRecords({ admissions, clusters, loadError, zh, onJoin, 
   // A join that has not made a node starts over: the name is cleared (a removal by name, which clears what RLark
   // keeps of a name its cluster has no Node of) and the admission is gone or open for a new code.
   const restart = (admission: NodeAdmission) => act(admission, zh
-    ? `清掉 ${admission.node_name} 这次没走完的入网？集群里已有这个节点就按删除节点处理；没有就退役它的场站、删掉这条入网记录，放出公钥和隧道地址。之后重新发码或 SSH 入网。机器上的安装程序如果还在跑，先等它停下或在机器上停掉它。`
-    : `Clear the unfinished join of ${admission.node_name}? A Node of the name in its cluster is removed; otherwise its Station is retired and this admission deleted, freeing its key and tunnel address. Then give out a new code or join it by SSH. If the installer still runs on the machine, wait for it to stop or stop it there first.`, async () => {
+    ? `清掉 ${admission.node_name} 这次没走完的入网？集群里已有这个节点就按删除节点处理；没有就退役它的场站节点记录、删掉这条入网记录，放出公钥和隧道地址。之后重新发码或 SSH 入网。机器上的安装程序如果还在跑，先等它停下或在机器上停掉它。`
+    : `Clear the unfinished join of ${admission.node_name}? A Node of the name in its cluster is removed; otherwise its site node record is retired and this admission deleted, freeing its key and tunnel address. Then give out a new code or join it by SSH. If the installer still runs on the machine, wait for it to stop or stop it there first.`, async () => {
     let operation = await selfHealApi.removeNode(admission.cluster_id, admission.node_name, `restart-${admission.node_name}-${Date.now().toString(36)}`);
     while (!["Succeeded", "Blocked", "Failed"].includes(operation.status?.phase ?? "")) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000));

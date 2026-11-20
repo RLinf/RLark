@@ -18,7 +18,7 @@
 - 口令只在请求体和内存里，不写对象、不进日志。1–6 阶段（`precheck` 到 `station`）要口令，从这些阶段重试要再填；只有 `addons`、`accept` 不要。
 - 镜像和 Addon 取值只取发布记录 `rlark-system/rlark-release-current`，没有就拒绝。
 - 每个阶段都能重做：先看机器和对象已是什么样。`POST .../{name}/retry` 从停下的阶段接着做；Gateway 重启时在跑的记录标为 Failed，重试即可。
-- `POST .../{name}/clear` `{password?, user?, machine_gone?}`：撤销停下的新建（机器上 `control-plane undo`、停隧道），删没建完的 Cluster 和凭据，退役它的身份，从 SiteNetwork 去掉场站、名字和节点声明，删记录。返回每一步。同名再建在清掉之前回 409。
+- `POST .../{name}/clear` `{password?, user?, machine_gone?}`：撤销停下的新建（机器上 `control-plane undo`、停隧道），删没建完的 Cluster 和凭据，删掉它的场站节点记录和入网许可，从 SiteNetwork 去掉场站、名字和节点声明，删记录。返回每一步。同名再建在清掉之前回 409。
 - 不是 Gateway 建的集群（如 Station 所在的集群）用 `rlarkctl station register` 登记成员，`rlarkctl release credential` 给发布建凭据。
 
 ## 机器怎么入网
@@ -71,25 +71,25 @@
 
 `POST /api/v1/station/node-operations` `{action: Remove, cluster_id, node_name, node_uid?}`，控制台节点页的“删除”。不登录机器。阶段：
 
-`Preflight` → `PowerOff`（机器人先下电）→ `Drain`（节点 `rlark.io/in-use` 非空时拒绝，按 PDB 排空）→ `RemovePeer`（退役身份，全网去掉它的 WireGuard 对端，地址回池）→ `Reset`（kubelet 还在时，由放在它上面的 Pod 执行 `kubeadm reset`）→ `DeleteNode` → `VerifyRemoval`。
+`Preflight` → `PowerOff`（机器人先下电）→ `Drain`（节点 `rlark.io/in-use` 非空时拒绝，按 PDB 排空）→ `RemovePeer`（场站节点记录标 `retired`，全网去掉它的 WireGuard 对端，地址回池；去掉节点的 `station.rlark.io/network` 标签）→ `Reset`（kubelet 还在时，由放在它上面的 Pod 执行 `kubeadm reset`）→ `DeleteNode` → `VerifyRemoval`（确认管理面的节点没了之后删掉它的场站节点记录）。
 
-- 不带 `node_uid`：删这个名字下的东西。集群里有这个 Node 就取它的 UID；没有就只退役绑在这个名字上的身份、删没成节点的入网记录，集群不碰。
+- 不带 `node_uid`：删这个名字下的东西。集群里有这个 Node 就取它的 UID；没有就只把这个名字的场站节点记录标 `retired`、删没成节点的入网记录，集群不碰。
 - 不上报的节点不会被 reset；下次入网时安装器清掉旧安装。
-- 已退役的身份：`DELETE /api/v1/station/stations/{name}?cluster_id=`，只收已退役的。station-controller 在这个名字下已有别的未退役身份、或集群里没有这个名字的节点时才删，删之前写一条审计。序号不回收。
+- 删除记录：`DELETE /api/v1/station/stations/{name}?cluster_id=`（控制台场站节点页的“删除记录”），`name` 是节点名。记录已 `retired`、`status.node.state` 是 `Conflict`、或节点不在上报（`status.node.state` 不是 `Bound`）且 RLark 里已没有这个名字的节点时删掉，否则回 409；读到之后记录又变了也回 409，重看一次再删。之后再上报的节点按新机器重新登记。
 
 ## 重新入网
 
 | 情形 | RLark 做什么 |
 |---|---|
 | 一台机器兑换了一个码没成节点，又用另一个码入网 | 删掉第一条入网记录（同一把隧道公钥、从没 Joined），注解 `station.rlark.io/self-healed` 写明 |
-| 节点没了（重装、手工 reset），同名再入网，旧身份还绑着旧 Node UID | 同一台机器（systemUUID 相同）：自动建一条 `StationRebind`，地址不变；另一台机器：旧身份退役，新节点建新的。都写进 `self-healed` |
-| 没有入网记录撑腰的同名新节点 | 身份进 `Conflict`，入网被拒，消息里写怎么办；管理员在控制台重绑 |
-| 换密钥 | 删节点上的 `/var/lib/station/wg/private.key` 重启网关；同一身份登记新公钥，各对端约 40 s 内换掉 |
+| 节点没了（重装、手工 reset、删除），用入网码或 SSH 同名再入网，场站节点记录还是旧 Node UID 的或已 `retired` | 入网许可兑换得比记录最后一次上报晚：记录自动转给新的 Node（重启次数清零），写进 `self-healed` |
+| 没有新的入网许可的同名新节点（Node UID 变了） | 记录进 `Conflict`，入网被拒，消息里写怎么办；管理员在控制台删除这条记录，节点下一次上报按新机器重新登记 |
+| 换密钥 | 删节点上的 `/var/lib/station/wg/private.key` 重启网关；同一条记录登记新公钥，各对端约 40 s 内换掉 |
 | 只是离线 | 什么都不变，回来就能连 |
 
 ## 入网排障
 
-- 入网记录（控制台“入网记录”或 NodeAdmission）的 `status.reason` 写停在哪一步：没回来取令牌 / 发了令牌但没有节点上报 / 节点上报了但身份还绑旧节点 / 隧道登记没过。兑换 20 分钟后标为 `stuck`。Redeemed 的行有“清掉重来”（按名字删除）。
+- 入网记录（控制台“入网记录”或 NodeAdmission）的 `status.reason` 写停在哪一步：没回来取令牌 / 发了令牌但没有节点上报 / 节点上报了但场站节点记录还是旧节点的 / 隧道登记没过。兑换 20 分钟后标为 `stuck`。Redeemed 的行有“清掉重来”（按名字删除）。
 - 机器上：入网码那一行的输出就是安装日志，失败时最后一行是 `FAILED: <原因>`；SSH 入网看 `/var/log/rlark-join.log`；迁移看 `/var/lib/rlark/bootstrap/install.log`。
 - `no peer has answered through the tunnel`：`station-gateway --config /etc/rlark/station/bootstrap.json --status` 看握手；看对端的 UDP 51820 是否可达。
 - `cannot resolve cp.<集群>.rlark.internal`：SiteNetwork 的 `names` 里没有它。

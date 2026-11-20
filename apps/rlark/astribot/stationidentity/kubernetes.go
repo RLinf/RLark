@@ -20,51 +20,33 @@ type Registration struct {
 	ClusterID, Namespace, ServiceAccount, ServiceAccountUID, Audience string
 }
 
-type Binding struct {
-	NodeUID, StationUID string
-	Generation          int64
-	Inactive            bool
-}
-
-type BindingResolver interface {
-	Resolve(context.Context, string, string, string) (Binding, error)
-}
-
 type RegisteredCluster struct {
 	Registration Registration
 	Client       kubernetes.Interface
-	Bindings     BindingResolver
 }
 
 type registeredReader struct{ cluster RegisteredCluster }
 
 func (r registeredReader) Authenticate(ctx context.Context, token string) (Evidence, error) {
-	return AuthenticateWithBindings(ctx, r.cluster.Client, r.cluster.Registration, r.cluster.Bindings, token)
+	return Authenticate(ctx, r.cluster.Client, r.cluster.Registration, token)
 }
 
-// CurrentNodeBinding rechecks the member Node and its Station binding on each
-// query. A historical heartbeat is not proof that a Node still exists.
-func (r registeredReader) CurrentNodeBinding(ctx context.Context, nodeName string) (Binding, error) {
+// CurrentNodeUID rechecks the member Node on each query. A historical
+// heartbeat is not proof that a Node still exists.
+func (r registeredReader) CurrentNodeUID(ctx context.Context, nodeName string) (string, error) {
 	node, err := r.cluster.Client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
-		return Binding{}, fmt.Errorf("read current member Node: %w", err)
+		return "", fmt.Errorf("read current member Node: %w", err)
 	}
 	if node.DeletionTimestamp != nil || node.UID == "" {
-		return Binding{}, ErrIdentityDenied
+		return "", ErrIdentityDenied
 	}
-	binding, err := r.cluster.Bindings.Resolve(ctx, r.cluster.Registration.ClusterID, node.Name, string(node.UID))
-	if err != nil {
-		return Binding{}, err
-	}
-	if binding.Inactive || binding.NodeUID != string(node.UID) || binding.StationUID == "" || binding.Generation <= 0 {
-		return Binding{}, ErrIdentityDenied
-	}
-	return binding, nil
+	return string(node.UID), nil
 }
 
-// AuthenticateWithBindings resolves a Pod-bound token with a registered
-// cluster API and the node's binding with a fresh server-side resolver.
-func AuthenticateWithBindings(ctx context.Context, client kubernetes.Interface, reg Registration, bindings BindingResolver, token string) (Evidence, error) {
+// Authenticate resolves a Pod-bound token with a registered cluster API to
+// the Node the Pod runs on.
+func Authenticate(ctx context.Context, client kubernetes.Interface, reg Registration, token string) (Evidence, error) {
 	review, err := client.AuthenticationV1().TokenReviews().Create(ctx, &authv1.TokenReview{Spec: authv1.TokenReviewSpec{Token: token, Audiences: []string{reg.Audience}}}, metav1.CreateOptions{})
 	if err != nil {
 		return Evidence{}, fmt.Errorf("%w: TokenReview request failed: %w", ErrIdentityUnavailable, err)
@@ -101,17 +83,7 @@ func AuthenticateWithBindings(ctx context.Context, client kubernetes.Interface, 
 		}
 		return Evidence{}, fmt.Errorf("read node: %w", err)
 	}
-	binding, err := bindings.Resolve(ctx, reg.ClusterID, node.Name, string(node.UID))
-	if err != nil {
-		if errors.Is(err, ErrStationBindingNotFound) {
-			binding = Binding{NodeUID: string(node.UID)}
-		} else if errors.Is(err, ErrIdentityUnavailable) {
-			return Evidence{}, err
-		} else {
-			return Evidence{}, fmt.Errorf("resolve node binding: %w", err)
-		}
-	}
-	e := Evidence{ClusterID: reg.ClusterID, RegisteredClusterID: reg.ClusterID, ServiceAccountNamespace: reg.Namespace, RegisteredNamespace: reg.Namespace, ServiceAccountName: reg.ServiceAccount, RegisteredServiceAccount: reg.ServiceAccount, TokenServiceAccountUID: string(review.Status.User.UID), RegisteredServiceAccountUID: string(sa.UID), PodServiceAccountName: pod.Spec.ServiceAccountName, TokenPodName: name, PodName: pod.Name, TokenPodUID: uid, PodUID: string(pod.UID), PodNodeName: pod.Spec.NodeName, NodeName: node.Name, NodeUID: string(node.UID), RegisteredNodeUID: binding.NodeUID, StationUID: binding.StationUID, RegisteredStationUID: binding.StationUID, TokenAuthenticated: review.Status.Authenticated, TokenAudiences: review.Status.Audiences, RequiredAudiences: []string{reg.Audience}, PodDeleted: pod.DeletionTimestamp != nil || sa.DeletionTimestamp != nil, NodeDeleted: node.DeletionTimestamp != nil, BindingInactive: binding.Inactive, Generation: binding.Generation, RegisteredGeneration: binding.Generation}
+	e := Evidence{ClusterID: reg.ClusterID, RegisteredClusterID: reg.ClusterID, ServiceAccountNamespace: reg.Namespace, RegisteredNamespace: reg.Namespace, ServiceAccountName: reg.ServiceAccount, RegisteredServiceAccount: reg.ServiceAccount, TokenServiceAccountUID: string(review.Status.User.UID), RegisteredServiceAccountUID: string(sa.UID), PodServiceAccountName: pod.Spec.ServiceAccountName, TokenPodName: name, PodName: pod.Name, TokenPodUID: uid, PodUID: string(pod.UID), PodNodeName: pod.Spec.NodeName, NodeName: node.Name, NodeUID: string(node.UID), TokenAuthenticated: review.Status.Authenticated, TokenAudiences: review.Status.Audiences, RequiredAudiences: []string{reg.Audience}, PodDeleted: pod.DeletionTimestamp != nil || sa.DeletionTimestamp != nil, NodeDeleted: node.DeletionTimestamp != nil}
 	// The Node is in hand for its UID; its pressure is stored with the report
 	// it vouches for, so no agent is given a way to read or to state it.
 	e.NodePressures = []string{}

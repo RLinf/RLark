@@ -40,30 +40,27 @@
 
 ## Station（场站节点）
 
-界面上叫“场站节点”：一台机器在场站里的长期身份和入网记录。“Station”这个词在 Fleet 里是 Run 的 station；CRD 组 `station.rlark.io`、kind `Station*`、程序名 `station-*` 是代号。
+界面上叫“场站节点”：一台节点在场站里的记录（身份、心跳、入网），按节点名一台一条。“Station”这个词在 Fleet 里是 Run 的 station；CRD 组 `station.rlark.io`、程序名 `station-*` 是代号。
 
 ### 对象（kcp 管理面，`station.rlark.io/v1alpha1`）
 
 | 对象 | 用途 |
 |---|---|
 | `SiteNetwork`（`station-system/default`） | 全站网络的唯一声明：地址池、场站、名字表、非叶子节点。改拓扑只改它 |
-| `NetworkEnrollment` | 一台节点的入网登记：公钥、自报地址；status 是算出来的隧道文档 |
+| `NetworkEnrollment` | 场站节点：每台节点一个，在集群的命名空间里按 Node 名命名。spec 是身份（`nodeUID`、`systemUUID`）、入网登记（公钥、自报地址；没有公钥的节点只有身份、不在隧道网里）和 `retired`（节点已删除）；status 分三块，各有一个写者：算出来的隧道文档（controller 的网络部分）、`observation`（agent 每 30 s 的上报：心跳、开机时间、隧道探测、网关版本，station-api 写）、`node`（`state` Bound / Offline / Conflict / Retired、重启次数、各条件，controller 写） |
 | `NodeClass`（集群级） | 一类机器：标签和污点、命名、怎么在网上认出（discovery）、登录账号放哪（access）、上联（uplink，如机器人经 Orin 上网的脚本） |
 | `Machine` | RLark 知道的一台机器：扫到的或自己登记的，管理员从这里勾选入网 |
 | `NodeAdmission` | 一次入网许可：只存入网码的 SHA-256；兑换后留作这台节点的网络声明 |
 | `NodeOperation` | 一次节点操作：`Join`（用 NodeClass 的账号登录装机）或 `Remove`（删除） |
-| `Station` | 一台节点的身份：序号、绑定的 Node UID 和绑定版本、在线 |
-| `StationObservation` | agent 每 30 s 的上报：心跳、开机时间、隧道探测、网关版本 |
-| `StationSequence` | 每个集群的序号分配；`spec.clusterID` 是集群身份，不可改 |
-| `StationRebind` | 管理员把身份重新绑到新 Node UID（重装后） |
-| `StationAuditEvent` | 绑定、重绑、删除的审计 |
+
+身份规则：station-api 用 TokenReview 认出上报的 Pod 在哪台 Node 上，得到节点名和 UID。没有这台的记录就建一条；记录的 `spec.nodeUID` 等于这个 UID 就只写 `status.observation`。UID 不同（重装、换机）或记录已 `retired` 时，上报照写，入网登记回 409；这个名字的入网许可（NodeAdmission）兑换得比记录最后一次上报晚，controller 就把记录转给新的 Node（`status.node` 重来，许可上写注解 `station.rlark.io/self-healed`），否则 `status.node.state` 是 `Conflict`、入网被拒，管理员在控制台删除这条记录，节点下一次上报按新机器重新登记。
 
 ### 程序
 
 | 程序 | 在哪 | 做什么 |
 |---|---|---|
-| station-api | `rlark-local-dev-gpu` 的 `station-system`；入网的机器经 `https://10.11.14.128:18443`，Gateway 经 `https://10.254.240.1:18443` | 节点上报（TokenReview 核对 Pod→Node→Station）、入网登记、发安装包和入网码兑换（`/b/<码>`、`/v1/bootstrap/*`）、节点凭隧道密钥取文档（`/v1/network/document`）、扫到的机器（`/v1/network/discovered`） |
-| station-controller | 同上 | 身份、地址分配和每台节点的隧道文档、NodeClass、Machine、NodeOperation、删除已退役的身份 |
+| station-api | `rlark-local-dev-gpu` 的 `station-system`；入网的机器经 `https://10.11.14.128:18443`，Gateway 经 `https://10.254.240.1:18443` | 节点上报（TokenReview 核对 Pod→Node，写进它的 NetworkEnrollment）、入网登记、发安装包和入网码兑换（`/b/<码>`、`/v1/bootstrap/*`）、节点凭隧道密钥取文档（`/v1/network/document`）、扫到的机器（`/v1/network/discovered`） |
+| station-controller | 同上 | 每台节点的在线状态和身份变化、每台节点的隧道文档、NodeClass、Machine、NodeOperation |
 | station-agent | 每个成员集群的 DaemonSet | 心跳、登记公钥、取回文档、探测对端 |
 | station-gateway | 每台节点 | 按文档维护 WireGuard 接口、对端、路由、`/etc/hosts` 里的站点名字、给 kubelet 的 `resolv.conf`；每 10 s 协调一次 |
 
@@ -85,7 +82,7 @@
 - 默认 MTU 1380，接口 `st-wg0`，端口 51820。controller 每次算完检查任意两台之间有没有路，没有的列在 `status.unreachable`，条件 `FullyConnected` 为假。
 - `mode: Routed`：保留登记和地址表，不下发隧道。
 - 网关只动自己的东西：只接管别名 `rlark-station-gateway/v1` 的接口；路由用协议号 242、metric 49321；对端逐个增删改，不动没变的会话。
-- 网关取文档的顺序：agent 或自己从 Station API 取回的 → 私钥旁的 `last-applied.json` → 静态文件（安装器写的 `/etc/rlark/station/bootstrap.json`，或 ConfigMap `station-wireguard-config` 里的 `<节点>.json`，只给不经隧道连不上 Station API 的节点）。有 `station-api.json` 时网关每 30 s 用自己的私钥向 Station API 证明身份取文档，所以 agent 不在时也能跟上控制面的变化。
+- 网关取文档的顺序：agent 或自己从 Station API 取回的 → 私钥旁的 `last-applied.json` → 安装器写的静态文件 `/etc/rlark/station/bootstrap.json`（只有主机上的网关有，给不经隧道连不上 Station API 的节点）。有 `station-api.json` 时网关每 30 s 用自己的私钥向 Station API 证明身份取文档，所以 agent 不在时也能跟上控制面的变化。
 - 文档版本 `documentLevel`（`astribot/station-gateway/main.go`、`astribot/station/network`）：给文档加字段时加一；发布要等所有网关报到新级别才换 controller（阶段 `controller` 的 `gateways-understand`）。
 
 ### “在线”是三件事
@@ -95,7 +92,7 @@
 | 心跳 | `Observed`，90 s 没有上报为 Offline | agent 每 30 s |
 | 隧道 | `NetworkVerified` | agent 对每个在线对端经隧道建 TCP；对端自己离线不算失败 |
 | RLark 节点 | `RLarkLinked` | 同名 Node 的 Ready |
-| 重启 | `Rebooted`、`status.reboots` | 开机时间比上次晚 30 s 以上 |
+| 重启 | `Rebooted`、`status.node.reboots` | 开机时间比上次晚 30 s 以上 |
 
 ### 部件停了会怎样
 
@@ -213,7 +210,7 @@ Station 容器：机器人被一个 Run 占用时，带站点令牌向 `stationC
 | Fleet 要的 | RLark 接口 |
 |---|---|
 | 提交、停止 Run | 官方 Job 接口；停止是 `PATCH spec.suspended`；用服务账号（`operator`）的令牌 |
-| 节点身份、地址、在线 | `GET /api/v1/site-nodes[/{node}]?cluster_id=&label=k=v`：`site_node_id`、`binding_version`、`online`、`tunnel`、`rlark_node`、`boot_time`、`reboots`、`network.address`（别的节点找它用的地址）、`robot_id`、全部标签 |
+| 节点身份、地址、在线 | `GET /api/v1/site-nodes[/{node}]?cluster_id=&label=k=v`：`node_uid`、`phase`、`online`、`tunnel`、`rlark_node`、`boot_time`、`reboots`、`network.address`（别的节点找它用的地址）、`robot_id`、全部标签 |
 | 用机器人 | 占用接口（上一节）；机器人上的 Station 容器读占用，向 `stationControlURL` 取连接参数 |
 | 机器人电源 | `PUT .../nodes/{name}/robot-power` |
 | 数据、模型 | 按名字引用的存储 |

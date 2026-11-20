@@ -124,17 +124,18 @@ func Propagation(ctx context.Context, client dynamic.Interface, enrolled *KeyInd
 		peer := PeerPropagation{Name: "key " + key[:min(8, len(key))], PublicKey: key}
 		if member := members[key]; member != nil {
 			peer.Name = memberName(member)
-			observation, err := client.Resource(stationObservationGVR).Namespace(member.GetNamespace()).Get(ctx, member.GetName(), metav1.GetOptions{})
+			// The index is up to 30 s old; the peer's report is read now.
+			observation, err := client.Resource(networkEnrollmentGVR).Namespace(member.GetNamespace()).Get(ctx, member.GetName(), metav1.GetOptions{})
 			if err != nil && !apierrors.IsNotFound(err) {
 				return nil, 0, fmt.Errorf("read the observation of %s: %w", peer.Name, err)
 			}
 			if err == nil {
-				if reported, _, _ := unstructured.NestedString(observation.Object, "status", "reportedAt"); reported != "" {
+				if reported, _, _ := unstructured.NestedString(observation.Object, "status", "observation", "reportedAt"); reported != "" {
 					if at, err := time.Parse(time.RFC3339Nano, reported); err == nil {
 						peer.ObservedAt = &at
 					}
 				}
-				seen, _, _ := unstructured.NestedSlice(observation.Object, "status", "wireguard", "peers")
+				seen, _, _ := unstructured.NestedSlice(observation.Object, "status", "observation", "wireguard", "peers")
 				for _, raw := range seen {
 					entry, _ := raw.(map[string]interface{})
 					if entry["name"] != self {

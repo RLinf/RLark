@@ -1,4 +1,4 @@
-/* Stations page: only Station-specific rules. Layout, table, toolbar, status
+/* Site nodes page: only its own rules. Layout, table, toolbar, status
    pills, overview cards and the drawer shell come from the shared styles. */
 
 .stations-overview-grid {
@@ -44,15 +44,6 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-}
-
-.stations-name small {
-  font-size: 11px;
-}
-
-.stations-node {
-  display: block;
-  margin-bottom: 3px;
 }
 
 .stations-state {
@@ -221,52 +212,6 @@
 .station-condition-dot.is-true { background: var(--green); }
 .station-condition-dot.is-false { background: var(--red); }
 
-.station-rebind-start {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.stations-rebind-form {
-  display: grid;
-  gap: 12px;
-}
-
-.station-evidence {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.station-evidence th,
-.station-evidence td {
-  padding: 7px 8px;
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-}
-
-.station-evidence th {
-  color: #8e97a6;
-  font-weight: 600;
-}
-
-.station-field {
-  display: grid;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.station-field select,
-.station-field input,
-.station-field textarea {
-  width: 100%;
-  min-width: 0;
-  font: inherit;
-  font-weight: 400;
-}
-
 .station-operation-history {
   flex: none;
 }
@@ -336,17 +281,6 @@
 
 .station-operation-drawer {
   z-index: 1243;
-}
-
-.station-field textarea {
-  resize: vertical;
-}
-
-.station-operation-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 .theme-dark .storage-overview-card.red > span {
@@ -458,6 +392,6 @@
   color: var(--success, var(--text-muted));
 }
 
-.station-retired-delete {
+.station-record-delete {
   margin-left: 8px;
 }

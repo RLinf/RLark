@@ -1,13 +1,10 @@
-import { useEffect, useState } from "react";
-import { AlertTriangle, Fingerprint, Network, Power, ShieldCheck, X } from "lucide-react";
-import { stationsApi, type StationItem, type StationObservationItem, type StationRebindOperation } from "../api";
+import { useEffect } from "react";
+import { AlertTriangle, Fingerprint, Power, ShieldCheck, X } from "lucide-react";
+import type { StationItem } from "../api";
 import type { ClusterSummary } from "../../types";
 import { formatChinaDateTime } from "../../utils/time.js";
 import { CopyButton } from "../components/CopyButton";
 import { NodeName } from "../components/NodeName";
-import { useAction } from "../components/useAction";
-import { useFollow } from "../components/useFollow";
-import { nodeLabel } from "../lib/displayName";
 import {
   isRobotNode,
   robotMaintenanceLabel,
@@ -20,13 +17,9 @@ import {
   robotSelfCheckState,
   type RobotPowerAction,
 } from "../lib/siteNodeDisplay";
-import { formatRelativeTime, shortUID, stationPhase, stationPhaseLabel, stationStatusClass, stationUptime } from "../lib/stationDisplay";
+import { formatRelativeTime, stationPhase, stationPhaseLabel, stationStatusClass, stationUptime } from "../lib/stationDisplay";
 
 type NodeRef = { metadata: { name: string }; spec?: { displayName?: string } };
-// A rebind submitted from the drawer of station (namespace/name), followed while the drawer shows that station.
-export type TrackedRebind = { clusterID: string; name: string; station: string };
-type RebindRequest = Parameters<typeof stationsApi.createRebind>[0];
-
 function CopyValue({ value, zh }: { value?: string; zh: boolean }) {
   if (!value) return <strong>—</strong>;
   return (
@@ -37,168 +30,72 @@ function CopyValue({ value, zh }: { value?: string; zh: boolean }) {
   );
 }
 
-function newRequestID() {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-// One site node's identity, binding, robot power and conditions, and the rebind of one in Conflict or Offline.
-export function StationDrawer({ station, cluster, displayName, labels, nodeAt, now, zh, power, tracked, onRebind, onClose }: {
+// One site node's identity, heartbeat, robot power and conditions.
+export function StationDrawer({ station, cluster, node, labels, now, zh, power, onClose }: {
   station: StationItem;
   cluster?: ClusterSummary;
-  displayName: string;
+  // The RLark Node of the name, or the name alone when it is gone.
+  node: NodeRef;
   // The node's labels as the Gateway's site-node view has them.
   labels?: Record<string, string>;
-  nodeAt: (name: string) => NodeRef;
   now: number;
   zh: boolean;
   power: { pending: boolean; message: string; press: (action: RobotPowerAction, label: string) => void };
-  tracked?: TrackedRebind;
-  onRebind: (tracked: TrackedRebind) => void;
   onClose: () => void;
 }) {
-  const key = `${station.metadata.namespace}/${station.metadata.name}`;
-  const { binding } = station.spec;
   const phase = stationPhase(station);
-  const boundNode = nodeAt(binding.nodeName);
+  const status = station.status?.node;
+  const reporting = station.status?.observation?.nodeUID;
   const powerNow = robotPowerState(labels);
   const selfCheck = robotSelfCheckState(labels);
   const maintenance = robotMaintenanceState(labels);
   const desired = robotPowerDesired(labels);
-  const rebindable = phase === "Conflict" || phase === "Offline";
 
-  const [rebindOpen, setRebindOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const { pending, error, setError, run } = useAction();
-  // The verified observations of other Nodes, the one picked and why.
-  const [candidates, setCandidates] = useState<StationObservationItem[]>([]);
-  const [targetName, setTargetName] = useState("");
-  const [reason, setReason] = useState("");
-  const [requestID, setRequestID] = useState("");
-  // A request that failed is retried as it was: the same request ID, target and reason.
-  const [submitted, setSubmitted] = useState<RebindRequest>();
-  const [operation, setOperation] = useState<StationRebindOperation>();
-  const [operationError, setOperationError] = useState("");
-  const target = candidates.find((item) => item.metadata.name === targetName);
-
-  const followed = tracked?.station === key ? tracked : undefined;
-  useFollow(
-    followed && `${followed.clusterID}/${followed.name}`,
-    (signal) => stationsApi.getRebind(followed!.name, followed!.clusterID, signal),
-    (value) => value.status?.phase === "Applied" || value.status?.phase === "Rejected",
-    (value) => {
-      setOperation(value);
-      setOperationError("");
-    },
-    setOperationError,
-    40,
-  );
-
-  const close = () => {
-    if (!pending) onClose();
-  };
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
+      if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const openRebind = async () => {
-    setRebindOpen(true);
-    setError("");
-    setCandidates([]);
-    setTargetName("");
-    setReason("");
-    setSubmitted(undefined);
-    setRequestID(newRequestID());
-    setLoading(true);
-    try {
-      const { items } = await stationsApi.observations(cluster!.id);
-      const others = items.filter((item) => item.status?.nodeUID && item.status.nodeUID !== binding.nodeUID);
-      setCandidates(others);
-      setTargetName(others[0]?.metadata.name ?? "");
-    } catch (reason) {
-      setError((reason as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const submitRebind = () => target && !pending && run(async () => {
-    const request = submitted ?? {
-      cluster_id: cluster!.id,
-      request_id: requestID,
-      station_name: station.metadata.name,
-      station_uid: station.metadata.uid!,
-      expected_binding_version: binding.version,
-      target_node_name: target.metadata.name,
-      target_node_uid: target.status.nodeUID,
-      target_system_uuid: target.status.systemUUID,
-      reason: reason.trim(),
-    };
-    setSubmitted(request);
-    const { operation } = await stationsApi.createRebind(request);
-    onRebind({ clusterID: request.cluster_id, name: operation.metadata.name, station: key });
-    setRebindOpen(false);
-    setSubmitted(undefined);
-  });
-
-  const closeRebind = () => {
-    setRebindOpen(false);
-    setSubmitted(undefined);
-    setError("");
-  };
-
   return <>
-    <div className="addon-drawer-overlay" onClick={close} />
+    <div className="addon-drawer-overlay" onClick={onClose} />
     <aside className="addon-drawer station-drawer" role="dialog" aria-modal="true" aria-labelledby="station-drawer-title">
       <div className="addon-drawer-header station-drawer-header">
         <div>
           <span className="eyebrow"><Fingerprint size={13} />{zh ? "身份详情" : "Identity details"}</span>
-          <h3 id="station-drawer-title">{displayName}</h3>
+          <h3 id="station-drawer-title"><NodeName node={node} /></h3>
           <div className="station-drawer-meta">
             <span className={`status ${stationStatusClass(phase)}`}><i />{stationPhaseLabel(phase, zh)}</span>
             <code className="inline-code">{station.metadata.name}</code>
           </div>
         </div>
-        <button type="button" className="icon-button" onClick={close} disabled={pending} aria-label={zh ? "关闭" : "Close"} title={zh ? "关闭" : "Close"}><X size={16} /></button>
+        <button type="button" className="icon-button" onClick={onClose} aria-label={zh ? "关闭" : "Close"} title={zh ? "关闭" : "Close"}><X size={16} /></button>
       </div>
 
       <div className="addon-drawer-body station-drawer-body">
         {phase === "Conflict" && <section className="station-conflict-banner" role="note">
           <AlertTriangle size={16} aria-hidden="true" />
           <div>
-            <strong>{zh ? "绑定冲突" : "Binding conflict"}</strong>
-            <p>{zh ? "节点 " : "Node "}<NodeName node={boundNode} />{zh ? " 上报的身份与当前绑定不一致，Station 已暂停接受新的绑定。请核对证据后确认重绑。" : " reported an identity that does not match the current binding. Review the evidence before confirming a rebind."}</p>
+            <strong>{zh ? "节点 UID 变了" : "Node UID changed"}</strong>
+            <p>{zh
+              ? `这个名字现在上报的节点 UID 是 ${reporting}，记录属于 UID ${station.spec.nodeUID}，之后没有新的入网许可（重装或换机后没有重新发码入网）。它不进隧道网。在列表里删除这条记录，节点下一次上报会按新机器重新登记。`
+              : `The Node reporting under this name has UID ${reporting}; the record is of UID ${station.spec.nodeUID}, and no admission let a machine in under the name since. It is kept out of the tunnel network. Delete the record in the list and the node registers again as a new machine with its next report.`}</p>
           </div>
         </section>}
 
         <section className="node-detail-section station-drawer-section">
           <span className="node-detail-label"><Fingerprint size={14} />{zh ? "身份" : "Identity"}</span>
           <div className="node-detail-grid station-detail-grid">
-            <div><span className="muted">{zh ? "场站节点 ID" : "Site node ID"}</span><CopyValue value={station.metadata.name} zh={zh} /></div>
-            <div><span className="muted">{zh ? "对象 UID" : "Object UID"}</span><CopyValue value={station.metadata.uid} zh={zh} /></div>
+            <div><span className="muted">{zh ? "节点名" : "Node name"}</span><CopyValue value={station.metadata.name} zh={zh} /></div>
             <div><span className="muted">{zh ? "集群" : "Cluster"}</span><strong>{cluster?.name ?? (zh ? "集群未确定" : "Cluster unresolved")}</strong></div>
-            <div><span className="muted">Namespace</span><strong>{station.metadata.namespace}</strong></div>
-            <div><span className="muted">{zh ? "序号" : "Sequence"}</span><strong>{station.spec.sequence}</strong></div>
-            <div><span className="muted">{zh ? "启动时间" : "Boot time"}</span><strong>{formatChinaDateTime(station.status?.bootTime)}</strong></div>
-            <div><span className="muted">{zh ? "运行时间" : "Uptime"}</span><strong>{stationUptime(station.status?.bootTime, now, zh)}</strong></div>
-            <div><span className="muted">{zh ? "最近上报" : "Last seen"}</span><strong title={formatChinaDateTime(station.status?.lastSeenTime)}>{formatRelativeTime(station.status?.lastSeenTime, now, zh)}</strong></div>
-          </div>
-        </section>
-
-        <section className="node-detail-section station-drawer-section">
-          <span className="node-detail-label"><Network size={14} />{zh ? "节点绑定" : "Node binding"}</span>
-          <div className="node-detail-grid station-detail-grid">
-            <div><span className="muted">{zh ? "节点" : "Node"}</span><strong><NodeName node={boundNode} /></strong></div>
-            <div><span className="muted">{zh ? "Binding 版本" : "Binding version"}</span><strong>v{binding.version} · {binding.boundBy}</strong></div>
-            <div className="station-detail-wide"><span className="muted">Node UID</span><CopyValue value={binding.nodeUID} zh={zh} /></div>
-            <div className="station-detail-wide"><span className="muted">System UUID</span><CopyValue value={binding.systemUUID} zh={zh} /></div>
+            <div className="station-detail-wide"><span className="muted">Node UID</span><CopyValue value={station.spec.nodeUID} zh={zh} /></div>
+            <div className="station-detail-wide"><span className="muted">System UUID</span><CopyValue value={station.spec.systemUUID} zh={zh} /></div>
+            <div><span className="muted">{zh ? "启动时间" : "Boot time"}</span><strong>{formatChinaDateTime(status?.bootTime)}</strong></div>
+            <div><span className="muted">{zh ? "运行时间" : "Uptime"}</span><strong>{stationUptime(status?.bootTime, now, zh)}</strong></div>
+            <div><span className="muted">{zh ? "重启次数" : "Reboots"}</span><strong>{status?.reboots ?? 0}</strong></div>
+            <div><span className="muted">{zh ? "最近上报" : "Last seen"}</span><strong title={formatChinaDateTime(status?.lastSeenTime)}>{formatRelativeTime(status?.lastSeenTime, now, zh)}</strong></div>
           </div>
         </section>
 
@@ -223,8 +120,8 @@ export function StationDrawer({ station, cluster, displayName, labels, nodeAt, n
 
         <section className="node-detail-section station-drawer-section">
           <span className="node-detail-label"><ShieldCheck size={14} />{zh ? "健康条件" : "Conditions"}</span>
-          {station.status?.conditions?.length ? <ul className="station-conditions">
-            {station.status.conditions.map((condition) => <li key={condition.type}>
+          {status?.conditions?.length ? <ul className="station-conditions">
+            {status.conditions.map((condition) => <li key={condition.type}>
               <span className={`station-condition-dot is-${condition.status.toLowerCase()}`} aria-hidden="true" />
               <div>
                 <strong>{condition.type}</strong>
@@ -236,63 +133,8 @@ export function StationDrawer({ station, cluster, displayName, labels, nodeAt, n
               </div>
             </li>)}
           </ul> : <small className="muted">{zh ? "暂无条件上报" : "No conditions reported"}</small>}
-          <small className="muted">{zh ? "网络状态取自 NetworkVerified 条件；IP 与 WireGuard 详情暂未通过 Station API 提供。" : "Network status comes from the NetworkVerified condition; IP and WireGuard details are not exposed by the Station API yet."}</small>
         </section>
-
-        {rebindable && <section className="node-detail-section station-drawer-section stations-rebind">
-          <span className="node-detail-label"><AlertTriangle size={14} />{zh ? "重绑确认" : "Rebind review"}</span>
-          {!rebindOpen ? <div className="station-rebind-start">
-            <small className="muted">{zh ? "加载该集群当前已验证的 Node 观测，选择目标节点后提交重绑。" : "Load the cluster's current verified Node observations, then pick a target and submit a rebind."}</small>
-            <button type="button" className="secondary-button" onClick={() => void openRebind()} disabled={!cluster || !station.metadata.uid}>
-              {zh ? "确认重绑…" : "Review rebind…"}
-            </button>
-          </div> : <div className="stations-rebind-form">
-            <table className="station-evidence">
-              <thead><tr><th>{zh ? "证据" : "Evidence"}</th><th>{zh ? "原绑定" : "Current binding"}</th><th>{zh ? "目标观测" : "Target observation"}</th></tr></thead>
-              <tbody>
-                <tr><td>{zh ? "节点" : "Node"}</td><td><NodeName node={boundNode} /></td><td>{target ? <NodeName node={nodeAt(target.metadata.name)} /> : "—"}</td></tr>
-                <tr><td>Node UID</td><td><code className="inline-code" title={binding.nodeUID}>{shortUID(binding.nodeUID)}</code></td><td><code className="inline-code" title={target?.status.nodeUID}>{shortUID(target?.status.nodeUID)}</code></td></tr>
-                <tr><td>System UUID</td><td><code className="inline-code" title={binding.systemUUID}>{shortUID(binding.systemUUID)}</code></td><td><code className="inline-code" title={target?.status.systemUUID}>{shortUID(target?.status.systemUUID)}</code></td></tr>
-                <tr><td>{zh ? "最近观测" : "Observed"}</td><td>—</td><td>{target ? formatRelativeTime(target.status.reportedAt, now, zh) : "—"}</td></tr>
-              </tbody>
-            </table>
-            {target && binding.systemUUID && target.status.systemUUID === binding.systemUUID && <small className="muted">
-              {zh ? "systemUUID 相同而 Node UID 不同，可能是同一台机器重装了系统或重新加入集群。" : "Same systemUUID with a different Node UID usually means the same machine was reinstalled or re-joined."}
-            </small>}
-            <label className="station-field">
-              <span>{zh ? "目标节点（已验证观测）" : "Target node (verified observation)"}</span>
-              <select value={targetName} onChange={(event) => setTargetName(event.target.value)} disabled={loading || pending || !!submitted}>
-                <option value="">{loading ? (zh ? "正在加载…" : "Loading…") : (zh ? "选择节点" : "Select a node")}</option>
-                {candidates.map((item) => {
-                  const label = nodeLabel(nodeAt(item.metadata.name));
-                  return <option key={`${item.metadata.name}/${item.status.nodeUID}`} value={item.metadata.name}>{label === item.metadata.name ? label : `${label} · ${item.metadata.name}`} · {item.status.nodeUID.slice(0, 8)}</option>;
-                })}
-              </select>
-            </label>
-            <label className="station-field">
-              <span>{zh ? "重绑原因" : "Reason"}</span>
-              <textarea value={submitted?.reason ?? reason} onChange={(event) => setReason(event.target.value)} maxLength={1024} rows={3} disabled={pending || !!submitted} placeholder={zh ? "例如：节点重装系统后重新加入集群" : "e.g. Node was reinstalled and re-joined"} />
-            </label>
-            {error && <div className="cert-error" role="alert">{error}</div>}
-            <small className="muted">{zh ? "提交后由 controller 再次核验目标 Node UID；受理不代表重绑完成。" : "The controller revalidates the target Node UID. Acceptance does not mean the rebind is complete."}</small>
-          </div>}
-        </section>}
-
-        {followed && <section className="node-detail-section station-drawer-section stations-rebind-status" aria-live="polite">
-          <span className="node-detail-label">{zh ? "重绑操作" : "Rebind operation"}</span>
-          <div className="station-operation-head">
-            <span className={`status ${operation?.status?.phase === "Applied" ? "status-online" : operation?.status?.phase === "Rejected" ? "status-failed" : "status-pending"}`}><i />{operation?.status?.phase ?? "Accepted"}</span>
-            <code className="inline-code">{followed.name}</code>
-          </div>
-          {operation?.status?.conditions?.map((condition) => <small className="muted" key={condition.type}>{condition.reason ?? condition.message ?? condition.type}</small>)}
-          {operationError && <div className="cert-error" role="alert">{operationError}</div>}
-        </section>}
       </div>
-
-      {rebindable && rebindOpen && <div className="addon-drawer-footer">
-        <button type="button" className="secondary-button" onClick={closeRebind} disabled={pending}>{zh ? "取消" : "Cancel"}</button>
-        <button type="button" className="primary-button" onClick={() => void submitRebind()} disabled={loading || pending || !targetName || !reason.trim()}>{pending ? (zh ? "提交中…" : "Submitting…") : submitted ? (zh ? "使用相同请求重试" : "Retry same request") : (zh ? "提交重绑" : "Submit rebind")}</button>
-      </div>}
     </aside>
   </>;
 }

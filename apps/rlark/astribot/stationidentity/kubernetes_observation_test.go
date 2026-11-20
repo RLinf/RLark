@@ -8,14 +8,11 @@ import (
 	"testing"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic/fake"
-	ktesting "k8s.io/client-go/testing"
 )
 
 type observationNamespaceMap map[string]string
@@ -30,39 +27,24 @@ func (m observationNamespaceMap) ResolveObservationNamespace(_ context.Context, 
 
 func testDynamicClient(objects ...runtime.Object) *fake.FakeDynamicClient {
 	return fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		stationObservationGVR: "StationObservationList",
-		stationGVR:            "StationList",
-		rlarkClusterGVR:       "ClusterList",
-		networkEnrollmentGVR:  "NetworkEnrollmentList",
-		nodeAdmissionGVR:      "NodeAdmissionList",
-		siteNetworkGVR:        "SiteNetworkList",
+		rlarkClusterGVR:      "ClusterList",
+		networkEnrollmentGVR: "NetworkEnrollmentList",
+		nodeAdmissionGVR:     "NodeAdmissionList",
+		siteNetworkGVR:       "SiteNetworkList",
 	}, objects...)
 }
 
-func TestKubernetesObservationSinkCreatesAndRefreshesOwnedSnapshot(t *testing.T) {
+// A node's first report makes its record; every report replaces the one
+// before it in status.observation and touches nothing else of the record,
+// whichever Node of the name sends it.
+func TestKubernetesObservationSinkWritesOnlyTheObservationOfTheNodesRecord(t *testing.T) {
 	client := testDynamicClient()
-	emptyBeforeStatusPatch := false
-	client.PrependReactor("patch", stationObservationResource, func(ktesting.Action) (bool, runtime.Object, error) {
-		obj, err := client.Tracker().Get(stationObservationGVR, "agent-a", "node-a")
-		if err != nil {
-			return true, nil, err
-		}
-		unstructuredObject := obj.(*unstructured.Unstructured)
-		_, found, _ := unstructured.NestedMap(unstructuredObject.Object, "status")
-		if !found {
-			emptyBeforeStatusPatch = true
-		}
-		return false, nil, nil
-	})
 	receivedAt := time.Date(2026, 11, 11, 1, 2, 3, 4, time.FixedZone("test", 8*60*60))
 	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}, Now: func() time.Time { return receivedAt }}
 	evidence := validEvidence()
-	evidence.ClusterID = "cluster-a"
-	evidence.RegisteredClusterID = "cluster-a"
-	evidence.NodeName = "node-a"
-	evidence.PodNodeName = "node-a"
-	evidence.StationUID = "station-uid-a"
-	evidence.RegisteredStationUID = "station-uid-a"
+	evidence.ClusterID, evidence.RegisteredClusterID = "cluster-a", "cluster-a"
+	evidence.NodeName, evidence.PodNodeName = "node-a", "node-a"
+	evidence.NodePressures = []string{"DiskPressure"}
 	observation := Observation{
 		SystemUUID: "system-a",
 		BootTime:   &receivedAt,
@@ -72,273 +54,52 @@ func TestKubernetesObservationSinkCreatesAndRefreshesOwnedSnapshot(t *testing.T)
 		Gateway:    &GatewayProgram{DocumentLevel: 2, Digest: strings.Repeat("ab", 32)},
 		Agent:      AgentProgram{Digest: strings.Repeat("cd", 32)},
 	}
-	evidence.NodePressures = []string{"DiskPressure"}
-	if err := sink.Store(context.Background(), evidence, observation); err != nil {
-		t.Fatal(err)
+	resource := client.Resource(networkEnrollmentGVR).Namespace("agent-a")
+	store := func(e Evidence, o Observation) map[string]interface{} {
+		t.Helper()
+		if err := sink.Store(context.Background(), e, o); err != nil {
+			t.Fatal(err)
+		}
+		stored, err := resource.Get(context.Background(), "node-a", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stored.Object
 	}
-	resource := client.Resource(stationObservationGVR).Namespace("agent-a")
-	created, err := resource.Get(context.Background(), "node-a", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
+	created := store(evidence, observation)
+	if spec, _ := json.Marshal(created["spec"]); string(spec) != `{"clusterID":"cluster-a","nodeUID":"n","systemUUID":"system-a"}` {
+		t.Fatalf("the record of a first report: %s", spec)
 	}
-	if got := created.GetAnnotations()[observationClusterIDKey]; got != "cluster-a" {
-		t.Fatalf("cluster ownership annotation = %q", got)
+	reported := created["status"].(map[string]interface{})["observation"].(map[string]interface{})
+	if reported["reportedAt"] != receivedAt.UTC().Format(time.RFC3339Nano) || reported["nodeUID"] != "n" || reported["wireguard"].(map[string]interface{})["interface"] != "st-wg0" {
+		t.Fatalf("the report: %v", reported)
 	}
-	if got := created.GetAnnotations()[observationStationUIDKey]; got != "station-uid-a" {
-		t.Fatalf("Station ownership annotation = %q", got)
-	}
-	if err := sink.Store(context.Background(), evidence, observation); err != nil {
-		t.Fatal(err)
-	}
-	if !emptyBeforeStatusPatch {
-		t.Fatal("new observation was not created empty before status write")
-	}
-	stored, err := resource.Get(context.Background(), "node-a", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	reportedAt, _, _ := unstructured.NestedString(stored.Object, "status", "reportedAt")
-	if reportedAt != receivedAt.UTC().Format(time.RFC3339Nano) {
-		t.Fatalf("reportedAt = %q", reportedAt)
-	}
-	if got, _, _ := unstructured.NestedString(stored.Object, "status", "nodeUID"); got != evidence.NodeUID {
-		t.Fatalf("nodeUID = %q", got)
-	}
-	if got, _, _ := unstructured.NestedString(stored.Object, "status", "wireguard", "interface"); got != "st-wg0" {
-		t.Fatalf("wireguard interface = %q", got)
-	}
-	programs, _ := json.Marshal(map[string]any{"gateway": stored.Object["status"].(map[string]any)["gateway"], "agent": stored.Object["status"].(map[string]any)["agent"], "pressures": stored.Object["status"].(map[string]any)["pressures"]})
+	programs, _ := json.Marshal(map[string]any{"gateway": reported["gateway"], "agent": reported["agent"], "pressures": reported["pressures"]})
 	if want := `{"agent":{"digest":"` + strings.Repeat("cd", 32) + `"},"gateway":{"digest":"` + strings.Repeat("ab", 32) + `","documentLevel":2},"pressures":["DiskPressure"]}`; string(programs) != want {
 		t.Fatalf("programs and pressures = %s", programs)
 	}
-	// A gateway that stopped reconciling, of a Node under no pressure.
-	evidence.NodePressures = []string{}
-	if err := sink.Store(context.Background(), evidence, Observation{Agent: observation.Agent}); err != nil {
-		t.Fatal(err)
-	}
-	stored, err = resource.Get(context.Background(), "node-a", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, found, _ := unstructured.NestedFieldNoCopy(stored.Object, "status", "wireguard"); found {
-		t.Fatal("empty latest snapshot retained old WireGuard data")
-	}
-	if _, found, _ := unstructured.NestedFieldNoCopy(stored.Object, "status", "bootTime"); found {
-		t.Fatal("empty latest snapshot retained old boot time")
-	}
-	_, gateway, _ := unstructured.NestedFieldNoCopy(stored.Object, "status", "gateway")
-	if pressures, found, _ := unstructured.NestedSlice(stored.Object, "status", "pressures"); gateway || !found || len(pressures) != 0 {
-		t.Fatalf("a report without a gateway kept the old one, or its pressures are not an empty list: %v", stored.Object["status"])
-	}
-}
 
-func TestObservationBindingVersionReplacesPreviousSnapshot(t *testing.T) {
-	client := testDynamicClient()
-	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}}
-	e := validEvidence()
-	e.ClusterID, e.RegisteredClusterID = "cluster-a", "cluster-a"
-	e.NodeName, e.PodNodeName = "node-a", "node-a"
-	e.StationUID, e.RegisteredStationUID = "station-a", "station-a"
-	wg := Observation{Wireguard: json.RawMessage(`{"interface":"st-wg0","addresses":["10.254.240.1/32"]}`)}
-	if err := sink.Store(context.Background(), e, wg); err != nil {
+	// station-controller answers and judges; the node enrolls.
+	answered, _ := resource.Get(context.Background(), "node-a", metav1.GetOptions{})
+	_ = unstructured.SetNestedField(answered.Object, "Enrolled", "status", "phase")
+	_ = unstructured.SetNestedField(answered.Object, "Bound", "status", "node", "state")
+	_ = unstructured.SetNestedField(answered.Object, "key", "spec", "publicKey")
+	if _, err := resource.Update(context.Background(), answered, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	e.Generation++
-	e.RegisteredGeneration = e.Generation
-	if err := sink.Store(context.Background(), e, Observation{}); err != nil {
-		t.Fatal(err)
+	// A gateway that stopped reconciling, of a Node under no pressure, reinstalled under the same name.
+	evidence.NodeUID, evidence.NodePressures = "reinstalled", []string{}
+	again := store(evidence, Observation{Agent: observation.Agent})
+	spec, status := again["spec"].(map[string]interface{}), again["status"].(map[string]interface{})
+	if spec["nodeUID"] != "n" || spec["publicKey"] != "key" || status["phase"] != "Enrolled" || status["node"].(map[string]interface{})["state"] != "Bound" {
+		t.Fatalf("a report changed what is not its own: %v", again)
 	}
-	got, err := client.Resource(stationObservationGVR).Namespace("agent-a").Get(context.Background(), "node-a", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.GetAnnotations()[observationBindingVersionKey] != "2" {
-		t.Fatalf("binding version = %q", got.GetAnnotations()[observationBindingVersionKey])
-	}
-	if _, found, _ := unstructured.NestedFieldNoCopy(got.Object, "status", "wireguard"); found {
-		t.Fatal("old WireGuard observation survived new binding")
-	}
-}
-
-func TestKubernetesObservationSinkTransfersObservationAfterVerifiedStationRebind(t *testing.T) {
-	previous := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "station.rlark.io/v1alpha1", "kind": "StationObservation",
-		"metadata": map[string]interface{}{
-			"name": "node-a", "namespace": "agent-a", "resourceVersion": "1",
-			"annotations": map[string]interface{}{
-				observationClusterIDKey: "cluster-a", observationNodeUIDKey: "old-node-uid",
-				observationStationUIDKey: "station-uid-a", observationBindingVersionKey: "1",
-			},
-		},
-		"spec": map[string]interface{}{},
-		"status": map[string]interface{}{
-			"reportedAt": "2026-11-12T10:00:00Z", "nodeUID": "old-node-uid",
-			"wireguard": map[string]interface{}{"interface": "st-wg0"},
-			"agent":     map[string]interface{}{"digest": "old"},
-		},
-	}}
-	client := testDynamicClient(previous)
-	client.PrependReactor("patch", stationObservationResource, func(action ktesting.Action) (bool, runtime.Object, error) {
-		patchAction, ok := action.(ktesting.PatchAction)
-		if !ok || patchAction.GetSubresource() != "status" {
-			return false, nil, nil
-		}
-		var body struct {
-			Status map[string]interface{} `json:"status"`
-		}
-		if err := json.Unmarshal(patchAction.GetPatch(), &body); err != nil {
-			return true, nil, err
-		}
-		// Mirror the live CRD's required status fields.
-		for _, field := range []string{"nodeUID", "reportedAt", "agent"} {
-			if value, present := body.Status[field]; present && value == nil {
-				return true, nil, errors.New("StationObservation required status field cannot be cleared")
-			}
-		}
-		return false, nil, nil
-	})
-	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}}
-	evidence := validEvidence()
-	evidence.ClusterID, evidence.RegisteredClusterID = "cluster-a", "cluster-a"
-	evidence.NodeName, evidence.PodNodeName = "node-a", "node-a"
-	evidence.NodeUID = "new-node-uid"
-	evidence.RegisteredNodeUID = evidence.NodeUID
-	evidence.StationUID, evidence.RegisteredStationUID = "station-uid-a", "station-uid-a"
-	evidence.Generation, evidence.RegisteredGeneration = 2, 2
-	if err := sink.Store(context.Background(), evidence, Observation{Roles: []string{"worker"}}); err != nil {
-		t.Fatalf("store after verified rebind: %v", err)
-	}
-	stored, err := client.Resource(stationObservationGVR).Namespace("agent-a").Get(context.Background(), "node-a", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stored.GetAnnotations()[observationNodeUIDKey] != "new-node-uid" || stored.GetAnnotations()[observationBindingVersionKey] != "2" {
-		t.Fatalf("ownership annotations did not follow rebind: %#v", stored.GetAnnotations())
-	}
-	if got, _, _ := unstructured.NestedString(stored.Object, "status", "nodeUID"); got != "new-node-uid" {
-		t.Fatalf("observation status node UID = %q", got)
-	}
-	if _, found, _ := unstructured.NestedFieldNoCopy(stored.Object, "status", "wireguard"); found {
-		t.Fatal("old Node WireGuard data survived identity transfer")
-	}
-}
-
-func TestKubernetesObservationSinkRejectsNodeUIDChangeWithoutStationRebind(t *testing.T) {
-	previous := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "station.rlark.io/v1alpha1", "kind": "StationObservation",
-		"metadata": map[string]interface{}{"name": "node", "namespace": "agent", "annotations": map[string]interface{}{
-			observationClusterIDKey: "cluster", observationNodeUIDKey: "old", observationStationUIDKey: "station", observationBindingVersionKey: "1",
-		}}, "spec": map[string]interface{}{},
-	}}
-	sink := &KubernetesObservationSink{Client: testDynamicClient(previous), Namespaces: observationNamespaceMap{"cluster": "agent"}}
-	evidence := validEvidence()
-	evidence.ClusterID, evidence.RegisteredClusterID = "cluster", "cluster"
-	evidence.NodeUID, evidence.RegisteredNodeUID = "new", "new"
-	evidence.StationUID, evidence.RegisteredStationUID = "station", "station"
-	evidence.Generation, evidence.RegisteredGeneration = 1, 1
-	if err := sink.Store(context.Background(), evidence, Observation{}); !errors.Is(err, ErrObservationOwnershipConflict) {
-		t.Fatalf("unapproved Node UID change error = %v", err)
-	}
-}
-
-func TestKubernetesObservationSinkRejectsForeignOwnershipAndUnverifiedEvidence(t *testing.T) {
-	foreign := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "station.rlark.io/v1alpha1", "kind": "StationObservation",
-		"metadata": map[string]interface{}{
-			"name": "node", "namespace": "agent",
-			"annotations": map[string]interface{}{observationClusterIDKey: "other", observationStationUIDKey: "station"},
-		},
-		"spec": map[string]interface{}{},
-	}}
-	client := testDynamicClient(foreign)
-	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"c": "agent"}}
-	evidence := validEvidence()
-	if err := sink.Store(context.Background(), evidence, Observation{}); !errors.Is(err, ErrObservationOwnershipConflict) {
-		t.Fatalf("foreign observation ownership error = %v", err)
-	}
-	evidence.TokenPodUID = "replaced"
-	if err := sink.Store(context.Background(), evidence, Observation{}); err == nil {
-		t.Fatal("unverified evidence was accepted")
-	}
-}
-
-func TestKubernetesObservationSinkSupportsUnboundBootstrapAndBindsOnce(t *testing.T) {
-	client := testDynamicClient()
-	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"c": "agent"}}
-	evidence := validEvidence()
-	evidence.StationUID = ""
-	evidence.RegisteredStationUID = ""
-	evidence.Generation = 0
-	evidence.RegisteredGeneration = 0
-	if err := sink.Store(context.Background(), evidence, Observation{}); err != nil {
-		t.Fatalf("bootstrap observation rejected: %v", err)
-	}
-	resource := client.Resource(stationObservationGVR).Namespace("agent")
-	current, err := resource.Get(context.Background(), "node", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current.GetAnnotations()[observationNodeUIDKey] != evidence.NodeUID || current.GetAnnotations()[observationStationUIDKey] != "" {
-		t.Fatalf("bootstrap ownership annotations = %#v", current.GetAnnotations())
-	}
-	evidence.StationUID = "station-object-uid"
-	evidence.RegisteredStationUID = evidence.StationUID
-	evidence.Generation = 1
-	evidence.RegisteredGeneration = 1
-	if err := sink.Store(context.Background(), evidence, Observation{}); err != nil {
-		t.Fatalf("Station binding did not adopt its verified Observation: %v", err)
-	}
-	current, err = resource.Get(context.Background(), "node", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if current.GetAnnotations()[observationStationUIDKey] != evidence.StationUID {
-		t.Fatalf("Station ownership annotation = %#v", current.GetAnnotations())
-	}
-	evidence.StationUID = "replacement-station-uid"
-	evidence.RegisteredStationUID = evidence.StationUID
-	if err := sink.Store(context.Background(), evidence, Observation{}); !errors.Is(err, ErrObservationOwnershipConflict) {
-		t.Fatalf("replaced Station identity error = %v", err)
-	}
-}
-
-func TestKubernetesObservationSinkRetriesCreateAndStatusConflicts(t *testing.T) {
-	client := testDynamicClient()
-	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"c": "agent"}}
-	evidence := validEvidence()
-	created := false
-	client.PrependReactor("create", stationObservationResource, func(action ktesting.Action) (bool, runtime.Object, error) {
-		if created {
-			return false, nil, nil
-		}
-		created = true
-		obj := action.(ktesting.CreateAction).GetObject().(*unstructured.Unstructured)
-		if err := client.Tracker().Create(stationObservationGVR, obj, "agent"); err != nil {
-			return true, nil, err
-		}
-		return true, nil, apierrors.NewAlreadyExists(schema.GroupResource{Group: stationObservationGroup, Resource: stationObservationResource}, "node")
-	})
-	conflicted := false
-	client.PrependReactor("patch", stationObservationResource, func(action ktesting.Action) (bool, runtime.Object, error) {
-		if conflicted {
-			return false, nil, nil
-		}
-		conflicted = true
-		return true, nil, apierrors.NewConflict(schema.GroupResource{Group: stationObservationGroup, Resource: stationObservationResource}, "node", errors.New("test conflict"))
-	})
-	if err := sink.Store(context.Background(), evidence, Observation{Roles: []string{"worker"}}); err != nil {
-		t.Fatal(err)
-	}
-	if !created || !conflicted {
-		t.Fatalf("create race=%t patch conflict=%t", created, conflicted)
-	}
-	stored, err := client.Resource(stationObservationGVR).Namespace("agent").Get(context.Background(), "node", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	roles, found, err := unstructured.NestedStringSlice(stored.Object, "status", "roles")
-	if err != nil || !found || len(roles) != 1 || roles[0] != "worker" {
-		t.Fatalf("status after retry roles=%v found=%t err=%v", roles, found, err)
+	reported = status["observation"].(map[string]interface{})
+	_, wireguard := reported["wireguard"]
+	_, bootTime := reported["bootTime"]
+	_, gateway := reported["gateway"]
+	if pressures, found := reported["pressures"].([]interface{}); reported["nodeUID"] != "reinstalled" || wireguard || bootTime || gateway || !found || len(pressures) != 0 {
+		t.Fatalf("the latest report kept what the one before it said, or its pressures are not an empty list: %v", reported)
 	}
 }
 
@@ -369,65 +130,6 @@ func TestKubernetesClusterNamespaceResolverRequiresUniqueAuthoritativeScope(t *t
 			t.Fatalf("unknown cluster error=%v", err)
 		}
 	})
-}
-
-func TestKubernetesObservationSinkPreservesExistingObjectUID(t *testing.T) {
-	existing := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "station.rlark.io/v1alpha1", "kind": "StationObservation",
-		"metadata": map[string]interface{}{
-			"name": "node", "namespace": "agent", "uid": "object-uid", "resourceVersion": "1",
-			"annotations": map[string]interface{}{observationClusterIDKey: "c", observationNodeUIDKey: "n", observationStationUIDKey: "s"},
-		},
-		"spec": map[string]interface{}{},
-	}}
-	client := testDynamicClient(existing)
-	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"c": "agent"}}
-	if err := sink.Store(context.Background(), validEvidence(), Observation{}); err != nil {
-		t.Fatal(err)
-	}
-	stored, err := client.Resource(stationObservationGVR).Namespace("agent").Get(context.Background(), "node", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.UID(stored.GetUID()) != "object-uid" {
-		t.Fatalf("observation UID changed to %q", stored.GetUID())
-	}
-}
-
-// A machine reinstalled under the same name has a new Node UID. It must be
-// able to report, or the Station never shows the conflict an administrator
-// rebinds; it gets a fresh snapshot and nothing of the previous Node's.
-func TestReinstalledNodeReplacesThePreviousNodesSnapshot(t *testing.T) {
-	client := testDynamicClient()
-	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"c": "agent"}}
-	old := validEvidence()
-	boot := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	if err := sink.Store(context.Background(), old, Observation{BootTime: &boot, Wireguard: json.RawMessage(`{"interface":"st-wg0","addresses":["10.254.240.5/32"]}`)}); err != nil {
-		t.Fatal(err)
-	}
-	rebuilt := validEvidence()
-	rebuilt.NodeUID, rebuilt.RegisteredNodeUID = "n-rebuilt", "n-rebuilt"
-	rebuilt.StationUID, rebuilt.RegisteredStationUID, rebuilt.Generation, rebuilt.RegisteredGeneration = "", "", 0, 0
-	if err := sink.Store(context.Background(), rebuilt, Observation{}); err != nil {
-		t.Fatalf("reinstalled node could not report: %v", err)
-	}
-	stored, err := client.Resource(stationObservationGVR).Namespace("agent").Get(context.Background(), "node", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	annotations := stored.GetAnnotations()
-	uid, _, _ := unstructured.NestedString(stored.Object, "status", "nodeUID")
-	_, hasTunnel, _ := unstructured.NestedMap(stored.Object, "status", "wireguard")
-	if uid != "n-rebuilt" || annotations[observationNodeUIDKey] != "n-rebuilt" || annotations[observationStationUIDKey] != "" || hasTunnel {
-		t.Fatalf("snapshot still carries the previous Node: %v %v", annotations, stored.Object["status"])
-	}
-	// Another cluster's node of the same name still cannot take the object.
-	foreign := validEvidence()
-	foreign.ClusterID, foreign.RegisteredClusterID = "d", "d"
-	other := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"d": "agent"}}
-	if err := other.Store(context.Background(), foreign, Observation{}); !errors.Is(err, ErrObservationOwnershipConflict) {
-		t.Fatalf("foreign cluster error = %v", err)
-	}
 }
 
 // A peer is named by the member enrolled with its key, or, before it enrolls, by the admission it redeemed or the
@@ -469,17 +171,14 @@ func TestObservationPeersAreStoredUnderTheMemberEnrolledWithTheirKey(t *testing.
 	e.NodeName, e.PodNodeName = "hub", "hub"
 	store := func(wireguard string) []interface{} {
 		t.Helper()
-		// The first write of a node only creates its object.
-		for range 2 {
-			if err := sink.Store(context.Background(), e, Observation{Wireguard: json.RawMessage(wireguard)}); err != nil {
-				t.Fatal(err)
-			}
+		if err := sink.Store(context.Background(), e, Observation{Wireguard: json.RawMessage(wireguard)}); err != nil {
+			t.Fatal(err)
 		}
-		stored, err := client.Resource(stationObservationGVR).Namespace("agent-a").Get(context.Background(), "hub", metav1.GetOptions{})
+		stored, err := client.Resource(networkEnrollmentGVR).Namespace("agent-a").Get(context.Background(), "hub", metav1.GetOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		peers, _, _ := unstructured.NestedSlice(stored.Object, "status", "wireguard", "peers")
+		peers, _, _ := unstructured.NestedSlice(stored.Object, "status", "observation", "wireguard", "peers")
 		return peers
 	}
 	peers := store(`{"interface":"st-wg0","peers":[
@@ -537,11 +236,11 @@ func TestObservationSinkListsEnrollmentsOncePerInterval(t *testing.T) {
 				lists++
 			}
 		}
-		stored, err := client.Resource(stationObservationGVR).Namespace("agent-a").Get(context.Background(), "hub", metav1.GetOptions{})
+		stored, err := client.Resource(networkEnrollmentGVR).Namespace("agent-a").Get(context.Background(), "hub", metav1.GetOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		entries, _, _ := unstructured.NestedSlice(stored.Object, "status", "wireguard", "peers")
+		entries, _, _ := unstructured.NestedSlice(stored.Object, "status", "observation", "wireguard", "peers")
 		for _, entry := range entries {
 			names += entry.(map[string]interface{})["name"].(string) + " "
 		}

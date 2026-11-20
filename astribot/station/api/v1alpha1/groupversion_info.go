@@ -10,11 +10,6 @@ var GroupVersion = schema.GroupVersion{Group: "station.rlark.io", Version: "v1al
 
 func AddToScheme(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(GroupVersion,
-		&Station{}, &StationList{},
-		&StationObservation{}, &StationObservationList{},
-		&StationSequence{}, &StationSequenceList{},
-		&StationRebind{}, &StationRebindList{},
-		&StationAuditEvent{}, &StationAuditEventList{},
 		&NodeOperation{}, &NodeOperationList{},
 		&SiteNetwork{}, &SiteNetworkList{},
 		&NetworkEnrollment{}, &NetworkEnrollmentList{},

@@ -150,14 +150,10 @@ func nodeOperationFailureCondition(stage string, err error) (string, string) {
 	switch {
 	case errors.Is(err, ErrInstallerFailed):
 		return "InstallerFailed", err.Error()
-	case errors.Is(err, ErrStationRebindRequired):
-		return "StationRebindRequired", "A Station is still bound to another Kubernetes Node UID. Rebind it to a fresh, verified observation before retrying this Join."
 	case errors.Is(err, ErrNodeIdentityChanged):
-		return "NodeIdentityChanged", "Node UID changed or the target Node is deleting; no different Node was modified."
+		return "NodeIdentityChanged", "Node UID changed or the target Node is deleting; no different Node was modified. If the node's record shows a conflict, delete the record and the node registers again."
 	case errors.Is(err, ErrNodeDrainBlocked):
 		return "DrainBlocked", "Drain is blocked by a protected Node, workload, local emptyDir data or a disruption budget."
-	case errors.Is(err, ErrWireGuardPeerOwnershipUnknown):
-		return "WireGuardOwnershipUnknown", "WireGuard peer ownership could not be proven for this Node UID; removal stopped before drain."
 	case errors.Is(err, ErrNodeStageUnavailable):
 		return "PrerequisiteUnavailable", "A required node-operation integration or permission is not configured."
 	case errors.Is(err, ErrNodeInUse):

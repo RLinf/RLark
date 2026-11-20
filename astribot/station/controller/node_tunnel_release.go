@@ -7,6 +7,7 @@ import (
 
 	stationv1alpha1 "github.com/rlinf/rlark/astribot/station/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -28,13 +29,14 @@ func AdmissionNodeRemoved(admission *stationv1alpha1.NodeAdmission) bool {
 }
 
 // StationTunnelRelease takes a removed node out of the SiteNetwork's tunnel.
-// Its Station is retired, which rejects its enrollment and gives its address
-// back, and its admission forgets the machine's key: then nothing puts the
-// machine among the peers. A machine admitted again under the name redeems a
-// new code with its key; one that joins otherwise gets a Station of its own.
+// Its NetworkEnrollment is retired, which rejects it, and its admission
+// forgets the machine's key: then nothing puts the machine among the peers.
+// A machine admitted again under the name redeems a new code with its key
+// and takes the record over.
 type StationTunnelRelease struct {
-	Reader client.Reader
-	Writer client.Client
+	Reader  client.Reader
+	Writer  client.Client
+	Members NodeMemberClientSource
 	// Network is the SiteNetwork.
 	Network types.NamespacedName
 }
@@ -55,31 +57,24 @@ func (s StationTunnelRelease) Check(ctx context.Context, op *stationv1alpha1.Nod
 }
 
 // Remove is done once the node's enrollment, if it has one, is no longer
-// answered with a place in the tunnel.
+// answered with a place in the tunnel and its network DaemonSet pod is gone.
 func (s StationTunnelRelease) Remove(ctx context.Context, op *stationv1alpha1.NodeOperation) (bool, error) {
 	if err := s.Check(ctx, op); err != nil {
 		return false, err
 	}
-	stations := &stationv1alpha1.StationList{}
-	if err := s.Reader.List(ctx, stations, client.InNamespace(op.Namespace)); err != nil {
-		return false, fmt.Errorf("list Stations: %w", err)
+	key := types.NamespacedName{Namespace: op.Namespace, Name: op.Spec.NodeName}
+	enrollment := &stationv1alpha1.NetworkEnrollment{}
+	err := s.Reader.Get(ctx, key, enrollment)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("read NetworkEnrollment %s: %w", op.Spec.NodeName, err)
 	}
-	for i := range stations.Items {
-		station := &stations.Items[i]
-		// A name with no Node in its cluster: no Station of it is of a live node.
-		if station.Spec.Binding.NodeName != op.Spec.NodeName || op.Spec.NodeUID != "" && station.Spec.Binding.NodeUID != op.Spec.NodeUID || station.Spec.Retired {
-			continue
-		}
-		retired := station.DeepCopy()
+	// A name with no Node in its cluster: the record of it is of no live node.
+	recorded := err == nil && (op.Spec.NodeUID == "" || enrollment.Spec.NodeUID == op.Spec.NodeUID)
+	if recorded && !enrollment.Spec.Retired {
+		retired := enrollment.DeepCopy()
 		retired.Spec.Retired = true
-		if err := s.Writer.Patch(ctx, retired, client.MergeFromWithOptions(station, client.MergeFromWithOptimisticLock{})); err != nil {
-			return false, fmt.Errorf("retire Station %s: %w", station.Name, err)
-		}
-		// Its node reports no more: nothing else would take what it showed last (Bound, a failed probe) off it.
-		said := retired.DeepCopy()
-		said.Status.Phase = stationv1alpha1.StationPhaseRetired
-		if err := s.Writer.Status().Patch(ctx, said, client.MergeFrom(retired)); err != nil {
-			return false, fmt.Errorf("say that Station %s is retired: %w", station.Name, err)
+		if err := s.Writer.Patch(ctx, retired, client.MergeFromWithOptions(enrollment, client.MergeFromWithOptimisticLock{})); err != nil {
+			return false, fmt.Errorf("retire NetworkEnrollment %s: %w", enrollment.Name, err)
 		}
 	}
 	removed := op.Spec.NodeUID
@@ -87,7 +82,7 @@ func (s StationTunnelRelease) Remove(ctx context.Context, op *stationv1alpha1.No
 		removed = string(op.UID)
 	}
 	admission := &stationv1alpha1.NodeAdmission{}
-	err := s.Reader.Get(ctx, types.NamespacedName{Namespace: op.Namespace, Name: op.Spec.NodeName}, admission)
+	err = s.Reader.Get(ctx, key, admission)
 	switch {
 	case err != nil && !apierrors.IsNotFound(err):
 		return false, fmt.Errorf("read NodeAdmission %s: %w", op.Spec.NodeName, err)
@@ -108,32 +103,53 @@ func (s StationTunnelRelease) Remove(ctx context.Context, op *stationv1alpha1.No
 			return false, fmt.Errorf("take the machine's key off NodeAdmission %s: %w", admission.Name, err)
 		}
 	}
-	enrollment := &stationv1alpha1.NetworkEnrollment{}
-	if err := s.Reader.Get(ctx, types.NamespacedName{Namespace: op.Namespace, Name: op.Spec.NodeName}, enrollment); apierrors.IsNotFound(err) {
-		return true, nil
-	} else if err != nil {
-		return false, fmt.Errorf("read NetworkEnrollment %s: %w", op.Spec.NodeName, err)
-	}
-	return op.Spec.NodeUID != "" && enrollment.Spec.NodeUID != op.Spec.NodeUID || enrollment.Status.Phase != stationv1alpha1.NetworkEnrollmentEnrolled, nil
-}
-
-// NodePeerCleaners are the places a node is a peer in, each released in turn.
-type NodePeerCleaners []NodeWireGuardPeerCleaner
-
-func (c NodePeerCleaners) Check(ctx context.Context, op *stationv1alpha1.NodeOperation) error {
-	for _, cleaner := range c {
-		if err := cleaner.Check(ctx, op); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c NodePeerCleaners) Remove(ctx context.Context, op *stationv1alpha1.NodeOperation) (bool, error) {
-	for _, cleaner := range c {
-		if done, err := cleaner.Remove(ctx, op); !done || err != nil {
+	if op.Spec.NodeUID != "" {
+		if stopped, err := s.stopNetworkPod(ctx, op); !stopped || err != nil {
 			return false, err
 		}
 	}
-	return true, nil
+	return !recorded || enrollment.Status.Phase != stationv1alpha1.NetworkEnrollmentEnrolled, nil
+}
+
+const (
+	stationSystemNamespace = "station-system"
+	stationNetworkLabel    = "station.rlark.io/network"
+)
+
+// stopNetworkPod takes the node out of the network DaemonSet (the label that
+// selects it) and is done when no pod of it is left on the node. A node
+// whose tunnel is a host service (station.rlark.io/network=host) has none.
+func (s StationTunnelRelease) stopNetworkPod(ctx context.Context, op *stationv1alpha1.NodeOperation) (bool, error) {
+	member, err := s.Members.Client(ctx, op.Spec.ClusterID)
+	if err != nil {
+		return false, fmt.Errorf("connect member cluster: %w", err)
+	}
+	node, err := member.CoreV1().Nodes().Get(ctx, op.Spec.NodeName, metav1.GetOptions{})
+	if err != nil {
+		return false, fmt.Errorf("read member node for peer cleanup: %w", err)
+	}
+	if string(node.UID) != op.Spec.NodeUID || node.DeletionTimestamp != nil {
+		return false, ErrNodeIdentityChanged
+	}
+	if node.Labels[stationNetworkLabel] == "enabled" {
+		delete(node.Labels, stationNetworkLabel)
+		if _, err := member.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{}); err != nil {
+			return false, fmt.Errorf("take the node out of the network DaemonSet: %w", err)
+		}
+	}
+	pods, err := member.CoreV1().Pods(stationSystemNamespace).List(ctx, metav1.ListOptions{FieldSelector: "spec.nodeName=" + op.Spec.NodeName, LabelSelector: "app=station-agent-network"})
+	if err != nil {
+		return false, fmt.Errorf("list the node's network DaemonSet pods: %w", err)
+	}
+	// No kubelet stops the pod on a node that no longer reports.
+	if !nodeReady(node) {
+		now := int64(0)
+		for i := range pods.Items {
+			pod := &pods.Items[i]
+			if err := member.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{GracePeriodSeconds: &now, Preconditions: &metav1.Preconditions{UID: &pod.UID}}); err != nil && !apierrors.IsNotFound(err) {
+				return false, fmt.Errorf("delete network DaemonSet pod %s: %w", pod.Name, err)
+			}
+		}
+	}
+	return len(pods.Items) == 0, nil
 }

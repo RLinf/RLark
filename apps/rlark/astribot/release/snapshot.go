@@ -28,7 +28,6 @@ var (
 	addonGVR       = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "addons"}
 	siteNetworkGVR = schema.GroupVersionResource{Group: "station.rlark.io", Version: "v1alpha1", Resource: "sitenetworks"}
 	enrollmentGVR  = schema.GroupVersionResource{Group: "station.rlark.io", Version: "v1alpha1", Resource: "networkenrollments"}
-	observationGVR = schema.GroupVersionResource{Group: "station.rlark.io", Version: "v1alpha1", Resource: "stationobservations"}
 )
 
 // Snapshot is everything the checks read. A site is never all green, so a
@@ -115,15 +114,14 @@ type (
 				Hub   string `json:"hub"`
 				State string `json:"state"`
 			} `json:"links"`
-		} `json:"status"`
-	}
-	observationObject struct {
-		Status struct {
-			ReportedAt metav1.Time `json:"reportedAt"`
-			Gateway    struct {
-				DocumentLevel int32 `json:"documentLevel"`
-			} `json:"gateway"`
-			Pressures []string `json:"pressures"`
+			// Observation is the node's last report; a node that never reported has none.
+			Observation *struct {
+				ReportedAt metav1.Time `json:"reportedAt"`
+				Gateway    struct {
+					DocumentLevel int32 `json:"documentLevel"`
+				} `json:"gateway"`
+				Pressures []string `json:"pressures"`
+			} `json:"observation"`
 		} `json:"status"`
 	}
 )
@@ -195,18 +193,12 @@ func Read(ctx context.Context, client dynamic.Interface, now time.Time) (Snapsho
 				entry.Links[link.Hub] = link.State
 			}
 			snapshot.Enrollments[clusterID+"/"+name] = entry
-		}
-
-		observations, err := list[observationObject](ctx, client.Resource(observationGVR).Namespace(namespace))
-		if err != nil {
-			return Snapshot{}, err
-		}
-		for name, observation := range observations {
-			status := observation.Status
-			slices.Sort(status.Pressures)
-			snapshot.Observations[clusterID+"/"+name] = Observation{
-				ReportedAt: status.ReportedAt.UTC(), Fresh: now.Sub(status.ReportedAt.Time) <= ObservationFresh,
-				GatewayLevel: status.Gateway.DocumentLevel, Pressures: status.Pressures,
+			if observation := status.Observation; observation != nil {
+				slices.Sort(observation.Pressures)
+				snapshot.Observations[clusterID+"/"+name] = Observation{
+					ReportedAt: observation.ReportedAt.UTC(), Fresh: now.Sub(observation.ReportedAt.Time) <= ObservationFresh,
+					GatewayLevel: observation.Gateway.DocumentLevel, Pressures: observation.Pressures,
+				}
 			}
 		}
 	}

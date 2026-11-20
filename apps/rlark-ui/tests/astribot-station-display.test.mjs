@@ -4,33 +4,32 @@ import {
   clusterForStation,
   formatRelativeTime,
   shortUID,
-  stationDisplayName,
   stationNetworkState,
+  stationPhase,
   stationStatusClass,
   stationUptime,
 } from "../dist/test/astribot/lib/stationDisplay.js";
 
-const station = { metadata: { namespace: "ns" }, spec: { sequence: 7, displayName: "Station-0007" } };
 const cluster = { agentNamespace: "ns", name: "集群" };
 
-test("Station display follows the current cluster name and preserves the sequence", () => {
-  assert.equal(stationDisplayName(station, [cluster]), "集群-0007");
-  assert.equal(stationDisplayName(station, [{ ...cluster, name: "新名称" }]), "新名称-0007");
-  assert.equal(station.spec.displayName, "Station-0007");
-});
-
 test("ambiguous or conflicted cluster namespace cannot select a cluster", () => {
+  assert.equal(clusterForStation([cluster], "ns"), cluster);
   assert.equal(clusterForStation([cluster, { ...cluster, name: "other" }], "ns"), undefined);
   assert.equal(clusterForStation([{ ...cluster, agentNamespaceConflict: true }], "ns"), undefined);
-  assert.equal(stationDisplayName(station, []), "Station-0007");
+});
+
+test("a site node's phase is its node state, Retired once removed, Unknown before its first report", () => {
+  assert.equal(stationPhase({ spec: {}, status: { node: { state: "Offline" } } }), "Offline");
+  assert.equal(stationPhase({ spec: { retired: true }, status: { node: { state: "Bound" } } }), "Retired");
+  assert.equal(stationPhase({ spec: {} }), "Unknown");
 });
 
 test("network state is derived only from the NetworkVerified condition", () => {
-  const withCondition = (status) => ({ status: { conditions: [{ type: "NetworkVerified", status }] } });
+  const withCondition = (status) => ({ status: { node: { conditions: [{ type: "NetworkVerified", status }] } } });
   assert.equal(stationNetworkState(withCondition("True")), "verified");
   assert.equal(stationNetworkState(withCondition("False")), "failed");
   assert.equal(stationNetworkState(withCondition("Unknown")), "unknown");
-  assert.equal(stationNetworkState({ status: { conditions: [{ type: "RLarkLinked", status: "True" }] } }), "unknown");
+  assert.equal(stationNetworkState({ status: { node: { conditions: [{ type: "RLarkLinked", status: "True" }] } } }), "unknown");
   assert.equal(stationNetworkState({}), "unknown");
 });
 

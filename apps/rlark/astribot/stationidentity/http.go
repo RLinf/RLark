@@ -204,7 +204,7 @@ func (a *API) authenticate(ctx context.Context, clusterID, token string) (Eviden
 		}
 		return Evidence{}, ErrIdentityDenied
 	}
-	// The reader validated the evidence (AuthenticateWithBindings).
+	// The reader validated the evidence (Authenticate).
 	if e.ClusterID != clusterID {
 		return Evidence{}, ErrIdentityDenied
 	}
@@ -234,7 +234,7 @@ func (a *API) observe(w http.ResponseWriter, r *http.Request, token string) {
 		writeError(w, http.StatusServiceUnavailable, "observation storage unavailable")
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "station_uid": e.StationUID, "node_uid": e.NodeUID, "reported_at": a.now().UTC()})
+	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "node_uid": e.NodeUID, "reported_at": a.now().UTC()})
 }
 
 func (a *API) now() time.Time {

@@ -11,11 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-var (
-	stationClusterGVR     = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "clusters"}
-	stationRecordGVR      = schema.GroupVersionResource{Group: "station.rlark.io", Version: "v1alpha1", Resource: "stations"}
-	stationObservationGVR = schema.GroupVersionResource{Group: "station.rlark.io", Version: "v1alpha1", Resource: "stationobservations"}
-)
+var stationClusterGVR = schema.GroupVersionResource{Group: "rlinf.io", Version: "v1alpha1", Resource: "clusters"}
 
 // pageOptions is a list request's page: limit (1 to 500, else the default) and continue. On a bad limit it has
 // answered.
@@ -43,12 +39,14 @@ func (g *Gateway) clusterNamespace(c *gin.Context) (clusterID, namespace string,
 	return clusterID, namespace, err == nil
 }
 
+// handleListStations answers GET /api/v1/station/stations: the site nodes (NetworkEnrollments) of one cluster, or of
+// all without cluster_id, each without its network document.
 func (g *Gateway) handleListStations(c *gin.Context) {
 	options, ok := pageOptions(c, 200)
 	if !ok {
 		return
 	}
-	resource := g.stationClient.Resource(stationRecordGVR)
+	resource := g.stationClient.Resource(networkEnrollmentGVR)
 	var records *unstructured.UnstructuredList
 	var err error
 	if clusterID := c.Query("cluster_id"); clusterID != "" {
@@ -64,41 +62,30 @@ func (g *Gateway) handleListStations(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Station API request failed"})
 		return
 	}
+	for i := range records.Items {
+		unstructured.RemoveNestedField(records.Items[i].Object, "status", "config")
+	}
 	c.JSON(http.StatusOK, gin.H{"items": records.Items, "continue": records.GetContinue()})
 }
 
+// handleGetStation answers GET /api/v1/station/stations/:name?cluster_id=: one site node, without its network
+// document.
 func (g *Gateway) handleGetStation(c *gin.Context) {
 	_, namespace, ok := g.clusterNamespace(c)
 	if !ok {
 		return
 	}
-	station, err := g.stationClient.Resource(stationRecordGVR).Namespace(namespace).Get(c.Request.Context(), c.Param("name"), metav1.GetOptions{})
+	record, err := g.stationClient.Resource(networkEnrollmentGVR).Namespace(namespace).Get(c.Request.Context(), c.Param("name"), metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Station not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "site node not found"})
 		return
 	}
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Station API request failed"})
 		return
 	}
-	c.JSON(http.StatusOK, station.Object)
-}
-
-func (g *Gateway) handleListStationObservations(c *gin.Context) {
-	_, namespace, ok := g.clusterNamespace(c)
-	if !ok {
-		return
-	}
-	options, ok := pageOptions(c, 200)
-	if !ok {
-		return
-	}
-	observations, err := g.stationClient.Resource(stationObservationGVR).Namespace(namespace).List(c.Request.Context(), options)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Station observation query failed"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"items": observations.Items, "continue": observations.GetContinue()})
+	unstructured.RemoveNestedField(record.Object, "status", "config")
+	c.JSON(http.StatusOK, record.Object)
 }
 
 func (g *Gateway) stationNamespace(c *gin.Context, clusterID string) (string, error) {

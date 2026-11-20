@@ -25,7 +25,7 @@ func TestReadSnapshot(t *testing.T) {
 	cluster.Object["spec"] = map[string]any{"agentNamespace": "rlark-office"}
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
 		clusterGVR: "ClusterList", nodeGVR: "NodeList", addonGVR: "AddonList",
-		siteNetworkGVR: "SiteNetworkList", enrollmentGVR: "NetworkEnrollmentList", observationGVR: "StationObservationList",
+		siteNetworkGVR: "SiteNetworkList", enrollmentGVR: "NetworkEnrollmentList",
 	},
 		cluster,
 		node,
@@ -44,15 +44,17 @@ func TestReadSnapshot(t *testing.T) {
 			"phase": "Enrolled", "configHash": "abc", "relay": "cloud/gpu-1",
 			"problems": []any{"z", "a"},
 			"links":    []any{map[string]any{"hub": "cloud/gpu-1", "state": "Connected", "since": "2026-11-13T19:00:00Z"}},
+			"observation": map[string]any{
+				"reportedAt": "2026-11-13T19:59:00Z", "nodeUID": "u1",
+				"gateway": map[string]any{"documentLevel": int64(2), "digest": "aa11"}, "agent": map[string]any{"digest": "bb22"},
+				"pressures": []any{"PIDPressure", "DiskPressure"},
+			},
 		}),
-		object("station.rlark.io/v1alpha1", "StationObservation", "rlark-office", "s1u-01", map[string]any{
-			"reportedAt": "2026-11-13T19:59:00Z", "nodeUID": "u1",
-			"gateway": map[string]any{"documentLevel": int64(2), "digest": "aa11"}, "agent": map[string]any{"digest": "bb22"},
-			"pressures": []any{"PIDPressure", "DiskPressure"},
-		}),
-		// Stored by a station-api that reads pressures, of a Node under none, with a gateway and an agent that state nothing.
-		object("station.rlark.io/v1alpha1", "StationObservation", "rlark-office", "desk-1", map[string]any{"reportedAt": "2026-11-13T19:59:30Z", "nodeUID": "u3", "pressures": []any{}}),
-		object("station.rlark.io/v1alpha1", "StationObservation", "rlark-office", "desk-2", map[string]any{"reportedAt": "2026-11-13T19:57:59Z", "nodeUID": "u2"}),
+		// Nodes in no tunnel network: one under no pressure, with a gateway and an agent that state nothing; one whose
+		// report states no pressures; one that never reported.
+		object("station.rlark.io/v1alpha1", "NetworkEnrollment", "rlark-office", "desk-1", map[string]any{"observation": map[string]any{"reportedAt": "2026-11-13T19:59:30Z", "nodeUID": "u3", "pressures": []any{}}}),
+		object("station.rlark.io/v1alpha1", "NetworkEnrollment", "rlark-office", "desk-2", map[string]any{"observation": map[string]any{"reportedAt": "2026-11-13T19:57:59Z", "nodeUID": "u2"}}),
+		object("station.rlark.io/v1alpha1", "NetworkEnrollment", "rlark-office", "desk-3", map[string]any{"phase": "Pending"}),
 	)
 
 	snapshot, err := Read(context.Background(), client, taken.Add(300*time.Millisecond))
@@ -64,7 +66,7 @@ func TestReadSnapshot(t *testing.T) {
 		`"siteNetwork":{"ready":true,"fullyConnected":false,"members":2,"unreachable":["a to b","b to a"]},` +
 		`"clusters":{"office":"Downgraded"},` +
 		`"nodes":{"office/s1u-01":"Online"},` +
-		`"enrollments":{"office/s1u-01":{"phase":"Enrolled","configHash":"abc","problems":["a","z"],"links":{"cloud/gpu-1":"Connected"}}},` +
+		`"enrollments":{"office/desk-1":{"phase":""},"office/desk-2":{"phase":""},"office/desk-3":{"phase":"Pending"},"office/s1u-01":{"phase":"Enrolled","configHash":"abc","problems":["a","z"],"links":{"cloud/gpu-1":"Connected"}}},` +
 		`"addons":{"office/station":{"phase":"Ready","version":"0.4.0"}},` +
 		`"observations":{"office/desk-1":{"reportedAt":"2026-11-13T19:59:30Z","fresh":true,"pressures":[]},` +
 		`"office/desk-2":{"reportedAt":"2026-11-13T19:57:59Z","fresh":false,"pressures":null},` +

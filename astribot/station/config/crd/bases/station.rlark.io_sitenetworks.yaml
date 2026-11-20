@@ -386,35 +386,6 @@ spec:
             type: object
           status:
             properties:
-              allocations:
-                description: |-
-                  Allocations are durable: an address stays with its Station identity
-                  across rebinds and is released only when the identity is retired.
-                items:
-                  properties:
-                    address:
-                      maxLength: 15
-                      minLength: 7
-                      type: string
-                    clusterID:
-                      type: string
-                    nodeName:
-                      type: string
-                    stationUID:
-                      maxLength: 128
-                      minLength: 1
-                      type: string
-                  required:
-                  - address
-                  - clusterID
-                  - nodeName
-                  - stationUID
-                  type: object
-                maxItems: 4096
-                type: array
-                x-kubernetes-list-map-keys:
-                - stationUID
-                x-kubernetes-list-type: map
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

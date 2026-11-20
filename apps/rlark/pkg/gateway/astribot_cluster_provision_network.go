@@ -130,10 +130,6 @@ func (n provisionNetwork) allocate(others []string) (string, error) {
 	for _, node := range n.nodes() {
 		taken[node.Address] = true
 	}
-	for _, entry := range n.list("status", "allocations") {
-		address, _ := entry["address"].(string)
-		taken[address] = true
-	}
 	for _, entry := range n.list("spec", "names") {
 		address, _ := entry["address"].(string)
 		taken[address] = true

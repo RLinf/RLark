@@ -228,7 +228,6 @@ spec:
         imagePullPolicy: IfNotPresent
         env:
         - {name: NODE_NAME, valueFrom: {fieldRef: {fieldPath: spec.nodeName}}}
-        - {name: STATION_GATEWAY_CONFIG, value: /config/none.json}
         - {name: STATION_GATEWAY_COMPUTED_CONFIG, value: "/documents/\$(NODE_NAME).json"}
         - {name: STATION_GATEWAY_PRUNE_ROUTES, value: "true"}
         - {name: STATION_GATEWAY_HOSTS_FILE, value: /host/etc/hosts}

@@ -18,7 +18,7 @@
 # one by itself (install.sh); this script then withdraws its admission, so
 # that its enrollment in the old cluster stands again.
 # Afterwards the node's leftovers in the old cluster are removed: its Node
-# object, its NetworkEnrollment, and its Station is retired.
+# object and its NetworkEnrollment (its site node record there).
 set -euo pipefail
 : "${KCP:=/home/cailiang/.local/share/rlark-runtime/kcp-admin.kubeconfig}" "${CA:=/tmp/station-api-ca.crt}"
 OLD=$1 NEW=$2 CLUSTER=$3 NODE=$4 STATION_API=$5 IMAGE=$6; shift 6
@@ -109,18 +109,13 @@ namespace=$(mgmt get clusters.rlinf.io "$CLUSTER" -o jsonpath='{.spec.agentNames
 tries=0
 until [[ $(mgmt -n "$namespace" get nodeadmissions.station.rlark.io "$NODE" -o jsonpath='{.status.phase}') == Joined ]]; do
   tries=$((tries + 1))
-  (( tries < 150 )) || { echo "$NODE is Ready in $CLUSTER, and its admission is not Joined after 5 min: it has not enrolled from there (its station-agent, its Station's binding). Its admission keeps it among its peers meanwhile" >&2; exit 1; }
+  (( tries < 150 )) || { echo "$NODE is Ready in $CLUSTER, and its admission is not Joined after 5 min: it has not enrolled from there (its station-agent, its NetworkEnrollment there). Its admission keeps it among its peers meanwhile" >&2; exit 1; }
   sleep 2
 done
 stamp "$NODE: enrolled in $CLUSTER under its own identity after $(( $(date +%s) - started )) s"
 
 # What it left behind.
 old delete node "$NODE" --ignore-not-found >/dev/null
-mgmt -n "$old_namespace" delete networkenrollments.station.rlark.io,stationobservations.station.rlark.io "$NODE" --ignore-not-found >/dev/null
-for station in $(mgmt -n "$old_namespace" get stations.station.rlark.io -o json | python3 -c '
-import json, sys
-print(" ".join(s["metadata"]["name"] for s in json.load(sys.stdin)["items"] if s["spec"]["binding"]["nodeName"] == sys.argv[1] and not s["spec"].get("retired")))' "$NODE"); do
-  mgmt -n "$old_namespace" patch stations.station.rlark.io "$station" --type=merge -p '{"spec":{"retired":true}}' >/dev/null
-done
-stamp "$NODE: its Station in $old_cluster is retired, its enrollment there removed"
+mgmt -n "$old_namespace" delete networkenrollments.station.rlark.io "$NODE" --ignore-not-found >/dev/null
+stamp "$NODE: its site node record in $old_cluster is removed"
 new get node "$NODE" -o wide

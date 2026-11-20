@@ -80,8 +80,7 @@ func provisionTestNetwork(declared ...map[string]interface{}) *unstructured.Unst
 				"advertise": []interface{}{map[string]interface{}{"cidr": "10.0.2.0/24"}}}},
 		},
 		"status": map[string]interface{}{
-			"allocations": []interface{}{map[string]interface{}{"stationUID": "s", "clusterID": "rlark-local-dev-gpu", "nodeName": "cailiang", "address": "10.254.240.4"}},
-			"declared":    status,
+			"declared": status,
 		},
 	}}
 }
@@ -107,10 +106,10 @@ func provisionGateway(t *testing.T, network *unstructured.Unstructured, objects 
 	g := &Gateway{
 		kubeClient: clientset.NewSimpleClientset(objects...),
 		rawClient:  kubefake.NewSimpleClientset(provisionTestRecord()),
-		astribotState: astribotState{stationClient: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{siteNetworkGVR: "SiteNetworkList", nodeAdmissionGVR: "NodeAdmissionList", stationRecordGVR: "StationList"}, network,
+		astribotState: astribotState{stationClient: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{siteNetworkGVR: "SiteNetworkList", nodeAdmissionGVR: "NodeAdmissionList", networkEnrollmentGVR: "NetworkEnrollmentList"}, network,
 			// A robot that joined by a code holds its tunnel address on its admission, not in the SiteNetwork.
 			&unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission",
-				"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "rlark-local-dev-gpu"}, "status": map[string]interface{}{"address": "10.254.240.5"}}})},
+				"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "rlark-local-dev-gpu"}, "status": map[string]interface{}{"address": "10.254.240.4"}}})},
 	}
 	// The Gateway's own namespace is not the record's (live runs it in default).
 	g.config.KubeClientConfig.Namespace = "default"
@@ -131,9 +130,9 @@ func TestChooseSubnetsTakesTheFirstPairFreeOfEveryNetwork(t *testing.T) {
 
 func TestAllocateTakesTheLowestFreeAddressAfterTheManagementMachine(t *testing.T) {
 	network := provisionNetwork{provisionTestNetwork()}
-	address, err := network.allocate([]string{"10.254.240.5"})
-	if err != nil || address != "10.254.240.6" {
-		t.Fatalf("address = %s %v, want 10.254.240.6 (.1 is the management machine; .2 a name, .3 a node, .4 an allocation, .5 another provision)", address, err)
+	address, err := network.allocate([]string{"10.254.240.4"})
+	if err != nil || address != "10.254.240.5" {
+		t.Fatalf("address = %s %v, want 10.254.240.5 (.1 is the management machine; .2 a name, .3 a node, .4 another provision)", address, err)
 	}
 }
 
@@ -212,14 +211,14 @@ func TestDeclareAddsTheSiteItsNamesAndTheHubKeepingTheRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	facts := p.Status.Facts
-	if facts.TunnelAddress != "10.254.240.6" || facts.ControlPlaneName != "cp.rlark-baidu-gpu.rlark.internal" || facts.PodSubnet != "10.202.0.0/16" || facts.ServiceSubnet != "10.203.0.0/16" {
-		t.Fatalf("facts = %+v (the admission's 10.254.240.5 and the machine's own 10.200.0.0/16 are avoided)", facts)
+	if facts.TunnelAddress != "10.254.240.5" || facts.ControlPlaneName != "cp.rlark-baidu-gpu.rlark.internal" || facts.PodSubnet != "10.202.0.0/16" || facts.ServiceSubnet != "10.203.0.0/16" {
+		t.Fatalf("facts = %+v (the admission's 10.254.240.4 and the machine's own 10.200.0.0/16 are avoided)", facts)
 	}
 	if !strings.Contains(readback, "status.declared") {
 		t.Fatalf("readback = %q", readback)
 	}
 	network, _ := g.provisionNetwork(context.Background())
-	if network.name(facts.ControlPlaneName) != "10.254.240.6" || network.name("rlark-server") != "10.254.240.1" || network.siteOf("rlark-baidu-gpu") != "baidu" || network.siteOf("rlark-local-dev-gpu") != "office" {
+	if network.name(facts.ControlPlaneName) != "10.254.240.5" || network.name("rlark-server") != "10.254.240.1" || network.siteOf("rlark-baidu-gpu") != "baidu" || network.siteOf("rlark-local-dev-gpu") != "office" {
 		t.Fatalf("names and sites = %v", network.object.Object["spec"])
 	}
 	sites := network.list("spec", "sites")
@@ -454,12 +453,12 @@ func TestAMakingThatStoppedIsClearedAndItsNameMadeAgain(t *testing.T) {
 	ctx := context.Background()
 	_, _ = g.rawClient.CoreV1().Secrets(stationMemberCredentialNamespace).Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: stationmember.SecretName("rlark-baidu-gpu"), Namespace: stationMemberCredentialNamespace}}, metav1.CreateOptions{})
 	for _, object := range []*unstructured.Unstructured{
-		{Object: map[string]interface{}{"apiVersion": "station.rlark.io/v1alpha1", "kind": "Station", "metadata": map[string]interface{}{"name": "stn-hub", "namespace": "rlark-baidu-gpu"},
-			"spec": map[string]interface{}{"binding": map[string]interface{}{"nodeName": "gpu-1", "nodeUID": "earlier"}}}},
+		{Object: map[string]interface{}{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NetworkEnrollment", "metadata": map[string]interface{}{"name": "gpu-1", "namespace": "rlark-baidu-gpu"},
+			"spec": map[string]interface{}{"nodeUID": "earlier"}}},
 		{Object: map[string]interface{}{"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission", "metadata": map[string]interface{}{"name": "gpu-2", "namespace": "rlark-baidu-gpu"},
 			"spec": map[string]interface{}{"publicKey": "second"}}},
 	} {
-		resource := stationRecordGVR
+		resource := networkEnrollmentGVR
 		if object.GetKind() == "NodeAdmission" {
 			resource = nodeAdmissionGVR
 		}
@@ -493,8 +492,8 @@ func TestAMakingThatStoppedIsClearedAndItsNameMadeAgain(t *testing.T) {
 	if _, err := g.rawClient.CoreV1().Secrets(stationMemberCredentialNamespace).Get(ctx, stationmember.SecretName("rlark-baidu-gpu"), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("Station's member credential: %v", err)
 	}
-	if station, err := g.stationClient.Resource(stationRecordGVR).Namespace("rlark-baidu-gpu").Get(ctx, "stn-hub", metav1.GetOptions{}); err != nil || station.Object["spec"].(map[string]interface{})["retired"] != true {
-		t.Fatalf("the cluster's Station must be retired: %v %v", station, err)
+	if left, _ := g.stationClient.Resource(networkEnrollmentGVR).Namespace("rlark-baidu-gpu").List(ctx, metav1.ListOptions{}); len(left.Items) != 0 {
+		t.Fatalf("the cluster's site node records must go: %d", len(left.Items))
 	}
 	if left, _ := g.stationClient.Resource(nodeAdmissionGVR).Namespace("rlark-baidu-gpu").List(ctx, metav1.ListOptions{}); len(left.Items) != 0 {
 		t.Fatalf("the cluster's admissions must go: %d", len(left.Items))

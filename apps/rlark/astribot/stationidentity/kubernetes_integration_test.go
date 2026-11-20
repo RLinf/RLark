@@ -2,14 +2,15 @@ package stationidentity
 
 import (
 	"context"
+	"os"
+	"testing"
+	"time"
+
 	authv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	"os"
-	"testing"
-	"time"
 )
 
 func TestLiveKubernetesIdentity(t *testing.T) {
@@ -55,13 +56,12 @@ func TestLiveKubernetesIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := Registration{ClusterID: "local", Namespace: ns.Name, ServiceAccount: sa.Name, ServiceAccountUID: string(sa.UID), Audience: "station-api-test"}
-	bindings := mapBindings{"local/" + node.Name: {NodeUID: string(node.UID), StationUID: "test-station", Generation: 1}}
-	if _, err = AuthenticateWithBindings(ctx, client, reg, bindings, tok.Status.Token); err != nil {
+	if _, err = Authenticate(ctx, client, reg, tok.Status.Token); err != nil {
 		t.Fatalf("valid token rejected: %v", err)
 	}
 	wrong := reg
 	wrong.Audience = "wrong-audience"
-	if _, err = AuthenticateWithBindings(ctx, client, wrong, bindings, tok.Status.Token); err == nil {
+	if _, err = Authenticate(ctx, client, wrong, tok.Status.Token); err == nil {
 		t.Fatal("wrong audience accepted")
 	}
 	zero := int64(0)
@@ -70,7 +70,7 @@ func TestLiveKubernetesIdentity(t *testing.T) {
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		_, err = AuthenticateWithBindings(ctx, client, reg, bindings, tok.Status.Token)
+		_, err = Authenticate(ctx, client, reg, tok.Status.Token)
 		if err != nil {
 			break
 		}

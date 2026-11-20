@@ -36,28 +36,20 @@ func testSiteNetwork() *stationv1alpha1.SiteNetwork {
 			Nodes: []stationv1alpha1.SiteNetworkNode{
 				{ClusterID: "dev", NodeName: "cailiang", Role: "Hub", Relay: true, Address: "10.254.240.1",
 					Endpoints: []stationv1alpha1.SiteNetworkEndpoint{{Address: "10.11.14.128:51820", Scope: "Site"}}},
-				{ClusterID: "dev", NodeName: "alexfu", Role: "Hub", Endpoints: []stationv1alpha1.SiteNetworkEndpoint{{Scope: "Site"}}},
+				{ClusterID: "dev", NodeName: "alexfu", Role: "Hub", Address: "10.254.240.2", Endpoints: []stationv1alpha1.SiteNetworkEndpoint{{Scope: "Site"}}},
+				{ClusterID: "robot-01", NodeName: "s1u-01-x86", Address: "10.254.240.3"},
+				{ClusterID: "robot-02", NodeName: "s1u-02-x86", Address: "10.254.240.4"},
 			},
 		},
 	}
 }
 
-// testMember returns the Station and the NetworkEnrollment of one node.
+// testMember returns the NetworkEnrollment of one node.
 func testMember(cluster, node, key string, addresses ...string) []client.Object {
-	uid := types.UID("station-" + node)
-	return []client.Object{
-		&stationv1alpha1.Station{
-			ObjectMeta: metav1.ObjectMeta{Namespace: "ns-" + cluster, Name: "stn-" + node, UID: uid},
-			Spec: stationv1alpha1.StationSpec{DisplayName: node, Sequence: 1, Binding: stationv1alpha1.StationBinding{
-				NodeName: node, NodeUID: "node-" + node, Version: 1, BoundBy: "test"}},
-			Status: stationv1alpha1.StationStatus{Phase: stationv1alpha1.StationPhaseBound},
-		},
-		&stationv1alpha1.NetworkEnrollment{
-			ObjectMeta: metav1.ObjectMeta{Namespace: "ns-" + cluster, Name: node, Generation: 1},
-			Spec: stationv1alpha1.NetworkEnrollmentSpec{ClusterID: cluster, NodeUID: "node-" + node, StationUID: string(uid),
-				BindingVersion: 1, PublicKey: key, Addresses: addresses},
-		},
-	}
+	return []client.Object{&stationv1alpha1.NetworkEnrollment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns-" + cluster, Name: node, Generation: 1},
+		Spec:       stationv1alpha1.NetworkEnrollmentSpec{ClusterID: cluster, NodeUID: "node-" + node, PublicKey: key, Addresses: addresses},
+	}}
 }
 
 func newNetworkTest(t *testing.T, objects ...client.Object) (*NetworkReconciler, client.Client) {
@@ -70,7 +62,7 @@ func newNetworkTest(t *testing.T, objects ...client.Object) (*NetworkReconciler,
 		t.Fatal(err)
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&stationv1alpha1.SiteNetwork{}, &stationv1alpha1.NetworkEnrollment{}, &stationv1alpha1.Station{}, &stationv1alpha1.NodeAdmission{}).
+		WithStatusSubresource(&stationv1alpha1.SiteNetwork{}, &stationv1alpha1.NetworkEnrollment{}, &stationv1alpha1.NodeAdmission{}).
 		WithObjects(objects...).Build()
 	reconciler := NewNetworkReconciler(c, c, testNetworkKey, func() time.Time { return time.Unix(1_800_000_000, 0) })
 	return reconciler, c
@@ -101,7 +93,7 @@ func configOf(t *testing.T, status stationv1alpha1.NetworkEnrollmentStatus) netw
 	return config
 }
 
-func TestNetworkEnrollsNodesAndAllocatesAddresses(t *testing.T) {
+func TestNetworkEnrollsNodesAtTheirDeclaredAddresses(t *testing.T) {
 	objects := []client.Object{testSiteNetwork()}
 	objects = append(objects, testMember("dev", "cailiang", "key-dev", "10.11.14.128")...)
 	objects = append(objects, testMember("dev", "alexfu", "key-3090", "10.11.13.192")...)
@@ -115,9 +107,8 @@ func TestNetworkEnrollsNodesAndAllocatesAddresses(t *testing.T) {
 	if dev.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || dev.Address != "10.254.240.1" || dev.Role != "Hub" || dev.Site != "office" {
 		t.Fatalf("declared hub: %+v", dev)
 	}
-	// Allocation follows cluster/node order: dev/alexfu, then robot-01/...
 	if desk.Address != "10.254.240.2" || robot.Address != "10.254.240.3" || robot.Role != "Leaf" || robot.Site != "lab" {
-		t.Fatalf("allocated %s and %s, robot %+v", desk.Address, robot.Address, robot)
+		t.Fatalf("declared %s and %s, robot %+v", desk.Address, robot.Address, robot)
 	}
 	robotConfig := configOf(t, robot)
 	if len(robotConfig.Peers) != 2 || robotConfig.Peers[0].Endpoint != "10.11.14.128:51820" || robotConfig.Peers[1].Endpoint != "10.11.13.192:51820" {
@@ -148,7 +139,7 @@ func TestNetworkEnrollsNodesAndAllocatesAddresses(t *testing.T) {
 	if err := c.Get(context.Background(), testNetworkKey, &siteNetwork); err != nil {
 		t.Fatal(err)
 	}
-	if siteNetwork.Status.Members != 4 || len(siteNetwork.Status.Allocations) != 3 || len(siteNetwork.Status.Unreachable) != 0 {
+	if siteNetwork.Status.Members != 4 || len(siteNetwork.Status.Unreachable) != 0 {
 		t.Fatalf("status %+v", siteNetwork.Status)
 	}
 
@@ -167,64 +158,69 @@ func TestNetworkEnrollsNodesAndAllocatesAddresses(t *testing.T) {
 	}
 }
 
-func TestNetworkRejectsStaleIdentityAndReleasesRetiredAddress(t *testing.T) {
+// A node in Conflict, a removed one and one with no address source have no
+// place in the tunnel; the answer leaves the report and the node's state alone.
+func TestNetworkRejectsAConflictingARetiredAndAnAddresslessNode(t *testing.T) {
 	objects := []client.Object{testSiteNetwork()}
 	objects = append(objects, testMember("dev", "cailiang", "key-dev", "10.11.14.128")...)
 	objects = append(objects, testMember("robot-01", "s1u-01-x86", "key-robot-1")...)
 	objects = append(objects, testMember("robot-02", "s1u-02-x86", "key-robot-2")...)
+	objects = append(objects, testMember("robot-02", "undeclared", "key-robot-3")...)
 	r, c := newNetworkTest(t, objects...)
 	reconcileNetwork(t, r)
-	if got := enrollmentStatus(t, c, "robot-01", "s1u-01-x86").Address; got != "10.254.240.2" {
-		t.Fatalf("first robot address %s", got)
+	if got := enrollmentStatus(t, c, "robot-01", "s1u-01-x86"); got.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || got.Address != "10.254.240.3" {
+		t.Fatalf("first robot: %+v", got)
+	}
+	if got := enrollmentStatus(t, c, "robot-02", "undeclared"); got.Phase != stationv1alpha1.NetworkEnrollmentRejected || !strings.Contains(got.Reason, "node admission") {
+		t.Fatalf("a node with no address source: %+v", got)
 	}
 
-	// The node was reinstalled and rebound: the old enrollment names binding 1.
-	var station stationv1alpha1.Station
-	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-robot-01", Name: "stn-s1u-01-x86"}, &station); err != nil {
+	var enrollment stationv1alpha1.NetworkEnrollment
+	key := types.NamespacedName{Namespace: "ns-robot-01", Name: "s1u-01-x86"}
+	if err := c.Get(context.Background(), key, &enrollment); err != nil {
 		t.Fatal(err)
 	}
-	station.Spec.Binding.Version, station.Spec.Binding.NodeUID = 2, "node-reinstalled"
-	if err := c.Update(context.Background(), &station); err != nil {
+	enrollment.Status.Node = &stationv1alpha1.NetworkEnrollmentNode{State: stationv1alpha1.NodeStateConflict}
+	enrollment.Status.Observation = &stationv1alpha1.NodeObservation{NodeUID: "node-reinstalled"}
+	if err := c.Status().Update(context.Background(), &enrollment); err != nil {
 		t.Fatal(err)
 	}
 	reconcileNetwork(t, r)
-	stale := enrollmentStatus(t, c, "robot-01", "s1u-01-x86")
-	if stale.Phase != stationv1alpha1.NetworkEnrollmentRejected || stale.Config != "" {
-		t.Fatalf("stale binding must be rejected: %+v", stale)
+	conflict := enrollmentStatus(t, c, "robot-01", "s1u-01-x86")
+	if conflict.Phase != stationv1alpha1.NetworkEnrollmentRejected || conflict.Config != "" || conflict.Node.State != stationv1alpha1.NodeStateConflict || conflict.Observation.NodeUID != "node-reinstalled" {
+		t.Fatalf("a node in Conflict must be rejected, its report and state kept: %+v", conflict)
 	}
 	if got := configOf(t, enrollmentStatus(t, c, "dev", "cailiang")); len(got.Peers) != 1 {
-		t.Fatalf("the old key must leave every peer list: %+v", got.Peers)
+		t.Fatalf("its key must leave every peer list: %+v", got.Peers)
 	}
 
-	// The reinstalled node enrolls under binding 2 with a new key and keeps its address.
-	var enrollment stationv1alpha1.NetworkEnrollment
-	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-robot-01", Name: "s1u-01-x86"}, &enrollment); err != nil {
+	// The record passes to the reinstalled node, which enrolls with a new key at the same address.
+	if err := c.Get(context.Background(), key, &enrollment); err != nil {
 		t.Fatal(err)
 	}
-	enrollment.Spec.BindingVersion, enrollment.Spec.NodeUID, enrollment.Spec.PublicKey = 2, "node-reinstalled", "key-robot-1-new"
+	enrollment.Status.Node.State = stationv1alpha1.NodeStateBound
+	if err := c.Status().Update(context.Background(), &enrollment); err != nil {
+		t.Fatal(err)
+	}
+	enrollment.Spec.NodeUID, enrollment.Spec.PublicKey = "node-reinstalled", "key-robot-1-new"
 	if err := c.Update(context.Background(), &enrollment); err != nil {
 		t.Fatal(err)
 	}
 	reconcileNetwork(t, r)
-	if again := enrollmentStatus(t, c, "robot-01", "s1u-01-x86"); again.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || again.Address != "10.254.240.2" || again.PublicKey != "key-robot-1-new" {
-		t.Fatalf("rebound node: %+v", again)
+	if again := enrollmentStatus(t, c, "robot-01", "s1u-01-x86"); again.Phase != stationv1alpha1.NetworkEnrollmentEnrolled || again.Address != "10.254.240.3" || again.PublicKey != "key-robot-1-new" {
+		t.Fatalf("the node the record passed to: %+v", again)
 	}
 
-	// Retirement removes the node and frees the address for the next one.
-	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-robot-01", Name: "stn-s1u-01-x86"}, &station); err != nil {
+	if err := c.Get(context.Background(), key, &enrollment); err != nil {
 		t.Fatal(err)
 	}
-	station.Spec.Retired = true
-	if err := c.Update(context.Background(), &station); err != nil {
+	enrollment.Spec.Retired = true
+	if err := c.Update(context.Background(), &enrollment); err != nil {
 		t.Fatal(err)
 	}
 	reconcileNetwork(t, r)
-	var siteNetwork stationv1alpha1.SiteNetwork
-	if err := c.Get(context.Background(), testNetworkKey, &siteNetwork); err != nil {
-		t.Fatal(err)
-	}
-	if len(siteNetwork.Status.Allocations) != 1 || siteNetwork.Status.Allocations[0].NodeName != "s1u-02-x86" {
-		t.Fatalf("allocations after retirement: %+v", siteNetwork.Status.Allocations)
+	if retired := enrollmentStatus(t, c, "robot-01", "s1u-01-x86"); retired.Phase != stationv1alpha1.NetworkEnrollmentRejected || !strings.Contains(retired.Reason, "removed") {
+		t.Fatalf("a removed node: %+v", retired)
 	}
 }
 
@@ -297,7 +293,7 @@ func TestLiveSiteDeclarationEnrollsTheSixNodes(t *testing.T) {
 	if err := c.Get(context.Background(), testNetworkKey, &siteNetwork); err != nil {
 		t.Fatal(err)
 	}
-	if len(siteNetwork.Status.Unreachable) != 0 || len(siteNetwork.Status.Allocations) != 0 || siteNetwork.Status.Members != 6 {
+	if len(siteNetwork.Status.Unreachable) != 0 || siteNetwork.Status.Members != 6 {
 		t.Fatalf("status %+v", siteNetwork.Status)
 	}
 }
@@ -411,20 +407,12 @@ func TestNetworkAdmitsAMachineByCode(t *testing.T) {
 		t.Fatalf("the hub must know the admitted machine and drop the replaced one: %v", peers)
 	}
 
-	// The node joins: its Station is rebound to the new Node and it enrolls with the same key.
-	var station stationv1alpha1.Station
-	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-dev", Name: "stn-robot"}, &station); err != nil {
-		t.Fatal(err)
-	}
-	station.Spec.Binding.NodeUID, station.Spec.Binding.Version = "node-robot-new", 2
-	if err := c.Update(context.Background(), &station); err != nil {
-		t.Fatal(err)
-	}
+	// The node joins: its record passes to the new Node and it enrolls with the same key.
 	var enrollment stationv1alpha1.NetworkEnrollment
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-dev", Name: "robot"}, &enrollment); err != nil {
 		t.Fatal(err)
 	}
-	enrollment.Spec.NodeUID, enrollment.Spec.BindingVersion, enrollment.Spec.PublicKey = "node-robot-new", 2, keyNew
+	enrollment.Spec.NodeUID, enrollment.Spec.PublicKey = "node-robot-new", keyNew
 	if err := c.Update(context.Background(), &enrollment); err != nil {
 		t.Fatal(err)
 	}
@@ -495,9 +483,8 @@ func TestNetworkMovesAMachineToAnotherCluster(t *testing.T) {
 
 // A cluster gets a new control plane and its nodes join it again, each as
 // the node it is, with the key it has: the admission answers with the
-// node's configuration, the node stays among its peers while its Station is
-// rebound to its new Node, and the admission is Joined once it has enrolled
-// from there. So for a node that joined by a code and for one the
+// node's configuration, the node stays among its peers until its record
+// has passed to its new Node, and the admission is Joined from there. So for a node that joined by a code and for one the
 // SiteNetwork declares; and a second time with a new code.
 func TestNetworkLetsANodeJoinItsClustersNewControlPlane(t *testing.T) {
 	keyHub, keyRobot, keyListed := strings.Repeat("A", 43)+"=", strings.Repeat("B", 43)+"=", strings.Repeat("C", 43)+"="
@@ -567,28 +554,12 @@ func TestNetworkLetsANodeJoinItsClustersNewControlPlane(t *testing.T) {
 			t.Fatalf("%s: the admission must answer with the node's own configuration: %+v, enrollment %+v", node.name, redeemed, own)
 		}
 
-		// The node is registered by the new control plane under a new UID; its
-		// Station is rebound before its enrollment says so.
-		var station stationv1alpha1.Station
-		if err := c.Get(ctx, types.NamespacedName{Namespace: "ns-robot-01", Name: "stn-" + node.name}, &station); err != nil {
-			t.Fatal(err)
-		}
-		station.Spec.Binding.NodeUID, station.Spec.Binding.Version = "node-"+node.name+"-again", 2
-		if err := c.Update(ctx, &station); err != nil {
-			t.Fatal(err)
-		}
-		between := admission(node.name).Status
-		var config network.NodeConfig
-		if err := json.Unmarshal([]byte(between.Config), &config); err != nil || between.Phase != stationv1alpha1.NodeAdmissionRedeemed ||
-			config.Address != node.address+"/32" || !hubKnows(node.key) || enrollmentStatus(t, c, "robot-01", node.name).Phase != stationv1alpha1.NetworkEnrollmentRejected {
-			t.Fatalf("%s: while its Station is rebound the node keeps its address and its peers: %+v %v", node.name, between, err)
-		}
-
+		// The node is registered by the new control plane under a new UID and its record passes to it.
 		var enrollment stationv1alpha1.NetworkEnrollment
 		if err := c.Get(ctx, types.NamespacedName{Namespace: "ns-robot-01", Name: node.name}, &enrollment); err != nil {
 			t.Fatal(err)
 		}
-		enrollment.Spec.NodeUID, enrollment.Spec.BindingVersion = "node-"+node.name+"-again", 2
+		enrollment.Spec.NodeUID = "node-" + node.name + "-again"
 		if err := c.Update(ctx, &enrollment); err != nil {
 			t.Fatal(err)
 		}
@@ -612,10 +583,6 @@ func TestNetworkSaysWhatTheHubsSeeOfALeaf(t *testing.T) {
 	objects = append(objects, testMember("dev", "cailiang", "key-dev", "10.11.14.128")...)
 	objects = append(objects, testMember("dev", "alexfu", "key-3090", "10.11.13.192")...)
 	objects = append(objects, testMember("robot-01", "s1u-01-x86", "key-robot-1", "192.168.0.10")...)
-	for _, hub := range []string{"cailiang", "alexfu"} {
-		objects = append(objects, &stationv1alpha1.StationObservation{ObjectMeta: metav1.ObjectMeta{
-			Namespace: "ns-dev", Name: hub, Annotations: map[string]string{"station.rlark.io/cluster-id": "dev"}}})
-	}
 	r, c := newNetworkTest(t, objects...)
 	clock := time.Unix(1_800_000_000, 0)
 	r.now = func() time.Time { return clock }
@@ -624,15 +591,15 @@ func TestNetworkSaysWhatTheHubsSeeOfALeaf(t *testing.T) {
 		t.Helper()
 		clock = clock.Add(30 * time.Second)
 		for _, hub := range hubs {
-			var observation stationv1alpha1.StationObservation
-			if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-dev", Name: hub}, &observation); err != nil {
+			var reporting stationv1alpha1.NetworkEnrollment
+			if err := c.Get(context.Background(), types.NamespacedName{Namespace: "ns-dev", Name: hub}, &reporting); err != nil {
 				t.Fatal(err)
 			}
 			seen := metav1.NewTime(handshake)
-			observation.Status = stationv1alpha1.StationObservationStatus{ReportedAt: metav1.NewTime(clock.Add(-time.Second)), NodeUID: "node-" + hub,
+			reporting.Status.Observation = &stationv1alpha1.NodeObservation{ReportedAt: metav1.NewTime(clock.Add(-time.Second)), NodeUID: "node-" + hub,
 				Wireguard: &stationv1alpha1.WireguardObservation{Interface: "st-wg0", Peers: []stationv1alpha1.WireguardPeerObservation{
 					{Name: "robot-01/s1u-01-x86", LatestHandshake: &seen, ReceivedBytes: received}}}}
-			if err := c.Update(context.Background(), &observation); err != nil {
+			if err := c.Status().Update(context.Background(), &reporting); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -743,6 +710,8 @@ func TestNetworkPutsANodeInTheSiteItNames(t *testing.T) {
 			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "lab", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
 		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "by-admission"},
 			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "office", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
+		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "at-home"},
+			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
 		// A machine not yet a node, admitted into a site nothing declares, before and after it redeemed its code.
 		&stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-robot-01", Name: "new-astray"},
 			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "robot-01", Site: "nowhere", ExpiresAt: metav1.NewTime(time.Unix(1_800_003_600, 0))}},
@@ -812,7 +781,7 @@ func TestNetworkTellsTheHubsOfADiscoverySiteWhatToLookForAndSaysWhenOneGoesSilen
 	declared := testSiteNetwork()
 	declared.Spec.Sites[1].Discovery = &stationv1alpha1.SiteNetworkDiscovery{Enabled: true, Ranges: []string{"192.168.31.0/24"}, IntervalSeconds: 30,
 		From: stationv1alpha1.SiteNetworkDiscoverySource{ClusterID: "dev", NodeName: "cailiang"}}
-	declared.Spec.Nodes = append(declared.Spec.Nodes, stationv1alpha1.SiteNetworkNode{ClusterID: "robot-01", NodeName: "cp", Role: "Hub",
+	declared.Spec.Nodes = append(declared.Spec.Nodes, stationv1alpha1.SiteNetworkNode{ClusterID: "robot-01", NodeName: "cp", Role: "Hub", Address: "10.254.240.5",
 		Endpoints: []stationv1alpha1.SiteNetworkEndpoint{{Address: "10.11.13.192:51820", Scope: "Site"}}})
 	factory := "SHA256:" + strings.Repeat("f", 43)
 	class := &stationv1alpha1.NodeClass{ObjectMeta: metav1.ObjectMeta{Name: "s1u"}, Spec: stationv1alpha1.NodeClassSpec{
@@ -935,25 +904,27 @@ func TestARedeemedAdmissionSaysWhereItsJoinStands(t *testing.T) {
 	redeemed := metav1.NewTime(now.Add(-5 * time.Minute))
 	admission := &stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "nb260706069"},
 		Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "cluster-a", PublicKey: "key", RedeemedAt: &redeemed}}
-	if step := joinStep(admission, nil, nil, nil); !strings.Contains(step, "还没回来取入网令牌") {
+	if step := joinStep(admission, nil); !strings.Contains(step, "还没回来取入网令牌") {
 		t.Fatalf("before the token: %q", step)
 	}
 	admission.Annotations = map[string]string{JoinTokenIssuedAnnotation: now.Add(-4 * time.Minute).Format(time.RFC3339)}
-	old := testObservation("nb260706069", "old-uid", now.Add(-time.Hour))
-	if step := joinStep(admission, old, nil, nil); !strings.Contains(step, "kubeadm join") {
+	enrollment := &stationv1alpha1.NetworkEnrollment{Spec: stationv1alpha1.NetworkEnrollmentSpec{NodeUID: "old-uid"}, Status: stationv1alpha1.NetworkEnrollmentStatus{
+		Observation: &stationv1alpha1.NodeObservation{NodeUID: "old-uid", ReportedAt: metav1.NewTime(now.Add(-time.Hour))},
+		Node:        &stationv1alpha1.NetworkEnrollmentNode{Conditions: []metav1.Condition{{Type: "IdentityMatched", Status: metav1.ConditionFalse, Message: "delete this node record"}}}}}
+	if step := joinStep(admission, enrollment); !strings.Contains(step, "kubeadm join") {
 		t.Fatalf("token given, no report since: %q", step)
 	}
-	fresh := testObservation("nb260706069", "new-uid", now)
-	stale := stationv1alpha1.Station{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "stn-old"},
-		Spec:   stationv1alpha1.StationSpec{DisplayName: "Station-0004", Binding: stationv1alpha1.StationBinding{NodeName: "nb260706069", NodeUID: "old-uid"}},
-		Status: stationv1alpha1.StationStatus{Conditions: []metav1.Condition{{Type: "IdentityMatched", Status: metav1.ConditionFalse, Message: "remove the node and join it again"}}}}
-	if step := joinStep(admission, fresh, []stationv1alpha1.Station{stale}, nil); !strings.Contains(step, "Station-0004 还绑在") || !strings.Contains(step, "remove the node") {
-		t.Fatalf("reported, Station bound to the gone node: %q", step)
+	enrollment.Status.Observation = &stationv1alpha1.NodeObservation{NodeUID: "new-uid", ReportedAt: metav1.NewTime(now)}
+	if step := joinStep(admission, enrollment); !strings.Contains(step, "以前的节点上") || !strings.Contains(step, "delete this node record") {
+		t.Fatalf("reported, the record still of the gone node: %q", step)
 	}
-	bound := stationv1alpha1.Station{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "stn-new"},
-		Spec: stationv1alpha1.StationSpec{DisplayName: "Station-0009", Binding: stationv1alpha1.StationBinding{NodeName: "nb260706069", NodeUID: "new-uid"}}}
-	rejected := &stationv1alpha1.NetworkEnrollment{Status: stationv1alpha1.NetworkEnrollmentStatus{Phase: stationv1alpha1.NetworkEnrollmentRejected, Reason: "the machine moved"}}
-	if step := joinStep(admission, fresh, []stationv1alpha1.Station{bound}, rejected); !strings.Contains(step, "隧道登记还没通过：the machine moved") {
-		t.Fatalf("enrollment rejected: %q", step)
+	enrollment.Spec.NodeUID, enrollment.Spec.Retired = "new-uid", true
+	if step := joinStep(admission, enrollment); !strings.Contains(step, "已被移除") {
+		t.Fatalf("reported, the record's own node removed: %q", step)
+	}
+	enrollment.Spec.Retired = false
+	enrollment.Status.Phase, enrollment.Status.Reason = stationv1alpha1.NetworkEnrollmentRejected, "the machine moved"
+	if step := joinStep(admission, enrollment); !strings.Contains(step, "隧道登记还没通过：the machine moved") {
+		t.Fatalf("reported, enrollment rejected: %q", step)
 	}
 }

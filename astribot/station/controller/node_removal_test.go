@@ -4,18 +4,28 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	stationv1alpha1 "github.com/rlinf/rlark/astribot/station/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+type nodeMemberClients map[string]kubernetes.Interface
+
+func (s nodeMemberClients) Client(_ context.Context, cluster string) (kubernetes.Interface, error) {
+	client, exists := s[cluster]
+	if !exists {
+		return nil, errors.New("member cluster is unavailable")
+	}
+	return client, nil
+}
 
 func TestARemovalLogsInNowhere(t *testing.T) {
 	ctx := context.Background()
@@ -128,15 +138,13 @@ func tunnelFixture(t *testing.T, objects ...client.Object) client.Client {
 	if err := stationv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	return fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&stationv1alpha1.NetworkEnrollment{}, &stationv1alpha1.Station{}).WithObjects(objects...).Build()
+	return fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&stationv1alpha1.NetworkEnrollment{}).WithObjects(objects...).Build()
 }
 
-func TestTunnelReleaseRetiresTheStationAndForgetsTheMachinesKey(t *testing.T) {
+func TestTunnelReleaseRetiresTheRecordForgetsTheMachinesKeyAndStopsTheNetworkPod(t *testing.T) {
 	ctx := context.Background()
-	station := &stationv1alpha1.Station{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "stn-a"},
-		Spec: stationv1alpha1.StationSpec{DisplayName: "Station-0001", Sequence: 1, Binding: stationv1alpha1.StationBinding{NodeName: "s1u-01-x86", NodeUID: "node-uid", Version: 1}}}
-	other := &stationv1alpha1.Station{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "stn-b"},
-		Spec: stationv1alpha1.StationSpec{DisplayName: "Station-0002", Sequence: 2, Binding: stationv1alpha1.StationBinding{NodeName: "s1u-02-x86", NodeUID: "other-uid", Version: 1}}}
+	other := &stationv1alpha1.NetworkEnrollment{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "s1u-02-x86"},
+		Spec: stationv1alpha1.NetworkEnrollmentSpec{ClusterID: "cluster-a", NodeUID: "other-uid"}}
 	redeemed := metav1.Now()
 	admission := &stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "s1u-01-x86"},
 		Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: "cluster-a", PublicKey: "key-of-the-machine", RedeemedAt: &redeemed, Serial: "1794925030610"}}
@@ -144,20 +152,31 @@ func TestTunnelReleaseRetiresTheStationAndForgetsTheMachinesKey(t *testing.T) {
 		Spec:   stationv1alpha1.NetworkEnrollmentSpec{ClusterID: "cluster-a", NodeUID: "node-uid"},
 		Status: stationv1alpha1.NetworkEnrollmentStatus{Phase: stationv1alpha1.NetworkEnrollmentEnrolled}}
 	network := &stationv1alpha1.SiteNetwork{ObjectMeta: metav1.ObjectMeta{Namespace: "station-system", Name: "default"}}
-	c := tunnelFixture(t, station, other, admission, enrollment, network)
-	release := StationTunnelRelease{Reader: c, Writer: c, Network: types.NamespacedName{Namespace: "station-system", Name: "default"}}
+	c := tunnelFixture(t, other, admission, enrollment, network)
+	// The node no longer reports: no kubelet stops its network pod.
+	member := kubefake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "s1u-01-x86", UID: "node-uid", Labels: map[string]string{stationNetworkLabel: "enabled"}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: stationSystemNamespace, Name: "station-agent-network-x", UID: "pod-uid", Labels: map[string]string{"app": "station-agent-network"}}, Spec: corev1.PodSpec{NodeName: "s1u-01-x86"}})
+	release := StationTunnelRelease{Reader: c, Writer: c, Members: nodeMemberClients{"cluster-a": member}, Network: types.NamespacedName{Namespace: "station-system", Name: "default"}}
 	op := &stationv1alpha1.NodeOperation{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}, Spec: stationv1alpha1.NodeOperationSpec{Action: "Remove", ClusterID: "cluster-a", NodeName: "s1u-01-x86", NodeUID: "node-uid"}}
 
-	// Its enrollment is still answered with a place in the tunnel.
+	// Its pod was there, and its enrollment is still answered with a place in the tunnel.
+	if done, err := release.Remove(ctx, op); done || err != nil {
+		t.Fatalf("done before the pod went: %v %v", done, err)
+	}
 	if done, err := release.Remove(ctx, op); done || err != nil {
 		t.Fatalf("done before the SiteNetwork let go: %v %v", done, err)
 	}
-	stored := &stationv1alpha1.Station{}
-	_ = c.Get(ctx, client.ObjectKeyFromObject(station), stored)
-	untouched := &stationv1alpha1.Station{}
+	node, _ := member.CoreV1().Nodes().Get(ctx, "s1u-01-x86", metav1.GetOptions{})
+	pods, _ := member.CoreV1().Pods(stationSystemNamespace).List(ctx, metav1.ListOptions{})
+	if _, labelled := node.Labels[stationNetworkLabel]; labelled || len(pods.Items) != 0 {
+		t.Fatalf("the node is still in the network DaemonSet: labels %v, pods %d", node.Labels, len(pods.Items))
+	}
+	stored, untouched := &stationv1alpha1.NetworkEnrollment{}, &stationv1alpha1.NetworkEnrollment{}
+	_ = c.Get(ctx, client.ObjectKeyFromObject(enrollment), stored)
 	_ = c.Get(ctx, client.ObjectKeyFromObject(other), untouched)
-	if !stored.Spec.Retired || stored.Status.Phase != stationv1alpha1.StationPhaseRetired || untouched.Spec.Retired {
-		t.Fatalf("retired: removed node %v (%s), other node %v", stored.Spec.Retired, stored.Status.Phase, untouched.Spec.Retired)
+	if !stored.Spec.Retired || untouched.Spec.Retired {
+		t.Fatalf("retired: removed node %v, other node %v", stored.Spec.Retired, untouched.Spec.Retired)
 	}
 	forgotten := &stationv1alpha1.NodeAdmission{}
 	_ = c.Get(ctx, client.ObjectKeyFromObject(admission), forgotten)
@@ -165,9 +184,8 @@ func TestTunnelReleaseRetiresTheStationAndForgetsTheMachinesKey(t *testing.T) {
 		t.Fatalf("admission after removal: %+v %v", forgotten.Spec, forgotten.Annotations)
 	}
 
-	_ = c.Get(ctx, client.ObjectKeyFromObject(enrollment), enrollment)
-	enrollment.Status.Phase = stationv1alpha1.NetworkEnrollmentRejected
-	if err := c.Status().Update(ctx, enrollment); err != nil {
+	stored.Status.Phase = stationv1alpha1.NetworkEnrollmentRejected
+	if err := c.Status().Update(ctx, stored); err != nil {
 		t.Fatal(err)
 	}
 	if done, err := release.Remove(ctx, op); !done || err != nil {
@@ -187,38 +205,6 @@ func TestTunnelReleaseLeavesANodeTheSiteNetworkDeclaresToItsAdministrator(t *tes
 	op.Spec.NodeName = "leaf"
 	if err := release.Check(context.Background(), op); err != nil {
 		t.Fatalf("undeclared node: %v", err)
-	}
-}
-
-func TestAMachineJoiningUnderARemovedNodesNameGetsAStationOfItsOwn(t *testing.T) {
-	now := time.Now().UTC()
-	retired := &stationv1alpha1.Station{
-		ObjectMeta: metav1.ObjectMeta{Name: "stn-removed", Namespace: testNamespace},
-		Spec:       stationv1alpha1.StationSpec{DisplayName: "Station-0001", Sequence: 1, Retired: true, Binding: stationv1alpha1.StationBinding{NodeName: "node-a", NodeUID: "old-uid", Version: 1, BoundBy: "system"}},
-		Status:     stationv1alpha1.StationStatus{Phase: stationv1alpha1.StationPhaseRetired},
-	}
-	reconciler, c := newTestReconciler(t, &now, retired, testObservation("node-a", "new-uid", now))
-	if _, err := reconciler.Reconcile(context.Background(), requestFor("node-a")); err != nil {
-		t.Fatal(err)
-	}
-	var stations stationv1alpha1.StationList
-	if err := c.List(context.Background(), &stations, client.InNamespace(testNamespace)); err != nil {
-		t.Fatal(err)
-	}
-	if len(stations.Items) != 2 {
-		t.Fatalf("stations: %d", len(stations.Items))
-	}
-	for _, station := range stations.Items {
-		switch station.Spec.Binding.NodeUID {
-		case "old-uid":
-			if !station.Spec.Retired || station.Status.Phase != stationv1alpha1.StationPhaseRetired {
-				t.Fatalf("the removed node's Station: %+v", station.Status)
-			}
-		case "new-uid":
-			if station.Spec.Retired || station.Status.Phase == stationv1alpha1.StationPhaseConflict {
-				t.Fatalf("the new node's Station: %+v", station.Status)
-			}
-		}
 	}
 }
 
@@ -281,21 +267,44 @@ func TestARemovedRobotIsAMachineToAdmitAgain(t *testing.T) {
 // A name its cluster has no Node of is removed all the same (nb260706069 11-16:
 // a join that never made a node could neither join nor be removed). The
 // removal names no UID; its Preflight finds no Node, nothing in the cluster is
-// touched, and what RLark keeps of the name goes: the Stations bound to it are
-// retired and an admission that never made a node is cleared. A Node of the
+// touched, and what RLark keeps of the name goes: its record is retired, then
+// deleted, and an admission that never made a node is cleared. A Node of the
 // name found by the Preflight is the one removed.
 func TestARemovalOfANameWithoutANodeClearsWhatRLarkKeepsOfIt(t *testing.T) {
 	ctx := context.Background()
 	member := kubefake.NewSimpleClientset()
 	checked := 0
-	executor := &NodeLifecycleExecutor{Members: nodeMemberClients{"cluster-a": member}, Management: tunnelFixture(t),
+	stale := &stationv1alpha1.NetworkEnrollment{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "cailiang-desktop"},
+		Spec: stationv1alpha1.NetworkEnrollmentSpec{ClusterID: "cluster-a", NodeUID: "gone-uid"}}
+	unfinished := &stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "cailiang-desktop", UID: "admission-uid"},
+		Spec:   stationv1alpha1.NodeAdmissionSpec{ClusterID: "cluster-a", PublicKey: "key"},
+		Status: stationv1alpha1.NodeAdmissionStatus{Phase: stationv1alpha1.NodeAdmissionRedeemed, Address: "10.254.240.8"}}
+	machine := &stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "s1u-03-x86"},
+		Spec:   stationv1alpha1.NodeAdmissionSpec{ClusterID: "cluster-a", PublicKey: "robot-key", Serial: "1423"},
+		Status: stationv1alpha1.NodeAdmissionStatus{Phase: stationv1alpha1.NodeAdmissionRedeemed}}
+	c := tunnelFixture(t, stale, unfinished, machine, &stationv1alpha1.SiteNetwork{ObjectMeta: metav1.ObjectMeta{Namespace: "station-system", Name: "default"}})
+	release := StationTunnelRelease{Reader: c, Writer: c, Network: types.NamespacedName{Namespace: "station-system", Name: "default"}}
+	executor := &NodeLifecycleExecutor{Members: nodeMemberClients{"cluster-a": member}, Management: c, PeerCleaner: release,
 		RemovalReady: func(context.Context, *stationv1alpha1.NodeOperation) error { checked++; return nil }}
 	op := &stationv1alpha1.NodeOperation{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, UID: "op-uid"},
 		Spec: stationv1alpha1.NodeOperationSpec{Action: "Remove", ClusterID: "cluster-a", NodeName: "cailiang-desktop"}}
-	for _, stage := range []string{"Preflight", "PowerOff", "Drain", "Reset", "DeleteNode", "VerifyRemoval"} {
+	for _, stage := range []string{"Preflight", "PowerOff", "Drain", "RemovePeer", "Reset", "DeleteNode"} {
 		if done, uid, err := executor.Execute(ctx, op, stage); !done || uid != "" || err != nil {
 			t.Fatalf("%s of a name without a Node: %v %q %v", stage, done, uid, err)
 		}
+	}
+	stored := &stationv1alpha1.NetworkEnrollment{}
+	if _ = c.Get(ctx, client.ObjectKeyFromObject(stale), stored); !stored.Spec.Retired {
+		t.Fatal("the record of a name without a Node must be retired")
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(unfinished), &stationv1alpha1.NodeAdmission{}); err == nil {
+		t.Fatal("the admission that never made a node must be cleared")
+	}
+	if done, _, err := executor.Execute(ctx, op, "VerifyRemoval"); !done || err != nil {
+		t.Fatalf("VerifyRemoval of a name without a Node: %v %v", done, err)
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(stale), stored); err == nil {
+		t.Fatal("the record must go once the removal is verified")
 	}
 	if checked != 1 || len(member.Actions()) != 3 {
 		t.Fatalf("the cluster is only read: checks %d, actions %v", checked, member.Actions())
@@ -308,26 +317,6 @@ func TestARemovalOfANameWithoutANodeClearsWhatRLarkKeepsOfIt(t *testing.T) {
 	}
 	op.Spec.NodeUID = ""
 
-	stale := &stationv1alpha1.Station{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "stn-stale"},
-		Spec: stationv1alpha1.StationSpec{DisplayName: "Station-0004", Sequence: 4, Binding: stationv1alpha1.StationBinding{NodeName: "cailiang-desktop", NodeUID: "gone-uid", Version: 2}}}
-	unfinished := &stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "cailiang-desktop", UID: "admission-uid"},
-		Spec:   stationv1alpha1.NodeAdmissionSpec{ClusterID: "cluster-a", PublicKey: "key"},
-		Status: stationv1alpha1.NodeAdmissionStatus{Phase: stationv1alpha1.NodeAdmissionRedeemed, Address: "10.254.240.8"}}
-	machine := &stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace, Name: "s1u-03-x86"},
-		Spec:   stationv1alpha1.NodeAdmissionSpec{ClusterID: "cluster-a", PublicKey: "robot-key", Serial: "1423"},
-		Status: stationv1alpha1.NodeAdmissionStatus{Phase: stationv1alpha1.NodeAdmissionRedeemed}}
-	c := tunnelFixture(t, stale, unfinished, machine, &stationv1alpha1.SiteNetwork{ObjectMeta: metav1.ObjectMeta{Namespace: "station-system", Name: "default"}})
-	release := StationTunnelRelease{Reader: c, Writer: c, Network: types.NamespacedName{Namespace: "station-system", Name: "default"}}
-	if done, err := release.Remove(ctx, op); !done || err != nil {
-		t.Fatalf("release of a name without a Node: %v %v", done, err)
-	}
-	stored := &stationv1alpha1.Station{}
-	if _ = c.Get(ctx, client.ObjectKeyFromObject(stale), stored); !stored.Spec.Retired {
-		t.Fatal("the Station of a name without a Node must be retired")
-	}
-	if err := c.Get(ctx, client.ObjectKeyFromObject(unfinished), &stationv1alpha1.NodeAdmission{}); err == nil {
-		t.Fatal("the admission that never made a node must be cleared")
-	}
 	// A discovered machine's admission stays, without the machine's key.
 	op.Spec.NodeName = "s1u-03-x86"
 	if done, err := release.Remove(ctx, op); !done || err != nil {

@@ -85,7 +85,7 @@ paths:
         - {name: label, in: query, required: false, schema: {type: string}, description: key=value}
       responses:
         '200':
-          description: Site nodes in sequence order, each shaped as in GET /api/v1/site-nodes/{name}
+          description: Site nodes by node name, each shaped as in GET /api/v1/site-nodes/{name}
           content:
             application/json:
               schema:
@@ -103,8 +103,8 @@ paths:
       summary: Look up one site node by Node name (read-only; identity, network address, robot)
       description: >-
         The interface for consumers that place work on machines, such as a Fleet Run. A caller keeps
-        the cluster ID and Node name and reads the rest here. site_node_id is stable across reinstalls;
-        binding_version increases when an administrator rebinds the identity to a reinstalled machine;
+        the cluster ID and Node name and reads the rest here. node_uid changes when the machine is
+        reinstalled or replaced under the name; a removed node is not served;
         network.address is the one address every other member reaches the node at. The answer says
         nothing about what runs on the machine.
       parameters:
@@ -112,31 +112,29 @@ paths:
         - {name: cluster_id, in: query, required: true, schema: {type: string}}
       responses:
         '200':
-          description: The site node bound to this Node name
+          description: The site node of this Node name
           content:
             application/json:
               schema:
                 type: object
-                required: [cluster_id, node_name, site_node_id, sequence, binding_version, phase, online]
+                required: [cluster_id, node_name, node_uid, phase, online]
                 properties:
                   cluster_id: {type: string}
                   node_name: {type: string}
-                  site_node_id: {type: string}
-                  sequence: {type: integer}
-                  binding_version: {type: integer}
-                  phase: {type: string, enum: [Bound, Offline, Conflict, Retired]}
+                  node_uid: {type: string, description: UID of the Kubernetes Node the record is of}
+                  phase: {type: string, enum: [Bound, Offline, Conflict, ''], description: Empty until the node's first report}
                   online: {type: boolean, description: Heartbeat only; the agent reported within 90 s}
                   tunnel: {type: string, enum: [verified, failed, unknown], description: Whether the node reaches every peer that is itself online}
                   rlark_node: {type: string, enum: [ready, not-ready, unknown]}
                   last_seen_time: {type: string, format: date-time}
                   boot_time: {type: string, format: date-time}
-                  reboots: {type: integer, description: Boot-time changes seen since the identity was created}
+                  reboots: {type: integer, description: Boot-time changes seen since the record was made or passed to this Node}
                   labels: {type: object, additionalProperties: {type: string}}
                   robot_id: {type: string}
                   workstation_id: {type: string}
                   network:
                     type: object
-                    description: Absent until the node has enrolled under its current binding
+                    description: Absent for a node that has enrolled no tunnel key
                     properties:
                       state: {type: string, enum: [Pending, Enrolled, Rejected]}
                       site: {type: string}
@@ -156,7 +154,7 @@ paths:
                             latest_handshake: {type: string, format: date-time}
         '400': {description: Missing cluster ID}
         '404': {description: Cluster or site node not found}
-        '409': {description: Ambiguous cluster namespace or node binding}
+        '409': {description: Ambiguous cluster namespace}
         '502': {description: Management API request failed}
         '503': {description: Station API unavailable}
   /api/v1/cluster-provisions:
@@ -680,14 +678,16 @@ paths:
   /api/v1/station/stations:
     get:
       tags: [Station]
-      summary: List registered Station identities (administrator only)
+      summary: List site node records (administrator only)
       parameters:
         - {name: cluster_id, in: query, required: false, schema: {type: string}}
         - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 200}}
         - {name: continue, in: query, required: false, schema: {type: string}}
       responses:
         '200':
-          description: Namespaced Station records from the current management API
+          description: >-
+            The NetworkEnrollment of each node (spec; status with phase and the network answer, observation and node),
+            without status.config
           content:
             application/json:
               schema:
@@ -701,85 +701,39 @@ paths:
   /api/v1/station/stations/{name}:
     get:
       tags: [Station]
-      summary: Get a Station by name and registered Cluster (administrator only)
+      summary: Get a site node record by Node name and registered Cluster (administrator only)
       parameters:
         - {name: name, in: path, required: true, schema: {type: string}}
         - {name: cluster_id, in: query, required: true, schema: {type: string}}
       responses:
-        '200': {description: Station record}
+        '200': {description: The node's NetworkEnrollment, without status.config}
         '400': {description: Cluster ID required}
         '403': {description: Administrator role required}
-        '404': {description: Cluster or Station not found}
+        '404': {description: Cluster or site node not found}
         '409': {description: Cluster namespace mapping is ambiguous}
         '502': {description: Management Kubernetes API unavailable}
     delete:
       tags: [Station]
-      summary: Ask for a retired Station to be deleted (administrator only)
+      summary: Delete a site node record (administrator only)
       description: >-
-        Only a retired Station is deleted, and only once nothing stands on it: another Station stands for its node's
-        name, or its cluster has no Node of that name. station-controller deletes it, with the observation stored for
-        its node and leaving an audit event, or writes on it why not (annotation station.rlark.io/delete-refused).
-        A Station that is gone already answers 200: the request can be made again.
+        The record (the node's NetworkEnrollment) is deleted when its node was removed (spec.retired), when another
+        Node reports under its name (status.node.state Conflict), or when its node does not report (is not Bound) and
+        RLark has no Node of the name. A node that comes back registers again with its next report, as a new machine.
+        A record that is gone already answers 200: the request can be made again.
       parameters:
         - {name: name, in: path, required: true, schema: {type: string}}
         - {name: cluster_id, in: query, required: true, schema: {type: string}}
       responses:
-        '200': {description: The Station is gone}
-        '202': {description: Asked; station-controller deletes it or says why not}
+        '200': {description: The record is gone}
         '400': {description: Cluster ID required}
         '404': {description: Cluster not found}
-        '409': {description: The Station is not retired}
+        '409': {description: The node is in the cluster (remove it first), or the record changed while it was being deleted}
         '502': {description: Management Kubernetes API unavailable}
-  /api/v1/station/rebinds:
-    post:
-      tags: [Station]
-      summary: Create an administrator-approved Station rebind operation
-      description: Requires an admin JWT and a strict JSON body no larger than 16 KiB. Unknown fields are rejected. The Gateway resolves the namespace from the registered Cluster, verifies the Station object UID and expected binding version, and creates an idempotent StationRebind resource. The controller independently verifies the target Node against the member Kubernetes API and refuses a Node UID already owned by another Station before changing the binding.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [cluster_id, request_id, station_name, station_uid, expected_binding_version, target_node_name, target_node_uid, reason]
-              properties:
-                cluster_id: {type: string, maxLength: 128}
-                request_id: {type: string, minLength: 1, maxLength: 128}
-                station_name: {type: string, maxLength: 253}
-                station_uid: {type: string, maxLength: 128}
-                expected_binding_version: {type: integer, format: int64, minimum: 1}
-                target_node_name: {type: string, maxLength: 253}
-                target_node_uid: {type: string, maxLength: 128}
-                target_system_uuid: {type: string, maxLength: 128}
-                reason: {type: string, minLength: 1, maxLength: 1024}
-      responses:
-        '202': {description: Operation created or an identical prior request returned}
-        '400': {description: Invalid request}
-        '401': {description: Authentication required}
-        '403': {description: Administrator role required}
-        '404': {description: Cluster or Station not found}
-        '409': {description: Request ID conflict, Station UID mismatch, or binding version changed}
-        '502': {description: Management Kubernetes API failure}
-        '503': {description: Station API unavailable}
-  /api/v1/station/rebinds/{name}:
-    get:
-      tags: [Station]
-      summary: Get a Station rebind operation (administrator only)
-      parameters:
-        - {name: name, in: path, required: true, schema: {type: string}}
-        - {name: cluster_id, in: query, required: true, schema: {type: string}}
-      responses:
-        '200': {description: Current asynchronous operation state}
-        '401': {description: Authentication required}
-        '403': {description: Administrator role required}
-        '404': {description: Cluster or operation not found}
-        '502': {description: Management Kubernetes API failure}
-        '503': {description: Station API unavailable}
   /api/v1/station/node-operations:
     post:
       tags: [Station]
       summary: Remove a node (administrator only)
-      description: Requires a registered Cluster and an installed NodeOperation CRD/controller. Only Remove is asked for here; the Joins in the list are station-controller's, for the machines an administrator admits (POST /api/v1/station/machines/admit), and a machine joined by SSH runs its code's line (POST /api/v1/station/node-joins). Remove takes only the node name and its UID and logs in nowhere. A robot (a Node with rlark.io/power-state) is first powered off its own way, its wanted power set to off so that its driver stops before its motors; one a Run or a session uses (rlark.io/in-use) stops the removal, and one whose node no longer reports is not powered off (the operation says so in its station.rlark.io/power-off annotation). It drains with PDBs (a node whose kubelet no longer reports has its pods deleted), requires UID-owned or observation-verified WireGuard config, disables the network DaemonSet, retires the node's Station and takes the machine's key off its admission (it leaves the tunnel and its name is free), resets a node whose kubelet still reports from a pod on that node (kubeadm reset; a node that no longer reports is reset when its machine joins again), and deletes the Node; unowned legacy config, and a node the SiteNetwork declares with a key, block before drain.
+      description: Requires a registered Cluster and an installed NodeOperation CRD/controller. Only Remove is asked for here; the Joins in the list are station-controller's, for the machines an administrator admits (POST /api/v1/station/machines/admit), and a machine joined by SSH runs its code's line (POST /api/v1/station/node-joins). Remove takes only the node name and its UID and logs in nowhere. A robot (a Node with rlark.io/power-state) is first powered off its own way, its wanted power set to off so that its driver stops before its motors; one a Run or a session uses (rlark.io/in-use) stops the removal, and one whose node no longer reports is not powered off (the operation says so in its station.rlark.io/power-off annotation). It drains with PDBs (a node whose kubelet no longer reports has its pods deleted), takes the node out of the network DaemonSet, retires the node's site node record and takes the machine's key off its admission (it leaves the tunnel and its name is free), resets a node whose kubelet still reports from a pod on that node (kubeadm reset; a node that no longer reports is reset when its machine joins again), deletes the Node and then its site node record; a node the SiteNetwork declares with a key blocks before drain.
       requestBody:
         required: true
         content:
@@ -830,22 +784,6 @@ paths:
         '403': {description: Administrator role required}
         '404': {description: Cluster or operation not found}
         '409': {description: Operation cluster binding mismatch}
-        '502': {description: Management Kubernetes API failure}
-        '503': {description: Station API unavailable}
-  /api/v1/station/observations:
-    get:
-      tags: [Station]
-      summary: List Station observations for a registered Cluster (administrator only)
-      parameters:
-        - {name: cluster_id, in: query, required: true, schema: {type: string}}
-        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 500, default: 200}}
-        - {name: continue, in: query, required: false, schema: {type: string}}
-      responses:
-        '200': {description: Latest verified observations from the mapped member namespace}
-        '400': {description: Cluster ID required or invalid limit}
-        '401': {description: Authentication required}
-        '403': {description: Administrator role required}
-        '404': {description: Cluster not found}
         '502': {description: Management Kubernetes API failure}
         '503': {description: Station API unavailable}
   /api/v1/image-registries/{id}/repositories:

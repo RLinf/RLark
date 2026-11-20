@@ -104,6 +104,10 @@ func TestConfigurationSourcesPreferComputedThenLastApplied(t *testing.T) {
 	if _, _, origin, _ := from.read(); origin != "last-applied" {
 		t.Fatalf("an invalid computed document must not be applied: %s", origin)
 	}
+	// A pod's gateway has no static file.
+	if _, _, origin, _ := (sources{computed: from.computed, lastApplied: from.lastApplied}).read(); origin != "last-applied" {
+		t.Fatalf("pod gateway: %s", origin)
+	}
 	// Without enrollment only the static file is ever read.
 	if _, _, origin, _ := (sources{static: from.static}).read(); origin != "static" {
 		t.Fatalf("static-only deployment: %s", origin)

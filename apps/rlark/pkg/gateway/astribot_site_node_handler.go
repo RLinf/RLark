@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -24,13 +25,11 @@ var (
 type siteNode struct {
 	ClusterID string `json:"cluster_id"`
 	NodeName  string `json:"node_name"`
-	// SiteNodeID is the Station object's name: stable across reinstalls.
-	SiteNodeID string `json:"site_node_id"`
-	Sequence   int64  `json:"sequence"`
-	// BindingVersion increases when an administrator rebinds the identity to
-	// a reinstalled machine; a consumer that cached it knows to look again.
-	BindingVersion int64  `json:"binding_version"`
-	Phase          string `json:"phase"`
+	// NodeUID is the UID of the Kubernetes Node the record is of: it changes
+	// when the machine is reinstalled or replaced under the name.
+	NodeUID string `json:"node_uid"`
+	// Phase is Bound, Offline or Conflict; empty until the node's first report.
+	Phase string `json:"phase"`
 	// Online is the heartbeat alone: the node's agent reported within the
 	// last 90 s. The three fields after it are separate facts; a consumer
 	// that needs the node reachable checks Tunnel as well.
@@ -76,14 +75,9 @@ type siteNodeLink struct {
 	LatestHandshake string `json:"latest_handshake,omitempty"`
 }
 
-// siteNodes joins, for one cluster, every unretired identity with its network
-// enrollment and its RLark Node.
+// siteNodes is, for one cluster, every unretired site node (NetworkEnrollment) with its RLark Node's labels, by name.
 func (g *Gateway) siteNodes(c *gin.Context, clusterID, namespace string) ([]siteNode, error) {
 	ctx := c.Request.Context()
-	stations, err := g.stationClient.Resource(stationRecordGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
 	enrollments, err := g.stationClient.Resource(networkEnrollmentGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
@@ -92,29 +86,25 @@ func (g *Gateway) siteNodes(c *gin.Context, clusterID, namespace string) ([]site
 	if err != nil {
 		return nil, err
 	}
-	enrollmentOf, nodeOf := map[string]*unstructured.Unstructured{}, map[string]*unstructured.Unstructured{}
-	for i := range enrollments.Items {
-		enrollmentOf[enrollments.Items[i].GetName()] = &enrollments.Items[i]
-	}
+	labelsOf := map[string]map[string]string{}
 	for i := range nodes.Items {
-		nodeOf[nodes.Items[i].GetName()] = &nodes.Items[i]
+		labelsOf[nodes.Items[i].GetName()] = nodes.Items[i].GetLabels()
 	}
-	results := make([]siteNode, 0, len(stations.Items))
-	for i := range stations.Items {
-		station := &stations.Items[i]
-		if retired, _, _ := unstructured.NestedBool(station.Object, "spec", "retired"); retired {
+	results := make([]siteNode, 0, len(enrollments.Items))
+	for i := range enrollments.Items {
+		enrollment := &enrollments.Items[i]
+		if retired, _, _ := unstructured.NestedBool(enrollment.Object, "spec", "retired"); retired {
 			continue
 		}
-		result := siteNode{ClusterID: clusterID, SiteNodeID: station.GetName(), Tunnel: "unknown", RLarkNode: "unknown"}
-		result.NodeName, _, _ = unstructured.NestedString(station.Object, "spec", "binding", "nodeName")
-		result.Sequence, _, _ = unstructured.NestedInt64(station.Object, "spec", "sequence")
-		result.BindingVersion, _, _ = unstructured.NestedInt64(station.Object, "spec", "binding", "version")
-		result.Phase, _, _ = unstructured.NestedString(station.Object, "status", "phase")
-		result.LastSeenTime, _, _ = unstructured.NestedString(station.Object, "status", "lastSeenTime")
-		result.BootTime, _, _ = unstructured.NestedString(station.Object, "status", "bootTime")
-		result.Reboots, _, _ = unstructured.NestedInt64(station.Object, "status", "reboots")
+		result := siteNode{ClusterID: clusterID, NodeName: enrollment.GetName(), Tunnel: "unknown", RLarkNode: "unknown", Labels: labelsOf[enrollment.GetName()]}
+		result.RobotID, result.WorkstationID = result.Labels[siteNodeRobotLabel], result.Labels[siteNodeWorkstationID]
+		result.NodeUID, _, _ = unstructured.NestedString(enrollment.Object, "spec", "nodeUID")
+		result.Phase, _, _ = unstructured.NestedString(enrollment.Object, "status", "node", "state")
+		result.LastSeenTime, _, _ = unstructured.NestedString(enrollment.Object, "status", "node", "lastSeenTime")
+		result.BootTime, _, _ = unstructured.NestedString(enrollment.Object, "status", "node", "bootTime")
+		result.Reboots, _, _ = unstructured.NestedInt64(enrollment.Object, "status", "node", "reboots")
 		result.Online = result.Phase == "Bound"
-		conditions, _, _ := unstructured.NestedSlice(station.Object, "status", "conditions")
+		conditions, _, _ := unstructured.NestedSlice(enrollment.Object, "status", "node", "conditions")
 		for _, raw := range conditions {
 			condition, _ := raw.(map[string]interface{})
 			status, _ := condition["status"].(string)
@@ -125,28 +115,21 @@ func (g *Gateway) siteNodes(c *gin.Context, clusterID, namespace string) ([]site
 				result.RLarkNode = map[string]string{"True": "ready", "False": "not-ready", "Unknown": "unknown"}[status]
 			}
 		}
-		// An answer for an earlier binding describes a machine that is gone.
-		if enrollment := enrollmentOf[result.NodeName]; enrollment != nil {
-			if version, _, _ := unstructured.NestedInt64(enrollment.Object, "spec", "bindingVersion"); version == result.BindingVersion {
-				status, _, _ := unstructured.NestedMap(enrollment.Object, "status")
-				text := func(key string) string { value, _ := status[key].(string); return value }
-				result.Network = &siteNodeNetwork{State: text("phase"), Site: text("site"), Role: text("role"), Address: text("address"), TunnelAddress: text("tunnelAddress"), LinkSummary: text("linkSummary")}
-				result.Network.PublicKey, _, _ = unstructured.NestedString(enrollment.Object, "spec", "publicKey")
-				links, _ := status["links"].([]interface{})
-				for _, raw := range links {
-					link, _ := raw.(map[string]interface{})
-					text := func(key string) string { value, _ := link[key].(string); return value }
-					result.Network.Links = append(result.Network.Links, siteNodeLink{Hub: text("hub"), State: text("state"), Since: text("since"), LatestHandshake: text("latestHandshake")})
-				}
+		// A node without a key is not in the tunnel network.
+		if key, _, _ := unstructured.NestedString(enrollment.Object, "spec", "publicKey"); key != "" {
+			status, _, _ := unstructured.NestedMap(enrollment.Object, "status")
+			text := func(key string) string { value, _ := status[key].(string); return value }
+			result.Network = &siteNodeNetwork{State: text("phase"), Site: text("site"), Role: text("role"), Address: text("address"), TunnelAddress: text("tunnelAddress"), PublicKey: key, LinkSummary: text("linkSummary")}
+			links, _ := status["links"].([]interface{})
+			for _, raw := range links {
+				link, _ := raw.(map[string]interface{})
+				text := func(key string) string { value, _ := link[key].(string); return value }
+				result.Network.Links = append(result.Network.Links, siteNodeLink{Hub: text("hub"), State: text("state"), Since: text("since"), LatestHandshake: text("latestHandshake")})
 			}
-		}
-		if node := nodeOf[result.NodeName]; node != nil {
-			result.Labels = node.GetLabels()
-			result.RobotID, result.WorkstationID = result.Labels[siteNodeRobotLabel], result.Labels[siteNodeWorkstationID]
 		}
 		results = append(results, result)
 	}
-	sort.Slice(results, func(i, j int) bool { return results[i].Sequence < results[j].Sequence })
+	sort.Slice(results, func(i, j int) bool { return results[i].NodeName < results[j].NodeName })
 	return results, nil
 }
 
@@ -192,20 +175,10 @@ func (g *Gateway) handleGetSiteNode(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var found *siteNode
-	for i := range results {
-		if results[i].NodeName != c.Param("name") {
-			continue
-		}
-		if found != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": "more than one identity is bound to this node"})
-			return
-		}
-		found = &results[i]
-	}
-	if found == nil {
+	index := slices.IndexFunc(results, func(result siteNode) bool { return result.NodeName == c.Param("name") })
+	if index < 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "site node not found"})
 		return
 	}
-	c.JSON(http.StatusOK, found)
+	c.JSON(http.StatusOK, results[index])
 }

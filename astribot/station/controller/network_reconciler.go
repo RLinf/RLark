@@ -33,12 +33,12 @@ import (
 // NetworkReconciler answers every NetworkEnrollment from the one SiteNetwork:
 // it allocates addresses, computes each node's peers and routes, and writes
 // the result to the enrollment's status, where station-api serves it.
-// The whole network is one reconcile key, so allocations never race.
+// The whole network is one reconcile key, so answers never race.
 //
 // It also says what the Hubs see of every Leaf (status.links). Hubs report
 // every 30 s; rather than compute the network on each report, the reconcile
-// repeats every linkInterval and reads the reports the Station reconciler's
-// cache already holds. A Leaf's status is written when a link changes state
+// repeats every linkInterval and reads the reports the enrollments hold
+// (status.observation). A Leaf's status is written when a link changes state
 // and, while a link is Unanswered, once per Hub report to keep the counter
 // the next report is compared with; a Connected or Silent link writes nothing.
 type NetworkReconciler struct {
@@ -70,7 +70,14 @@ func (r *NetworkReconciler) SetupWithManager(mgr manager.Manager) error {
 	})
 	return ctrl.NewControllerManagedBy(mgr).Named("site-network").
 		For(&stationv1alpha1.SiteNetwork{}).
-		Watches(&stationv1alpha1.NetworkEnrollment{}, whole).
+		Watches(&stationv1alpha1.NetworkEnrollment{}, whole, builder.WithPredicates(predicate.Funcs{
+			// Heartbeats touch every enrollment's status; only its spec, or
+			// its node going into or out of Conflict, alters the network.
+			UpdateFunc: func(e event.UpdateEvent) bool {
+				before, after := e.ObjectOld.(*stationv1alpha1.NetworkEnrollment), e.ObjectNew.(*stationv1alpha1.NetworkEnrollment)
+				return before.Generation != after.Generation || (nodeState(before) == stationv1alpha1.NodeStateConflict) != (nodeState(after) == stationv1alpha1.NodeStateConflict)
+			},
+		})).
 		Watches(&stationv1alpha1.NodeAdmission{}, whole).
 		Watches(&stationv1alpha1.NodeClass{}, whole).
 		Watches(&stationv1alpha1.Machine{}, whole, builder.WithPredicates(predicate.Funcs{
@@ -82,19 +89,10 @@ func (r *NetworkReconciler) SetupWithManager(mgr manager.Manager) error {
 				return !okBefore || !okAfter || before.Status.Entry.HostKeyFingerprint != after.Status.Entry.HostKeyFingerprint
 			},
 		})).
-		Watches(&stationv1alpha1.Station{}, whole, builder.WithPredicates(predicate.Funcs{
-			// Heartbeats touch every Station's status; only a binding,
-			// retirement or phase change alters the network.
-			UpdateFunc: func(e event.UpdateEvent) bool {
-				before, okBefore := e.ObjectOld.(*stationv1alpha1.Station)
-				after, okAfter := e.ObjectNew.(*stationv1alpha1.Station)
-				return !okBefore || !okAfter || before.Generation != after.Generation || before.Status.Phase != after.Status.Phase
-			},
-		})).
 		Complete(r)
 }
 
-// Reconcile answers every enrollment. station-api writes enrollments while this
+// Reconcile answers every enrollment. station-api writes admissions while this
 // runs; losing such a race is not an error, the network is computed again.
 func (r *NetworkReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	if req.NamespacedName != r.network {
@@ -117,10 +115,6 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	var enrollments stationv1alpha1.NetworkEnrollmentList
 	if err := r.reader.List(ctx, &enrollments); err != nil {
 		return reconcile.Result{}, fmt.Errorf("list NetworkEnrollments: %w", err)
-	}
-	var stations stationv1alpha1.StationList
-	if err := r.reader.List(ctx, &stations); err != nil {
-		return reconcile.Result{}, fmt.Errorf("list Stations: %w", err)
 	}
 	var admissionList stationv1alpha1.NodeAdmissionList
 	if err := r.reader.List(ctx, &admissionList); err != nil {
@@ -195,21 +189,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	for _, node := range spec.Nodes {
 		declared[node.ClusterID+"/"+node.NodeName] = node
 	}
-	stationByUID := map[types.UID]*stationv1alpha1.Station{}
-	for i := range stations.Items {
-		stationByUID[stations.Items[i].UID] = &stations.Items[i]
-	}
-
-	// Keep the allocations of identities that still exist; a retired or
-	// deleted Station gives its address back.
-	allocated := map[string]stationv1alpha1.SiteNetworkAllocation{}
 	var taken []string
-	for _, allocation := range siteNetwork.Status.Allocations {
-		if station := stationByUID[types.UID(allocation.StationUID)]; station != nil && !station.Spec.Retired {
-			allocated[allocation.StationUID] = allocation
-			taken = append(taken, allocation.Address)
-		}
-	}
 	for _, node := range spec.Nodes {
 		if node.Address != "" {
 			taken = append(taken, node.Address)
@@ -219,12 +199,9 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	// An admission is the declaration of a node that joins by a one-time
 	// code. Its address is durable in its own status before anything uses it.
 	admissions := map[string]*stationv1alpha1.NodeAdmission{}
-	// holderOf is the node an address is another node's by: an admission's or an allocation's. A node the
-	// SiteNetwork declares at such an address is left out, never let take it from the node that has it.
+	// holderOf is the node an address is by its admission. A node the SiteNetwork
+	// declares at such an address is left out, never let take it from the node that has it.
 	holderOf := map[string]string{}
-	for _, allocation := range allocated {
-		holderOf[allocation.Address] = allocation.ClusterID + "/" + allocation.NodeName
-	}
 	for i := range admissionList.Items {
 		admission := &admissionList.Items[i]
 		holder := admission.Spec.ClusterID + "/" + admission.Name
@@ -251,12 +228,6 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		}
 		if inSpec && node.Address != "" {
 			address = node.Address
-		}
-		// A machine that replaces a node keeps the node's address.
-		for _, allocation := range allocated {
-			if address == "" && allocation.ClusterID == admission.Spec.ClusterID && allocation.NodeName == admission.Name {
-				address = allocation.Address
-			}
 		}
 		if address == "" {
 			free, err := network.Allocate(spec.Pool, taken)
@@ -310,10 +281,17 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		id := enrollment.Spec.ClusterID + "/" + enrollment.Name
 		answer := &stationv1alpha1.NetworkEnrollmentStatus{ObservedGeneration: enrollment.Generation, Phase: stationv1alpha1.NetworkEnrollmentRejected, PublicKey: enrollment.Spec.PublicKey}
 		answers[id], enrollmentOf[id] = answer, enrollment
-		station := stationByUID[types.UID(enrollment.Spec.StationUID)]
-		if station == nil || station.Namespace != enrollment.Namespace || station.Spec.Retired || station.Status.Phase == stationv1alpha1.StationPhaseConflict ||
-			station.Spec.Binding.NodeUID != enrollment.Spec.NodeUID || station.Spec.Binding.Version != enrollment.Spec.BindingVersion {
-			answer.Reason = "the enrollment does not match a current, unretired Station binding"
+		if enrollment.Spec.Retired {
+			answer.Reason = "the node was removed; a machine admitted under the name takes the record over"
+			continue
+		}
+		if nodeState(enrollment) == stationv1alpha1.NodeStateConflict {
+			answer.Reason = "the Node of this name has another UID than the record and no admission let it in: delete the record and it registers again"
+			continue
+		}
+		// A node with no key is recorded and is no member of the tunnel.
+		if enrollment.Spec.PublicKey == "" && spec.Mode != stationv1alpha1.SiteNetworkModeRouted {
+			answer.Phase, answer.Reason = stationv1alpha1.NetworkEnrollmentPending, "the node has not reported a public key"
 			continue
 		}
 		answer.Site = siteOf(enrollment.Spec.ClusterID, enrollment.Name)
@@ -355,25 +333,14 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 			}
 			continue
 		}
-		if enrollment.Spec.PublicKey == "" {
-			answer.Phase, answer.Reason = stationv1alpha1.NetworkEnrollmentPending, "the node has not reported a public key"
-			continue
-		}
+		// A node the SiteNetwork declares without an address has its admission's.
 		address := node.Address
+		if admission := admissions[id]; address == "" && admission != nil {
+			address = admission.Status.Address
+		}
 		if address == "" {
-			allocation, ok := allocated[enrollment.Spec.StationUID]
-			if !ok {
-				free, err := network.Allocate(spec.Pool, taken)
-				if err != nil {
-					answer.Phase, answer.Reason = stationv1alpha1.NetworkEnrollmentPending, err.Error()
-					continue
-				}
-				allocation = stationv1alpha1.SiteNetworkAllocation{StationUID: enrollment.Spec.StationUID, Address: free}
-				taken = append(taken, free)
-			}
-			allocation.ClusterID, allocation.NodeName = enrollment.Spec.ClusterID, enrollment.Name
-			allocated[enrollment.Spec.StationUID] = allocation
-			address = allocation.Address
+			answer.Reason = "the node has no tunnel address: it needs a node admission, or an address declared in SiteNetwork.spec.nodes"
+			continue
 		}
 		member := network.Member{
 			ID: id, Site: answer.Site, Role: network.Role(answer.Role), Relay: node.Relay, PublicKey: enrollment.Spec.PublicKey,
@@ -444,20 +411,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	}
 	sort.Slice(members, func(i, j int) bool { return members[i].ID < members[j].ID })
 
-	// Addresses are durable before any node is told to use one.
 	status := *siteNetwork.Status.DeepCopy()
-	status.Allocations = status.Allocations[:0]
-	for _, allocation := range allocated {
-		status.Allocations = append(status.Allocations, allocation)
-	}
-	sort.Slice(status.Allocations, func(i, j int) bool { return status.Allocations[i].StationUID < status.Allocations[j].StationUID })
-	if !reflect.DeepEqual(status.Allocations, siteNetwork.Status.Allocations) {
-		siteNetwork.Status.Allocations = status.Allocations
-		if err := r.client.Status().Update(ctx, &siteNetwork); err != nil {
-			return reconcile.Result{}, fmt.Errorf("record address allocations: %w", err)
-		}
-	}
-
 	ready := metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Computed", Message: "every enrollment is answered from the current topology"}
 	if len(addressTaken) > 0 {
 		ready = metav1.Condition{Type: "Ready", Status: metav1.ConditionFalse, Reason: "AddressTaken", Message: strings.Join(addressTaken, "; ") + ": left out"}
@@ -465,15 +419,6 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	connected := metav1.Condition{Type: "FullyConnected", Status: metav1.ConditionTrue, Reason: "AllPairsReachable", Message: "every pair of members has a path"}
 	status.Members, status.Unreachable, status.Declared = 0, nil, nil
 	var again time.Duration
-	var observationList stationv1alpha1.StationObservationList
-	if err := r.client.List(ctx, &observationList); err != nil {
-		return reconcile.Result{}, fmt.Errorf("list StationObservations: %w", err)
-	}
-	observations := map[string]*stationv1alpha1.StationObservation{}
-	for i := range observationList.Items {
-		observation := &observationList.Items[i]
-		observations[observation.Annotations["station.rlark.io/cluster-id"]+"/"+observation.Name] = observation
-	}
 	if spec.Mode != stationv1alpha1.SiteNetworkModeRouted {
 		again = linkInterval
 		memberOfKey := map[string]string{}
@@ -546,11 +491,11 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 				// the API server stores it.
 				var seen *stationv1alpha1.WireguardPeerObservation
 				var reported metav1.Time
-				if observation := observations[link.Hub]; observation != nil && observation.Status.Wireguard != nil && now.Sub(observation.Status.ReportedAt.Time) < linkReportAge {
-					reported = observation.Status.ReportedAt.Rfc3339Copy()
-					for i := range observation.Status.Wireguard.Peers {
-						if observation.Status.Wireguard.Peers[i].Name == member.ID {
-							seen = &observation.Status.Wireguard.Peers[i]
+				if hub := enrollmentOf[link.Hub]; hub != nil && hub.Status.Observation != nil && hub.Status.Observation.Wireguard != nil && now.Sub(hub.Status.Observation.ReportedAt.Time) < linkReportAge {
+					reported = hub.Status.Observation.ReportedAt.Rfc3339Copy()
+					for i := range hub.Status.Observation.Wireguard.Peers {
+						if hub.Status.Observation.Wireguard.Peers[i].Name == member.ID {
+							seen = &hub.Status.Observation.Wireguard.Peers[i]
 						}
 					}
 				}
@@ -632,11 +577,16 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	for i := range enrollments.Items {
 		enrollment := &enrollments.Items[i]
 		answer := answers[enrollment.Spec.ClusterID+"/"+enrollment.Name]
+		// The report and the node's state are their writers', who write them
+		// with every heartbeat: the answer carries them as they are, and the
+		// patch holds the network's fields alone, whatever version the record has.
+		answer.Observation, answer.Node = enrollment.Status.Observation, enrollment.Status.Node
 		if reflect.DeepEqual(*answer, enrollment.Status) {
 			continue
 		}
+		base := enrollment.DeepCopy()
 		enrollment.Status = *answer
-		if err := r.client.Status().Update(ctx, enrollment); err != nil {
+		if err := r.client.Status().Patch(ctx, enrollment, client.MergeFrom(base)); err != nil {
 			return reconcile.Result{}, fmt.Errorf("answer NetworkEnrollment %s/%s: %w", enrollment.Namespace, enrollment.Name, err)
 		}
 	}
@@ -649,8 +599,8 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		// key it is enrolled with, joins again: its cluster has a new control
 		// plane. Its admission answers with the configuration it has until
 		// the node has enrolled from there, under a new Node UID; until then
-		// the admission also keeps the node among its peers while its Station
-		// is rebound. Whether it is that case is seen once, when the
+		// the admission also keeps the node among its peers while its record
+		// passes to the new Node. Whether it is that case is seen once, when the
 		// redemption is first answered.
 		enrollment := enrollmentOf[id]
 		sameKey := key != "" && enrollment != nil && enrollment.Spec.PublicKey == key
@@ -682,7 +632,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 			answer.Phase = stationv1alpha1.NodeAdmissionPending
 		}
 		if answer.Phase == stationv1alpha1.NodeAdmissionRedeemed && answer.Reason == "" {
-			answer.Reason = joinStep(admission, observations[id], stations.Items, enrollmentOf[id])
+			answer.Reason = joinStep(admission, enrollmentOf[id])
 		}
 		// A machine admitted into a site nothing declares never gets as far
 		// as an enrollment that could be rejected: its admission says it.
@@ -758,47 +708,32 @@ const JoinTokenIssuedAnnotation = "station.rlark.io/join-token-issued-at"
 // joinStep says where the join of a redeemed admission that has its tunnel
 // stands, from what the management plane holds of it: the console shows it,
 // and offers to clear the name and start again.
-func joinStep(admission *stationv1alpha1.NodeAdmission, observation *stationv1alpha1.StationObservation, stations []stationv1alpha1.Station, enrollment *stationv1alpha1.NetworkEnrollment) string {
+func joinStep(admission *stationv1alpha1.NodeAdmission, enrollment *stationv1alpha1.NetworkEnrollment) string {
 	token, _ := time.Parse(time.RFC3339, admission.Annotations[JoinTokenIssuedAnnotation])
-	var step string
 	switch {
 	case token.IsZero() || admission.Spec.RedeemedAt != nil && token.Before(admission.Spec.RedeemedAt.Time):
-		step = "机器拿到了隧道配置，还没回来取入网令牌：机器上的安装程序没在跑，或连不上 Station API"
-	case observation == nil || observation.Status.ReportedAt.Time.Before(token):
-		step = "已发入网令牌（" + token.UTC().Format(time.RFC3339) + "），这个名字还没有节点上报：kubeadm join 没成，或节点上的 station-agent 没起来（看安装输出，SSH 入网的在机器的 /var/log/rlark-join.log）"
-	default:
-		var bound, named *stationv1alpha1.Station
-		for i := range stations {
-			station := &stations[i]
-			if station.Namespace != admission.Namespace || station.Spec.Retired {
-				continue
-			}
-			if station.Spec.Binding.NodeUID == observation.Status.NodeUID {
-				bound = station
-			} else if station.Spec.Binding.NodeName == admission.Name {
-				named = station
-			}
-		}
-		switch {
-		case bound == nil && named != nil:
-			step = "节点已上报（UID " + observation.Status.NodeUID + "），场站 " + named.Spec.DisplayName + " 还绑在这个名字以前的节点上"
-			if condition := apimeta.FindStatusCondition(named.Status.Conditions, "IdentityMatched"); condition != nil && condition.Status == metav1.ConditionFalse {
+		return "机器拿到了隧道配置，还没回来取入网令牌：机器上的安装程序没在跑，或连不上 Station API"
+	case enrollment == nil || enrollment.Status.Observation == nil || enrollment.Status.Observation.ReportedAt.Time.Before(token):
+		return "已发入网令牌（" + token.UTC().Format(time.RFC3339) + "），这个名字还没有节点上报：kubeadm join 没成，或节点上的 station-agent 没起来（看安装输出，SSH 入网的在机器的 /var/log/rlark-join.log）"
+	case enrollment.Spec.Retired && enrollment.Status.Observation.NodeUID == enrollment.Spec.NodeUID:
+		return "节点已上报，但这个节点已被移除，场站节点记录停用了：发新的入网许可重新入网后记录恢复"
+	case enrollment.Status.Observation.NodeUID != enrollment.Spec.NodeUID:
+		step := "节点已上报（UID " + enrollment.Status.Observation.NodeUID + "），场站节点记录还在这个名字以前的节点上"
+		if enrollment.Status.Node != nil {
+			if condition := apimeta.FindStatusCondition(enrollment.Status.Node.Conditions, "IdentityMatched"); condition != nil && condition.Status == metav1.ConditionFalse {
 				step += "：" + condition.Message
 			}
-		case bound == nil:
-			step = "节点已上报（UID " + observation.Status.NodeUID + "），场站身份还没建成"
-		case enrollment != nil && enrollment.Status.Phase != stationv1alpha1.NetworkEnrollmentEnrolled && enrollment.Status.Reason != "":
-			step = "节点和场站 " + bound.Spec.DisplayName + " 都有了，隧道登记还没通过：" + enrollment.Status.Reason
-		default:
-			step = "节点和场站 " + bound.Spec.DisplayName + " 都有了，等节点以自己的身份登记隧道"
 		}
+		return step
+	case enrollment.Status.Phase != stationv1alpha1.NetworkEnrollmentEnrolled && enrollment.Status.Reason != "":
+		return "节点已上报，隧道登记还没通过：" + enrollment.Status.Reason
+	default:
+		return "节点已上报，等它以自己的身份登记隧道"
 	}
-	return step
 }
 
 // DiscoveryReportedAnnotation is, on the NetworkEnrollment of a hub, when the
-// hub last reported what it found on its site's network (Station API writes
-// it; the enrollment's status is this controller's answer and is written whole).
+// hub last reported what it found on its site's network (Station API writes it).
 const DiscoveryReportedAnnotation = "station.rlark.io/discovery-reported-at"
 
 // document is a node's configuration as it is served, and its SHA-256.

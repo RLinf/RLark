@@ -6,41 +6,40 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// Only a retired Station is asked to be deleted; who asked is written on it for station-controller, an earlier
-// refusal is taken off, and a Station that is gone answers as deleted.
-func TestDeleteStationAsksStationControllerForARetiredOne(t *testing.T) {
+// A record is deleted when its node was removed, when another Node reports under its name, or when its node does
+// not report and RLark has no Node of the name; the record of a node in the cluster, or of one that reports, stays,
+// and one that is gone answers as deleted.
+func TestDeleteStationDeletesARecordNoNodeStandsOn(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	retired := stationHandlerStation("stn-retired", "agent-a")
+	retired := stationHandlerRecord("retired", "agent-a")
 	_ = unstructured.SetNestedField(retired.Object, true, "spec", "retired")
-	retired.SetAnnotations(map[string]string{stationDeleteRefusedAnnotation: "its node is in the cluster"})
-	client := stationHandlerClient(stationHandlerCluster("cluster-a", "agent-a"), retired, stationHandlerStation("stn-bound", "agent-a"))
+	conflict := stationHandlerRecord("conflict", "agent-a")
+	_ = unstructured.SetNestedField(conflict.Object, "Conflict", "status", "node", "state")
+	node := func(name string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "rlinf.io/v1alpha1", "kind": "Node", "metadata": map[string]interface{}{"name": name, "namespace": "agent-a"}}}
+	}
+	reporting := stationHandlerRecord("reporting", "agent-a")
+	_ = unstructured.SetNestedField(reporting.Object, "Bound", "status", "node", "state")
+	client := stationHandlerClient(stationHandlerCluster("cluster-a", "agent-a"), retired, conflict, reporting, stationHandlerRecord("bound", "agent-a"), stationHandlerRecord("left", "agent-a"),
+		node("retired"), node("conflict"), node("bound"))
 	g := &Gateway{astribotState: astribotState{stationClient: client}}
-	call := func(name string) int {
+	for name, want := range map[string]int{"bound": http.StatusConflict, "reporting": http.StatusConflict, "gone": http.StatusOK, "retired": http.StatusOK, "conflict": http.StatusOK, "left": http.StatusOK} {
 		recorder := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(recorder)
 		ctx.Request = httptest.NewRequest(http.MethodDelete, "/api/v1/station/stations/"+name+"?cluster_id=cluster-a", nil)
 		ctx.Params = gin.Params{{Key: "name", Value: name}}
-		ctx.Set(authSubjectKey, "alice")
 		g.handleDeleteStation(ctx)
-		return recorder.Code
-	}
-	if code := call("stn-bound"); code != http.StatusConflict {
-		t.Fatalf("a Station that is not retired = %d, want 409", code)
-	}
-	if code := call("stn-gone"); code != http.StatusOK {
-		t.Fatalf("a Station that is gone = %d, want 200", code)
-	}
-	for range 2 {
-		if code := call("stn-retired"); code != http.StatusAccepted {
-			t.Fatalf("a retired Station = %d, want 202", code)
+		if recorder.Code != want {
+			t.Fatalf("%s = %d, want %d", name, recorder.Code, want)
 		}
-	}
-	stored, err := client.Resource(stationRecordGVR).Namespace("agent-a").Get(t.Context(), "stn-retired", metav1.GetOptions{})
-	if err != nil || stored.GetAnnotations()[stationDeleteRequestedAnnotation] != "alice" || stored.GetAnnotations()[stationDeleteRefusedAnnotation] != "" {
-		t.Fatalf("annotations %v %v", stored.GetAnnotations(), err)
+		_, err := client.Resource(networkEnrollmentGVR).Namespace("agent-a").Get(t.Context(), name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) != (want == http.StatusOK) {
+			t.Fatalf("%s after the request: %v", name, err)
+		}
 	}
 }

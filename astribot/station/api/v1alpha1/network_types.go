@@ -244,13 +244,7 @@ type SiteNetworkDiscoverySource struct {
 
 type SiteNetworkStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-	// Allocations are durable: an address stays with its Station identity
-	// across rebinds and is released only when the identity is retired.
-	// +kubebuilder:validation:MaxItems=4096
-	// +listType=map
-	// +listMapKey=stationUID
-	Allocations []SiteNetworkAllocation `json:"allocations,omitempty"`
-	Members     int32                   `json:"members,omitempty"`
+	Members            int32 `json:"members,omitempty"`
 	// Unreachable lists the first ordered pairs of members with no path.
 	// +kubebuilder:validation:MaxItems=32
 	Unreachable []string `json:"unreachable,omitempty"`
@@ -277,17 +271,6 @@ type SiteNetworkDeclaredConfig struct {
 	ConfigHash string `json:"configHash"`
 }
 
-type SiteNetworkAllocation struct {
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	StationUID string `json:"stationUID"`
-	ClusterID  string `json:"clusterID"`
-	NodeName   string `json:"nodeName"`
-	// +kubebuilder:validation:MinLength=7
-	// +kubebuilder:validation:MaxLength=15
-	Address string `json:"address"`
-}
-
 // +kubebuilder:object:root=true
 type SiteNetworkList struct {
 	metav1.TypeMeta `json:",inline"`
@@ -295,10 +278,11 @@ type SiteNetworkList struct {
 	Items           []SiteNetwork `json:"items"`
 }
 
-// NetworkEnrollment is one node's request to join the SiteNetwork and the
-// answer to it. station-api writes spec from the node's verified identity and
-// its report; station-controller writes status. Its name is the Node name in
-// the namespace mapped to the cluster.
+// NetworkEnrollment is the record of one node: its identity, its latest
+// report and its place in the SiteNetwork. Its name is the Node name in the
+// namespace mapped to the cluster. station-api writes spec and
+// status.observation; station-controller writes the rest of status, and
+// spec.nodeUID, systemUUID and retired when the name passes to another Node.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=netenroll
@@ -306,6 +290,8 @@ type SiteNetworkList struct {
 // +kubebuilder:printcolumn:name="Site",type=string,JSONPath=`.status.site`
 // +kubebuilder:printcolumn:name="Role",type=string,JSONPath=`.status.role`
 // +kubebuilder:printcolumn:name="Address",type=string,JSONPath=`.status.address`
+// +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.node.state`
+// +kubebuilder:printcolumn:name="Reported",type=date,JSONPath=`.status.observation.reportedAt`
 type NetworkEnrollment struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -320,15 +306,14 @@ type NetworkEnrollmentSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	NodeUID string `json:"nodeUID"`
-	// StationUID and BindingVersion are the identity the request was verified
-	// against; the controller rejects the enrollment when they are no longer current.
-	// +kubebuilder:validation:MinLength=1
+	// SystemUUID is evidence only: it tells a reinstalled machine from another one.
 	// +kubebuilder:validation:MaxLength=128
-	StationUID string `json:"stationUID"`
-	// +kubebuilder:validation:Minimum=1
-	BindingVersion int64 `json:"bindingVersion"`
+	SystemUUID string `json:"systemUUID,omitempty"`
+	// Retired marks the record of a node that was removed. It has no place
+	// in the tunnel until a machine is admitted under the name again.
+	Retired bool `json:"retired,omitempty"`
 	// PublicKey is the node's WireGuard public key; the private key never
-	// leaves the node. Empty for a node that runs no tunnel.
+	// leaves the node. Empty for a node that is not in the tunnel.
 	// +kubebuilder:validation:MaxLength=44
 	PublicKey string `json:"publicKey,omitempty"`
 	// Addresses are the node's own addresses as it reported them, the first
@@ -384,6 +369,10 @@ type NetworkEnrollmentStatus struct {
 	// while every link is Connected.
 	// +kubebuilder:validation:MaxLength=1024
 	LinkSummary string `json:"linkSummary,omitempty"`
+	// Observation is station-api's alone: it patches this block and nothing else of status.
+	Observation *NodeObservation `json:"observation,omitempty"`
+	// Node is the node reconciler's alone.
+	Node *NetworkEnrollmentNode `json:"node,omitempty"`
 }
 
 // +kubebuilder:validation:Enum=Connected;Unanswered;Silent;Unknown
@@ -413,7 +402,7 @@ type NetworkEnrollmentLink struct {
 	Since metav1.Time `json:"since"`
 	// LatestHandshake is the last handshake the Hub completed with the Leaf,
 	// kept while the link is Unanswered or Silent. A Connected link has a new
-	// one every two minutes, in the Hub's StationObservation.
+	// one every two minutes, in the Hub's status.observation.
 	LatestHandshake *metav1.Time `json:"latestHandshake,omitempty"`
 	// ReceivedBytes is what the Hub had received from the Leaf at ObservedAt,
 	// the Hub's report the next one is compared with: a counter that grows

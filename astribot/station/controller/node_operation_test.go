@@ -106,9 +106,7 @@ func TestNodeOperationFailureConditionsAreStableAndDoNotExposeInternalErrors(t *
 	}{
 		{ErrNodeIdentityChanged, "NodeIdentityChanged"},
 		{ErrNodeDrainBlocked, "DrainBlocked"},
-		{ErrWireGuardPeerOwnershipUnknown, "WireGuardOwnershipUnknown"},
 		{ErrNodeStageUnavailable, "PrerequisiteUnavailable"},
-		{ErrStationRebindRequired, "StationRebindRequired"},
 		{errors.New("remote output includes sensitive internal detail"), "StageFailed"},
 	} {
 		reason, message := nodeOperationFailureCondition("Drain", tc.err)

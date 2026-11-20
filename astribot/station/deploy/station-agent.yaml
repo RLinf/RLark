@@ -3,9 +3,7 @@
 # A network node enrolls itself: the wireguard container publishes its public
 # key, the station-agent container registers it with Station API and stores the
 # computed configuration, and the wireguard container reconciles it. Nothing is
-# written per node. station-wireguard-config is optional and holds a static
-# <node-name>.json only for a node that cannot reach Station API without the
-# tunnel (astribot/docs/architecture.md, Station).
+# written per node.
 # Each node keeps private.key and last-applied.json in /var/lib/station/wg.
 apiVersion: v1
 kind: ConfigMap
@@ -248,12 +246,6 @@ spec:
         image: REPLACE_PRIVATE_WIREGUARD_IMAGE
         imagePullPolicy: IfNotPresent
         env:
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-        - name: STATION_GATEWAY_CONFIG
-          value: /config/$(NODE_NAME).json
         - name: STATION_GATEWAY_OBSERVATION_FILE
           value: /var/run/station-observation/wireguard.json
         - name: STATION_GATEWAY_IDENTITY_FILE
@@ -288,9 +280,6 @@ spec:
         - name: station-api-ca
           mountPath: /var/run/secrets/station-api-ca
           readOnly: true
-        - name: wireguard-config
-          mountPath: /config
-          readOnly: true
         - name: wireguard-key
           mountPath: /var/lib/station/wg
         - name: wireguard-observation
@@ -324,10 +313,6 @@ spec:
           items:
           - key: ca.crt
             path: ca.crt
-      - name: wireguard-config
-        configMap:
-          name: station-wireguard-config
-          optional: true
       - name: wireguard-key
         hostPath:
           path: /var/lib/station/wg
