@@ -17,6 +17,7 @@ var (
 	networkEnrollmentGVR  = schema.GroupVersionResource{Group: "station.rlark.io", Version: "v1alpha1", Resource: "networkenrollments"}
 	siteNodeRobotLabel    = "rlark.io/robot-id"
 	siteNodeWorkstationID = "rlark.io/workstation-id"
+	siteNodeCameras       = "rlark.io/cameras"
 )
 
 // siteNode is the read-only view a scheduler of work (a Fleet Run) needs of
@@ -48,6 +49,8 @@ type siteNode struct {
 	Network       *siteNodeNetwork  `json:"network,omitempty"`
 	RobotID       string            `json:"robot_id,omitempty"`
 	WorkstationID string            `json:"workstation_id,omitempty"`
+	// A robot's cameras as its camera service last wrote them (the annotation rlark.io/cameras, JSON).
+	Cameras string `json:"cameras,omitempty"`
 }
 
 type siteNodeNetwork struct {
@@ -86,9 +89,10 @@ func (g *Gateway) siteNodes(c *gin.Context, clusterID, namespace string) ([]site
 	if err != nil {
 		return nil, err
 	}
-	labelsOf := map[string]map[string]string{}
+	labelsOf, camerasOf := map[string]map[string]string{}, map[string]string{}
 	for i := range nodes.Items {
 		labelsOf[nodes.Items[i].GetName()] = nodes.Items[i].GetLabels()
+		camerasOf[nodes.Items[i].GetName()] = nodes.Items[i].GetAnnotations()[siteNodeCameras]
 	}
 	results := make([]siteNode, 0, len(enrollments.Items))
 	for i := range enrollments.Items {
@@ -96,7 +100,7 @@ func (g *Gateway) siteNodes(c *gin.Context, clusterID, namespace string) ([]site
 		if retired, _, _ := unstructured.NestedBool(enrollment.Object, "spec", "retired"); retired {
 			continue
 		}
-		result := siteNode{ClusterID: clusterID, NodeName: enrollment.GetName(), Tunnel: "unknown", RLarkNode: "unknown", Labels: labelsOf[enrollment.GetName()]}
+		result := siteNode{ClusterID: clusterID, NodeName: enrollment.GetName(), Tunnel: "unknown", RLarkNode: "unknown", Labels: labelsOf[enrollment.GetName()], Cameras: camerasOf[enrollment.GetName()]}
 		result.RobotID, result.WorkstationID = result.Labels[siteNodeRobotLabel], result.Labels[siteNodeWorkstationID]
 		result.NodeUID, _, _ = unstructured.NestedString(enrollment.Object, "spec", "nodeUID")
 		result.Phase, _, _ = unstructured.NestedString(enrollment.Object, "status", "node", "state")

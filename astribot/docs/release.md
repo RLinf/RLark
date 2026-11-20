@@ -63,6 +63,12 @@ astribot/release/build.sh base <RLark 提交>                      # 安装器�
    没给 `--image` 的组件（包括 `installer-live`）沿用上一个发布的镜像；Addon 版本取树里的。
 6. 同一目录照常 `apply`（下一节），发布文件拷回工作站提交。
 
+## 要和 Fleet 一起上线的改动
+
+`s1u-robot` 的 `bodies.json`（每种机体有哪几路相机）是相机服务和 Fleet 设备层共用的清单：设备层发现自己 `configs/robots` 的相机和它不一样就拒绝启动。所以改了相机清单或相机接口的 `s1u-robot` 版本，必须和对应的 Fleet 设备层镜像（`deviceImage`）在同一次 `apply` 里上线，先上哪一边，另一边都会起不来。
+
+- `s1u-robot` v1.7.0（相机归 RLark）：`bodies.json` 加了 `torso`，`video` 容器换成相机服务（端口 18891），`/services/s1u-video.sock`、`/viewers`、WebRTC 和 `orin` 读的 `/run/rlark/s1u/camera-reset-request` 都没有了。它要的 Fleet 是相机那次改动之后的 main：`torso` 是录制相机，设备层不再重启相机驱动、不再调 `camera_control_command`，Dashboard 经 Gateway 看相机。发布文件里 `deviceImage` 换成按那个 Fleet 提交构建的镜像、`--fleet` 写那个提交，和这个 Addon 版本一起 `apply`。Fleet main 还在 50d1eb37 时不要上这个版本。
+
 ## 上线
 
 在管理机上，以 root，在 `astribot/release/` 下：

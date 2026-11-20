@@ -339,6 +339,7 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
         cluster={clusterForStation(clusters, selected.metadata.namespace)}
         node={nodeOf(selected)}
         labels={selectedLabels}
+        cameras={siteNodeOf(selected)?.cameras}
         now={now}
         zh={zh}
         power={{

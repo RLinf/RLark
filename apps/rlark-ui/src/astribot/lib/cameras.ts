@@ -1,6 +1,6 @@
-// A robot's cameras as its model Addon reports them (astribot/s1u/device/cameras.py): the Gateway's
-// GET .../nodes/{name}/cameras, live, and the same JSON as the Node's annotation rlark.io/cameras, written when a
-// camera's state changes.
+// A robot's cameras as its model Addon reports them (astribot/s1u/device/cameras.py): the Node's annotation
+// rlark.io/cameras (the site-node view's `cameras`), written when a camera's state changes, and the same JSON live
+// (rates and ages) from the Gateway's GET .../nodes/{name}/cameras.
 import { withQuery } from "../../api.js";
 
 // The views a robot may have, in the order of its camera wall: head, torso / wrist_left, wrist_right.
@@ -25,6 +25,19 @@ export interface CamerasReport {
   // The views of the robot's body only.
   cameras: Partial<Record<CameraView, CameraReport>>;
   updated_at: number;
+}
+
+// The robot's last published report, from its Node's annotation; undefined when there is none.
+export function publishedCameras(annotation: string | undefined): CamerasReport | undefined {
+  return annotation ? JSON.parse(annotation) as CamerasReport : undefined;
+}
+
+// The views whose stream is to be asked for anew: those that send again after no frames, and all of them after the
+// report could not be read (the robot's Pod replaced). A multipart stream that ended keeps its last picture and says
+// nothing, so it is not seen to end.
+export function returnedViews(before: CamerasReport | undefined, next: CamerasReport): CameraView[] {
+  const down = (camera?: CameraReport) => !camera || camera.state === "stale" || camera.state === "absent";
+  return CAMERA_VIEWS.filter((view) => next.cameras[view] && !down(next.cameras[view]) && (!before || down(before.cameras[view])));
 }
 
 // The console's status class it shows as (status-<tone>).

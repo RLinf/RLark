@@ -130,6 +130,7 @@ paths:
                   boot_time: {type: string, format: date-time}
                   reboots: {type: integer, description: Boot-time changes seen since the record was made or passed to this Node}
                   labels: {type: object, additionalProperties: {type: string}}
+                  cameras: {type: string, description: "A robot's cameras as its camera service last wrote them (the Node annotation rlark.io/cameras, the JSON of GET .../nodes/{name}/cameras)"}
                   robot_id: {type: string}
                   workstation_id: {type: string}
                   network:

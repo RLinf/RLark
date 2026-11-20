@@ -32,13 +32,15 @@ function CopyValue({ value, zh }: { value?: string; zh: boolean }) {
 }
 
 // One site node's identity, heartbeat, robot power and conditions.
-export function StationDrawer({ station, cluster, node, labels, now, zh, power, onClose }: {
+export function StationDrawer({ station, cluster, node, labels, cameras, now, zh, power, onClose }: {
   station: StationItem;
   cluster?: ClusterSummary;
   // The RLark Node of the name, or the name alone when it is gone.
   node: NodeRef;
   // The node's labels as the Gateway's site-node view has them.
   labels?: Record<string, string>;
+  // Its annotation rlark.io/cameras, likewise.
+  cameras?: string;
   now: number;
   zh: boolean;
   power: { pending: boolean; message: string; press: (action: RobotPowerAction, label: string) => void };
@@ -119,7 +121,7 @@ export function StationDrawer({ station, cluster, node, labels, now, zh, power, 
           </div>
           {power.message && <small role="status">{power.message}</small>}
         </section>}
-        <NodeCameras node={station.metadata.name} namespace={station.metadata.namespace} labels={labels} zh={zh} />
+        <NodeCameras node={station.metadata.name} namespace={station.metadata.namespace} labels={labels} published={cameras} zh={zh} />
 
         <section className="node-detail-section station-drawer-section">
           <span className="node-detail-label"><ShieldCheck size={14} />{zh ? "健康条件" : "Conditions"}</span>

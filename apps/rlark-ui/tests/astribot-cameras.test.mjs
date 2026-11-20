@@ -6,6 +6,8 @@ import {
   cameraCells,
   cameraStreamPath,
   camerasPath,
+  publishedCameras,
+  returnedViews,
 } from "../dist/test/astribot/lib/cameras.js";
 
 const camera = (fields) => ({
@@ -53,4 +55,13 @@ test("ages and the Gateway's paths", () => {
     "/api/v1/rlinf.io/v1alpha1/nodes/s1u-03-x86/cameras/wrist_left/stream?namespace=rlark-robot&fps=10");
   assert.equal(cameraStreamPath("s1u-03-x86", "rlark-robot", "wall", 5),
     "/api/v1/rlinf.io/v1alpha1/nodes/s1u-03-x86/cameras/wall/stream?namespace=rlark-robot&fps=5");
+});
+
+test("the Node's annotation stands in while the robot does not answer, and a view that sends again is asked for anew", () => {
+  const report = (states) => ({ state: "recovering", updated_at: 0, cameras: Object.fromEntries(Object.entries(states).map(([view, state]) => [view, camera({ state })])) });
+  assert.equal(publishedCameras(undefined), undefined);
+  assert.equal(cameraCells(publishedCameras(JSON.stringify(report({ head: "stale", torso: "ok" }))), true)[0].badge, "无画面");
+  assert.deepEqual(returnedViews(undefined, report({ head: "ok", torso: "absent" })), ["head"]);
+  assert.deepEqual(returnedViews(report({ head: "stale", torso: "ok" }), report({ head: "ok", torso: "slow" })), ["head"]);
+  assert.deepEqual(returnedViews(report({ head: "ok", torso: "ok" }), report({ head: "ok", torso: "stale" })), []);
 });

@@ -8,6 +8,8 @@ export interface SiteNode {
   node_name: string;
   online: boolean;
   labels?: Record<string, string>;
+  // A robot's cameras as its Node's annotation rlark.io/cameras has them (lib/cameras.ts publishedCameras).
+  cameras?: string;
   network?: { public_key?: string; links?: SiteNodeLink[]; link_summary?: string };
 }
 

@@ -783,10 +783,10 @@ def test_removing_takes_back_what_the_orin_got_and_sends_nothing_to_one_never_tr
                         {"metadata": {"annotations": {orin.HOST_KEY: None, orin.TRUST: None, orin.SERIAL: None}}})]
 
 
-def test_the_orin_resets_a_views_camera_by_its_serial_once_per_request(tmp_path, monkeypatch):
+def test_the_orin_resets_a_camera_by_its_serial_once_per_request(tmp_path, monkeypatch):
     """s1u_01 11-13 22:40: the head camera's own stream wedged and no restart of the vendor's camera driver brought it
     back. The camera service asks through a file the two containers share; the reset is the Orin account's (the
-    cameras' rule), of the one device whose serial the vendor's camera_info.json gives the view's camera."""
+    cameras' rule), of the one device whose serial the vendor's camera_info.json gives the camera."""
     robot = make_orin(tmp_path, monkeypatch)
     sent, answer = [], ["head_rgbd bus 002 dev 008\n", 0]
     monkeypatch.setattr(robot, "known", lambda: ("ssh-ed25519 KEY", {}))
@@ -794,7 +794,7 @@ def test_the_orin_resets_a_views_camera_by_its_serial_once_per_request(tmp_path,
         answer[0].encode(), answer[1], b"PermissionError: [Errno 13]\n"))
     robot.camera_pass()
     assert not sent  # no request
-    (tmp_path / "reset-request").write_text(json.dumps({"id": "a" * 32, "cameras": ["head"]}))
+    (tmp_path / "reset-request").write_text(json.dumps({"id": "a" * 32, "cameras": ["head_rgbd"]}))
     robot.camera_pass()
     assert sent[0].startswith("python3 -c '") and sent[0].endswith("' head_rgbd") and "sudo" not in sent[0]
     result = json.loads((tmp_path / "reset-result").read_text())
@@ -808,18 +808,18 @@ def test_the_orin_resets_a_views_camera_by_its_serial_once_per_request(tmp_path,
     again.camera_pass()
     assert len(sent) == 1 and again.state["camera_reset"]["id"] == "a" * 32
     # Two cameras asked for, one of them not on the bus: said, and not ok.
-    (tmp_path / "reset-request").write_text(json.dumps({"id": "b" * 32, "cameras": ["head", "wrist_left"]}))
+    (tmp_path / "reset-request").write_text(json.dumps({"id": "b" * 32, "cameras": ["head_rgbd", "left_wrist_rgbd"]}))
     robot.camera_pass()
     assert sent[-1].endswith("' head_rgbd left_wrist_rgbd")
     result = json.loads((tmp_path / "reset-result").read_text())
     assert not result["ok"] and result["detail"] == "reset ok head_rgbd bus 002 dev 008; no USB device of left_wrist_rgbd"
-    (tmp_path / "reset-request").write_text(json.dumps({"id": "c" * 32, "cameras": ["head"]}))
+    (tmp_path / "reset-request").write_text(json.dumps({"id": "c" * 32, "cameras": ["head_rgbd"]}))
     answer[:] = ["", 1]
     robot.camera_pass()
     assert json.loads((tmp_path / "reset-result").read_text())["detail"] == "PermissionError: [Errno 13]"
     # The script on an Orin: the device whose serial is the camera's, whatever its vendor, and no other.
     (tmp_path / "camera_info.json").write_text(json.dumps(
-        {"head_rgbd": "CL8TC53000T", "torso_rgbd": "CP0HC5300034", "left_wrist_rgbd": {"serial": "261123074156"}}))
+        {"head_rgbd": "CL8TC53000T", "torso_rgbd": "CP0HC5300034", "left_wrist_rgbd": "261123074156"}))
     script = orin.USB_RESET.replace("/sys/bus/usb/devices/*", str(tmp_path / "sys/*")).replace(
         "/dev/bus/usb/%03d/%03d", str(tmp_path / "dev/%03d-%03d")).replace("fcntl.ioctl(f, 0x5514)", "f.write(b'reset')").replace(
         "/etc/config/camera_info.json", str(tmp_path / "camera_info.json"))

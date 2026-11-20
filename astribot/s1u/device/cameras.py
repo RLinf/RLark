@@ -18,18 +18,21 @@ Only the wall decodes (OpenCV, at a quarter of the size in libjpeg itself), and 
 
 A camera is ok | slow (under 10 frames a second for 30 s) | stale (no frame for 5 s) | absent (none since this
 started). Health is the topic alone: the vendor's /astribot_error_code/multi_error_code keeps only the last of the
-camera driver's codes and is not read. Cameras that are stale or absent are brought back by a ladder (Recovery), each
-step an Event on the Node:
+camera driver's codes and is not read. Cameras that are stale or absent for 30 s (longer than the blank of a driver
+restart, anyone's) are brought back by a ladder (Recovery), each step an Event on the Node:
     1. the vendor's camera driver restarted (/astribot_system_monitor/camera_control_command False, 2 s, True: all
        cameras blank for about 25 s), up to 3 times, 60 s apart doubling to 900 s. It is also how the driver starts
        after a boot: the vendor's monitor starts it on True. A slow camera gets this step only, once an hour.
     2. the stale cameras' USB devices reset on the Orin: a request to the orin container through the Pod's shared
-       directory (S1U_CAMERA_DIRECTORY: reset-request {id, cameras}, reset-result {id, ok, detail, finished_at}),
-       then the driver restarted once more (s1u_01 11-13 22:40: the head camera stalled inside the Orbbec SDK and no
-       driver restart brought it back).
-    3. stuck: 相机需要断电或 USB 复位. The ladder starts over after an hour, or at once when the frames are back.
-Nothing is done in the first 90 s. The state is on the Node, written when it changes: label rlark.io/camera-state
-ok | recovering | degraded (slow cameras only) | stuck, annotation rlark.io/cameras the JSON of GET /cameras.
+       directory (S1U_CAMERA_DIRECTORY: reset-request {id, cameras: the vendor's names}, reset-result {id, ok, detail,
+       finished_at}), then the driver restarted once more (s1u_01 11-13 22:40: the head camera stalled inside the
+       Orbbec SDK and no driver restart brought it back). A request the frames came back before is withdrawn.
+    3. stuck: 相机需要断电或 USB 复位. The ladder starts over after an hour.
+The ladder starts over once every camera has sent for 5 minutes: a camera that comes back for a moment and stalls
+again goes on up it. Nothing is done in the first 90 s. The state is on the Node, written when it changes: label
+rlark.io/camera-state ok | recovering | degraded (slow cameras only) | stuck, annotation rlark.io/cameras the JSON of
+GET /cameras. A restart of the robot's ROS master ends this process (rospy does not subscribe again at a new master):
+kubelet starts it afresh.
 """
 
 import json
@@ -41,10 +44,13 @@ import threading
 import time
 import uuid
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as Unanswered
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
+from xmlrpc.client import ServerProxy
 
 import cv2
 import numpy
@@ -63,7 +69,10 @@ STREAMS = 16  # open streams at most
 STALE_SECONDS = 5.0
 SLOW_FPS, SLOW_SECONDS, SLOW_RESTART_SECONDS = 10.0, 30.0, 3600.0
 GRACE_SECONDS = 90.0
+SETTLE_SECONDS = 30.0  # cameras down for less are left alone: a driver restart blanks them for about 25 s
+HEALTHY_SECONDS = 300.0  # the ladder starts over once every camera has sent this long
 RESTART_SECONDS, RESTARTS = (60.0, 900.0), 3
+CALL_SECONDS = 30.0  # the vendor's monitor answers a call within this, or the call failed
 RESET_SECONDS = 300.0  # the orin container's answer is waited for this long
 STUCK_SECONDS = 3600.0
 STUCK = "相机需要断电或 USB 复位"
@@ -173,6 +182,8 @@ class Recovery:
         self.records = {view: dict(step=0, attempts=0, next_attempt_at=None, last_action=None, last_result=None)
                         for view in cameras.views}
         self.slow_at = None  # when the driver was last restarted for a slow camera
+        self.down_since = self.healthy_since = None
+        self.request_file.unlink(missing_ok=True)  # an earlier run's request, which nobody waits for
         self.rewind()
 
     def rewind(self):
@@ -205,7 +216,13 @@ class Recovery:
             if state == "ok":
                 self.records[view].update(step=0, attempts=0, next_attempt_at=None)
         if not down:
-            if self.step:  # the frames are back
+            self.down_since = None
+            if self.request:  # back before the Orin reset them
+                self.request_file.unlink(missing_ok=True)
+                self.request = None
+            if self.healthy_since is None:
+                self.healthy_since = now
+            if self.step and now - self.healthy_since >= HEALTHY_SECONDS:
                 self.rewind()
                 for record in self.records.values():
                     record.update(step=0, attempts=0, next_attempt_at=None)
@@ -217,7 +234,10 @@ class Recovery:
                     self.records[view].update(step=1, attempts=1, last_action="driver_restart", last_result=result,
                                               next_attempt_at=round(self.wall() + SLOW_RESTART_SECONDS))
             return
-        if now - self.started < GRACE_SECONDS:
+        self.healthy_since = None
+        if self.down_since is None:
+            self.down_since = now
+        if now - self.started < GRACE_SECONDS or now - self.down_since < SETTLE_SECONDS:
             return
         if self.step == 3:
             if now - self.stuck_since < STUCK_SECONDS:
@@ -241,13 +261,17 @@ class Recovery:
         elif self.attempts < RESTARTS:
             self.step = 1
             restarted, result = self.restart_drivers(down, "no frames")
-            self.attempts += restarted  # the vendor's service away is no attempt: a USB reset would not bring it back
-            self.next_at, self.pause = now + self.pause, min(self.pause * 2, RESTART_SECONDS[1])
+            # The vendor's service away is no attempt (a USB reset would not bring it back), and no backoff: tried
+            # again in a minute.
+            self.attempts += restarted
+            self.next_at = now + (self.pause if restarted else RESTART_SECONDS[0])
+            if restarted:
+                self.pause = min(self.pause * 2, RESTART_SECONDS[1])
             self.mark(down, now, self.next_at, last_action="driver_restart", last_result=result)
         elif not self.reset_done:
             self.step = 2
             self.request = (uuid.uuid4().hex, now)
-            self.request_file.with_suffix(".new").write_text(json.dumps(dict(id=self.request[0], cameras=down)) + "\n")
+            self.request_file.with_suffix(".new").write_text(json.dumps(dict(id=self.request[0], cameras=[VENDOR[view] for view in down])) + "\n")
             self.request_file.with_suffix(".new").replace(self.request_file)
             self.mark(down, now, last_action="usb_reset", last_result="asked")
         else:
@@ -260,7 +284,7 @@ def report(cameras, recovery, now, wall):
     """What GET /cameras answers and the Node's annotation holds."""
     states = cameras.states(now)
     down = [state for state in states.values() if state in ("stale", "absent")]
-    overall = "stuck" if recovery.step == 3 else "recovering" if down else "degraded" if "slow" in states.values() else "ok"
+    overall = "stuck" if recovery.step == 3 and down else "recovering" if down else "degraded" if "slow" in states.values() else "ok"
     return dict(state=overall, updated_at=round(wall(), 1), cameras={
         view: dict(recovery.records[view], state=states[view], fps=cameras.fps(view), age_seconds=cameras.age(view, now))
         for view in cameras.views})
@@ -382,6 +406,21 @@ def follow(cameras, recovery, node):
         time.sleep(1.0)
 
 
+def watch_master(uri):
+    """Once a second, the process ID of the ROS master this process subscribed at; when it changes (the master
+    restarted), the subscriptions are gone with the old master and this ends the process (vital)."""
+    first = None
+    while True:
+        try:
+            pid = ServerProxy(uri).getPid("/s1u_cameras")[2]
+        except OSError:  # the master is down
+            pid = first
+        first = first or pid
+        if pid != first:
+            raise RuntimeError("the ROS master at %s restarted (process %s, was %s)" % (uri, pid, first))
+        time.sleep(1.0)
+
+
 def main():
     lines = (line.split("=", 1) for line in open(os.environ["S1U_NODE_PROFILE"]).read().splitlines()
              if "=" in line and line[0] != "#")
@@ -401,8 +440,15 @@ def main():
     cameras = Cameras(json.loads(Path(os.environ["S1U_BODIES"]).read_text())[body])
 
     def call(value):
+        """The vendor's service called on a thread of its own: one that hangs does not stop the ladder."""
         rospy.wait_for_service(SERVICE, timeout=5.0)
-        return rospy.ServiceProxy(SERVICE, SetBool)(value)
+        caller = ThreadPoolExecutor(1)
+        try:
+            return caller.submit(rospy.ServiceProxy(SERVICE, SetBool), value).result(CALL_SECONDS)
+        except Unanswered:
+            raise RuntimeError("no answer in %d s" % CALL_SECONDS) from None
+        finally:
+            caller.shutdown(wait=False)
 
     def restart():
         call(False)  # a driver that does not run (after a boot) has nothing to stop: only the start must succeed
@@ -428,6 +474,7 @@ def main():
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     vital(follow, cameras, recovery, node)
+    vital(watch_master, os.environ["ROS_MASTER_URI"])
     print("Cameras of %s (%s, %s) on %s:%d" % (node, body, ", ".join(cameras.views), os.environ["S1U_NODE_ADDRESS"], PORT), flush=True)
     rospy.init_node("s1u_cameras", disable_signals=True)  # waits for the master
     for view in cameras.views:

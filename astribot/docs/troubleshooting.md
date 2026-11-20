@@ -70,7 +70,7 @@
 |---|---|---|
 | `s1u_observer`（s1u-01，没有腕部相机）的厂商页面一直报 14120003、14120004 | 厂商驱动总按 5 路相机启动（`camera_config.yaml` 的 `camera_config_list`，各台相同），没有腕部相机就一直报；改这个文件关不掉（试过、已还原） | 误报，不处理；我们只看本机体有的视角（`bodies.json`） |
 | s1u-01 的 `head_stereo` 只有约 5 帧每秒 | 厂商进程里的问题：内核侧 30 帧、0 错误 | 我们不用这一路；已作为厂商问题记下 |
-| 头部相机没画面，驱动重启也不回来（s1u_01 11-13 22:40） | Femto Bolt（`head_rgbd`，经 libusb/usbfs 打开）卡在 Orbbec SDK 里：libusb 控制传输失败、取帧超时 | 相机容器自动按阶梯做：重启驱动三次后请 `orin` 按序列号 USB 复位这一路，再重启驱动；仍不行是 `stuck`，要人给机器人断电。一小时后会自动再来一遍 |
+| 头部相机没画面，驱动重启也不回来（s1u_01 11-13 22:40） | Femto Bolt（`head_rgbd`，经 libusb/usbfs 打开）卡在 Orbbec SDK 里：libusb 控制传输失败、取帧超时 | 相机容器自动按阶梯做：重启驱动三次后请 `orin` 按序列号 USB 复位这一路，再重启驱动；仍不行是 `stuck`，要人给机器人断电。一小时后会自动再来一遍；只回来一会儿又卡住的，接着往上走，不从头来 |
 | 所有相机同时约 25 s 没画面 | 相机驱动被重启（只能整个重启，所有相机一起） | 看事件 `CameraDriverRestart` 是谁、为什么 |
 | `stuck` 且事件说 `no USB device of …` | Orin 上 `/etc/config/camera_info.json` 的序列号对不上总线上的设备（换过相机，或相机掉线了） | 断电重启机器人；仍不对就核对这个文件（厂商的 `camera_serial_generator.py` 按 `lsusb` 生成它，Femto Bolt 记为 `head_rgbd`、Gemini 335 记为 `torso_rgbd`） |
 

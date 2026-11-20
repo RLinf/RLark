@@ -6,6 +6,7 @@ import struct
 import sys
 import threading
 from http.server import ThreadingHTTPServer
+from xmlrpc.server import SimpleXMLRPCServer
 from pathlib import Path
 
 import cv2
@@ -13,9 +14,7 @@ import numpy
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "device"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "orin"))
 import cameras  # noqa: E402
-import orin  # noqa: E402
 
 BODIES = json.loads((Path(__file__).resolve().parents[1] / "tuner/bodies.json").read_text())
 
@@ -64,8 +63,8 @@ class Robot:
 
 def test_the_views_are_four_in_the_walls_order_and_a_body_has_its_own():
     assert cameras.VIEWS == ("head", "torso", "wrist_left", "wrist_right")
-    assert cameras.VENDOR == orin.CAMERA_NAMES == {"head": "head_rgbd", "torso": "torso_rgbd", "wrist_left": "left_wrist_rgbd",
-                                                   "wrist_right": "right_wrist_rgbd"}
+    assert cameras.VENDOR == {"head": "head_rgbd", "torso": "torso_rgbd", "wrist_left": "left_wrist_rgbd",
+                              "wrist_right": "right_wrist_rgbd"}
     assert cameras.Cameras(BODIES["s1u"]).views == cameras.VIEWS
     assert cameras.Cameras(BODIES["s1u_observer"]).views == ("head", "torso")
     assert cameras.Cameras(["wrist_left", "head"]).views == ("head", "wrist_left")  # the wall's order, however listed
@@ -120,7 +119,7 @@ def test_the_ladder_restarts_the_driver_resets_the_usb_and_says_stuck(tmp_path):
     robot.run(600)
     assert robot.restarts == [90.0, 150.0, 270.0]
     request = json.loads((tmp_path / "reset-request").read_text())
-    assert request["cameras"] == ["head"] and len(request["id"]) == 32
+    assert request["cameras"] == ["head_rgbd"] and len(request["id"]) == 32  # the vendor's name, as the Orin knows it
     head = robot.said()["cameras"]["head"]
     assert head["step"] == 2 and head["attempts"] == 3 and head["last_action"] == "usb_reset" and head["last_result"] == "asked"
     assert robot.said()["state"] == "recovering"
@@ -148,16 +147,30 @@ def test_the_ladder_restarts_the_driver_resets_the_usb_and_says_stuck(tmp_path):
     assert len(robot.restarts) == 4 and len(robot.events) == 6
     robot.run(1)
     assert robot.restarts[-1] == stuck_at + 3600 and robot.said()["cameras"]["head"]["step"] == 1 and robot.said()["state"] == "recovering"
-    # The frames are back: the ladder is at its start, and what was last done stays said.
+    # The frames are back for a moment: said ok, and what was last done stays said.
+    restarted = robot.restarts[-1]
     robot.sending.add("head")
     robot.run(2)
     head = robot.said()["cameras"]["head"]
     assert robot.said()["state"] == "ok" and head["step"] == 0 and head["attempts"] == 0 and head["next_attempt_at"] is None
     assert head["last_action"] == "driver_restart"
-    restarts = len(robot.restarts)
+    # Stalled again (the Femto Bolt of 11-13 sent a burst now and then): the ladder goes on where it was, 60 s after
+    # the restart, not from its start.
     robot.sending.discard("head")
-    robot.run(6)
-    assert len(robot.restarts) == restarts + 1  # stale again: from the first step, at once
+    robot.run(restarted + 59 - robot.now)
+    assert robot.restarts[-1] == restarted
+    robot.run(1)
+    assert robot.restarts[-1] == restarted + 60 and robot.said()["cameras"]["head"]["attempts"] == 2
+    # Five minutes of frames start it over: stalled again, the first restart 30 s after the frames stopped.
+    robot.sending.add("head")
+    robot.run(301)
+    assert robot.recovery.step == 0
+    robot.sending.discard("head")
+    stopped = robot.now
+    robot.run(35)
+    assert robot.restarts[-1] == restarted + 60
+    robot.run(1)
+    assert robot.restarts[-1] == stopped + 36 and robot.said()["cameras"]["head"]["attempts"] == 1
 
 
 def test_the_vendors_service_away_is_no_attempt_and_the_orins_silence_ends_the_wait(tmp_path):
@@ -168,17 +181,17 @@ def test_the_vendors_service_away_is_no_attempt_and_the_orins_silence_ends_the_w
     head = robot.said()["cameras"]["head"]
     assert head["state"] == "absent" and head["step"] == 1 and head["attempts"] == 0
     assert head["last_result"] == "vendor service failed: " + robot.fails and not (tmp_path / "reset-request").exists()
-    assert [event[2] for event in robot.events] == ["Warning"] * 5  # at 90, 150, 270, 510, 990 s
-    # The monitor is up: the driver starts on the restart's True, and the cameras send.
+    assert [event[2] for event in robot.events] == ["Warning"] * 16  # every minute from 90 s: no backoff
+    # The monitor is up: the driver starts on the restart's True within a minute, and the cameras send.
     robot.fails = None
-    robot.run(900)
+    robot.run(60)
     assert len(robot.restarts) == 1
     robot.sending = {"head", "torso"}
-    robot.run(2)
-    assert robot.said()["state"] == "ok"
+    robot.run(301)
+    assert robot.said()["state"] == "ok" and robot.recovery.step == 0
     # An orin container that does not answer: after 300 s the ladder goes on to the restart and to stuck.
     robot.sending = {"head"}
-    robot.run(5 + 1 + 60 + 120 + 240)
+    robot.run(6 + 30 + 60 + 120 + 240)
     assert robot.said()["cameras"]["torso"]["step"] == 2
     robot.run(300)
     assert robot.said()["cameras"]["torso"]["last_result"] == "the orin container did not answer; driver restarted"
@@ -197,10 +210,45 @@ def test_a_slow_camera_gets_the_driver_restart_only_and_once_an_hour(tmp_path):
     assert right["state"] == "slow" and right["step"] == 1 and right["last_action"] == "driver_restart"
     assert right["next_attempt_at"] == 1795000000 + 90 + 3600
     assert robot.events == [("CameraDriverRestart", "the camera driver restarted for wrist_right (under 10 frames a second)", "Normal")]
-    robot.run(3599)
+    # The restart blanks every camera for about 25 s: no camera failure, nothing more done.
+    robot.sending = set()
+    robot.run(25)
+    assert robot.said()["state"] == "recovering"
+    robot.sending = set(robot.cameras.views)
+    robot.run(3574)
     assert len(robot.restarts) == 1 and not (tmp_path / "reset-request").exists()
     robot.run(1)
     assert len(robot.restarts) == 2
+
+
+def test_a_reset_the_frames_came_back_before_is_withdrawn(tmp_path):
+    (tmp_path / "reset-request").write_text(json.dumps(dict(id="0" * 32, cameras=["head_rgbd"])))
+    robot = Robot(tmp_path, "s1u_observer")
+    assert not (tmp_path / "reset-request").exists()  # an earlier run's, which nobody waits for
+    robot.sending = {"torso"}
+    robot.run(510)
+    asked = json.loads((tmp_path / "reset-request").read_text())["id"]
+    robot.sending.add("head")
+    robot.run(1)
+    assert not (tmp_path / "reset-request").exists() and "CameraUsbReset" not in [event[0] for event in robot.events]
+    # Stalled again: asked again, 30 s after the frames stopped.
+    robot.sending.discard("head")
+    robot.run(35)
+    assert not (tmp_path / "reset-request").exists()
+    robot.run(1)
+    assert json.loads((tmp_path / "reset-request").read_text())["id"] != asked
+
+
+def test_a_restarted_ros_master_ends_the_process():
+    """rospy does not subscribe again at a new master: the process ends (vital) and kubelet starts it afresh."""
+    pids = [101, 101, 202]
+    master = SimpleXMLRPCServer(("127.0.0.1", 0), logRequests=False)
+    master.register_function(lambda caller: [1, "", pids.pop(0) if len(pids) > 1 else pids[0]], "getPid")
+    threading.Thread(target=master.serve_forever, daemon=True).start()
+    with pytest.raises(RuntimeError, match="restarted .process 202, was 101"):
+        cameras.watch_master("http://127.0.0.1:%d" % master.server_address[1])
+    master.shutdown()
+    master.server_close()
 
 
 def test_the_node_is_written_when_the_state_changes_and_not_for_rates_and_ages(tmp_path):

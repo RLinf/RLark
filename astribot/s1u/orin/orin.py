@@ -10,9 +10,10 @@ declares:
   unit deletes the forwarding rules both of them hold;
 - the cameras' USB rule (the devices of the cameras' vendors the account's), and on request a USB reset of single
   cameras as the Orin's account: this Pod's camera service (device/cameras.py) writes reset-request ({"id",
-  "cameras": views}) in the directory the two share (/camera) when it restarted the vendor's camera driver and still
-  had no frames; each view's camera is found by its serial number in the Orin's /etc/config/camera_info.json (the
-  vendor's record of which camera is which) and its USB device reset. Each id is done once, also across a restart of
+  "cameras": the vendor's names}) in the directory the two share (/camera) when it restarted the vendor's camera
+  driver and still had no frames; each camera is found by its serial number in the Orin's
+  /etc/config/camera_info.json (the vendor's record of which camera is which: name -> serial) and its USB device
+  reset. Each id is done once, also across a restart of
   this container: the result ({"id", "ok", "detail", "finished_at"}) is written to reset-result beside it;
 - a vendor process that must not run there (the profile's S1U_ORIN_STOPPED) ended at every pass, and the line that
   starts it in the vendor's start script (S1U_ORIN_STOPPED_LAUNCHER) commented out;
@@ -74,20 +75,15 @@ KEPT = "/state/orin_trust.json"
 # The robot's cameras' USB vendors (Orbbec: head and torso; Intel: the wrists' RealSense), whose devices the account
 # may reset; how often the camera service's request is looked for, and where (the Pod's shared directory).
 CAMERA_VENDORS, WATCH_SECONDS, CAMERAS = ("2bc5", "8086"), 5, "/camera"
-# Each view's camera as the vendor's driver names it (device/cameras.py VENDOR).
-CAMERA_NAMES = {"head": "head_rgbd", "torso": "torso_rgbd", "wrist_left": "left_wrist_rgbd", "wrist_right": "right_wrist_rgbd"}
 # Run on the Orin as its account with the vendor's names of the cameras to reset: each one's serial number from the
-# vendor's /etc/config/camera_info.json (under the camera's name: the serial, or an object that holds it), the USB
-# device of that serial by its sysfs entry, reset through usbfs (USBDEVFS_RESET); prints "NAME bus BBB dev DDD" for
-# each device reset.
+# vendor's /etc/config/camera_info.json (camera name -> serial), the USB device of that serial by its sysfs entry,
+# reset through usbfs (USBDEVFS_RESET); prints "NAME bus BBB dev DDD" for each device reset.
 USB_RESET = ("import fcntl, glob, json, os, sys\n"
              "info = json.load(open(\"/etc/config/camera_info.json\"))\n"
-             "def texts(v):\n"
-             "    return [v] if isinstance(v, str) else [t for x in (v.values() if isinstance(v, dict) else []) for t in texts(x)]\n"
              "for name in sys.argv[1:]:\n"
              "    for d in glob.glob(\"/sys/bus/usb/devices/*\"):\n"
              "        s = os.path.join(d, \"serial\")\n"
-             "        if os.path.exists(s) and open(s).read().strip() in texts(info.get(name, {})):\n"
+             "        if os.path.exists(s) and open(s).read().strip() == info.get(name):\n"
              "            r = lambda n: int(open(os.path.join(d, n)).read())\n"
              "            with open(\"/dev/bus/usb/%03d/%03d\" % (r(\"busnum\"), r(\"devnum\")), \"wb\") as f:\n"
              "                fcntl.ioctl(f, 0x5514)\n"
@@ -503,13 +499,12 @@ class Orin:
         os.replace(CAMERAS + "/reset-result.new", CAMERAS + "/reset-result")
         print("Camera USB reset on the Orin (%s): %s" % (", ".join(request["cameras"]), detail), flush=True)
 
-    def reset_cameras(self, views):
-        """(every one done, one line): the USB devices of ``views``' cameras reset through usbfs as the Orin's
+    def reset_cameras(self, names):
+        """(every one done, one line): the USB devices of the cameras ``names`` reset through usbfs as the Orin's
         account, whose they are by the cameras' USB rule; no sudo."""
         known, _ = self.known()
         if known is None:
             return False, "the Orin's host key is not trusted yet"
-        names = [CAMERA_NAMES[view] for view in views]
         done = self.ssh(known, "python3 -c '%s' %s" % (USB_RESET, " ".join(names)))
         if done.returncode:
             return False, done.stderr.decode(errors="replace").strip().splitlines()[-1][-200:]
