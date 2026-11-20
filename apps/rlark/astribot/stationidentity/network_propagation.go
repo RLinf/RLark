@@ -41,10 +41,7 @@ type DeclaredKeys struct {
 }
 
 func (x *DeclaredKeys) Lookup(ctx context.Context, keys ...string) (map[string]string, error) {
-	now := time.Now()
-	if x.Now != nil {
-		now = x.Now()
-	}
+	now := clock(x.Now)
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	age := now.Sub(x.read)
@@ -259,10 +256,7 @@ func (d *NetworkDocuments) ServePropagation(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, "the peers' observations are unavailable")
 		return
 	}
-	now := time.Now()
-	if d.Now != nil {
-		now = d.Now()
-	}
+	now := clock(d.Now)
 	if request.State.Since.IsZero() || request.State.Since.After(now) {
 		request.State.Since = now
 	}

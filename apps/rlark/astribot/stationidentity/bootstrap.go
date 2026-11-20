@@ -91,13 +91,6 @@ type BootstrapAnswer struct {
 	Taints        string          `json:"taints,omitempty"`
 }
 
-func (b *Bootstrap) now() time.Time {
-	if b.Now != nil {
-		return b.Now()
-	}
-	return time.Now()
-}
-
 func (b *Bootstrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/b/") && strings.HasSuffix(r.URL.Path, "/uplink"):
@@ -114,7 +107,7 @@ func (b *Bootstrap) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(b.CA)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/bootstrap/bundle":
 		// The archive is hundreds of megabytes; the server's write timeout is for API calls.
-		_ = http.NewResponseController(w).SetWriteDeadline(b.now().Add(30 * time.Minute))
+		_ = http.NewResponseController(w).SetWriteDeadline(clock(b.Now).Add(30 * time.Minute))
 		w.Header().Set("Content-Type", "application/x-tar")
 		http.ServeFile(w, r, b.BundleFile)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/bootstrap/bundle.sha256":
@@ -243,7 +236,7 @@ func (b *Bootstrap) UplinkSetup(ctx context.Context, code string) (setup []byte,
 	}
 	expires, _, _ := unstructured.NestedString(admission.Object, "spec", "expiresAt")
 	redeemedBy, _, _ := unstructured.NestedString(admission.Object, "spec", "publicKey")
-	if at, err := time.Parse(time.RFC3339, expires); err != nil || !b.now().Before(at) || redeemedBy != "" {
+	if at, err := time.Parse(time.RFC3339, expires); err != nil || !clock(b.Now).Before(at) || redeemedBy != "" {
 		return nil, true, nil
 	}
 	name, _, _ := unstructured.NestedString(admission.Object, "spec", "nodeClass")
@@ -353,12 +346,12 @@ func validCode(code string) bool {
 func (b *Bootstrap) throttled(failed bool) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	cutoff := b.now().Add(-time.Minute)
+	cutoff := clock(b.Now).Add(-time.Minute)
 	for len(b.failures) > 0 && b.failures[0].Before(cutoff) {
 		b.failures = b.failures[1:]
 	}
 	if failed {
-		b.failures = append(b.failures, b.now())
+		b.failures = append(b.failures, clock(b.Now))
 	}
 	return len(b.failures) > 10
 }
@@ -413,7 +406,7 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 	switch redeemedBy := text("spec", "publicKey"); {
 	case redeemedBy == "":
 		expires, err := time.Parse(time.RFC3339, text("spec", "expiresAt"))
-		if err != nil || !b.now().Before(expires) {
+		if err != nil || !clock(b.Now).Before(expires) {
 			return BootstrapAnswer{State: "rejected", Reason: "the code has expired"}, http.StatusGone, nil
 		}
 		// The code is bound to the machine only once its cluster can give the
@@ -434,7 +427,7 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 			admission.SetAnnotations(annotations)
 		}
 		_ = unstructured.SetNestedField(admission.Object, publicKey, "spec", "publicKey")
-		_ = unstructured.SetNestedField(admission.Object, b.now().UTC().Format(time.RFC3339), "spec", "redeemedAt")
+		_ = unstructured.SetNestedField(admission.Object, clock(b.Now).UTC().Format(time.RFC3339), "spec", "redeemedAt")
 		if _, err := b.Management.Resource(nodeAdmissionGVR).Namespace(admission.GetNamespace()).Update(ctx, admission, metav1.UpdateOptions{}); err != nil && !apierrors.IsConflict(err) {
 			return BootstrapAnswer{}, 0, fmt.Errorf("record the redeemed code: %w", err)
 		}
@@ -490,7 +483,7 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 	if err != nil {
 		return BootstrapAnswer{}, 0, err
 	}
-	join, err := newJoinToken(ctx, member, clusterID, admission.GetName(), caHash, b.now())
+	join, err := newJoinToken(ctx, member, clusterID, admission.GetName(), caHash, clock(b.Now))
 	if err != nil {
 		return BootstrapAnswer{}, 0, err
 	}
@@ -518,7 +511,7 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 		if annotations == nil {
 			annotations = map[string]string{}
 		}
-		annotations[JoinTokenIssuedAnnotation] = b.now().UTC().Format(time.RFC3339)
+		annotations[JoinTokenIssuedAnnotation] = clock(b.Now).UTC().Format(time.RFC3339)
 		admission.SetAnnotations(annotations)
 		if _, err := b.Management.Resource(nodeAdmissionGVR).Namespace(admission.GetNamespace()).Update(ctx, admission, metav1.UpdateOptions{}); err != nil && !apierrors.IsConflict(err) {
 			return BootstrapAnswer{}, 0, fmt.Errorf("record that the machine has its join token: %w", err)

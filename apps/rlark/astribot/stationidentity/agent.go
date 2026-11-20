@@ -39,30 +39,6 @@ type AgentConfig struct {
 	NetworkConfigFile   string
 }
 
-func (c AgentConfig) Validate() error {
-	parsed, err := url.Parse(c.APIURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" {
-		return errors.New("Station API URL must be an HTTPS origin or path")
-	}
-	if c.ClusterID == "" || len(c.ClusterID) > 128 || c.TokenFile == "" {
-		return errors.New("cluster ID and projected token path are required")
-	}
-	if c.Interval < 5*time.Second || c.Interval > 10*time.Minute || c.RequestLimit < time.Second || c.RequestLimit > time.Minute {
-		return errors.New("agent interval or request timeout is outside the supported range")
-	}
-	if c.ProbeAddress != "" {
-		_, port, err := net.SplitHostPort(c.ProbeAddress)
-		n, portErr := strconv.Atoi(port)
-		if err != nil || portErr != nil || n < 1 || n > 65535 {
-			return errors.New("agent probe address must contain a valid TCP port")
-		}
-	}
-	if c.NetworkIdentityFile != "" && c.NetworkConfigFile == "" {
-		return errors.New("a network identity file requires a network configuration file")
-	}
-	return nil
-}
-
 // pendingEnrollmentRetry is how soon a node asks again while its enrollment is
 // being answered. It stays above the observation rate limit of one per second.
 const pendingEnrollmentRetry = 5 * time.Second
@@ -71,7 +47,7 @@ type Agent struct {
 	config               AgentConfig
 	client               *http.Client
 	read                 func(string) ([]byte, error)
-	post                 func(context.Context, string, []byte, string) error
+	post                 func(ctx context.Context, path string, body []byte) (int, []byte, error)
 	now                  func() time.Time
 	mu                   sync.RWMutex
 	lastSuccessfulReport time.Time
@@ -103,17 +79,11 @@ func newAgent(config AgentConfig, read func(string) ([]byte, error), now func() 
 	if config.ProbeAddress == "" {
 		config.ProbeAddress = ":8081"
 	}
-	if err := config.Validate(); err != nil {
-		return nil, err
+	// The Pod's token goes to Station API over verified TLS only.
+	if parsed, err := url.Parse(config.APIURL); err != nil || parsed.Scheme != "https" || parsed.Host == "" || config.ClusterID == "" || config.TokenFile == "" {
+		return nil, errors.New("an HTTPS Station API URL, the cluster ID and the projected token path are required")
 	}
-	transport := &http.Transport{
-		DialContext:           (&net.Dialer{Timeout: config.RequestLimit, KeepAlive: 30 * time.Second}).DialContext,
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
-		TLSHandshakeTimeout:   config.RequestLimit,
-		ResponseHeaderTimeout: config.RequestLimit,
-		IdleConnTimeout:       60 * time.Second,
-		MaxIdleConns:          16,
-	}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
 	if config.CAFile != "" {
 		pem, err := read(config.CAFile)
 		if err != nil {
@@ -136,7 +106,7 @@ func newAgent(config AgentConfig, read func(string) ([]byte, error), now func() 
 		},
 	}
 	agent := &Agent{config: config, client: client, read: read, now: now, observe: collectSystemObservation}
-	agent.post = agent.postObservation
+	agent.post = agent.send
 	agent.dial = func(ctx context.Context, address string) error {
 		connection, err := (&net.Dialer{}).DialContext(ctx, "tcp4", address)
 		if err == nil {
@@ -157,23 +127,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen for Station agent health probes: %w", err)
 	}
-	probeErr := make(chan error, 1)
-	go func() { probeErr <- probeServer.Serve(listener) }()
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = probeServer.Shutdown(shutdownCtx)
-	}()
+	go func() { _ = probeServer.Serve(listener) }()
+	defer probeServer.Close()
 	backoff, enrollment, reported := time.Second, "", ""
 	maxBackoff := min(a.config.Interval, 30*time.Second)
 	for {
-		select {
-		case err := <-probeErr:
-			if !errors.Is(err, http.ErrServerClosed) {
-				return errors.New("Station agent probe listener stopped")
-			}
-		default:
-		}
 		// A refused report is tried again sooner, and does not keep the node
 		// from asking for its network: its tunnel document must not hang on
 		// what station-api makes of an observation.
@@ -221,14 +179,6 @@ func (a *Agent) Run(ctx context.Context) error {
 }
 
 func (a *Agent) Report(ctx context.Context) error {
-	tokenBytes, err := a.read(a.config.TokenFile)
-	if err != nil {
-		return errors.New("read projected Station token")
-	}
-	token := strings.TrimSpace(string(tokenBytes))
-	if token == "" || strings.ContainsAny(token, "\r\n \t") {
-		return errors.New("projected Station token is invalid")
-	}
 	observation, err := a.observe()
 	if err != nil {
 		return fmt.Errorf("collect Station observation: %w", err)
@@ -242,10 +192,14 @@ func (a *Agent) Report(ctx context.Context) error {
 	}
 	body, err := json.Marshal(observationRequest{ClusterID: a.config.ClusterID, Observation: observation})
 	if err != nil {
-		return errors.New("encode Station observation")
-	}
-	if err := a.post(ctx, strings.TrimRight(a.config.APIURL, "/")+"/v1/observations", body, token); err != nil {
 		return err
+	}
+	status, _, err := a.post(ctx, "/v1/observations", body)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusAccepted {
+		return fmt.Errorf("Station API rejected observation with HTTP %d", status)
 	}
 	a.mu.Lock()
 	a.lastSuccessfulReport = a.now().UTC()
@@ -342,23 +296,26 @@ func (a *Agent) probeHandler() http.Handler {
 	return mux
 }
 
-func (a *Agent) postObservation(ctx context.Context, endpoint string, body []byte, token string) error {
+// send posts body to Station API as the node's Pod, with its projected token as it is now (it rotates), and
+// answers the status and what came back.
+func (a *Agent) send(ctx context.Context, path string, body []byte) (int, []byte, error) {
+	token, err := a.read(a.config.TokenFile)
+	if err != nil {
+		return 0, nil, errors.New("read projected Station token")
+	}
 	requestCtx, cancel := context.WithTimeout(ctx, a.config.RequestLimit)
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, strings.TrimRight(a.config.APIURL, "/")+path, bytes.NewReader(body))
 	if err != nil {
-		return errors.New("build Station API request")
+		return 0, nil, err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
 	response, err := a.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("send Station observation: %w", err)
+		return 0, nil, fmt.Errorf("send to Station API: %w", err)
 	}
-	defer func() { _ = response.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-	if response.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("Station API rejected observation with HTTP %d", response.StatusCode)
-	}
-	return nil
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	return response.StatusCode, data, err
 }

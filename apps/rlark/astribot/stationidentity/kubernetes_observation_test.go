@@ -42,13 +42,12 @@ func TestKubernetesObservationSinkWritesOnlyTheObservationOfTheNodesRecord(t *te
 	receivedAt := time.Date(2026, 11, 11, 1, 2, 3, 4, time.FixedZone("test", 8*60*60))
 	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}, Now: func() time.Time { return receivedAt }}
 	evidence := validEvidence()
-	evidence.ClusterID, evidence.RegisteredClusterID = "cluster-a", "cluster-a"
-	evidence.NodeName, evidence.PodNodeName = "node-a", "node-a"
+	evidence.ClusterID = "cluster-a"
+	evidence.NodeName = "node-a"
 	evidence.NodePressures = []string{"DiskPressure"}
 	observation := Observation{
 		SystemUUID: "system-a",
 		BootTime:   &receivedAt,
-		Roles:      []string{"worker"},
 		Wireguard:  json.RawMessage(`{"interface":"st-wg0","addresses":["10.254.240.10/32"]}`),
 		Probes:     []Probe{{Target: "nas:445", OK: true}},
 		Gateway:    &GatewayProgram{DocumentLevel: 2, Digest: strings.Repeat("ab", 32)},
@@ -167,8 +166,8 @@ func TestObservationPeersAreStoredUnderTheMemberEnrolledWithTheirKey(t *testing.
 	)
 	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}, Enrolled: EnrolledKeys(client), Admitted: AdmittedKeys(client), Declared: &DeclaredKeys{Client: client}}
 	e := validEvidence()
-	e.ClusterID, e.RegisteredClusterID = "cluster-a", "cluster-a"
-	e.NodeName, e.PodNodeName = "hub", "hub"
+	e.ClusterID = "cluster-a"
+	e.NodeName = "hub"
 	store := func(wireguard string) []interface{} {
 		t.Helper()
 		if err := sink.Store(context.Background(), e, Observation{Wireguard: json.RawMessage(wireguard)}); err != nil {
@@ -218,8 +217,8 @@ func TestObservationSinkListsEnrollmentsOncePerInterval(t *testing.T) {
 	sink := &KubernetesObservationSink{Client: client, Namespaces: observationNamespaceMap{"cluster-a": "agent-a"}, Now: func() time.Time { return clock }, Enrolled: EnrolledKeys(client), Admitted: AdmittedKeys(client), Declared: &DeclaredKeys{Client: client}}
 	sink.Enrolled.Now, sink.Admitted.Now, sink.Declared.Now = sink.Now, sink.Now, sink.Now
 	e := validEvidence()
-	e.ClusterID, e.RegisteredClusterID = "cluster-a", "cluster-a"
-	e.NodeName, e.PodNodeName = "hub", "hub"
+	e.ClusterID = "cluster-a"
+	e.NodeName = "hub"
 	// lists is how often the enrollments have been listed, names what is stored.
 	report := func(after time.Duration, keys ...string) (lists int, names string) {
 		t.Helper()

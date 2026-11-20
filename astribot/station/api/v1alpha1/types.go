@@ -36,13 +36,9 @@ type NodeObservation struct {
 	// +kubebuilder:validation:MaxLength=128
 	NodeUID string `json:"nodeUID"`
 	// SystemUUID is evidence only and must not be used to authorize a binding.
-	SystemUUID string       `json:"systemUUID,omitempty"`
-	BootTime   *metav1.Time `json:"bootTime,omitempty"`
-	// +kubebuilder:validation:MaxItems=32
-	// +kubebuilder:validation:items:MaxLength=64
-	// +listType=set
-	Roles     []string              `json:"roles,omitempty"`
-	Wireguard *WireguardObservation `json:"wireguard,omitempty"`
+	SystemUUID string                `json:"systemUUID,omitempty"`
+	BootTime   *metav1.Time          `json:"bootTime,omitempty"`
+	Wireguard  *WireguardObservation `json:"wireguard,omitempty"`
 	// +kubebuilder:validation:MaxItems=256
 	Probes []StationProbe `json:"probes,omitempty"`
 	// Gateway is the station-gateway of the node, as that program states it

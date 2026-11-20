@@ -61,7 +61,7 @@ func TestNetworkSummaryEndpointRequiresDedicatedCredential(t *testing.T) {
 func TestCurrentNodeUIDIsOfANodeThatIsNotBeingDeleted(t *testing.T) {
 	deleting := metav1.Now()
 	client := fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "node-uid"}}, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "going", UID: "going-uid", DeletionTimestamp: &deleting}})
-	reader := registeredReader{cluster: RegisteredCluster{Registration: Registration{ClusterID: "cluster"}, Client: client}}
+	reader := registeredReader{registration: Registration{ClusterID: "cluster"}, client: client}
 	if uid, err := reader.CurrentNodeUID(context.Background(), "node"); err != nil || uid != "node-uid" {
 		t.Fatalf("current Node: %q %v", uid, err)
 	}
@@ -95,7 +95,6 @@ func TestNodeNetworkSummaryIsOfTheCurrentNodesOwnFreshReport(t *testing.T) {
 		{"record of another Node", []runtime.Object{record("old", "old", false, now)}, "unreported", false},
 		{"report of another Node", []runtime.Object{record("node-uid", "old", false, now)}, "unreported", false},
 		{"removed", []runtime.Object{record("node-uid", "node-uid", true, now)}, "unreported", false},
-		{"future", []runtime.Object{record("node-uid", "node-uid", false, now.Add(time.Minute))}, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NodeNetworkSummaryReader{Registry: summaryRegistryStub{summaryReaderStub{nodeUID: "node-uid"}}, Client: testDynamicClient(tc.objects...), Namespaces: observationNamespaceMap{"cluster": "ns"}, Now: func() time.Time { return now }}

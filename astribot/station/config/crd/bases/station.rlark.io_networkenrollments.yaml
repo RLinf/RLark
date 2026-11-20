@@ -351,13 +351,6 @@ spec:
                       timestamp.
                     format: date-time
                     type: string
-                  roles:
-                    items:
-                      maxLength: 64
-                      type: string
-                    maxItems: 32
-                    type: array
-                    x-kubernetes-list-type: set
                   systemUUID:
                     description: SystemUUID is evidence only and must not be used
                       to authorize a binding.

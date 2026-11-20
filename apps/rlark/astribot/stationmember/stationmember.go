@@ -137,12 +137,7 @@ func SecretName(cluster string) string {
 
 // PutSecret writes a credential of a member cluster into kcp, in a namespace of such credentials.
 func PutSecret(ctx context.Context, management kubernetes.Interface, secret *corev1.Secret) error {
-	namespaces := management.CoreV1().Namespaces()
-	if _, err := namespaces.Get(ctx, secret.Namespace, metav1.GetOptions{}); apierrors.IsNotFound(err) {
-		if _, err := namespaces.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secret.Namespace}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-			return err
-		}
-	} else if err != nil {
+	if _, err := management.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secret.Namespace}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
 	}
 	secrets := management.CoreV1().Secrets(secret.Namespace)

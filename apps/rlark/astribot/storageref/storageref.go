@@ -107,12 +107,7 @@ func IsReference(volume corev1.Volume) bool {
 
 // HasReferences reports whether a Pod spec has a volume naming a storage.
 func HasReferences(spec *corev1.PodSpec) bool {
-	for _, volume := range spec.Volumes {
-		if IsReference(volume) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(spec.Volumes, IsReference)
 }
 
 // Resolve rewrites every volume of spec that names a storage, using the
@@ -210,20 +205,13 @@ func requireNodes(spec *corev1.PodSpec, selector map[string]string) {
 	for i := range required.NodeSelectorTerms {
 		term := &required.NodeSelectorTerms[i]
 		for _, requirement := range requirements {
-			if !containsRequirement(term.MatchExpressions, requirement) {
+			if !slices.ContainsFunc(term.MatchExpressions, func(have corev1.NodeSelectorRequirement) bool {
+				return have.Key == requirement.Key && have.Operator == requirement.Operator && slices.Equal(have.Values, requirement.Values)
+			}) {
 				term.MatchExpressions = append(term.MatchExpressions, requirement)
 			}
 		}
 	}
-}
-
-func containsRequirement(requirements []corev1.NodeSelectorRequirement, wanted corev1.NodeSelectorRequirement) bool {
-	for _, requirement := range requirements {
-		if requirement.Key == wanted.Key && requirement.Operator == wanted.Operator && len(requirement.Values) == 1 && requirement.Values[0] == wanted.Values[0] {
-			return true
-		}
-	}
-	return false
 }
 
 // podSpecPaths locates the Pod spec in the workload kinds an Addon renders.

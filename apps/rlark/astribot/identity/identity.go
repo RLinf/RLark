@@ -56,16 +56,10 @@ type Credential struct {
 
 // Ensure makes the component's ServiceAccount and permissions what they should be.
 func Ensure(ctx context.Context, kcp kubernetes.Interface, c Component) error {
-	if err := create(ctx, func() error {
-		_, err := kcp.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: c.Namespace}}, metav1.CreateOptions{})
-		return err
-	}); err != nil {
+	if _, err := kcp.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: c.Namespace}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("namespace %s: %w", c.Namespace, err)
 	}
-	if err := create(ctx, func() error {
-		_, err := kcp.CoreV1().ServiceAccounts(c.Namespace).Create(ctx, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: c.ServiceAccount, Namespace: c.Namespace}}, metav1.CreateOptions{})
-		return err
-	}); err != nil {
+	if _, err := kcp.CoreV1().ServiceAccounts(c.Namespace).Create(ctx, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: c.ServiceAccount, Namespace: c.Namespace}}, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("service account %s/%s: %w", c.Namespace, c.ServiceAccount, err)
 	}
 	role := c.ClusterRole
@@ -107,13 +101,6 @@ func Ensure(ctx context.Context, kcp kubernetes.Interface, c Component) error {
 	}
 	if err != nil {
 		return fmt.Errorf("cluster role binding %s: %w", c.Name, err)
-	}
-	return nil
-}
-
-func create(ctx context.Context, fn func() error) error {
-	if err := fn(); err != nil && !apierrors.IsAlreadyExists(err) {
-		return err
 	}
 	return nil
 }

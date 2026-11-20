@@ -105,10 +105,7 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 	if !declared || text(hub, "status", "role") != "Hub" || tunnel == "" {
 		return http.StatusForbidden, nil
 	}
-	now := time.Now()
-	if d.Now != nil {
-		now = d.Now()
-	}
+	now := clock(d.Now)
 	// When the hub last reported, on its enrollment: station-controller says
 	// on the SiteNetwork when a hub has gone silent (DiscoveryStale).
 	enrollments := d.Client.Resource(networkEnrollmentGVR).Namespace(hub.GetNamespace())

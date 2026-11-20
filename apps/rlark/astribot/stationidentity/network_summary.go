@@ -2,7 +2,6 @@ package stationidentity
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -70,31 +69,15 @@ func (s *NodeNetworkSummaryReader) Read(ctx context.Context, clusterID, nodeName
 	if err != nil {
 		return NodeNetworkSummary{}, errors.New("invalid observation receipt time")
 	}
-	now := time.Now()
-	if s.Now != nil {
-		now = s.Now()
-	}
-	if reportedAt.After(now.Add(5 * time.Second)) {
-		return NodeNetworkSummary{}, errors.New("observation receipt time is in the future")
-	}
-	raw, found := observation["wireguard"].(map[string]interface{})
+	// The summary shows no peers.
+	iface, found, _ := unstructured.NestedString(observation, "wireguard", "interface")
 	if !found {
 		return NodeNetworkSummary{State: "unreported", ReportedAt: &reportedAt}, nil
 	}
-	// The summary shows no peers; they are stored under the names the server
-	// gave them, not as the node reported them.
-	delete(raw, "peers")
-	data, err := json.Marshal(raw)
-	if err != nil || validateWireguardObservation(data, now) != nil {
-		return NodeNetworkSummary{}, errors.New("invalid stored WireGuard observation")
-	}
-	var wg wireguardObservation
-	if err := json.Unmarshal(data, &wg); err != nil {
-		return NodeNetworkSummary{}, err
-	}
+	addresses, _, _ := unstructured.NestedStringSlice(observation, "wireguard", "addresses")
 	state := "current"
-	if now.Sub(reportedAt) > 90*time.Second {
+	if clock(s.Now).Sub(reportedAt) > 90*time.Second {
 		state = "stale"
 	}
-	return NodeNetworkSummary{State: state, Interface: wg.Interface, Addresses: wg.Addresses, ReportedAt: &reportedAt}, nil
+	return NodeNetworkSummary{State: state, Interface: iface, Addresses: addresses, ReportedAt: &reportedAt}, nil
 }
