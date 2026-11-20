@@ -420,14 +420,21 @@ func Compute(topology Topology, members []Member) (Result, error) {
 			uplink = self.site.LeafUplink
 		}
 		if uplink != nil {
-			seen := map[netip.Addr]bool{}
+			// Behind the uplink the node reaches only what is routed through
+			// it: the endpoints it dials and its site's name servers.
+			destinations := make([]string, 0, len(dialed)+len(self.site.DNS))
 			for _, endpoint := range dialed {
-				if seen[endpoint] {
+				destinations = append(destinations, endpoint.String())
+			}
+			destinations = append(destinations, self.site.DNS...)
+			seen := map[string]bool{}
+			for _, destination := range destinations {
+				if seen[destination] {
 					continue
 				}
-				seen[endpoint] = true
+				seen[destination] = true
 				config.UplinkRoutes = append(config.UplinkRoutes, UplinkRoute{
-					Destination: endpoint.String() + "/32", Gateway: uplink.Gateway,
+					Destination: destination + "/32", Gateway: uplink.Gateway,
 				})
 			}
 		}

@@ -267,6 +267,30 @@ func TestLeavesOfASiteShareItsUplink(t *testing.T) {
 	}
 }
 
+// A node behind an uplink reaches its site's name servers through it: each
+// gets a route like a dialled endpoint, once when it is also an endpoint.
+func TestUplinkRoutesReachTheSiteNameServers(t *testing.T) {
+	topology, members := liveTopology()
+	before, err := Compute(topology, members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "rlark-robot-s1u-01/s1u-01-x86"
+	endpoints := before.Configs[id].UplinkRoutes
+	dialled := strings.TrimSuffix(endpoints[0].Destination, "/32")
+	topology.Sites[1].DNS = []string{"10.11.2.10", dialled, "10.11.2.20"}
+	after, err := Compute(topology, members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append(append([]UplinkRoute{}, endpoints...),
+		UplinkRoute{Destination: "10.11.2.10/32", Gateway: "192.168.0.11"},
+		UplinkRoute{Destination: "10.11.2.20/32", Gateway: "192.168.0.11"})
+	if got := after.Configs[id].UplinkRoutes; !reflect.DeepEqual(got, want) {
+		t.Fatalf("uplink routes %+v, want %+v", got, want)
+	}
+}
+
 // A site names the hub that relays for its leaves. Changing it changes, in a
 // leaf's configuration, which peer carries the pool, and nothing else: the
 // leaf's own sessions with the hubs it dials stay.

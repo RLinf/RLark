@@ -309,7 +309,7 @@ func uplinkVia(gateway net.IP) (netlink.Link, net.IP, error) {
 	return nil, nil, fmt.Errorf("no address of this node is in the network of the uplink gateway %s", gateway)
 }
 
-// applyUplink keeps the routes to the endpoints the node dials. A route this
+// applyUplink keeps the routes through the node's uplink gateway. A route this
 // program installed (its protocol and metric, through a gateway) follows the
 // document: it is replaced in one step when the gateway or the node's address
 // beside it changes, and removed, with prune, when the document drops it. A
