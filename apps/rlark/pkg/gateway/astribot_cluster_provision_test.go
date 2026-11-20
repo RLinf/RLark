@@ -321,14 +321,14 @@ func TestAMakingStopsAtTheStageThatFailsAndARetryGoesOnFromIt(t *testing.T) {
 	withProvisionStages(t, stages)
 
 	for _, refused := range []string{
-		`{"site":"baidu","address":"1.2.3.4","user":"root","password":"s3cret","tunnel_endpoint":"1.2.3.4"}`,
-		`{"site":"baidu","address":"gpu-1.example","user":"root","password":"s3cret"}`,
+		`{"type":"gpu","site":"baidu","address":"1.2.3.4","user":"root","password":"s3cret","tunnel_endpoint":"1.2.3.4"}`,
+		`{"type":"gpu","site":"baidu","address":"gpu-1.example","user":"root","password":"s3cret"}`,
 	} {
 		if code, body := provisionCall(t, g, http.MethodPost, "/cluster-provisions", "", refused); code != http.StatusBadRequest {
 			t.Fatalf("create %s = %d %v, want 400: a tunnel endpoint is an IPv4 ip:port", refused, code, body)
 		}
 	}
-	code, body := provisionCall(t, g, http.MethodPost, "/cluster-provisions", "", `{"site":"baidu","address":"1.2.3.4","user":"root","password":"s3cret"}`)
+	code, body := provisionCall(t, g, http.MethodPost, "/cluster-provisions", "", `{"type":"gpu","site":"baidu","address":"1.2.3.4","user":"root","password":"s3cret"}`)
 	if code != http.StatusCreated {
 		t.Fatalf("create = %d %v", code, body)
 	}
@@ -375,19 +375,19 @@ func TestAMakingStopsAtTheStageThatFailsAndARetryGoesOnFromIt(t *testing.T) {
 func TestCreateRefusesATakenSiteOrClusterAndAMissingRelease(t *testing.T) {
 	g := provisionGateway(t, provisionTestNetwork(), &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "rlark-ksyun-gpu"}})
 	for body, want := range map[string]int{
-		`{"site":"office","address":"1.2.3.4","user":"root","password":"p"}`:                  http.StatusConflict,
-		`{"site":"ksyun","address":"1.2.3.4","user":"root","password":"p"}`:                   http.StatusConflict,
-		`{"site":"baidu","cluster":"baidu","address":"1.2.3.4","user":"root","password":"p"}`: http.StatusBadRequest,
-		`{"site":"baidu","address":"1.2.3.4","user":"root"}`:                                  http.StatusBadRequest,
-		`{"site":"Baidu","address":"1.2.3.4","user":"root","password":"p"}`:                   http.StatusBadRequest,
-		`{"site":"baidu","address":"root@1.2.3.4","user":"root","password":"p"}`:              http.StatusBadRequest,
+		`{"type":"gpu","site":"office","address":"1.2.3.4","user":"root","password":"p"}`:                  http.StatusConflict,
+		`{"type":"gpu","site":"ksyun","address":"1.2.3.4","user":"root","password":"p"}`:                   http.StatusConflict,
+		`{"type":"gpu","site":"baidu","cluster":"baidu","address":"1.2.3.4","user":"root","password":"p"}`: http.StatusBadRequest,
+		`{"type":"gpu","site":"baidu","address":"1.2.3.4","user":"root"}`:                                  http.StatusBadRequest,
+		`{"type":"gpu","site":"Baidu","address":"1.2.3.4","user":"root","password":"p"}`:                   http.StatusBadRequest,
+		`{"type":"gpu","site":"baidu","address":"root@1.2.3.4","user":"root","password":"p"}`:              http.StatusBadRequest,
 	} {
 		if code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions", "", body); code != want {
 			t.Errorf("%s = %d %v, want %d", body, code, out, want)
 		}
 	}
 	_ = g.rawClient.CoreV1().ConfigMaps(release.RecordNamespace).Delete(context.Background(), release.RecordName, metav1.DeleteOptions{})
-	if code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions", "", `{"site":"baidu","address":"1.2.3.4","user":"root","password":"p"}`); code != http.StatusServiceUnavailable || !strings.Contains(out["message"].(string), "release record") {
+	if code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions", "", `{"type":"gpu","site":"baidu","address":"1.2.3.4","user":"root","password":"p"}`); code != http.StatusServiceUnavailable || !strings.Contains(out["message"].(string), "release record") {
 		t.Fatalf("without a release record = %d %v", code, out)
 	}
 }
@@ -473,7 +473,7 @@ func TestAMakingThatStoppedIsClearedAndItsNameMadeAgain(t *testing.T) {
 		return machine, hostKey, nil
 	}
 
-	if code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions", "", `{"site":"baidu","address":"1.2.3.4","user":"root","password":"p"}`); code != http.StatusConflict || !strings.Contains(out["message"].(string), "clear it") {
+	if code, out := provisionCall(t, g, http.MethodPost, "/cluster-provisions", "", `{"type":"gpu","site":"baidu","address":"1.2.3.4","user":"root","password":"p"}`); code != http.StatusConflict || !strings.Contains(out["message"].(string), "clear it") {
 		t.Fatalf("a new making over one that is left = %d %v", code, out)
 	}
 	if code, _ := provisionCall(t, g, http.MethodPost, "/cluster-provisions/rlark-baidu-gpu/clear", "", `{}`); code != http.StatusBadRequest {

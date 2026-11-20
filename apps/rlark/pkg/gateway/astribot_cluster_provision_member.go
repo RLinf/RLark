@@ -149,10 +149,11 @@ func (r *provisionRun) agent(ctx context.Context, p *rlarkv1alpha1.ClusterProvis
 			return err
 		}
 		cluster.Spec.NodeAgents = &rlarkv1alpha1.ClusterNodeAgents{Enabled: true, Image: rel.Images["node-agent"]}
+		metav1.SetMetaDataLabel(&cluster.ObjectMeta, clusterTypeLabel, p.Labels[clusterTypeLabel])
 		_, err = r.g.kubeClient.RlinfV1alpha1().Clusters().Update(ctx, cluster, metav1.UpdateOptions{})
 		return err
 	}); err != nil {
-		return "the agent reports in", fmt.Errorf("declare the node agents: %w", err)
+		return "the agent reports in", fmt.Errorf("declare the node agents and the cluster's type: %w", err)
 	}
 	m, err := stationmember.New(admin)
 	if err != nil {

@@ -3,6 +3,7 @@ package gateway
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -93,6 +94,33 @@ func (g *Gateway) setClusterDisplayName(c *gin.Context) {
 		"cluster", c.Param("cluster_id"), "was", was, "now", displayName, "set", c.Writer.Status() == http.StatusOK)
 }
 
+// clusterTypeLabel is, on a Cluster, what kind of cluster it is: gpu (GPU 集群: training and inference machines)
+// or robot (机器人集群: robots and their site's machines). It is set when the cluster is made (POST
+// /cluster-provisions, the ClusterProvision carries it until the Cluster exists) or with PUT
+// /clusters/{id}/cluster-type. A Node's kind stays the official rlark.io/node-category-{cloud,edge,robot}.
+const clusterTypeLabel = "rlark.io/cluster-type"
+
+var clusterTypes = []string{"gpu", "robot"}
+
+// setClusterType sets the Cluster's type (clusterTypeLabel).
+func (g *Gateway) setClusterType(c *gin.Context) {
+	var request struct {
+		ClusterType string `json:"clusterType"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || !slices.Contains(clusterTypes, request.ClusterType) {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "clusterType must be gpu or robot")
+		return
+	}
+	var was string
+	g.updateCluster(c, func(cluster *rlarkv1alpha1.Cluster) error {
+		was = cluster.Labels[clusterTypeLabel]
+		metav1.SetMetaDataLabel(&cluster.ObjectMeta, clusterTypeLabel, request.ClusterType)
+		return nil
+	})
+	log.FromContext(c.Request.Context()).WithName("audit").Info("cluster type", "action", "set", "actor", c.GetString(authSubjectKey),
+		"cluster", c.Param("cluster_id"), "was", was, "now", request.ClusterType, "set", c.Writer.Status() == http.StatusOK)
+}
+
 // AstribotClusterInfo is what the site adds to ClusterInfo.
 type AstribotClusterInfo struct {
 	// DisplayName is spec.displayName as the administrator set it; absent when unset. The official Name is what the
@@ -100,10 +128,13 @@ type AstribotClusterInfo struct {
 	DisplayName string `json:"displayName,omitempty"`
 	// NodeAgents is the declared node Agents of the cluster (spec.nodeAgents); absent when never declared.
 	NodeAgents *rlarkv1alpha1.ClusterNodeAgents `json:"nodeAgents,omitempty"`
+	// ClusterType is the Cluster's label rlark.io/cluster-type: gpu or robot; absent when never set.
+	ClusterType string `json:"clusterType,omitempty"`
 }
 
 func setAstribotClusterInfo(info *ClusterInfo, cluster rlarkv1alpha1.Cluster) {
 	info.NodeAgents = cluster.Spec.NodeAgents
+	info.ClusterType = cluster.Labels[clusterTypeLabel]
 	if displayName := strings.TrimSpace(cluster.Spec.DisplayName); displayName != "" {
 		info.Name = displayName
 		info.DisplayName = displayName

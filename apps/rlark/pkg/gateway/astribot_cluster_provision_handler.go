@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -20,7 +21,9 @@ import (
 // to it. The password is used for this making only and kept nowhere.
 type createClusterProvisionRequest struct {
 	Site string `json:"site"`
-	// Cluster is the new cluster's name; empty, rlark-<site>-gpu.
+	// Type is the new cluster's type, gpu or robot (the Cluster's label rlark.io/cluster-type).
+	Type string `json:"type"`
+	// Cluster is the new cluster's name; empty, rlark-<site>-<type>.
 	Cluster  string `json:"cluster"`
 	Address  string `json:"address"`
 	Port     int32  `json:"port"`
@@ -63,7 +66,7 @@ func (g *Gateway) handleCreateClusterProvision(c *gin.Context) {
 	}
 	req.Site, req.Cluster, req.Address, req.User = strings.TrimSpace(req.Site), strings.TrimSpace(req.Cluster), strings.TrimSpace(req.Address), strings.TrimSpace(req.User)
 	if req.Cluster == "" {
-		req.Cluster = apis.RLarkAgentNamespacePrefix + req.Site + "-gpu"
+		req.Cluster = apis.RLarkAgentNamespacePrefix + req.Site + "-" + req.Type
 	}
 	if req.Port == 0 {
 		req.Port = 22
@@ -73,6 +76,9 @@ func (g *Gateway) handleCreateClusterProvision(c *gin.Context) {
 		req.TunnelEndpoint = net.JoinHostPort(req.Address, strconv.Itoa(provisionTunnelPort))
 	}
 	switch {
+	case !slices.Contains(clusterTypes, req.Type):
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "type must be gpu or robot")
+		return
 	case len(validation.IsDNS1123Label(req.Site)) > 0:
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "site must be lower-case letters, digits and -")
 		return
@@ -123,7 +129,7 @@ func (g *Gateway) handleCreateClusterProvision(c *gin.Context) {
 	}
 	client := g.kubeClient.RlinfV1alpha1().ClusterProvisions()
 	p, err := client.Create(ctx, &rlarkv1alpha1.ClusterProvision{
-		ObjectMeta: metav1.ObjectMeta{Name: req.Cluster},
+		ObjectMeta: metav1.ObjectMeta{Name: req.Cluster, Labels: map[string]string{clusterTypeLabel: req.Type}},
 		Spec: rlarkv1alpha1.ClusterProvisionSpec{
 			Site:        req.Site,
 			Machine:     rlarkv1alpha1.ClusterProvisionMachine{Address: req.Address, Port: req.Port, User: req.User, TunnelEndpoint: req.TunnelEndpoint},

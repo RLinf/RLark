@@ -164,8 +164,8 @@ function JoinProgress({ zh, progress }: { zh: boolean; progress: MachineJoinProg
       </div>
     </div>
     <div className="join-progress-bar" aria-hidden="true">
-      <i className="join-progress-joined" style={{ width: `${100 * progress.joined / progress.total}%` }} />
-      <i className="join-progress-failed" style={{ width: `${100 * progress.failed / progress.total}%` }} />
+      <i className="is-joined" style={{ width: `${100 * progress.joined / progress.total}%` }} />
+      <i className="is-failed" style={{ width: `${100 * progress.failed / progress.total}%` }} />
     </div>
     <ol className="join-progress-rows">
       {progress.rows.map((item) => <li key={item.machine.name} className={`join-progress-row join-progress-${item.state}`}>

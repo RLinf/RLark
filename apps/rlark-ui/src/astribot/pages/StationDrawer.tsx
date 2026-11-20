@@ -5,6 +5,7 @@ import type { ClusterSummary } from "../../types";
 import { formatChinaDateTime } from "../../utils/time.js";
 import { CopyButton } from "../components/CopyButton";
 import { NodeName, type NodeRef } from "../components/NodeName";
+import { RobotPoseButton } from "../components/RobotControls";
 import {
   isRobotNode,
   robotMaintenanceLabel,
@@ -113,6 +114,7 @@ export function StationDrawer({ station, cluster, node, labels, now, zh, power, 
             {([["power_on", zh ? "上电" : "Power on"], ["driver_on", zh ? "启动驱动" : "Start driver"], ["driver_off", zh ? "关闭驱动" : "Stop driver"], ["power_off", zh ? "下电" : "Power off"]] as [RobotPowerAction, string][]).map(([action, label]) => (
               <button key={action} type="button" className="secondary-button" disabled={power.pending} onClick={() => power.press(action, label)}>{label}</button>
             ))}
+            <RobotPoseButton robots={[{ key: `${station.metadata.namespace}/${station.metadata.name}`, node: station.metadata.name, namespace: station.metadata.namespace, labels }]} zh={zh} />
           </div>
           {power.message && <small role="status">{power.message}</small>}
         </section>}

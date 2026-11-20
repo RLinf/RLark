@@ -48,15 +48,38 @@ export interface NodeOperation {
   };
 }
 
+// A cluster's type, the Cluster's label rlark.io/cluster-type; the Gateway's cluster list and detail (ClusterInfo)
+// carry it as clusterType, absent on a cluster whose type was never set. Not the official ClusterInfo.type
+// (Cloud / Embodied / Hybrid, from its nodes). A Node's kind stays the official rlark.io/node-category-* label.
+export type ClusterType = "gpu" | "robot";
+export const clusterTypes: { value: ClusterType; zh: string; en: string }[] = [
+  { value: "gpu", zh: "GPU 集群", en: "GPU cluster" },
+  { value: "robot", zh: "机器人集群", en: "Robot cluster" },
+];
+export type WithClusterType = { clusterType?: ClusterType };
+
+export const clusterTypeApi = {
+  // An existing cluster's type (administrator); the answer is the cluster as GET /api/v1/clusters/{id} gives it.
+  async set<T = unknown>(id: string, clusterType: ClusterType) {
+    const response = await requestJson<{ data?: T }>(`/api/v1/clusters/${encodeURIComponent(id)}/cluster-type`, {
+      method: "PUT",
+      body: { clusterType },
+    });
+    return response.data;
+  },
+};
+
 export const clusterProvisionsApi = {
   async list() {
     const response = await requestJson<{ data?: ClusterProvision[] }>("/api/v1/cluster-provisions");
     return response.data ?? [];
   },
-  async create(form: NewClusterForm) {
+  // The new cluster's name, left empty, is rlark-<site>-<clusterType>.
+  async create(form: NewClusterForm & { clusterType: ClusterType }) {
     const response = await requestJson<{ data: ClusterProvision }>("/api/v1/cluster-provisions", {
       method: "POST",
       body: {
+        type: form.clusterType,
         site: form.site.trim(),
         cluster: form.cluster.trim(),
         address: form.address.trim(),
@@ -91,7 +114,30 @@ export const stationsApi = {
   setRobotPower(node: string, namespace: string, desired: RobotPowerDesired) {
     return request(withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/robot-power`, { namespace }), { method: "PUT", body: { desired } });
   },
+  // Hold-to-move to a pose (初始姿势 is home; administrator or operator): hold about every 200 ms while the button is
+  // held, stop when it is let go; the robot stops by itself 0.5 s after the last hold. A refusal is an ApiError of
+  // status 409 whose body is RobotPoseRefusal; 502 when the vendor's web server failed or the robot is not reached.
+  robotPose(node: string, namespace: string, action: "hold" | "stop", pose: RobotPose = "home") {
+    return requestJson<RobotPoseAnswer>(withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/robot-pose`, { namespace }), {
+      method: "POST",
+      body: { pose, action },
+    });
+  },
 };
+
+export type RobotPose = "home";
+export interface RobotPoseAnswer {
+  pose: RobotPose;
+  moving: boolean;
+  // This hold started the movement (the vendor was sent pose_running).
+  started: boolean;
+  // The vendor's reply to pose_running or pose_stop; null when none was sent.
+  vendor: unknown;
+}
+export interface RobotPoseRefusal {
+  reason: "estop" | "fault" | "not_powered" | "driver_not_running" | "claimed" | "in_use" | "vendor_monitor_down" | `maintenance: ${string}`;
+  state: Record<string, unknown>;
+}
 
 export const siteNodesApi = {
   list(clusterID: string, signal?: AbortSignal) {

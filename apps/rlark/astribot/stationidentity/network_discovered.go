@@ -29,6 +29,11 @@ const discoveryRelayPort = 18022
 // last reported what it found.
 const discoveryReportedAnnotation = "station.rlark.io/discovery-reported-at"
 
+// entryHostKeyAnnotation is EntryHostKeyAnnotation of
+// astribot/station/controller: on a NodeAdmission, the host key its machine's
+// entry device was given when it joined.
+const entryHostKeyAnnotation = "rlark.io/entry-host-key"
+
 var (
 	hardwareAddressPattern = regexp.MustCompile(`^[0-9a-f]{2}(:[0-9a-f]{2}){5}$`)
 	hostKeyPattern         = regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]{43}$`)
@@ -138,6 +143,18 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 			classOf[fingerprint] = classes.Items[i].GetName()
 		}
 	}
+	// The key an entry device was given when its machine joined, by the
+	// machine's cluster and node: after that the machine is known by it, not by
+	// a key a report says it shows (station-controller looks at it).
+	admissions, err := d.Client.Resource(nodeAdmissionGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("list NodeAdmissions: %w", err)
+	}
+	ownKey := map[[2]string]string{}
+	for i := range admissions.Items {
+		clusterID := text(&admissions.Items[i], "spec", "clusterID")
+		ownKey[[2]string{clusterID, admissions.Items[i].GetName()}] = admissions.Items[i].GetAnnotations()[entryHostKeyAnnotation]
+	}
 	machines := d.Client.Resource(machineGVR).Namespace("station-system")
 	for _, host := range hosts {
 		class := classOf[host.HostKey]
@@ -171,7 +188,14 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		if err != nil {
 			return 0, fmt.Errorf("keep Machine %s: %w", name, err)
 		}
-		entry := map[string]interface{}{"address": host.Address, "mac": host.MAC, "hostKeyFingerprint": host.HostKey,
+		hostKey := host.HostKey
+		// A machine that shows its class's factory key is written with it:
+		// station-controller looks at it by that key, and a machine set up anew
+		// is joined again.
+		if key := ownKey[[2]string{text(machine, "status", "clusterID"), text(machine, "status", "nodeName")}]; key != "" && class == "" {
+			hostKey = key
+		}
+		entry := map[string]interface{}{"address": host.Address, "mac": host.MAC, "hostKeyFingerprint": hostKey,
 			"via": via, "lastSeen": now.UTC().Format(time.RFC3339)}
 		// A machine that shows up changed is looked at anew.
 		for _, field := range []string{"address", "hostKeyFingerprint", "via"} {

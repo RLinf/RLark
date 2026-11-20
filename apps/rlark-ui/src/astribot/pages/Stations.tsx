@@ -8,7 +8,6 @@ import {
   KeyRound,
   ListFilter,
   MonitorSmartphone,
-  Power,
   ShieldCheck,
   Unplug,
 } from "lucide-react";
@@ -21,6 +20,8 @@ import type { Copy } from "../../i18n";
 import type { ClusterSummary, CRDNode } from "../../types";
 import { formatChinaDateTime } from "../../utils/time.js";
 import { NodeName } from "../components/NodeName";
+import { RobotControls } from "../components/RobotControls";
+import { useRobotPower } from "../components/useRobotPower";
 import { nodeLabel } from "../lib/displayName";
 import {
   clusterForStation,
@@ -44,7 +45,6 @@ import {
   robotPowerNodes,
   type IssuedNodeAdmission,
   type NodeAdmission,
-  type RobotPowerDesired,
   type SiteNode,
 } from "../lib/siteNodeDisplay";
 import { isControlPlaneLabels } from "../../utils/nodeVisibility";
@@ -81,8 +81,6 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
   const [admissionError, setAdmissionError] = useState("");
   const [showNodeOperations, setShowNodeOperations] = useState(false);
   const [deletePending, setDeletePending] = useState("");
-  const [powerPending, setPowerPending] = useState(false);
-  const [powerMessage, setPowerMessage] = useState("");
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [now, setNow] = useState(() => Date.now());
   const activeRequest = useRef<AbortController | null>(null);
@@ -189,29 +187,11 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
   const selected = items.find((item) => keyOf(item) === selectedID);
   const selectedLabels = selected && siteNodeOf(selected)?.labels;
 
-  // The desired state of robots' Nodes, which the Addon's power service converges on: one request per robot, each
-  // recorded by the Gateway with who made it.
-  const setPower = async (nodes: { node: string; namespace: string; desired: RobotPowerDesired }[], label: string) => {
-    if (!nodes.length) return;
-    const names = nodes.map((entry) => entry.node).join(zh ? "、" : ", ");
-    if (!window.confirm(zh ? `${label}：${names}\n\n请确认这些机器人周围安全、现场有人守着急停。` : `${label}: ${names}\n\nMake sure the robots' surroundings are safe and someone is at their emergency stops.`)) return;
-    setPowerPending(true);
-    setPowerMessage("");
-    const failed: string[] = [];
-    await Promise.all(nodes.map((entry) => stationsApi.setRobotPower(entry.node, entry.namespace, entry.desired)
-      .catch((reason) => failed.push(`${entry.node}: ${(reason as Error).message}`))));
-    setPowerMessage(failed.length
-      ? failed.join("; ")
-      : (zh ? `期望状态已改（${label}，${nodes.length} 台），机器人几秒内跟上；没跟上的原因见节点注解 rlark.io/power 的 waiting。` : `Desired state set (${label}, ${nodes.length}); the robots follow within seconds. Why one does not is in its Node's annotation rlark.io/power (waiting).`));
-    setPowerPending(false);
-    await load(false);
-  };
+  const power = useRobotPower(zh, () => load(false));
   // The robots of the list a batch may act on, and those chosen.
   const robots = visible.map((item) => ({ key: keyOf(item), node: item.metadata.name, namespace: item.metadata.namespace, labels: siteNodeOf(item)?.labels }));
   const powerRobots = robotPowerNodes(robots, new Set(robots.map((robot) => robot.key)));
   const chosenRobots = robotPowerNodes(robots, chosen);
-  const pressBatch = (desired: RobotPowerDesired, label: string) =>
-    setPower(chosenRobots.map((robot) => ({ node: robot.node, namespace: robot.namespace, desired })), label);
 
   const count = (value: string) => stationsOfPhase(items, value).length;
   const phaseOptions = [
@@ -290,13 +270,7 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
         ) : visible.length === 0 ? (
           <div className="stations-state muted">{zh ? "没有匹配的场站节点" : "No matching site nodes"}</div>
         ) : (
-          <>{powerRobots.length > 0 && <div className="stations-power-batch" role="group" aria-label={zh ? "机器人电源（批量）" : "Robot power (batch)"}>
-            <Power size={14} />
-            <span>{zh ? `机器人电源：已选 ${chosenRobots.length} / ${powerRobots.length} 台` : `Robot power: ${chosenRobots.length} of ${powerRobots.length} chosen`}</span>
-            <button type="button" className="secondary-button" disabled={powerPending || chosenRobots.length === 0} onClick={() => void pressBatch("ready", zh ? "上电并启动驱动" : "Power on and start driver")}>{zh ? "上电并启动驱动" : "Power on and start driver"}</button>
-            <button type="button" className="secondary-button" disabled={powerPending || chosenRobots.length === 0} onClick={() => void pressBatch("off", zh ? "关闭驱动并下电" : "Stop driver and power off")}>{zh ? "关闭驱动并下电" : "Stop driver and power off"}</button>
-            {!selected && powerMessage && <small role="status">{powerMessage}</small>}
-          </div>}
+          <>{powerRobots.length > 0 && <RobotControls robots={powerRobots} chosen={chosenRobots} power={power} zh={zh} />}
           <table className="stations-table">
             <thead><tr>
               <th>{powerRobots.length > 0 && <input type="checkbox" aria-label={zh ? "全选机器人" : "Select every robot"} checked={chosenRobots.length === powerRobots.length} onChange={(event) => setChosen(event.target.checked ? new Set(powerRobots.map((robot) => robot.key)) : new Set())} />}</th>
@@ -368,9 +342,9 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
         now={now}
         zh={zh}
         power={{
-          pending: powerPending,
-          message: powerMessage,
-          press: (action, label) => void setPower([{ node: selected.metadata.name, namespace: selected.metadata.namespace, desired: robotPowerAfter(action, robotPowerDesired(selectedLabels)) }], label),
+          pending: power.pending,
+          message: power.message,
+          press: (action, label) => void power.set([{ node: selected.metadata.name, namespace: selected.metadata.namespace, desired: robotPowerAfter(action, robotPowerDesired(selectedLabels)) }], label),
         }}
         onClose={() => setSelectedID("")}
       />}

@@ -1,8 +1,11 @@
 import type { IClusterProvision } from "../../generated/rlark/rlinf.io/v1alpha1/ClusterProvision.js";
+import type { ClusterType } from "../api.js";
 
 export type ClusterProvision = IClusterProvision;
 
 export interface NewClusterForm {
+  // GPU or robot cluster; "" until chosen.
+  clusterType: ClusterType | "";
   site: string;
   cluster: string;
   address: string;
@@ -40,15 +43,18 @@ export function tunnelEndpointProblem(endpoint: string, lang: Lang): string {
   return lang === "zh" ? "隧道公网端点写成 公网IP:UDP端口，例如 180.76.174.250:8100" : "The tunnel endpoint is public-ip:udp-port, e.g. 180.76.174.250:8100";
 }
 
-export function defaultClusterName(site: string): string {
-  return `rlark-${site.trim()}-gpu`;
+export function defaultClusterName(site: string, clusterType: ClusterType): string {
+  return `rlark-${site.trim()}-${clusterType}`;
 }
 
 // What is wrong with the form, or "" when it can be sent.
 export function newClusterProblem(form: NewClusterForm, lang: Lang): string {
   const zh = lang === "zh";
+  if (!form.clusterType) {
+    return zh ? "选择集群类型：GPU 集群或机器人集群" : "Choose the cluster type: GPU or robot";
+  }
   const site = form.site.trim();
-  const cluster = form.cluster.trim() || defaultClusterName(site);
+  const cluster = form.cluster.trim() || defaultClusterName(site, form.clusterType);
   const address = form.address.trim();
   if (!label.test(site)) {
     return zh ? "场地名只能用小写字母、数字和 -" : "The site is lower-case letters, digits and -";

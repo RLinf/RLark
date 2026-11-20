@@ -1,20 +1,19 @@
 import { useEffect, useState } from "react";
 import { Server, Shield } from "lucide-react";
 import type { Lang } from "../../i18n";
-import { clusterProvisionsApi, selfHealApi } from "../api";
+import { clusterProvisionsApi, clusterTypes, selfHealApi, type ClusterType } from "../api";
 import { RetryClear } from "../components/RetryClear";
 import { StageList } from "../components/StageList";
 import { useAction } from "../components/useAction";
 import "../components/provision.css";
 import {
-  defaultClusterName,
   newClusterProblem,
   provisionView,
   type ClusterProvision,
   type NewClusterForm,
 } from "../lib/clusterProvision";
 
-const emptyForm: NewClusterForm = { site: "", cluster: "", address: "", port: "22", user: "root", password: "", tunnelEndpoint: "" };
+const emptyForm: NewClusterForm = { clusterType: "", site: "", cluster: "", address: "", port: "22", user: "root", password: "", tunnelEndpoint: "" };
 
 // NewClusterPage makes a new site's cluster from its first machine: RLark logs in to it, makes it the site's
 // first hub and the cluster's control plane, and shows each stage as it goes, where it stopped and why.
@@ -44,7 +43,7 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
   const current = provisions.find((p) => p.metadata?.name === selected) ?? provisions[0];
   const view = current ? provisionView(current, lang) : undefined;
   const create = () => run(async () => {
-    const made = await clusterProvisionsApi.create(form);
+    const made = await clusterProvisionsApi.create({ ...form, clusterType: form.clusterType as ClusterType });
     setForm(emptyForm);
     setSelected(made.metadata?.name ?? "");
     await refresh();
@@ -92,8 +91,15 @@ export function NewClusterPage({ lang }: { lang: Lang }) {
             </div>
           </div>
           <div className="cert-form new-cluster-form">
+            <label>
+              <span>{zh ? "集群类型" : "Cluster type"}</span>
+              <select value={form.clusterType} onChange={(e) => setForm({ ...form, clusterType: e.target.value as ClusterType })}>
+                <option value="" disabled>{zh ? "选择 GPU 集群或机器人集群" : "Choose GPU or robot"}</option>
+                {clusterTypes.map((type) => <option key={type.value} value={type.value}>{zh ? type.zh : type.en}</option>)}
+              </select>
+            </label>
             {field("site", "场地名", "Site", "baidu")}
-            {field("cluster", "集群名", "Cluster", form.site.trim() ? defaultClusterName(form.site) : "rlark-<site>-gpu")}
+            {field("cluster", "集群名", "Cluster", `rlark-${form.site.trim() || "<site>"}-${form.clusterType || "<type>"}`)}
             {field("address", "机器 IP", "Machine IP", "1.2.3.4")}
             {field("port", "SSH 端口", "SSH port", "22")}
             {field("user", "SSH 账号", "SSH account", "root")}

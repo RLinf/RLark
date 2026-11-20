@@ -9,11 +9,13 @@ import {
   tunnelEndpointProblem,
 } from "../dist/test/astribot/lib/clusterProvision.js";
 
-const form = { site: "baidu", cluster: "", address: "1.2.3.4", port: "22", user: "root", password: "p", tunnelEndpoint: "" };
+const form = { clusterType: "gpu", site: "baidu", cluster: "", address: "1.2.3.4", port: "22", user: "root", password: "p", tunnelEndpoint: "" };
 
 test("a new cluster is named after its site unless named", () => {
-  assert.equal(defaultClusterName("baidu"), "rlark-baidu-gpu");
+  assert.equal(defaultClusterName("baidu", "gpu"), "rlark-baidu-gpu");
+  assert.equal(defaultClusterName("baidu", "robot"), "rlark-baidu-robot");
   assert.equal(newClusterProblem(form, "en"), "");
+  assert.match(newClusterProblem({ ...form, clusterType: "" }, "zh"), /集群类型/);
   assert.match(newClusterProblem({ ...form, cluster: "baidu" }, "en"), /rlark-/);
   assert.match(newClusterProblem({ ...form, site: "Baidu" }, "en"), /site/);
   assert.match(newClusterProblem({ ...form, address: "root@1.2.3.4" }, "en"), /IP/);

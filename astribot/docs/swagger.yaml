@@ -177,10 +177,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [site, address, user, password]
+              required: [type, site, address, user, password]
               properties:
+                type: {type: string, enum: [gpu, robot], description: "The cluster's type (GPU 集群 / 机器人集群): the ClusterProvision's and then the Cluster's label rlark.io/cluster-type"}
                 site: {type: string, description: The new site's name}
-                cluster: {type: string, description: "The cluster's name, rlark-...; empty, rlark-<site>-gpu"}
+                cluster: {type: string, description: "The cluster's name, rlark-...; empty, rlark-<site>-<type>"}
                 address: {type: string, description: "The machine's address; its WireGuard endpoint is this address, UDP 51820"}
                 port: {type: integer, description: SSH port, default 22}
                 user: {type: string}
@@ -950,6 +951,43 @@ paths:
         '400': {description: enabled missing, empty nodeSelector, or an invalid label key or value}
         '404': {description: Cluster not found}
 
+  /api/v1/clusters/{cluster_id}/cluster-type:
+    put:
+      tags: [Cluster]
+      summary: Set a cluster's type (administrator only; audited with its actor)
+      description: >-
+        Sets the Cluster's label rlark.io/cluster-type: gpu (GPU 集群) or robot (机器人集群). A cluster made with POST
+        /api/v1/cluster-provisions has it from its making. A Node's kind stays the official
+        rlark.io/node-category-{cloud,edge,robot} label.
+      operationId: setClusterType
+      parameters:
+        - name: cluster_id
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clusterType]
+              properties:
+                clusterType: {type: string, enum: [gpu, robot]}
+      responses:
+        '200':
+          description: Type stored; the response is the updated cluster
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, success]
+                properties:
+                  data: {$ref: '#/components/schemas/ClusterInfo'}
+                  success: {type: boolean}
+        '400': {description: clusterType is not gpu or robot}
+        '404': {description: Cluster not found}
+
   /api/v1/clusters/{cluster_id}/display-name:
     put:
       tags: [Cluster]
@@ -1017,6 +1055,42 @@ paths:
                 $ref: '#/components/schemas/Node'
         '400': {description: desired is not off, powered or ready}
         '404': {description: Not Found}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/robot-pose:
+    post:
+      tags: [Node]
+      summary: Hold-to-move a robot to a pose (administrator or operator; a movement's start and end and every refusal audited with its actor)
+      description: >-
+        The vendor page's 初始姿势 (Home Pose), a momentary command and no desired state. Send hold while the button is
+        held, about every 200 ms, and stop when it is let go. The robot's power service (s1u-robot Addon) moves the
+        robot from the first hold (the vendor's pose_running) and stops it (pose_stop) on stop or 0.5 s after the last
+        hold. It refuses a robot not powered, without its driver, held by a Run, in use or in maintenance; a hold
+        refused while the robot moves stops it. The vendor checks the robot's state, control source and permission
+        itself. The request reaches the service on the robot's Unix socket through the server and that node's own
+        Agent (/api/nodeproxy/{agent}/{node}/api/astribot/services/s1u-power/pose).
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pose, action]
+              properties:
+                pose: {type: string, enum: [home]}
+                action: {type: string, enum: [hold, stop]}
+      responses:
+        '200':
+          description: "{pose, moving, started: this hold started the movement, vendor: the vendor's reply to pose_running or pose_stop (null when none was sent)}"
+        '400': {description: pose or action is invalid, or the Node is not a robot with a power service (no rlark.io/power-state)}
+        '403': {description: Neither administrator nor operator}
+        '404': {description: Not Found}
+        '409':
+          description: >-
+            Refused, {reason, state}: reason is estop, fault, not_powered, driver_not_running, claimed, in_use, "maintenance: <why>"
+            or vendor_monitor_down; state is the robot's state as GET /power on the node reads it
+        '502': {description: "UPSTREAM_UNAVAILABLE: the vendor's web server failed, or the node, its Agent or the power service is not reached"}
   /api/v1/rlinf.io/v1alpha1/nodes/{name}/robot-claim:
     put:
       tags: [Node]
@@ -1164,6 +1238,7 @@ components:
         displayName: {type: string, description: Trimmed spec.displayName; absent when unset.}
         nodeAgents:
           $ref: '#/components/schemas/ClusterNodeAgents'
+        clusterType: {type: string, enum: [gpu, robot], description: "The Cluster's label rlark.io/cluster-type; absent when never set."}
     NodeSpec:
       properties:
         displayName:

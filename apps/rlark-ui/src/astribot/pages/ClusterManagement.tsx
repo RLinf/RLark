@@ -33,13 +33,16 @@ import {
 import { ColumnFilterPopover } from "../../components/ColumnFilterPopover";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
 import { NodeName } from "../components/NodeName";
+import { RobotControls } from "../components/RobotControls";
+import { useRobotPower } from "../components/useRobotPower";
+import { controlledRobot } from "../lib/siteNodeDisplay";
 import { clustersApi, nodesApi } from "../../backend";
-import { displayNameApi } from "../api";
+import { clusterTypeApi, clusterTypes, displayNameApi, type ClusterType, type WithClusterType } from "../api";
 import { displayNameError, displayNameMessage, displayNameRefusal } from "../lib/displayName";
 import "./ClusterManagement.css";
 
 // A cluster as this page lists it: the Gateway's summary and what its nodes tell.
-type ClusterSummary = RLarkClusterSummary & {
+type ClusterSummary = RLarkClusterSummary & WithClusterType & {
   // The name it was given; name is this when set, else the ID.
   displayName?: string;
   // The cluster's control-plane nodes; empty for a managed control plane.
@@ -91,6 +94,12 @@ function clusterTypeLabel(type: string, zh: boolean): string {
   const entry = map[type];
   if (!entry) return type;
   return zh ? entry.zh : entry.en;
+}
+
+// Our cluster type (GPU / robot), set when the cluster is made or by an administrator; "" when never set.
+function ourClusterTypeLabel(clusterType: ClusterType | undefined, zh: boolean): string {
+  const entry = clusterTypes.find((type) => type.value === clusterType);
+  return entry ? (zh ? entry.zh : entry.en) : zh ? "未分类" : "No type";
 }
 
 function aggregateClusterNodes(
@@ -267,6 +276,11 @@ export function ClusterManagementPage({
   const [query, setQuery] = useState("");
   // 状态列多选筛选；空数组 = 全部
   const [phaseFilterValues, setPhaseFilterValues] = useState<string[]>([]);
+  // 类型列多选筛选（gpu / robot / none）；空数组 = 全部
+  const [typeFilterValues, setTypeFilterValues] = useState<string[]>([]);
+  // The robots chosen in a robot cluster's node list, by namespace/name.
+  const [chosenRobotKeys, setChosenRobotKeys] = useState<Set<string>>(new Set());
+  const [typePending, setTypePending] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [actionClusterID, setActionClusterID] = useState<string>();
@@ -281,6 +295,7 @@ export function ClusterManagementPage({
   const [renameError, setRenameError] = useState("");
   const [renamePending, setRenamePending] = useState(false);
   const { openKey, anchorRect, openFor, close } = useColumnFilter();
+  const robotPower = useRobotPower(zh, () => fetchClusters(false));
 
   const fetchClusters = async (isInitial = true) => {
     if (isInitial) setLoading(true);
@@ -415,13 +430,16 @@ export function ClusterManagementPage({
     const normalized = query.trim().toLowerCase();
     return clusters.filter((cluster) => {
       const searchable =
-        `${cluster.name} ${cluster.id} ${cluster.type} ${cluster.region} ${cluster.location}`.toLowerCase();
+        `${cluster.name} ${cluster.id} ${cluster.type} ${ourClusterTypeLabel(cluster.clusterType, zh)} ${cluster.region} ${cluster.location}`.toLowerCase();
       const phaseHit =
         phaseFilterValues.length === 0 ||
         phaseFilterValues.includes(cluster.phase);
-      return (!normalized || searchable.includes(normalized)) && phaseHit;
+      const typeHit =
+        typeFilterValues.length === 0 ||
+        typeFilterValues.includes(cluster.clusterType ?? "none");
+      return (!normalized || searchable.includes(normalized)) && phaseHit && typeHit;
     });
-  }, [clusters, phaseFilterValues, query]);
+  }, [clusters, phaseFilterValues, typeFilterValues, query, zh]);
 
   const totalPages = Math.max(1, Math.ceil(filteredClusters.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -429,7 +447,8 @@ export function ClusterManagementPage({
     (currentPage - 1) * pageSize,
     currentPage * pageSize,
   );
-  useEffect(() => setPage(1), [pageSize, phaseFilterValues, query]);
+  useEffect(() => setPage(1), [pageSize, phaseFilterValues, typeFilterValues, query]);
+  useEffect(() => setChosenRobotKeys(new Set()), [selectedClusterID]);
 
   const selectedCluster = selectedClusterID
     ? clusters.find((cluster) => cluster.id === selectedClusterID)
@@ -464,6 +483,26 @@ export function ClusterManagementPage({
         setRenamePending(false);
       }
     };
+    const saveClusterType = async (clusterType: ClusterType) => {
+      setTypePending(true);
+      setError("");
+      try {
+        await clusterTypeApi.set(selectedCluster.id, clusterType);
+        await fetchClusters(false);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setTypePending(false);
+      }
+    };
+    // A robot cluster's robots, and those chosen in its node list.
+    const robots =
+      selectedCluster.clusterType === "robot"
+        ? visibleDetailNodes
+            .filter((node) => hasNodeCategory(node, "robot"))
+            .map(controlledRobot)
+        : [];
+    const chosenRobots = robots.filter((robot) => chosenRobotKeys.has(robot.key));
     const onlineRate = selectedCluster.totalNodes
       ? Math.round(
           (selectedCluster.onlineNodes / selectedCluster.totalNodes) * 100,
@@ -491,7 +530,10 @@ export function ClusterManagementPage({
               <CloudCog size={24} />
             </span>
             <div>
-              <small>{selectedCluster.type || (zh ? "集群" : "Cluster")}</small>
+              <small>
+                {ourClusterTypeLabel(selectedCluster.clusterType, zh)}
+                {selectedCluster.type && ` · ${clusterTypeLabel(selectedCluster.type, zh)}`}
+              </small>
               <h2>{selectedCluster.name}</h2>
               {selectedCluster.name !== selectedCluster.id && (
                 <code className="real-name">{selectedCluster.id}</code>
@@ -506,6 +548,23 @@ export function ClusterManagementPage({
             </div>
           </div>
           <div className="cluster-detail-hero-actions">
+            {adminMode && (
+              <select
+                aria-label={zh ? "集群类型" : "Cluster type"}
+                value={selectedCluster.clusterType ?? ""}
+                disabled={typePending}
+                onChange={(e) => void saveClusterType(e.target.value as ClusterType)}
+              >
+                <option value="" disabled>
+                  {zh ? "设置集群类型" : "Set the cluster type"}
+                </option>
+                {clusterTypes.map((type) => (
+                  <option key={type.value} value={type.value}>
+                    {zh ? type.zh : type.en}
+                  </option>
+                ))}
+              </select>
+            )}
             {adminMode && (
               <button
                 type="button"
@@ -522,6 +581,11 @@ export function ClusterManagementPage({
             <ClusterStatus phase={selectedCluster.phase} zh={zh} />
           </div>
         </section>
+        {error && (
+          <div className="cert-error" role="alert" style={{ marginBottom: 12 }}>
+            {error}
+          </div>
+        )}
         {renameDraft !== undefined && (
           // A form: the backdrop does not dismiss it.
           <div className="modal-backdrop cluster-rename-backdrop">
@@ -658,6 +722,9 @@ export function ClusterManagementPage({
               <h2>{zh ? "节点资源" : "Node resources"}</h2>
             </div>
           </div>
+          {robots.length > 0 && (
+            <RobotControls robots={robots} chosen={chosenRobots} power={robotPower} zh={zh} />
+          )}
           <NodeResourceBrowser
             nodes={visibleDetailNodes}
             clusters={clusters}
@@ -665,6 +732,12 @@ export function ClusterManagementPage({
             onRefresh={handleRefresh}
             refreshing={refreshing}
             onSelectNode={onSelectNode}
+            {...(robots.length > 0 && {
+              selectedNodeKeys: chosenRobotKeys,
+              onSelectionChange: setChosenRobotKeys,
+              onSelectFiltered: (keys: string[]) => setChosenRobotKeys(new Set(keys)),
+              onClearSelection: () => setChosenRobotKeys(new Set()),
+            })}
           />
         </section>
       </div>
@@ -710,7 +783,11 @@ export function ClusterManagementPage({
       >
         <div className="cluster-management-table-head">
           <span>{zh ? "集群名称" : "Cluster"}</span>
-          <span>{zh ? "类型" : "Type"}</span>
+          <ColumnFilterButton
+            label={zh ? "类型" : "Type"}
+            selectedCount={typeFilterValues.length}
+            onClick={openFor("type")}
+          />
           <span>{zh ? "控制面" : "Control plane"}</span>
           <span>Kubernetes</span>
           <span>{zh ? "节点数" : "Nodes"}</span>
@@ -768,8 +845,11 @@ export function ClusterManagementPage({
                       {cluster.region && <small>{cluster.region}</small>}
                     </span>
                   </span>
-                  <span className="cluster-type-chip">
-                    {clusterTypeLabel(cluster.type, zh)}
+                  <span
+                    className="cluster-type-chip"
+                    title={clusterTypeLabel(cluster.type, zh)}
+                  >
+                    {ourClusterTypeLabel(cluster.clusterType, zh)}
                     {cluster.agentNamespaceConflict &&
                       (zh ? " · 命名空间冲突" : " · Namespace conflict")}
                   </span>
@@ -943,6 +1023,23 @@ export function ClusterManagementPage({
           error={error}
           onClose={() => setConfirmation(undefined)}
           onConfirm={confirmClusterAction}
+        />
+      )}
+      {openKey === "type" && (
+        <ColumnFilterPopover
+          label={zh ? "类型" : "Type"}
+          options={[
+            ...clusterTypes.map((type) => ({
+              value: type.value,
+              label: zh ? type.zh : type.en,
+            })),
+            { value: "none", label: zh ? "未分类" : "No type" },
+          ]}
+          selected={typeFilterValues}
+          onChange={setTypeFilterValues}
+          anchorRect={anchorRect}
+          onClose={close}
+          zh={zh}
         />
       )}
       {openKey === "phase" && (

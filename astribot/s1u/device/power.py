@@ -32,6 +32,15 @@ the node and decides who may press, and records who did.
 bring_up is from off to ready in one press (the motors, then the driver), shut_down the way back (the driver, then the
 motors).
 
+    POST /pose    {"pose": "home", "action": "hold" | "stop"}: the vendor page's hold-to-move 初始姿势 (Home Pose). The
+                  first hold sends the vendor's web server (S1U_ROS_IP_ADDRESS:5141, POST /msg) pose_running, each
+                  further hold keeps the robot moving, and pose_stop is sent on stop or once no hold came for
+                  HOLD_SECONDS (a dead man's switch: a button let go, a browser or link gone). 200 {pose, moving,
+                  started, vendor}; 409 {reason, state} when refused: estop, fault, not_powered, driver_not_running, claimed (a Run
+                  holds the robot), in_use, maintenance: <why>, vendor_monitor_down; a hold refused while the robot
+                  moves stops it. 503 when the vendor's web server failed. The vendor checks the robot's state, its
+                  control source and permission itself.
+
 What the robot should be is its desired state (user 11-15: "RLark keeps a state: whether the user wants the robot
 powered with its driver running or not, also while the robot is in no Run; when the driver is found down and the user
 wants it up, RLark starts it"). It is RLark's, on the robot's Node object:
@@ -78,6 +87,7 @@ On the socket, a press that lowers the robot below its desired state is refused 
 """
 import json
 import os
+import signal
 import socketserver
 import ssl
 import threading
@@ -105,6 +115,9 @@ SHUT_DOWN_SECONDS = 30.0
 DESIRED = ("off", "powered", "ready")
 LOWERS = {"driver_off": "powered", "power_off": "off", "shut_down": "off", "restart": "off"}
 RETRY_SECONDS = (30.0, 600.0)
+POSES = {"home": "home_pose"}  # the vendor page's poses by our name
+HOLD_SECONDS = 0.5  # a moving pose stops this long after the last hold
+VENDOR_WEB_PORT = 5141
 ACCOUNT = "/var/run/secrets/kubernetes.io/serviceaccount"
 ANNOTATION, STATE, WANTED = "rlark.io/power", "rlark.io/power-state", "rlark.io/robot-power"
 IN_FORCE, CLAIM = "rlark.io/power-desired", "rlark.io/robot-claim"
@@ -380,11 +393,88 @@ class Power:
             self.retry_at, self.pause = now + self.pause, min(self.pause * 2, RETRY_SECONDS[1])
 
 
+class Pose:
+    """The vendor page's hold-to-move poses: ``post(message)`` sends one message to the vendor's web server and
+    answers its reply. One pose moves at a time; a watch thread stops it once its holds stop coming."""
+
+    def __init__(self, power, post):
+        self.power, self.post = power, post
+        self.lock = threading.Lock()
+        self.moving, self.until = None, 0.0  # the pose moving now, and when it stops without another hold
+
+    def refusal(self):
+        state, lease = self.power.state(), maintenance()
+        if not state["monitor"]:
+            return "vendor_monitor_down", state
+        if state["emergency_stop"]:
+            return "estop", state
+        if state["errors"]:
+            return "fault", state
+        if not state["powered"]:
+            return "not_powered", state
+        if not state["driver"]:
+            return "driver_not_running", state
+        if CLAIM_FILE.exists():
+            return "claimed", state
+        if in_use():
+            return "in_use", state
+        if lease and lease["kind"]:
+            return "maintenance: %s" % lease["why"], state
+        return None, state
+
+    def act(self, pose, action):
+        """(HTTP status, body) of one hold or stop."""
+        with self.lock:
+            if action == "stop":
+                return 200, dict(pose=pose, moving=False, started=False, vendor=self.stop())
+            refused, state = self.refusal()
+            if refused:
+                self.stop()
+                return 409, dict(reason=refused, state=state)
+            started = self.moving is None
+            self.moving = pose
+            if not started:
+                self.until = time.monotonic() + HOLD_SECONDS
+                return 200, dict(pose=pose, moving=True, started=False, vendor=None)
+            threading.Thread(target=self.watch, daemon=True).start()
+            try:
+                vendor = self.post(dict(msg_id="pose_running", data=dict(pose=POSES[pose])))
+            except Exception as error:  # it may have reached the robot: the watch sends pose_stop at once
+                self.until = 0.0
+                return 503, dict(detail="vendor web server failed: %s" % error)
+            # Counted from the vendor's reply: holds queued behind a slow start are not late.
+            self.until = time.monotonic() + HOLD_SECONDS
+            return 200, dict(pose=pose, moving=True, started=True, vendor=vendor)
+
+    def stop(self):
+        """pose_stop when a pose moves (the lock held); the vendor's reply, or None. A pose_stop that failed leaves the
+        pose moving: the watch sends it again."""
+        if self.moving is None:
+            return None
+        reply = self.post(dict(msg_id="pose_stop"))
+        self.moving = None
+        return reply
+
+    def watch(self):
+        while True:
+            time.sleep(0.05)
+            with self.lock:
+                if self.moving is None:
+                    return
+                if time.monotonic() < self.until:
+                    continue
+                print("%s pose_stop: no hold for %.1f s" % (time.strftime("%F %T"), HOLD_SECONDS), flush=True)
+                try:
+                    self.stop()
+                except Exception as error:  # sent again on the next look
+                    print("%s pose_stop failed: %s" % (time.strftime("%F %T"), error), flush=True)
+
+
 class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
 
-def handler(power):
+def handler(power, pose):
     class Handler(BaseHTTPRequestHandler):
         def reply(self, status, body):
             data = json.dumps(body).encode()
@@ -398,9 +488,11 @@ def handler(power):
             self.reply(*((200, power.state()) if self.path == "/power" else (404, dict(detail="no such path"))))
 
         def do_POST(self):
-            if self.path != "/power":
+            if self.path not in ("/power", "/pose"):
                 return self.reply(404, dict(detail="no such path"))
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            if self.path == "/pose":
+                return self.do_pose(body)
             if body.get("action") not in (*SERVICES, "bring_up", "shut_down"):
                 return self.reply(400, dict(detail="unsupported action"))
             status, answer = power.act(body["action"], bool(body.get("force")), str(body.get("reason") or ""))
@@ -409,6 +501,20 @@ def handler(power):
                 time.strftime("%F %T"), body["action"], bool(body.get("force")), body.get("reason") or "",
                 self.headers.get("X-Remote-User", "?"), status, answer.get("reason") or answer.get("detail") or "sent"),
                 flush=True)
+            self.reply(status, answer)
+
+        def do_pose(self, body):
+            if body.get("pose") not in POSES or body.get("action") not in ("hold", "stop"):
+                return self.reply(400, dict(detail="pose must be home and action hold or stop"))
+            try:
+                status, answer = pose.act(body["pose"], body["action"])
+            except Exception as error:  # pose_stop failed: the operator reads why
+                status, answer = 503, dict(detail="vendor web server failed: %s" % error)
+            # A movement's start and end, and every refusal; the holds between are not.
+            if body["action"] == "stop" or status != 200 or answer["started"]:
+                print("%s pose %s %s by %s: %s %s" % (
+                    time.strftime("%F %T"), body["pose"], body["action"], self.headers.get("X-Remote-User", "?"), status,
+                    answer.get("reason") or answer.get("detail") or "sent"), flush=True)
             self.reply(status, answer)
 
         def address_string(self):
@@ -516,7 +622,25 @@ def main():
     path = Path(os.environ["S1U_SERVICE_SOCKET"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
-    server = Server(str(path), handler(power))
+    vendor = "http://%s:%d/msg" % (profile["S1U_ROS_IP_ADDRESS"], VENDOR_WEB_PORT)
+
+    def post(message):
+        request = Request(vendor, data=json.dumps(message).encode(), headers={"Content-Type": "application/json"})
+        with urlopen(request, timeout=2.0) as response:
+            text = response.read().decode()
+        return json.loads(text) if text.strip().startswith(("{", "[")) else text
+
+    def halt(why):
+        """pose_stop whatever this process knows: a pose started by a process before it is stopped too."""
+        try:
+            post(dict(msg_id="pose_stop"))
+        except Exception as error:
+            print("%s pose_stop at %s failed: %s" % (time.strftime("%F %T"), why, error), flush=True)
+
+    # A pose held under a process that died has no dead man's switch left: it stops now, and with this process.
+    halt("start")
+    signal.signal(signal.SIGTERM, lambda *_: (halt("SIGTERM"), os._exit(0)))
+    server = Server(str(path), handler(power, Pose(power, post)))
     os.chmod(path, 0o600)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     rospy.init_node("s1u_power", disable_signals=True)  # waits for the master

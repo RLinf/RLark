@@ -1,0 +1,22 @@
+/* The robot buttons (RobotControls.tsx): power and hold-to-move to the home pose. */
+.robot-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.robot-pose-button {
+  touch-action: none;
+  user-select: none;
+}
+
+.robot-pose-button.is-moving {
+  color: var(--orange);
+  border-color: var(--orange);
+}
+
+.robot-controls-error {
+  color: var(--red);
+}

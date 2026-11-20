@@ -189,7 +189,29 @@ func (r *MachineReconciler) reconcile(ctx context.Context, machine *stationv1alp
 	if status.Entry.Address == "" {
 		return reconcile.Result{}, nil
 	}
-	factoryKey := slices.Contains(class.Spec.Discovery.HostKeyFingerprints, status.Entry.HostKeyFingerprint)
+	// A machine whose entry device was given keys of its own when it joined is
+	// known by the key its NodeAdmission records, whatever key was last
+	// written of it; one turned away for showing a key is looked at by that
+	// one again. A joined machine written with its class's factory key is
+	// looked at by that key: set up anew, it shows it.
+	factory := class.Spec.Discovery.HostKeyFingerprints
+	ownKey := ""
+	if status.NodeName != "" {
+		namespace, err := r.Clusters.Namespace(ctx, status.ClusterID)
+		if err != nil {
+			return reconcile.Result{}, fmt.Errorf("resolve cluster %s: %w", status.ClusterID, err)
+		}
+		admission := &stationv1alpha1.NodeAdmission{}
+		if err := r.Reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: status.NodeName}, admission); err != nil && !apierrors.IsNotFound(err) {
+			return reconcile.Result{}, fmt.Errorf("read NodeAdmission %s: %w", status.NodeName, err)
+		}
+		ownKey = admission.Annotations[EntryHostKeyAnnotation]
+	}
+	if ownKey != "" && ownKey != status.Entry.HostKeyFingerprint &&
+		(status.Phase == stationv1alpha1.MachineJoined && !slices.Contains(factory, status.Entry.HostKeyFingerprint) || status.Problem == stationv1alpha1.MachineHostKeyChanged) {
+		status.Entry.HostKeyFingerprint, status.InspectedAt = ownKey, nil
+	}
+	factoryKey := slices.Contains(factory, status.Entry.HostKeyFingerprint)
 	switch status.Phase {
 	case stationv1alpha1.MachineAdmitted:
 		return r.follow(ctx, machine, class)
@@ -230,6 +252,14 @@ func (r *MachineReconciler) reconcile(ctx context.Context, machine *stationv1alp
 					status.Problem, status.Message = problem, message
 				}
 				return reconcile.Result{}, fmt.Errorf("inspect Machine %s: %w", machine.Name, err)
+			}
+			// A machine of a node that shows the key its admission records, or
+			// its class's factory key (set up anew), is that machine: it is
+			// known by the key it shows and looked at again.
+			var mismatch *SSHHostKeyMismatchError
+			if problem == stationv1alpha1.MachineHostKeyChanged && status.NodeName != "" && errors.As(err, &mismatch) && (mismatch.Received == ownKey || slices.Contains(factory, mismatch.Received)) {
+				status.Entry.HostKeyFingerprint, status.InspectedAt, status.Problem, status.Message = mismatch.Received, nil, "", ""
+				return reconcile.Result{Requeue: true}, nil
 			}
 			now := metav1.NewTime(r.now())
 			status.Phase, status.Problem, status.Message, status.InspectedAt = stationv1alpha1.MachineDiscovered, problem, message, &now

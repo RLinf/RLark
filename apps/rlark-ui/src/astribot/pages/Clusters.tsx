@@ -65,6 +65,7 @@ import {
 } from "../../components/shared";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
 import { NodeLinks } from "../components/NodeLinks";
+import { RobotNodeControls } from "../components/RobotControls";
 import { useNodeNetworks } from "../components/useNodeNetworks";
 import { nodeNetworkKey } from "../lib/nodeNetwork";
 import { formatChinaDateTime } from "../../utils/time";
@@ -945,6 +946,7 @@ export function NodeDetailReal({
             </span>
           </div>
         </header>
+        <RobotNodeControls node={node} zh={zh} />
 
         {node.status?.reason && (
           <div className="node-health-message">

@@ -1,6 +1,7 @@
 // GET /api/v1/site-nodes?cluster_id=: what the console reads of one machine's heartbeat, labels and site-network
 // membership, joined by the Gateway.
 import type { SiteNodeLink } from "./nodeNetwork.js";
+import type { CRDNode } from "../../types.js";
 
 export interface SiteNode {
   cluster_id: string;
@@ -339,6 +340,15 @@ export function robotPowerAfter(action: RobotPowerAction, desired: RobotPowerDes
   return ({ power_on: desired === "off" ? "powered" : desired, driver_on: "ready", driver_off: desired === "off" ? "off" : "powered", power_off: "off" } as const)[action];
 }
 
+// Why the robot's power service refused a hold-to-move pose (409 {reason}): maintenance carries its why.
+export function robotPoseRefusalLabel(reason: string, zh: boolean): string {
+  const [kind, why] = reason.split(/:\s*/, 2);
+  const text = zh
+    ? ({ estop: "急停按下", fault: "硬件报错", not_powered: "未上电", driver_not_running: "驱动没在跑", claimed: "被 Run 占着", in_use: "正在被使用", maintenance: "在做维护", vendor_monitor_down: "厂商监控没有应答" } as Record<string, string>)[kind]
+    : ({ estop: "emergency stop pressed", fault: "hardware error", not_powered: "not powered", driver_not_running: "driver not running", claimed: "held by a Run", in_use: "in use", maintenance: "under maintenance", vendor_monitor_down: "the vendor's monitor does not answer" } as Record<string, string>)[kind];
+  return text ? (why ? (zh ? `${text}（${why}）` : `${text} (${why})`) : text) : reason;
+}
+
 // Where the robot is with a maintenance its Addon does by itself while nobody uses it (a restart its node profile
 // needs or a person asked for, the Orin's switch of a payload): waiting | queued | lowering | acting | failed; ""
 // where there is none. What it is and why it waits is the Node's annotation rlark.io/maintenance.
@@ -395,3 +405,19 @@ export function unseenFor(lastSeen: string | undefined, now: number, zh: boolean
   const [count, zhUnit, enUnit] = minutes < 120 ? [minutes, "分钟", "min"] : minutes < 48 * 60 ? [Math.floor(minutes / 60), "小时", "h"] : [Math.floor(minutes / 1440), "天", "d"];
   return zh ? `Hub 已 ${count} ${zhUnit}没看到` : `not seen by a hub for ${count} ${enUnit}`;
 }
+
+// A robot the controls act on: its RLark Node and the labels its power service reports on it.
+export interface ControlledRobot {
+  key: string;
+  node: string;
+  namespace: string;
+  labels?: Record<string, string>;
+}
+
+// A robot's RLark Node as the robot controls take it.
+export const controlledRobot = (node: CRDNode): ControlledRobot => ({
+  key: `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
+  node: node.metadata.name,
+  namespace: node.metadata.namespace ?? "",
+  labels: node.metadata.labels,
+});

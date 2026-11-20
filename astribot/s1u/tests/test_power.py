@@ -117,7 +117,7 @@ def test_the_service_answers_on_its_unix_socket_only(tmp_path):
     service.keep("powered", "powered")
     service.receive("12000000,13000000")
     path = tmp_path / "s1u-power.sock"
-    server = power.Server(str(path), power.handler(service))
+    server = power.Server(str(path), power.handler(service, power.Pose(service, lambda message: "ok")))
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     class Connection(http.client.HTTPConnection):
@@ -137,6 +137,26 @@ def test_the_service_answers_on_its_unix_socket_only(tmp_path):
     status, body = call("POST", "/power", {"action": "driver_off"})
     assert status == 200 and body["success"]
     server.shutdown()
+
+
+def test_home_pose_moves_while_held_and_stops_when_the_holds_stop(tmp_path, monkeypatch):
+    monkeypatch.setattr(power, "IN_USE", tmp_path / "in-use")
+    monkeypatch.setattr(power, "MAINTENANCE", tmp_path / "maintenance")
+    monkeypatch.setattr(power, "CLAIM_FILE", tmp_path / "claim")
+    (tmp_path / "in-use").mkdir()
+    service, sent = power.Power(lambda name, value: (True, "")), []
+    pose = power.Pose(service, lambda message: sent.append(message["msg_id"]) or {"code": 0})
+    service.receive("12000000")
+    assert pose.act("home", "hold") == (409, dict(reason="driver_not_running", state=service.state()))
+    service.receive("12000000,13000000")
+    assert pose.act("home", "hold")[1]["started"] and not pose.act("home", "hold")[1]["started"]
+    assert sent == ["pose_running"]
+    time.sleep(power.HOLD_SECONDS + 0.2)  # no hold: the dead man's switch
+    assert sent == ["pose_running", "pose_stop"] and pose.moving is None
+    pose.act("home", "hold")
+    (tmp_path / "claim").write_text('{"holder": "run-1"}')  # a Run takes the robot: the hold is refused and it stops
+    assert pose.act("home", "hold")[1]["reason"] == "claimed"
+    assert sent[-2:] == ["pose_running", "pose_stop"] and pose.act("home", "stop")[1]["vendor"] is None
 
 
 class Robot:

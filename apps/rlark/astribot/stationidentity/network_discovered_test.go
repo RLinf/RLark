@@ -99,6 +99,8 @@ func TestAHubsDiscoveredHostsBecomeMachinesOfTheClassWhoseKeyTheyShow(t *testing
 	rotated := "SHA256:" + strings.Repeat("r", 43)
 	_ = unstructured.SetNestedField(machine.Object, rotated, "status", "entry", "hostKeyFingerprint")
 	_ = unstructured.SetNestedField(machine.Object, "Joined", "status", "phase")
+	_ = unstructured.SetNestedField(machine.Object, "robots", "status", "clusterID")
+	_ = unstructured.SetNestedField(machine.Object, "s1u-01-x86", "status", "nodeName")
 	if _, err := machines.UpdateStatus(context.Background(), machine, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +119,26 @@ func TestAHubsDiscoveredHostsBecomeMachinesOfTheClassWhoseKeyTheyShow(t *testing
 	}
 	if list, _ := machines.List(context.Background(), metav1.ListOptions{}); len(list.Items) != 1 {
 		t.Fatalf("Machines after a known key on another device: %d", len(list.Items))
+	}
+	// The key its NodeAdmission records is the one it is known by. A report of the factory's key is written, for
+	// station-controller to look at the machine by it (one set up anew shows it), and does not drop it.
+	admission := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission",
+		"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "agents-robots", "annotations": map[string]interface{}{entryHostKeyAnnotation: rotated}},
+		"spec":     map[string]interface{}{"clusterID": "robots"},
+	}}
+	if _, err := client.Resource(nodeAdmissionGVR).Namespace("agents-robots").Create(context.Background(), admission, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	_ = report(hub, `[{"address":"192.168.31.140","port":22,"mac":"48:b0:2d:5c:9a:11","host_key":"`+factory+`"}]`)
+	machine, _ = machines.Get(context.Background(), "lab-48b02d5c9a11", metav1.GetOptions{})
+	entry, _, _ = unstructured.NestedStringMap(machine.Object, "status", "entry")
+	if entry["hostKeyFingerprint"] != factory || entry["lastSeen"] != now.UTC().Format(time.RFC3339) {
+		t.Fatalf("a joined machine reported with the factory's key: %v", entry)
+	}
+	_ = unstructured.SetNestedField(machine.Object, rotated, "status", "entry", "hostKeyFingerprint")
+	if _, err := machines.UpdateStatus(context.Background(), machine, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
 	}
 
 	// Another hub on the same network sees it too: it stays with the hub that has it, and is not looked at anew,

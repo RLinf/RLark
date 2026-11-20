@@ -279,11 +279,11 @@
   transition: width 0.18s ease;
 }
 
-.join-progress-joined {
+.join-progress-bar > .is-joined {
   background: var(--green);
 }
 
-.join-progress-failed {
+.join-progress-bar > .is-failed {
   background: var(--red);
 }
 

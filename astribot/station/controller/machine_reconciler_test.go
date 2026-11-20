@@ -299,6 +299,32 @@ func TestAMachineSaysHowItsJoinGoesAndWhatIsWrongWithIt(t *testing.T) {
 	if got := status(machine); got.Phase != stationv1alpha1.MachineJoined || got.Entry.HostKeyFingerprint != "SHA256:its-own" {
 		t.Fatalf("a machine whose join succeeded: %+v", got)
 	}
+
+	// Written over with the factory's key, it is still known by the key its admission records: looked at, it
+	// shows that key and stays joined. One already turned away for showing that key comes back.
+	address := machine.Status.Entry.Address
+	inspections.seen[address] = MachineInspection{Serial: "A", NodeHostKey: "SHA256:a", NodeName: "s1u-01-x86"}
+	inspections.refused[address] = &SSHHostKeyMismatchError{Received: "SHA256:its-own"}
+	for _, phase := range []stationv1alpha1.MachinePhase{stationv1alpha1.MachineJoined, stationv1alpha1.MachineDiscovered} {
+		_ = c.Get(ctx, client.ObjectKeyFromObject(machine), stored)
+		stored.Status.Phase, stored.Status.Entry.HostKeyFingerprint, stored.Status.InspectedAt = phase, factoryKey, nil
+		if phase == stationv1alpha1.MachineDiscovered {
+			stored.Status.Problem, stored.Status.InspectedAt = stationv1alpha1.MachineHostKeyChanged, &metav1.Time{Time: time.Now()}
+			delete(inspections.refused, address)
+		}
+		_ = c.Status().Update(ctx, stored)
+		if got := status(machine); got.Phase != stationv1alpha1.MachineJoined || got.Problem != "" || got.Entry.HostKeyFingerprint != "SHA256:its-own" {
+			t.Fatalf("a %s machine written over with the factory's key: %+v", phase, got)
+		}
+	}
+
+	// Set up anew, it shows the factory's key when looked at by it: it is joined again.
+	_ = c.Get(ctx, client.ObjectKeyFromObject(machine), stored)
+	stored.Status.Entry.HostKeyFingerprint = factoryKey
+	_ = c.Status().Update(ctx, stored)
+	if got := status(machine); got.Phase != stationv1alpha1.MachineAdmitted || got.Entry.HostKeyFingerprint != factoryKey {
+		t.Fatalf("a joined machine set up anew is joined again: %+v", got)
+	}
 }
 
 func TestAMachineIsLookedAtOnceItIsKnownWhereAndAgainAfterAFaultOfTheDial(t *testing.T) {

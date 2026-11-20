@@ -162,6 +162,7 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 	{
 		adminClusters.PUT("/:cluster_id/node-agents", g.setClusterNodeAgents)
 		adminClusters.PUT("/:cluster_id/display-name", g.setClusterDisplayName)
+		adminClusters.PUT("/:cluster_id/cluster-type", g.setClusterType)
 	}
 
 	g.registerRobotRoutes(rlinfv1alpha1.Group("/nodes"))

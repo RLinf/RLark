@@ -66,6 +66,7 @@ func requireOperator() gin.HandlerFunc {
 // registerRobotRoutes: what of a robot is not the administrator's alone.
 func (g *Gateway) registerRobotRoutes(nodes gin.IRouter) {
 	nodes.PUT("/:name/robot-power", requireOperator(), g.handleSetRobotPower)
+	nodes.POST("/:name/robot-pose", requireOperator(), g.handleRobotPose)
 	nodes.PUT("/:name/robot-claim", g.handleClaimRobot)
 	nodes.DELETE("/:name/robot-claim", g.handleReleaseRobot)
 }
