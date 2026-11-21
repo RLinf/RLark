@@ -94,9 +94,9 @@ USB_RESET = ("import fcntl, glob, json, os, sys\n"
 # Run on the Orin as its account (python3 -, the script on standard input): each camera of the vendor's
 # /etc/config/camera_info.json on the USB by its serial (its sysfs entry: path, device number, speed, vendor, the hubs
 # from the root port down, its first interface's driver), whether the vendor's camera process runs, and in the Orbbec
-# SDK's log the seconds since its last COLOR and DEPTH stream lines and the frame timeouts after the last COLOR one;
-# one line of JSON.
-CAMERA_FACTS = r"""import json, os, subprocess, time
+# SDK's log (None without one) the seconds since its last COLOR and DEPTH stream lines and the frame timeouts after the
+# last COLOR one; one line of JSON. The log's lines begin "[MM/DD HH:MM:SS.ffffff]", without the year.
+CAMERA_FACTS = r"""import json, os, re, subprocess, time
 USB = "/sys/bus/usb/devices"
 names = {serial: name for name, serial in json.load(open("/etc/config/camera_info.json")).items()}
 read = lambda device, key: open(os.path.join(USB, device, key)).read().strip()
@@ -108,15 +108,22 @@ for device in os.listdir(USB):
             path=device, device=int(read(device, "devnum")), speed=int(read(device, "speed")), vendor=read(device, "idVendor"),
             hubs=["%s:%s" % (read(hub, "idVendor"), read(hub, "idProduct")) for hub in (".".join(parts[:i]) for i in range(1, len(parts)))],
             driver=os.path.basename(os.readlink(driver)) if os.path.exists(driver) else None)
-sdk, log = dict(color=None, depth=None, timeouts=0), os.path.expanduser("~/Log/OrbbecSDK.log.txt")
+sdk, log = None, os.path.expanduser("~/Log/OrbbecSDK.log.txt")
 if os.path.exists(log):
+    sdk, now = dict(color=None, depth=None, timeouts=0), time.time()
     with open(log, "rb") as file:
-        file.seek(max(0, os.path.getsize(log) - 400000))
-        lines = file.read().decode(errors="replace").splitlines()
+        start = max(0, os.path.getsize(log) - 400000)
+        file.seek(start)
+        lines = file.read().decode(errors="replace").splitlines()[1 if start else 0:]  # from the first whole line
     for line in reversed(lines):
+        stamp = re.match(r"\[(\d\d/\d\d \d\d:\d\d:\d\d)", line)
+        if not stamp:
+            continue
+        at = lambda year: time.mktime(time.strptime("%d/%s" % (year, stamp[1]), "%Y/%m/%d %H:%M:%S"))
         for stream in ("color", "depth"):
             if sdk[stream] is None and "OB_SENSOR_%s Streaming" % stream.upper() in line:
-                sdk[stream] = round(time.time() - time.mktime(time.strptime(time.strftime("%Y/") + line[1:15], "%Y/%m/%d %H:%M:%S")))
+                year = time.localtime(now).tm_year
+                sdk[stream] = round(now - (at(year) if at(year) <= now else at(year - 1)))  # 31 December's on 1 January
         sdk["timeouts"] += sdk["color"] is None and "Wait for frame timeout" in line
 process = subprocess.run(["pgrep", "-f", "astribot_camera_main"], stdout=subprocess.DEVNULL).returncode == 0
 print(json.dumps(dict(cameras=cameras, process=process, sdk=sdk)))
@@ -208,10 +215,9 @@ class Orin:
         self.state = dict(reachable=False, identity=None, trust=None, failures=0,
                           payloads={name: dict(wanted=version) for name, (version, _) in self.payloads.items()})
         # The camera reset and diagnosis last done, as their results in the Pod's shared directory say: a request done
-        # before this container restarted is not done again.
-        for action in ("reset", "diagnose"):
-            if os.path.exists(CAMERAS + "/%s-result" % action):
-                self.state["camera_" + action] = json.loads(Path(CAMERAS + "/%s-result" % action).read_text())
+        # before this container restarted is not done again. The camera thread's own: each pass copies it to the state.
+        self.camera = {action: json.loads(Path(CAMERAS + "/%s-result" % action).read_text())
+                       for action in ("reset", "diagnose") if os.path.exists(CAMERAS + "/%s-result" % action)}
         self.wake = threading.Event()
         self.serial = None  # the Orin's hardware serial as the Node records it (known)
         self.kept = None  # the Node's record of the Orin as last written to KEPT
@@ -501,7 +507,8 @@ class Orin:
             # A host key that changed waits for a person, not for a retry: its confirmation is read every minute.
             good = result["label"] in ("ok", "updating", "removing", "removed", "identity_changed")
             self.state = dict(self.state, **result, failures=0 if good else self.state["failures"] + 1, since=(
-                self.state.get("since") if before == result["label"] else time.time()), checked_at=time.time())
+                self.state.get("since") if before == result["label"] else time.time()), checked_at=time.time(),
+                **{"camera_" + action: done for action, done in self.camera.items()})
             if before != result["label"]:  # one line per change, none while an Orin stays off
                 print("Orin: %s%s" % (result["label"], ": %s" % result["error"] if result.get("error") else ""),
                       flush=True)
@@ -527,16 +534,21 @@ class Orin:
                 print("Cameras on the Orin: %s: %s" % (type(error).__name__, error), flush=True)
 
     def camera_pass(self):
-        """One look at the camera service's requests, each done once, its result beside it."""
+        """One look at the camera service's requests, each done once whatever comes of it, its result beside it."""
         for action, do in (("reset", self.reset_cameras), ("diagnose", self.diagnose_cameras)):
             try:
                 request = json.loads(Path(CAMERAS + "/%s-request" % action).read_text())
             except (OSError, ValueError):  # none, or being written
                 continue
-            if request["id"] == self.state.get("camera_" + action, {}).get("id"):
+            if request["id"] == self.camera.get(action, {}).get("id"):
                 continue
-            done = dict(do(request["cameras"]), id=request["id"], finished_at=time.time())
-            self.state = dict(self.state, **{"camera_" + action: done})
+            try:
+                done = do(request["cameras"])
+            except Exception as error:  # ssh timed out (a reset hung on a wedged device), the cluster away
+                failed = "%s: %s" % (type(error).__name__, error)
+                done = dict(ok=False, detail=failed) if action == "reset" else dict(
+                    cameras=dict.fromkeys(request["cameras"], "Orin 没有回答（%s）" % failed))
+            done = self.camera[action] = dict(done, id=request["id"], finished_at=time.time())
             Path(CAMERAS + "/%s-result.new" % action).write_text(json.dumps(done, ensure_ascii=False) + "\n")
             os.replace(CAMERAS + "/%s-result.new" % action, CAMERAS + "/%s-result" % action)
             print("Camera %s on the Orin (%s): %s" % (action, ", ".join(request["cameras"]), done.get("detail") or done["cameras"]), flush=True)
@@ -580,7 +592,10 @@ class Orin:
             lines = ["在 USB %s（%dM，经 %d 级 hub）" % (camera["path"], camera["speed"], len(camera["hubs"])) if camera
                      else "USB 上没有它（camera_info.json 的序列号）", "厂商相机进程%s" % ("在跑" if facts["process"] else "不在")]
             # The SDK's own log: a stream line every 5 s while it streams.
-            if camera and camera["vendor"] == "2bc5" and camera["driver"] == "usbfs":
+            orbbec = camera and camera["vendor"] == "2bc5" and camera["driver"] == "usbfs"
+            if orbbec and sdk is None:
+                lines.append("Orbbec SDK：没有日志")
+            elif orbbec:
                 color, depth = (sdk[stream] is not None and sdk[stream] <= 10 for stream in ("color", "depth"))
                 if depth and not color:
                     lines.append("Orbbec SDK：彩色停了（%s），深度仍在，之后等帧超时 %d 次" % (

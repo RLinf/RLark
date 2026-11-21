@@ -807,7 +807,7 @@ def test_the_orin_resets_a_camera_by_its_serial_once_per_request(tmp_path, monke
     again = make_orin(tmp_path, monkeypatch)
     monkeypatch.setattr(again, "ssh", lambda *a, **k: sent.append("again") or done())
     again.camera_pass()
-    assert len(sent) == 1 and again.state["camera_reset"]["id"] == "a" * 32
+    assert len(sent) == 1 and again.camera["reset"]["id"] == "a" * 32
     # Two cameras asked for, one of them not on the bus: said, and not ok.
     (tmp_path / "reset-request").write_text(json.dumps({"id": "b" * 32, "cameras": ["head_rgbd", "left_wrist_rgbd"]}))
     robot.camera_pass()
@@ -818,6 +818,19 @@ def test_the_orin_resets_a_camera_by_its_serial_once_per_request(tmp_path, monke
     answer[:] = ["", 1]
     robot.camera_pass()
     assert json.loads((tmp_path / "reset-result").read_text())["detail"] == "PermissionError: [Errno 13]"
+    # A reset that hangs (a wedged device) ends with ssh's timeout: done all the same, and not done again.
+    (tmp_path / "reset-request").write_text(json.dumps({"id": "f" * 32, "cameras": ["head_rgbd"]}))
+
+    def hung(*arguments, **keywords):
+        sent.append("hung")
+        raise subprocess.TimeoutExpired("ssh", 180)
+
+    monkeypatch.setattr(robot, "ssh", hung)
+    robot.camera_pass()
+    robot.camera_pass()
+    result = json.loads((tmp_path / "reset-result").read_text())
+    assert sent.count("hung") == 1 and result["id"] == "f" * 32 and not result["ok"]
+    assert result["detail"] == "TimeoutExpired: Command 'ssh' timed out after 180 seconds"
     # The script on an Orin: the device whose serial is the camera's, whatever its vendor, and no other.
     (tmp_path / "camera_info.json").write_text(json.dumps(
         {"head_rgbd": "CL8TC53000T", "torso_rgbd": "CP0HC5300034", "left_wrist_rgbd": "261123074156"}))
@@ -859,6 +872,8 @@ def test_the_orin_says_where_each_camera_is_and_what_it_shows_of_a_stuck_one(tmp
         (sysfs / name / "driver").symlink_to(tmp_path / "drivers" / driver)
     stamp = lambda ago: time.strftime("[%m/%d %H:%M:%S.000001]", time.localtime(time.time() - ago))
     (tmp_path / "OrbbecSDK.log.txt").write_text("".join(line + "\n" for line in (
+        "x" * 400000,
+        "OB_SENSOR_COLOR Streaming... a line of a stack trace, without a stamp",
         stamp(60) + "[warning][1][Pipeline.cpp:377] Wait for frame timeout, you can try to increase the wait time!",
         stamp(40) + "[debug][3021309][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.2fps",
         stamp(39) + "[debug][3021311][VideoSensor.cpp:427] OB_SENSOR_DEPTH Streaming... frameRate=30.1fps",
@@ -889,7 +904,7 @@ def test_the_orin_says_where_each_camera_is_and_what_it_shows_of_a_stuck_one(tmp
     robot.camera_pass()
     assert sent == [("ssh-ed25519 KEY", "python3 -", orin.CAMERA_FACTS.encode())]
     result = json.loads((tmp_path / "diagnose-result").read_text())
-    assert set(result) == {"id", "cameras", "finished_at"} and result["id"] == "e" * 32 and robot.state["camera_diagnose"] == result
+    assert set(result) == {"id", "cameras", "finished_at"} and result["id"] == "e" * 32 and robot.camera["diagnose"] == result
     assert result["cameras"] == {
         "head_rgbd": "在 USB 2-3.3.3（5000M，经 2 级 hub）；厂商相机进程在跑；Orbbec SDK：彩色停了（40 秒前），深度仍在，之后等帧超时 2 次",
         "torso_rgbd": "在 USB 2-3.4.6（5000M，经 2 级 hub）；厂商相机进程在跑",  # uvcvideo's, not the SDK's
@@ -899,6 +914,11 @@ def test_the_orin_says_where_each_camera_is_and_what_it_shows_of_a_stuck_one(tmp
         "torso_rgbd": dict(path="2-3.4.6", device=10, speed=5000, hubs=["0bda:0420", "0424:5806"])}
     robot.camera_pass()
     assert len(sent) == 1  # the same request once
+    # An Orin without the SDK's log: said so, not taken for both streams stopped.
+    (tmp_path / "OrbbecSDK.log.txt").unlink()
+    assert json.loads(subprocess.run([sys.executable, "-"], input=script, capture_output=True, text=True, check=True).stdout)["sdk"] is None
+    monkeypatch.setattr(robot, "ssh", lambda *a, **k: done(json.dumps(dict(facts, process=True, sdk=None)).encode()))
+    assert robot.diagnose_cameras(["head_rgbd"])["cameras"]["head_rgbd"] == "在 USB 2-3.3.3（5000M，经 2 级 hub）；厂商相机进程在跑；Orbbec SDK：没有日志"
 
 
 def test_a_trusted_host_key_is_kept_on_the_robot_at_once(tmp_path, monkeypatch):

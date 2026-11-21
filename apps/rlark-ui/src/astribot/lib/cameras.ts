@@ -13,7 +13,7 @@ export interface CameraReport {
   fps: number;
   age_seconds: number | null;
   // Where its recovery is: 0 none, 1 driver restarts, 2 USB reset, 3 stuck (left alone until it has sent for
-  // 5 minutes again or its USB device is a new one).
+  // 5 minutes again).
   step: number;
   attempts: number;
   next_attempt_at: number | null;
@@ -24,7 +24,7 @@ export interface CameraReport {
   diagnosis: string | null;
   // Where it is on the Orin's USB, null before the Orin is read or while it is not on the bus.
   usb: CameraUsb | null;
-  // Advice when it shares its USB root port with cameras behind another hub; no state of its own.
+  // Advice when its hub holds fewer cameras than another hub on its USB root port; no state of its own.
   usb_advice: string | null;
 }
 
