@@ -32,14 +32,6 @@ export function publishedCameras(annotation: string | undefined): CamerasReport 
   return annotation ? JSON.parse(annotation) as CamerasReport : undefined;
 }
 
-// The views whose stream is to be asked for anew: those that send again after no frames, and all of them after the
-// report could not be read (the robot's Pod replaced). A multipart stream that ended keeps its last picture and says
-// nothing, so it is not seen to end.
-export function returnedViews(before: CamerasReport | undefined, next: CamerasReport): CameraView[] {
-  const down = (camera?: CameraReport) => !camera || camera.state === "stale" || camera.state === "absent";
-  return CAMERA_VIEWS.filter((view) => next.cameras[view] && !down(next.cameras[view]) && (!before || down(before.cameras[view])));
-}
-
 // The console's status class it shows as (status-<tone>).
 export type CameraTone = "online" | "pending" | "failed" | "stopped";
 
@@ -52,7 +44,7 @@ export interface CameraCell {
   tone: CameraTone;
   age: string;
   // A frame can be asked for: the camera has sent one.
-  streams: boolean;
+  frames: boolean;
 }
 
 const viewNames: Record<CameraView, [string, string]> = {
@@ -80,14 +72,17 @@ export function cameraAge(seconds: number | null | undefined, zh: boolean): stri
   return zh ? `${shown} 秒前` : `${shown} s ago`;
 }
 
-// The wall's four cells, in its order, as the report says them.
-export function cameraCells(report: CamerasReport | undefined, zh: boolean): CameraCell[] {
+// The wall's four cells, in its order, as the live report says them. While the report cannot be read (live false),
+// each view of the last published one says so, with no state of its own.
+export function cameraCells(report: CamerasReport | undefined, zh: boolean, live = true): CameraCell[] {
   return CAMERA_VIEWS.map((view) => {
     const name = viewNames[view][zh ? 0 : 1];
-    if (!report) return { view, name, badge: zh ? "等待相机状态" : "Waiting for the cameras", tone: "stopped", age: "—", streams: false };
+    const unread = { badge: zh ? "读不到实时状态" : "Live state unavailable", tone: "stopped" as const, age: "—", frames: false };
+    if (!report) return live ? { view, name, badge: zh ? "等待相机状态" : "Waiting for the cameras", tone: "stopped", age: "—", frames: false } : { view, name, ...unread };
     const camera = report.cameras[view];
-    if (!camera) return { view, name, present: false, badge: zh ? "该本体没有这路相机" : "This body has no such camera", tone: "stopped", age: "—", streams: false };
-    return { view, name, present: true, ...cameraBadge(camera, zh), age: cameraAge(camera.age_seconds, zh), streams: camera.state !== "absent" };
+    if (!camera) return { view, name, present: false, badge: zh ? "该本体没有这路相机" : "This body has no such camera", tone: "stopped", age: "—", frames: false };
+    if (!live) return { view, name, present: true, ...unread };
+    return { view, name, present: true, ...cameraBadge(camera, zh), age: cameraAge(camera.age_seconds, zh), frames: camera.state !== "absent" };
   });
 }
 
@@ -95,7 +90,7 @@ export function camerasPath(node: string, namespace: string): string {
   return withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/cameras`, { namespace });
 }
 
-// A view's stream (multipart JPEG, an <img> source; the session cookie authenticates it).
-export function cameraStreamPath(node: string, namespace: string, view: CameraView | "wall", fps = 10): string {
-  return withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/cameras/${view}/stream`, { namespace, fps });
+// A view's newest JPEG (its age in the header X-Age-Seconds; 404 the body has no such view, 503 no frame yet).
+export function cameraFramePath(node: string, namespace: string, view: CameraView): string {
+  return withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/cameras/${view}.jpg`, { namespace });
 }

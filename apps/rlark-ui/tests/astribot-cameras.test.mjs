@@ -4,10 +4,9 @@ import {
   CAMERA_VIEWS,
   cameraAge,
   cameraCells,
-  cameraStreamPath,
+  cameraFramePath,
   camerasPath,
   publishedCameras,
-  returnedViews,
 } from "../dist/test/astribot/lib/cameras.js";
 
 const camera = (fields) => ({
@@ -18,20 +17,20 @@ test("the wall is head, torso / wrist_left, wrist_right, and a body's missing vi
   assert.deepEqual(CAMERA_VIEWS, ["head", "torso", "wrist_left", "wrist_right"]);
   // s1u_observer: head and torso only.
   const cells = cameraCells({ state: "ok", updated_at: 1795000000, cameras: { head: camera(), torso: camera({ age_seconds: 12.4 }) } }, true);
-  assert.deepEqual(cells.map((cell) => [cell.view, cell.name, cell.present, cell.badge, cell.age, cell.streams]), [
+  assert.deepEqual(cells.map((cell) => [cell.view, cell.name, cell.present, cell.badge, cell.age, cell.frames]), [
     ["head", "头部", true, "正常", "0.0 秒前", true],
     ["torso", "躯干", true, "正常", "12 秒前", true],
     ["wrist_left", "左腕", false, "该本体没有这路相机", "—", false],
     ["wrist_right", "右腕", false, "该本体没有这路相机", "—", false],
   ]);
   // Before the robot's first answer nothing is said to be missing.
-  assert.ok(cameraCells(undefined, true).every((cell) => cell.present === undefined && cell.badge === "等待相机状态" && !cell.streams));
+  assert.ok(cameraCells(undefined, true).every((cell) => cell.present === undefined && cell.badge === "等待相机状态" && !cell.frames));
 });
 
 test("each camera's badge follows its state and the step its recovery is at", () => {
   const badge = (fields) => {
     const [cell] = cameraCells({ state: "recovering", updated_at: 0, cameras: { head: camera(fields) } }, true);
-    return [cell.badge, cell.tone, cell.streams];
+    return [cell.badge, cell.tone, cell.frames];
   };
   assert.deepEqual(badge({}), ["正常", "online", true]);
   assert.deepEqual(badge({ state: "slow", fps: 5 }), ["帧率低", "pending", true]);
@@ -51,17 +50,18 @@ test("ages and the Gateway's paths", () => {
   assert.equal(cameraAge(0.123, false), "0.1 s ago");
   assert.equal(cameraAge(95.6, true), "96 秒前");
   assert.equal(camerasPath("s1u-03-x86", "rlark-robot"), "/api/v1/rlinf.io/v1alpha1/nodes/s1u-03-x86/cameras?namespace=rlark-robot");
-  assert.equal(cameraStreamPath("s1u-03-x86", "rlark-robot", "wrist_left"),
-    "/api/v1/rlinf.io/v1alpha1/nodes/s1u-03-x86/cameras/wrist_left/stream?namespace=rlark-robot&fps=10");
-  assert.equal(cameraStreamPath("s1u-03-x86", "rlark-robot", "wall", 5),
-    "/api/v1/rlinf.io/v1alpha1/nodes/s1u-03-x86/cameras/wall/stream?namespace=rlark-robot&fps=5");
+  assert.equal(cameraFramePath("s1u-03-x86", "rlark-robot", "wrist_left"),
+    "/api/v1/rlinf.io/v1alpha1/nodes/s1u-03-x86/cameras/wrist_left.jpg?namespace=rlark-robot");
 });
 
-test("the Node's annotation stands in while the robot does not answer, and a view that sends again is asked for anew", () => {
-  const report = (states) => ({ state: "recovering", updated_at: 0, cameras: Object.fromEntries(Object.entries(states).map(([view, state]) => [view, camera({ state })])) });
+test("while the live report cannot be read no view shows a state, the published report gives the body's views only", () => {
+  const published = publishedCameras(JSON.stringify({ state: "ok", updated_at: 0, cameras: { head: camera(), torso: camera({ state: "stale" }) } }));
   assert.equal(publishedCameras(undefined), undefined);
-  assert.equal(cameraCells(publishedCameras(JSON.stringify(report({ head: "stale", torso: "ok" }))), true)[0].badge, "无画面");
-  assert.deepEqual(returnedViews(undefined, report({ head: "ok", torso: "absent" })), ["head"]);
-  assert.deepEqual(returnedViews(report({ head: "stale", torso: "ok" }), report({ head: "ok", torso: "slow" })), ["head"]);
-  assert.deepEqual(returnedViews(report({ head: "ok", torso: "ok" }), report({ head: "ok", torso: "stale" })), []);
+  assert.deepEqual(cameraCells(published, true, false).map((cell) => [cell.view, cell.present, cell.badge, cell.tone, cell.age, cell.frames]), [
+    ["head", true, "读不到实时状态", "stopped", "—", false],
+    ["torso", true, "读不到实时状态", "stopped", "—", false],
+    ["wrist_left", false, "该本体没有这路相机", "stopped", "—", false],
+    ["wrist_right", false, "该本体没有这路相机", "stopped", "—", false],
+  ]);
+  assert.ok(cameraCells(undefined, false, false).every((cell) => cell.present === undefined && cell.badge === "Live state unavailable" && !cell.frames));
 });
