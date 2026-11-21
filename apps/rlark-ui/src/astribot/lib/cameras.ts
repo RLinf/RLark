@@ -12,12 +12,28 @@ export interface CameraReport {
   state: "ok" | "slow" | "stale" | "absent";
   fps: number;
   age_seconds: number | null;
-  // Where its recovery is: 0 none, 1 driver restarts, 2 USB reset, 3 stuck.
+  // Where its recovery is: 0 none, 1 driver restarts, 2 USB reset, 3 stuck (left alone until it has sent for
+  // 5 minutes again or its USB device is a new one).
   step: number;
   attempts: number;
   next_attempt_at: number | null;
   last_action: string | null;
+  // Stuck: why (相机需要断电或 USB 复位, or 疑似硬件 when a USB reset did not hold).
   last_result: string | null;
+  // Stuck: what the Orin showed of it (on the USB or not and where, the vendor's camera process, the Orbbec SDK's streams).
+  diagnosis: string | null;
+  // Where it is on the Orin's USB, null before the Orin is read or while it is not on the bus.
+  usb: CameraUsb | null;
+  // Advice when it shares its USB root port with cameras behind another hub; no state of its own.
+  usb_advice: string | null;
+}
+
+export interface CameraUsb {
+  path: string;
+  device: number;
+  speed: number;
+  // vendor:product of each hub from the root port down.
+  hubs: string[];
 }
 
 export interface CamerasReport {
@@ -45,6 +61,9 @@ export interface CameraCell {
   age: string;
   // A frame can be asked for: the camera has sent one.
   frames: boolean;
+  // A stuck camera's reason and diagnosis.
+  note?: string;
+  advice?: string;
 }
 
 const viewNames: Record<CameraView, [string, string]> = {
@@ -54,9 +73,10 @@ const viewNames: Record<CameraView, [string, string]> = {
   wrist_right: ["右腕", "Right wrist"],
 };
 
+// A stuck camera that sends again is as its frames say: it leaves stuck once they have held for 5 minutes.
 export function cameraBadge(camera: CameraReport, zh: boolean): { badge: string; tone: CameraTone } {
-  if (camera.step === 3) return { badge: zh ? "需要断电或 USB 复位" : "Needs a power cycle or USB reset", tone: "failed" };
   if (camera.state === "stale" || camera.state === "absent") {
+    if (camera.step === 3) return { badge: zh ? "需要断电或 USB 复位" : "Needs a power cycle or USB reset", tone: "failed" };
     if (camera.step === 1 || camera.step === 2) {
       return { badge: zh ? `恢复中 第 ${camera.step} 步` : `Recovering, step ${camera.step}`, tone: "pending" };
     }
@@ -82,7 +102,12 @@ export function cameraCells(report: CamerasReport | undefined, zh: boolean, live
     const camera = report.cameras[view];
     if (!camera) return { view, name, present: false, badge: zh ? "该本体没有这路相机" : "This body has no such camera", tone: "stopped", age: "—", frames: false };
     if (!live) return { view, name, present: true, ...unread };
-    return { view, name, present: true, ...cameraBadge(camera, zh), age: cameraAge(camera.age_seconds, zh), frames: camera.state !== "absent" };
+    const stuck = camera.step === 3 && (camera.state === "stale" || camera.state === "absent");
+    return {
+      view, name, present: true, ...cameraBadge(camera, zh), age: cameraAge(camera.age_seconds, zh), frames: camera.state !== "absent",
+      note: stuck ? [camera.last_result, camera.diagnosis].filter(Boolean).join("；") : undefined,
+      advice: camera.usb_advice ?? undefined,
+    };
   });
 }
 

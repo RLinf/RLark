@@ -9,7 +9,8 @@ newest JPEG, when it arrived and the rate.
 Read-only HTTP on the node's address (S1U_NODE_ADDRESS, the site tunnel's), port 18891; RLark's Gateway reaches it
 through the cluster's API server (the Pod's proxy) and decides who may look:
     GET /cameras                        {state, cameras: {view: {state, fps, age_seconds, step, attempts,
-                                        next_attempt_at, last_action, last_result}}, updated_at}
+                                        next_attempt_at, last_action, last_result, diagnosis, usb, usb_advice}},
+                                        updated_at}
     GET /cameras/<view>.jpg             the newest JPEG (X-Age-Seconds); 404 a view the body lacks, 503 no frame yet
     GET /cameras/<view>/stream?fps=N    multipart/x-mixed-replace of the camera's own JPEGs, N 1..30 (10); 404, 503 alike
     GET /cameras/wall.jpg               the four views as one 256 x 144 image: head, torso / wrist_left, wrist_right,
@@ -23,16 +24,26 @@ restart, anyone's) are brought back by a ladder (Recovery), each step an Event o
     1. the vendor's camera driver restarted (/astribot_system_monitor/camera_control_command False, 2 s, True: all
        cameras blank for about 25 s), up to 3 times, 60 s apart doubling to 900 s. It is also how the driver starts
        after a boot: the vendor's monitor starts it on True. A slow camera gets this step only, once an hour.
-    2. the stale cameras' USB devices reset on the Orin: a request to the orin container through the Pod's shared
-       directory (S1U_CAMERA_DIRECTORY: reset-request {id, cameras: the vendor's names}, reset-result {id, ok, detail,
-       finished_at}), then the driver restarted once more (s1u_01 11-13 22:40: the head camera stalled inside the
-       Orbbec SDK and no driver restart brought it back). A request the frames came back before is withdrawn.
-    3. stuck: 相机需要断电或 USB 复位. The ladder starts over after an hour.
-The ladder starts over once every camera has sent for 5 minutes: a camera that comes back for a moment and stalls
-again goes on up it. Nothing is done in the first 90 s. The state is on the Node, written when it changes: label
-rlark.io/camera-state ok | recovering | degraded (slow cameras only) | stuck, annotation rlark.io/cameras the JSON of
-GET /cameras. A restart of the robot's ROS master ends this process (rospy does not subscribe again at a new master):
-kubelet starts it afresh.
+    2. the stale cameras' USB devices reset on the Orin by the orin container, then the driver restarted once more
+       (s1u_01 11-13 22:40: the head camera stalled inside the Orbbec SDK and no driver restart brought it back). A
+       request the frames came back before is withdrawn.
+    3. stuck: 相机需要断电或 USB 复位. A camera that stalls again within 5 minutes of its USB reset is stuck at once:
+       疑似硬件 (s1u-03 11-21: the head camera's colour stream stopped 25 s to 3 min after each reset).
+A stuck camera is left alone, its driver restarted for nobody on a timer (each restart blanks the cameras that work):
+it is out of the ladder until it has sent for 5 minutes again or its USB device is a new one (replugged, rewired:
+the ladder starts over), and the ladder goes on for the others. Its Event CameraStuck carries what the orin
+container found on the Orin (diagnosis: on the USB or not and where, the vendor's camera process, an Orbbec camera's
+colour and depth streams in the SDK's log). The ladder starts over once every camera not stuck has sent for 5 minutes: a camera that comes back
+for a moment and stalls again goes on up it. Nothing is done in the first 90 s.
+
+The orin container is asked through the Pod's shared directory (S1U_CAMERA_DIRECTORY): <action>-request {id,
+cameras: the vendor's names} and its <action>-result {id, ..., finished_at}, for reset {ok, detail} and diagnose
+{cameras: {name: diagnosis}}; it writes each camera's USB position to usb ({name: {path, device, speed, hubs}}), which
+the report carries, with advice where a camera shares its root port with cameras behind another hub (usb_advice).
+
+The state is on the Node, written when it changes: label rlark.io/camera-state ok | recovering | degraded (slow
+cameras only) | stuck, annotation rlark.io/cameras the JSON of GET /cameras. A restart of the robot's ROS master ends
+this process (rospy does not subscribe again at a new master): kubelet starts it afresh, stuck cameras with it.
 """
 
 import json
@@ -70,12 +81,12 @@ STALE_SECONDS = 5.0
 SLOW_FPS, SLOW_SECONDS, SLOW_RESTART_SECONDS = 10.0, 30.0, 3600.0
 GRACE_SECONDS = 90.0
 SETTLE_SECONDS = 30.0  # cameras down for less are left alone: a driver restart blanks them for about 25 s
-HEALTHY_SECONDS = 300.0  # the ladder starts over once every camera has sent this long
+HEALTHY_SECONDS = 300.0  # the ladder starts over once every camera has sent this long; a stuck camera leaves stuck
 RESTART_SECONDS, RESTARTS = (60.0, 900.0), 3
 CALL_SECONDS = 30.0  # the vendor's monitor answers a call within this, or the call failed
-RESET_SECONDS = 300.0  # the orin container's answer is waited for this long
-STUCK_SECONDS = 3600.0
+ANSWER_SECONDS = 300.0  # the orin container's answer is waited for this long
 STUCK = "相机需要断电或 USB 复位"
+SUSPECT = "疑似硬件：USB 复位后 %d 秒又停，需要断电或现场检查接线"
 
 ACCOUNT = "/var/run/secrets/kubernetes.io/serviceaccount"
 STATE, ANNOTATION = "rlark.io/camera-state", "rlark.io/cameras"
@@ -173,30 +184,84 @@ class Cameras:
 
 class Recovery:
     """The ladder that brings stale and absent cameras back. ``restart`` restarts the vendor's camera driver (it
-    raises when the vendor's service is away); ``event(reason, message, kind)`` tells the Node."""
+    raises when the vendor's service is away); ``event(reason, message, kind)`` tells the Node; ``directory`` is
+    shared with the orin container."""
 
     def __init__(self, cameras, restart, directory, event, wall=time.time):
         self.cameras, self.restart, self.event, self.wall = cameras, restart, event, wall
-        self.request_file, self.result_file = Path(directory) / "reset-request", Path(directory) / "reset-result"
+        self.directory = Path(directory)
         self.started = cameras.clock()
-        self.records = {view: dict(step=0, attempts=0, next_attempt_at=None, last_action=None, last_result=None)
-                        for view in cameras.views}
+        self.records = {view: dict(step=0, attempts=0, next_attempt_at=None, last_action=None, last_result=None,
+                                   diagnosis=None, usb=None, usb_advice=None) for view in cameras.views}
         self.slow_at = None  # when the driver was last restarted for a slow camera
         self.down_since = self.healthy_since = None
-        self.request_file.unlink(missing_ok=True)  # an earlier run's request, which nobody waits for
+        # The cameras the ladder gave up on: {view: {back: since when it sends again, device: its USB device as the
+        # diagnosis found it}}; the USB reading before may predate its reset's new device.
+        self.stuck = {}
+        self.reset_at = {}  # when each camera's USB device was last reset
+        self.diagnosing = None  # the stuck cameras' facts asked for and not answered yet: (id, when, views)
+        self.usb = {}  # each camera's USB device as the orin container last found it, by the vendor's name
+        for action in ("reset", "diagnose"):  # an earlier run's request, which nobody waits for
+            (self.directory / (action + "-request")).unlink(missing_ok=True)
         self.rewind()
 
     def rewind(self):
         self.step, self.attempts, self.pause, self.next_at = 0, 0, RESTART_SECONDS[0], 0.0
-        self.request = None  # the USB reset asked for and not answered yet: (id, when)
+        self.request = None  # the USB reset asked for and not answered yet: (id, when, views)
         self.reset_done = False
-        self.stuck_since = None
 
     def mark(self, views, now, next_at=None, **fields):
         """What the ladder did for ``views``, as GET /cameras says it; ``next_at``: when it acts next."""
         for view in views:
             self.records[view].update(fields, step=self.step, attempts=self.attempts, next_attempt_at=(
                 None if next_at is None else round(self.wall() + next_at - now)))
+
+    def ask(self, action, views, now):
+        """The orin container asked to ``action`` (reset, diagnose) the cameras ``views``: (id, when, views)."""
+        asked = (uuid.uuid4().hex, now, views)
+        new = self.directory / (action + "-request.new")
+        new.write_text(json.dumps(dict(id=asked[0], cameras=[VENDOR[view] for view in views])) + "\n")
+        new.replace(self.directory / (action + "-request"))
+        return asked
+
+    def answer(self, action, asked, now):
+        """The orin container's result for ``asked``: None while it is awaited, {} when it did not come in time."""
+        try:
+            result = json.loads((self.directory / (action + "-result")).read_text())
+        except (OSError, ValueError):  # none yet, or being written
+            result = {}
+        if result.get("id") == asked[0]:
+            return result
+        return None if now - asked[1] < ANSWER_SECONDS else {}
+
+    def locate(self):
+        """Each camera's USB device as the orin container wrote it, and advice for one that shares its root port with
+        cameras behind another hub (s1u-03 11-21: the head's colour stream stalled behind two hubs on the root port of
+        the torso and the wrists; on s1u-01 and s1u-02 the head has a root port of its own)."""
+        try:
+            usb = json.loads((self.directory / "usb").read_text())
+        except OSError:  # not found on the Orin yet
+            return
+        if usb == self.usb:
+            return
+        self.usb = usb
+        paths = {view: usb[VENDOR[view]]["path"] for view in self.cameras.views if VENDOR[view] in usb}
+        advice = {}
+        for view, path in paths.items():
+            root, hub = path.split(".")[0], path.rsplit(".", 1)[0]
+            others = [other for other, place in paths.items() if place.split(".")[0] == root and place.rsplit(".", 1)[0] != hub]
+            if others:
+                advice[view] = "与 %s 共用 USB 根口 %s（经 %d 级 hub），建议改接独立根口" % ("、".join(others), root, path.count("."))
+        for view in self.cameras.views:
+            self.records[view].update(usb=usb.get(VENDOR[view]), usb_advice=advice.get(view))
+
+    def give_up(self, reasons, now):
+        """The cameras ``reasons`` names stuck, each for its reason, and their facts asked of the orin container."""
+        for view, reason in reasons.items():
+            self.stuck[view] = dict(back=None)
+            self.records[view].update(step=3, attempts=self.attempts, next_attempt_at=None, last_action="stuck",
+                                      last_result=reason, diagnosis=None)
+        self.diagnosing = self.ask("diagnose", (self.diagnosing[2] if self.diagnosing else []) + list(reasons), now)
 
     def restart_drivers(self, views, why):
         """(restarted, what came of it); an Event either way."""
@@ -210,23 +275,48 @@ class Recovery:
 
     def tick(self, now):
         """One look, once a second: at most one step."""
+        self.locate()
+        if self.diagnosing:
+            result = self.answer("diagnose", self.diagnosing, now)
+            if result is not None:  # the orin container wrote the cameras' USB devices before its answer
+                for view in self.diagnosing[2]:
+                    diagnosis = result["cameras"][VENDOR[view]] if result else "orin 容器没有回答"
+                    if view in self.stuck:
+                        self.records[view]["diagnosis"] = diagnosis
+                        self.stuck[view]["device"] = self.usb.get(VENDOR[view])
+                    self.event("CameraStuck", "%s: %s；%s" % (view, self.records[view]["last_result"], diagnosis), "Warning")
+                self.diagnosing = None
         states = self.cameras.states(now)
         down = [view for view, state in states.items() if state in ("stale", "absent")]
+        for view, stuck in list(self.stuck.items()):
+            stuck["back"] = None if view in down else now if stuck["back"] is None else stuck["back"]
+            device = self.usb.get(VENDOR[view])
+            back = stuck["back"] is not None and now - stuck["back"] >= HEALTHY_SECONDS
+            if back or "device" in stuck and device not in (None, stuck["device"]):
+                del self.stuck[view]
+                self.reset_at.pop(view, None)
+                self.records[view].update(step=0, attempts=0, diagnosis=None)
+                if not back:  # replugged or rewired: a new device, the whole ladder for it
+                    self.rewind()
+                self.event("CameraBack", "%s is no longer stuck: %s" % (view, "it has sent for %d s" % HEALTHY_SECONDS if back
+                                                                         else "its USB device is a new one (%s)" % device["path"]), "Normal")
+        active = [view for view in down if view not in self.stuck]
         for view, state in states.items():
-            if state == "ok":
+            if state == "ok" and view not in self.stuck:
                 self.records[view].update(step=0, attempts=0, next_attempt_at=None)
-        if not down:
+        if not active:
             self.down_since = None
             if self.request:  # back before the Orin reset them
-                self.request_file.unlink(missing_ok=True)
+                (self.directory / "reset-request").unlink(missing_ok=True)
                 self.request = None
             if self.healthy_since is None:
                 self.healthy_since = now
             if self.step and now - self.healthy_since >= HEALTHY_SECONDS:
                 self.rewind()
-                for record in self.records.values():
-                    record.update(step=0, attempts=0, next_attempt_at=None)
-            slow = [view for view, state in states.items() if state == "slow"]
+                for view, record in self.records.items():
+                    if view not in self.stuck:
+                        record.update(step=0, attempts=0, next_attempt_at=None)
+            slow = [view for view, state in states.items() if state == "slow" and view not in self.stuck]
             if slow and now - self.started >= GRACE_SECONDS and (self.slow_at is None or now - self.slow_at >= SLOW_RESTART_SECONDS):
                 self.slow_at = now
                 _, result = self.restart_drivers(slow, "under %d frames a second" % SLOW_FPS)
@@ -239,52 +329,50 @@ class Recovery:
             self.down_since = now
         if now - self.started < GRACE_SECONDS or now - self.down_since < SETTLE_SECONDS:
             return
-        if self.step == 3:
-            if now - self.stuck_since < STUCK_SECONDS:
+        # Back after its USB reset and stalled again within 5 minutes: the reset does not hold, nor would a restart.
+        held = {view: self.cameras.frames[view]["received"] - self.reset_at[view] for view in active if view in self.reset_at
+                and self.cameras.frames[view]["received"] is not None}
+        suspect = {view: SUSPECT % seconds for view, seconds in held.items() if 0 < seconds < HEALTHY_SECONDS}
+        if suspect:
+            self.give_up(suspect, now)
+        elif self.request:
+            result = self.answer("reset", self.request, now)
+            if result is None:
                 return
-            self.rewind()
-        if self.request:
-            identifier, asked = self.request
-            try:
-                result = json.loads(self.result_file.read_text())
-            except (OSError, ValueError):  # none yet, or being written
-                result = {}
-            if result.get("id") != identifier and now - asked < RESET_SECONDS:
-                return
-            detail = result["detail"] if result.get("id") == identifier else "the orin container did not answer"
-            self.event("CameraUsbReset", "USB reset of %s: %s" % (", ".join(down), detail), "Normal")
-            _, restarted = self.restart_drivers(down, "after the USB reset")
+            views = self.request[2]
+            detail = result["detail"] if result else "the orin container did not answer"
+            self.event("CameraUsbReset", "USB reset of %s: %s" % (", ".join(views), detail), "Normal")
+            if result.get("ok"):
+                self.reset_at.update(dict.fromkeys(views, now))
+            _, restarted = self.restart_drivers(views, "after the USB reset")
             self.request, self.reset_done, self.next_at = None, True, now + RESTART_SECONDS[0]
-            self.mark(down, now, self.next_at, last_action="usb_reset", last_result="%s; driver %s" % (detail, restarted))
+            self.mark(views, now, self.next_at, last_action="usb_reset", last_result="%s; driver %s" % (detail, restarted))
         elif now < self.next_at:
             return
         elif self.attempts < RESTARTS:
             self.step = 1
-            restarted, result = self.restart_drivers(down, "no frames")
+            restarted, result = self.restart_drivers(active, "no frames")
             # The vendor's service away is no attempt (a USB reset would not bring it back), and no backoff: tried
             # again in a minute.
             self.attempts += restarted
             self.next_at = now + (self.pause if restarted else RESTART_SECONDS[0])
             if restarted:
                 self.pause = min(self.pause * 2, RESTART_SECONDS[1])
-            self.mark(down, now, self.next_at, last_action="driver_restart", last_result=result)
+            self.mark(active, now, self.next_at, last_action="driver_restart", last_result=result)
         elif not self.reset_done:
             self.step = 2
-            self.request = (uuid.uuid4().hex, now)
-            self.request_file.with_suffix(".new").write_text(json.dumps(dict(id=self.request[0], cameras=[VENDOR[view] for view in down])) + "\n")
-            self.request_file.with_suffix(".new").replace(self.request_file)
-            self.mark(down, now, last_action="usb_reset", last_result="asked")
+            self.request = self.ask("reset", active, now)
+            self.mark(active, now, last_action="usb_reset", last_result="asked")
         else:
-            self.step, self.stuck_since = 3, now
-            self.event("CameraStuck", "%s: %s" % (", ".join(down), STUCK), "Warning")
-            self.mark(down, now, now + STUCK_SECONDS, last_action="stuck", last_result=STUCK)
+            self.give_up(dict.fromkeys(active, STUCK), now)
 
 
 def report(cameras, recovery, now, wall):
     """What GET /cameras answers and the Node's annotation holds."""
     states = cameras.states(now)
-    down = [state for state in states.values() if state in ("stale", "absent")]
-    overall = "stuck" if recovery.step == 3 and down else "recovering" if down else "degraded" if "slow" in states.values() else "ok"
+    down = [view for view, state in states.items() if state in ("stale", "absent")]
+    overall = ("stuck" if any(view in recovery.stuck for view in down) else "recovering" if down else
+               "degraded" if "slow" in states.values() else "ok")
     return dict(state=overall, updated_at=round(wall(), 1), cameras={
         view: dict(recovery.records[view], state=states[view], fps=cameras.fps(view), age_seconds=cameras.age(view, now))
         for view in cameras.views})

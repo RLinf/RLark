@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -836,6 +837,68 @@ def test_the_orin_resets_a_camera_by_its_serial_once_per_request(tmp_path, monke
     assert (tmp_path / "dev/002-008").read_bytes() == b"reset" and (tmp_path / "dev/002-010").read_bytes() == b"reset"
     assert not (tmp_path / "dev/002-009").exists() and not (tmp_path / "dev/001-003").exists()
     assert "'" not in orin.USB_RESET  # it is sent inside single quotes
+
+
+def test_the_orin_says_where_each_camera_is_and_what_it_shows_of_a_stuck_one(tmp_path, monkeypatch):
+    """s1u-03 11-21: the head's Femto Bolt behind two hubs on the root port of the other cameras, its colour stream
+    stopped while depth went on, the vendor's process running, no USB error. The facts are read as the Orin's account."""
+    (tmp_path / "camera_info.json").write_text(json.dumps({"head_rgbd": "CL83C530054", "torso_rgbd": "CP0T2630001C",
+                                                           "left_wrist_rgbd": "261123074156"}))
+    sysfs = tmp_path / "sys"
+    for name, keys in (("usb2", dict(serial="3610000.xhci", idVendor="1d6b", idProduct="0003")),
+                       ("2-3", dict(idVendor="0bda", idProduct="0420")), ("2-3.3", dict(idVendor="0424", idProduct="5806")),
+                       ("2-3.4", dict(idVendor="0424", idProduct="5806")),
+                       ("2-3.3.3", dict(serial="CL83C530054", devnum="13", speed="5000", idVendor="2bc5")),
+                       ("2-3.4.6", dict(serial="CP0T2630001C", devnum="10", speed="5000", idVendor="2bc5"))):
+        (sysfs / name).mkdir(parents=True)
+        for key, value in keys.items():
+            (sysfs / name / key).write_text(value + "\n")
+    for name, driver in (("2-3.3.3:1.0", "usbfs"), ("2-3.4.6:1.0", "uvcvideo")):
+        (sysfs / name).mkdir()
+        (tmp_path / "drivers" / driver).mkdir(parents=True)
+        (sysfs / name / "driver").symlink_to(tmp_path / "drivers" / driver)
+    stamp = lambda ago: time.strftime("[%m/%d %H:%M:%S.000001]", time.localtime(time.time() - ago))
+    (tmp_path / "OrbbecSDK.log.txt").write_text("".join(line + "\n" for line in (
+        stamp(60) + "[warning][1][Pipeline.cpp:377] Wait for frame timeout, you can try to increase the wait time!",
+        stamp(40) + "[debug][3021309][VideoSensor.cpp:427] OB_SENSOR_COLOR Streaming... frameRate=30.2fps",
+        stamp(39) + "[debug][3021311][VideoSensor.cpp:427] OB_SENSOR_DEPTH Streaming... frameRate=30.1fps",
+        stamp(30) + "[warning][1][Pipeline.cpp:377] Wait for frame timeout, you can try to increase the wait time!",
+        stamp(20) + "[warning][1][Pipeline.cpp:377] Wait for frame timeout, you can try to increase the wait time!",
+        stamp(2) + "[debug][3021311][VideoSensor.cpp:427] OB_SENSOR_DEPTH Streaming... frameRate=30.1fps")))
+    script = orin.CAMERA_FACTS.replace('"/sys/bus/usb/devices"', repr(str(sysfs))).replace(
+        "/etc/config/camera_info.json", str(tmp_path / "camera_info.json")).replace("~/Log/OrbbecSDK.log.txt", str(tmp_path / "OrbbecSDK.log.txt"))
+    facts = json.loads(subprocess.run([sys.executable, "-"], input=script, capture_output=True, text=True, check=True).stdout)
+    assert facts["cameras"] == {
+        "head_rgbd": dict(path="2-3.3.3", device=13, speed=5000, vendor="2bc5", hubs=["0bda:0420", "0424:5806"], driver="usbfs"),
+        "torso_rgbd": dict(path="2-3.4.6", device=10, speed=5000, vendor="2bc5", hubs=["0bda:0420", "0424:5806"], driver="uvcvideo")}
+    assert facts["sdk"]["color"] in (40, 41) and facts["sdk"]["depth"] in (2, 3) and facts["sdk"]["timeouts"] == 2  # after colour's last
+    assert facts["process"] is False
+    # Asked by the camera service: the facts once, a line for each camera, and where each one is for its report.
+    robot = make_orin(tmp_path, monkeypatch)
+    sent = []
+    monkeypatch.setattr(robot, "ssh", lambda key, remote, data=b"", *a: sent.append((key, remote, data)) or done(
+        json.dumps(dict(facts, process=True, sdk=dict(color=40, depth=2, timeouts=2))).encode()))
+    robot.camera_pass()
+    assert not sent  # no request, and nothing to log in with before the first pass
+    (tmp_path / "diagnose-request").write_text(json.dumps({"id": "d" * 32, "cameras": ["head_rgbd", "torso_rgbd", "left_wrist_rgbd"]}))
+    robot.camera_pass()
+    assert json.loads((tmp_path / "diagnose-result").read_text())["cameras"] == dict.fromkeys(
+        ["head_rgbd", "torso_rgbd", "left_wrist_rgbd"], "Orin 没有回答")
+    robot.kept = dict(key="ssh-ed25519 KEY", trust=None, serial=None)
+    (tmp_path / "diagnose-request").write_text(json.dumps({"id": "e" * 32, "cameras": ["head_rgbd", "torso_rgbd", "left_wrist_rgbd"]}))
+    robot.camera_pass()
+    assert sent == [("ssh-ed25519 KEY", "python3 -", orin.CAMERA_FACTS.encode())]
+    result = json.loads((tmp_path / "diagnose-result").read_text())
+    assert set(result) == {"id", "cameras", "finished_at"} and result["id"] == "e" * 32 and robot.state["camera_diagnose"] == result
+    assert result["cameras"] == {
+        "head_rgbd": "在 USB 2-3.3.3（5000M，经 2 级 hub）；厂商相机进程在跑；Orbbec SDK：彩色停了（40 秒前），深度仍在，之后等帧超时 2 次",
+        "torso_rgbd": "在 USB 2-3.4.6（5000M，经 2 级 hub）；厂商相机进程在跑",  # uvcvideo's, not the SDK's
+        "left_wrist_rgbd": "USB 上没有它（camera_info.json 的序列号）；厂商相机进程在跑"}
+    assert json.loads((tmp_path / "usb").read_text()) == {
+        "head_rgbd": dict(path="2-3.3.3", device=13, speed=5000, hubs=["0bda:0420", "0424:5806"]),
+        "torso_rgbd": dict(path="2-3.4.6", device=10, speed=5000, hubs=["0bda:0420", "0424:5806"])}
+    robot.camera_pass()
+    assert len(sent) == 1  # the same request once
 
 
 def test_a_trusted_host_key_is_kept_on_the_robot_at_once(tmp_path, monkeypatch):

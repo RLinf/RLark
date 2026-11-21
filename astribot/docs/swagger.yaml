@@ -1263,11 +1263,22 @@ components:
         state: {type: string, enum: [ok, slow, stale, absent], description: 'slow: under 10 frames a second for 30 s; stale: no frame for 5 s; absent: none since the camera service started'}
         fps: {type: number, description: Frames a second over the last 5 s}
         age_seconds: {type: number, nullable: true, description: Seconds since the newest frame; null before the first}
-        step: {type: integer, enum: [0, 1, 2, 3], description: 'Where its recovery is: 0 none, 1 driver restarts, 2 USB reset, 3 stuck'}
+        step: {type: integer, enum: [0, 1, 2, 3], description: 'Where its recovery is: 0 none, 1 driver restarts, 2 USB reset, 3 stuck (left alone until it has sent for 5 minutes again or its USB device is a new one)'}
         attempts: {type: integer, description: Driver restarts done in this round of the recovery}
         next_attempt_at: {type: integer, nullable: true, description: When the recovery acts next (Unix seconds)}
         last_action: {type: string, nullable: true, enum: [driver_restart, usb_reset, stuck]}
-        last_result: {type: string, nullable: true}
+        last_result: {type: string, nullable: true, description: 'Stuck: why (相机需要断电或 USB 复位; 疑似硬件 when it stalled again within 5 minutes of its USB reset)'}
+        diagnosis: {type: string, nullable: true, description: 'Stuck: what the Orin showed of it (on the USB or not and where, the vendor camera process, the Orbbec SDK colour and depth streams)'}
+        usb:
+          type: object
+          nullable: true
+          description: Where it is on the Orin's USB; null before the Orin is read or while it is not on the bus
+          properties:
+            path: {type: string, description: 'sysfs path, e.g. 2-3.3.3 (bus 2, root port 3, then hub ports)'}
+            device: {type: integer}
+            speed: {type: integer, description: Mbit/s}
+            hubs: {type: array, items: {type: string}, description: 'vendor:product of each hub from the root port down'}
+        usb_advice: {type: string, nullable: true, description: 'When it shares its USB root port with cameras behind another hub: move it to a root port of its own (advice, no state)'}
     RobotCameras:
       type: object
       properties:

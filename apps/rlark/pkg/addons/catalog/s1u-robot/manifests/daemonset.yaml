@@ -146,7 +146,8 @@ spec:
             - {name: state, mountPath: /state}
             - {name: in-use, mountPath: /in-use, readOnly: true}
             - {name: payloads, mountPath: /payloads, readOnly: true}
-            # The camera service's requests for a USB reset of cameras, and their results.
+            # The camera service's requests (a USB reset of cameras, a stuck camera's diagnosis) and their results,
+            # and where each camera is on the Orin's USB.
             - {name: camera, mountPath: /camera}
         # The robot's power, driver start and restart (device/power.py): the vendor's buttons through its ROS master,
         # on a Unix socket only, which RLark reaches on the node. No capability: ROS over the host's network.
@@ -178,8 +179,9 @@ spec:
         # The robot's cameras (device/cameras.py): the body's cameras from the vendor's ROS topics, read from start to
         # stop, served read-only on the node's address (port 18891: the state, each view's JPEG and stream, the wall),
         # which RLark's Gateway reaches through the API server's proxy of this Pod; cameras without frames brought
-        # back (the vendor's driver restarted, a USB reset asked of the orin container through /camera), the state on
-        # the Node (rlark.io/camera-state, rlark.io/cameras). No capability: ROS over the host's network.
+        # back (the vendor's driver restarted, a USB reset asked of the orin container through /camera) or left stuck
+        # with the orin container's diagnosis, the state on the Node (rlark.io/camera-state, rlark.io/cameras). No
+        # capability: ROS over the host's network.
         - name: video
           image: {{ .Values.image }}
           imagePullPolicy: IfNotPresent

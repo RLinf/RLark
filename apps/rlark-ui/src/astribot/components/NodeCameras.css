@@ -43,3 +43,9 @@
   flex-wrap: wrap;
   font-size: 12px;
 }
+
+.node-camera-note {
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}

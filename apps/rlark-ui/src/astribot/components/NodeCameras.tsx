@@ -120,6 +120,8 @@ export function NodeCameras({ node, namespace, labels, published, zh }: {
               ? <small className="muted">{cameraAge(frame.age + (now - frame.at) / 1000, zh)}</small>
               : cell.present && report && <small className="muted">{cell.age}</small>}
           </figcaption>
+          {cell.note && <small className="node-camera-note">{cell.note}</small>}
+          {cell.advice && <small className="node-camera-note muted">{cell.advice}</small>}
         </figure>;
       })}
     </div>

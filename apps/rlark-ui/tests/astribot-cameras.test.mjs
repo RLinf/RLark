@@ -10,7 +10,8 @@ import {
 } from "../dist/test/astribot/lib/cameras.js";
 
 const camera = (fields) => ({
-  state: "ok", fps: 30, age_seconds: 0.03, step: 0, attempts: 0, next_attempt_at: null, last_action: null, last_result: null, ...fields,
+  state: "ok", fps: 30, age_seconds: 0.03, step: 0, attempts: 0, next_attempt_at: null, last_action: null, last_result: null,
+  diagnosis: null, usb: null, usb_advice: null, ...fields,
 });
 
 test("the wall is head, torso / wrist_left, wrist_right, and a body's missing views say so", () => {
@@ -39,6 +40,8 @@ test("each camera's badge follows its state and the step its recovery is at", ()
   assert.deepEqual(badge({ state: "stale", step: 1, attempts: 2 }), ["恢复中 第 1 步", "pending", true]);
   assert.deepEqual(badge({ state: "absent", step: 2 }), ["恢复中 第 2 步", "pending", false]);
   assert.deepEqual(badge({ state: "stale", step: 3 }), ["需要断电或 USB 复位", "failed", true]);
+  // A stuck camera that sends again (it leaves stuck after 5 minutes of frames) is as its frames say.
+  assert.deepEqual(badge({ state: "ok", step: 3 }), ["正常", "online", true]);
   // A slow camera's driver restart (step 1) is not a recovery from no frames.
   assert.deepEqual(badge({ state: "slow", step: 1 }), ["帧率低", "pending", true]);
   assert.equal(cameraCells({ state: "ok", updated_at: 0, cameras: { head: camera({ state: "stale", step: 3 }) } }, false)[0].badge,
@@ -64,4 +67,23 @@ test("while the live report cannot be read no view shows a state, the published 
     ["wrist_right", false, "该本体没有这路相机", "stopped", "—", false],
   ]);
   assert.ok(cameraCells(undefined, false, false).every((cell) => cell.present === undefined && cell.badge === "Live state unavailable" && !cell.frames));
+});
+
+test("a stuck camera says why and what the Orin showed, and a camera's USB advice is said whatever its state", () => {
+  const usb = { path: "2-3.3.3", device: 13, speed: 5000, hubs: ["0bda:0420", "0424:5806"] };
+  const advice = "与 torso、wrist_left、wrist_right 共用 USB 根口 2-3（经 2 级 hub），建议改接独立根口";
+  const [head, torso] = cameraCells({ state: "stuck", updated_at: 0, cameras: {
+    head: camera({ state: "stale", step: 3, last_action: "stuck", last_result: "疑似硬件：USB 复位后 52 秒又停，需要断电或现场检查接线",
+      diagnosis: "在 USB 2-3.3.3（5000M，经 2 级 hub）；厂商相机进程在跑", usb, usb_advice: advice }),
+    torso: camera({ usb: { ...usb, path: "2-3.4.6" }, usb_advice: "与 head 共用 USB 根口 2-3（经 2 级 hub），建议改接独立根口" }),
+  } }, true);
+  assert.equal(head.note, "疑似硬件：USB 复位后 52 秒又停，需要断电或现场检查接线；在 USB 2-3.3.3（5000M，经 2 级 hub）；厂商相机进程在跑");
+  assert.equal(head.advice, advice);
+  assert.equal(torso.note, undefined);
+  assert.equal(torso.advice, "与 head 共用 USB 根口 2-3（经 2 级 hub），建议改接独立根口");
+  // Before the Orin answers, the reason alone; once it sends again, neither.
+  const [waiting] = cameraCells({ state: "stuck", updated_at: 0, cameras: { head: camera({ state: "absent", step: 3, last_result: "相机需要断电或 USB 复位" }) } }, true);
+  assert.equal(waiting.note, "相机需要断电或 USB 复位");
+  const [back] = cameraCells({ state: "ok", updated_at: 0, cameras: { head: camera({ step: 3, last_result: "相机需要断电或 USB 复位" }) } }, true);
+  assert.equal(back.note, undefined);
 });

@@ -8,13 +8,16 @@ declares:
   (none is the x86's, none is of the robot's own network). Units the Addon retires (orinRetiredUnits: the same
   uplink under an earlier name) are stopped and removed, and this one started again at once, since stopping such a
   unit deletes the forwarding rules both of them hold;
-- the cameras' USB rule (the devices of the cameras' vendors the account's), and on request a USB reset of single
-  cameras as the Orin's account: this Pod's camera service (device/cameras.py) writes reset-request ({"id",
-  "cameras": the vendor's names}) in the directory the two share (/camera) when it restarted the vendor's camera
-  driver and still had no frames; each camera is found by its serial number in the Orin's
-  /etc/config/camera_info.json (the vendor's record of which camera is which: name -> serial) and its USB device
-  reset. Each id is done once, also across a restart of
-  this container: the result ({"id", "ok", "detail", "finished_at"}) is written to reset-result beside it;
+- the cameras' USB rule (the devices of the cameras' vendors the account's), and the cameras for this Pod's camera
+  service (device/cameras.py) as the Orin's account, through the directory the two share (/camera). Each camera is
+  found by its serial number in the Orin's /etc/config/camera_info.json (the vendor's record of which camera is
+  which: name -> serial). Every minute, where each camera is on the USB (usb: {name: {path, device, speed, hubs}}).
+  On request ({"id", "cameras": the vendor's names}), each id done once, also across a restart of this container, the
+  result beside it: reset-request, when it restarted the vendor's camera driver and still had no frames, the cameras'
+  USB devices reset (reset-result {"id", "ok", "detail", "finished_at"}); diagnose-request, when it gave a camera up,
+  what the Orin shows of each (diagnose-result {"id", "cameras": {name: diagnosis}, "finished_at"}): on the USB or
+  not and where, whether the vendor's camera process runs, and for an Orbbec camera the SDK opens (usbfs) whether its
+  log has the colour and depth streams (s1u-03 11-21: colour stopped, depth went on, no USB error);
 - a vendor process that must not run there (the profile's S1U_ORIN_STOPPED) ended at every pass, and the line that
   starts it in the vendor's start script (S1U_ORIN_STOPPED_LAUNCHER) commented out;
 - the site's adb key the headsets trust (the secret's adb_key, if it holds one) as ~/.android/adbkey_rlark;
@@ -46,8 +49,8 @@ Event.
 The state is on the Node: label s1u.rlark.io/orin-state, one word: ok | updating | no_access (the secret is not in the
 cluster yet) | unreachable | login_failed | identity_changed | failed; with the Addon's profile=removed, removing (the
 host is marked in use) | removed (remove: nothing of the Addon's is left there); annotation s1u.rlark.io/orin, the
-whole state as JSON (reachable, identity, trust, fingerprints, serial, payloads, the last camera reset, failures).
-The camera service tells the Node of each reset (Event CameraUsbReset).
+whole state as JSON (reachable, identity, trust, fingerprints, serial, payloads, the last camera reset and diagnosis,
+failures). The camera service tells the Node of each reset and diagnosis (Events CameraUsbReset, CameraStuck).
 
 Standard library and the image's ssh only."""
 import hashlib
@@ -88,6 +91,36 @@ USB_RESET = ("import fcntl, glob, json, os, sys\n"
              "            with open(\"/dev/bus/usb/%03d/%03d\" % (r(\"busnum\"), r(\"devnum\")), \"wb\") as f:\n"
              "                fcntl.ioctl(f, 0x5514)\n"
              "            print(\"%s bus %03d dev %03d\" % (name, r(\"busnum\"), r(\"devnum\")))\n")
+# Run on the Orin as its account (python3 -, the script on standard input): each camera of the vendor's
+# /etc/config/camera_info.json on the USB by its serial (its sysfs entry: path, device number, speed, vendor, the hubs
+# from the root port down, its first interface's driver), whether the vendor's camera process runs, and in the Orbbec
+# SDK's log the seconds since its last COLOR and DEPTH stream lines and the frame timeouts after the last COLOR one;
+# one line of JSON.
+CAMERA_FACTS = r"""import json, os, subprocess, time
+USB = "/sys/bus/usb/devices"
+names = {serial: name for name, serial in json.load(open("/etc/config/camera_info.json")).items()}
+read = lambda device, key: open(os.path.join(USB, device, key)).read().strip()
+cameras = {}
+for device in os.listdir(USB):
+    if os.path.exists(os.path.join(USB, device, "serial")) and read(device, "serial") in names:
+        parts, driver = device.split("."), os.path.join(USB, device + ":1.0", "driver")
+        cameras[names[read(device, "serial")]] = dict(
+            path=device, device=int(read(device, "devnum")), speed=int(read(device, "speed")), vendor=read(device, "idVendor"),
+            hubs=["%s:%s" % (read(hub, "idVendor"), read(hub, "idProduct")) for hub in (".".join(parts[:i]) for i in range(1, len(parts)))],
+            driver=os.path.basename(os.readlink(driver)) if os.path.exists(driver) else None)
+sdk, log = dict(color=None, depth=None, timeouts=0), os.path.expanduser("~/Log/OrbbecSDK.log.txt")
+if os.path.exists(log):
+    with open(log, "rb") as file:
+        file.seek(max(0, os.path.getsize(log) - 400000))
+        lines = file.read().decode(errors="replace").splitlines()
+    for line in reversed(lines):
+        for stream in ("color", "depth"):
+            if sdk[stream] is None and "OB_SENSOR_%s Streaming" % stream.upper() in line:
+                sdk[stream] = round(time.time() - time.mktime(time.strptime(time.strftime("%Y/") + line[1:15], "%Y/%m/%d %H:%M:%S")))
+        sdk["timeouts"] += sdk["color"] is None and "Wait for frame timeout" in line
+process = subprocess.run(["pgrep", "-f", "astribot_camera_main"], stdout=subprocess.DEVNULL).returncode == 0
+print(json.dumps(dict(cameras=cameras, process=process, sdk=sdk)))
+"""
 CAMERA_RULE = '/etc/udev/rules.d/70-s1u-camera.rules'
 HOST = "/host"  # the host's /run/rlark/s1u, the node profile's state
 ACCOUNT = "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -174,10 +207,11 @@ class Orin:
                          for path in sorted(PAYLOADS.iterdir()) if path.is_dir()} if PAYLOADS.is_dir() else {}
         self.state = dict(reachable=False, identity=None, trust=None, failures=0,
                           payloads={name: dict(wanted=version) for name, (version, _) in self.payloads.items()})
-        # The camera reset last done, as its result in the Pod's shared directory says: a request done before this
-        # container restarted is not done again.
-        if os.path.exists(CAMERAS + "/reset-result"):
-            self.state["camera_reset"] = json.loads(Path(CAMERAS + "/reset-result").read_text())
+        # The camera reset and diagnosis last done, as their results in the Pod's shared directory say: a request done
+        # before this container restarted is not done again.
+        for action in ("reset", "diagnose"):
+            if os.path.exists(CAMERAS + "/%s-result" % action):
+                self.state["camera_" + action] = json.loads(Path(CAMERAS + "/%s-result" % action).read_text())
         self.wake = threading.Event()
         self.serial = None  # the Orin's hardware serial as the Node records it (known)
         self.kept = None  # the Node's record of the Orin as last written to KEPT
@@ -258,7 +292,10 @@ class Orin:
     def ssh(self, key, remote, data=b"", password=False):
         """``remote`` on the Orin, which must present ``key``; ``data`` to its standard input."""
         known = self.directory + "/known_hosts"
-        Path(known).write_text("%s %s\n" % (self.address, key))
+        # Replaced whole: the camera thread's ssh reads it while a pass writes it.
+        staged = "%s.%d" % (known, threading.get_ident())
+        Path(staged).write_text("%s %s\n" % (self.address, key))
+        os.replace(staged, known)
         command = ["ssh", "-o", "UserKnownHostsFile=" + known, "-o", "StrictHostKeyChecking=yes",
                    "-o", "ConnectTimeout=5", "-o", "LogLevel=ERROR"]
         environment = dict(os.environ)
@@ -477,41 +514,81 @@ class Orin:
             self.wake.clear()
 
     def watch_cameras(self):
-        """The camera service's request for a USB reset of cameras (reset-request in the Pod's shared directory: id,
-        cameras), when it restarted the vendor's camera driver and still had no frames (the camera's own stream
-        wedged: s1u_01 11-13 22:40). Each request once; the result beside it."""
+        """The camera service's requests, and every minute where the cameras are on the USB."""
+        located = -PERIOD_SECONDS
         while True:
             time.sleep(WATCH_SECONDS)
-            self.camera_pass()
+            try:
+                self.camera_pass()
+                if time.monotonic() - located >= PERIOD_SECONDS:
+                    located = time.monotonic()
+                    self.camera_facts()
+            except Exception as error:  # the Orin or the cluster away: looked at again
+                print("Cameras on the Orin: %s: %s" % (type(error).__name__, error), flush=True)
 
     def camera_pass(self):
-        """One look at the camera service's request, and the reset it asks for."""
-        try:
-            request = json.loads(Path(CAMERAS + "/reset-request").read_text())
-        except (OSError, ValueError):  # none, or being written
-            return
-        if request["id"] == self.state.get("camera_reset", {}).get("id"):
-            return
-        ok, detail = self.reset_cameras(request["cameras"])
-        done = dict(id=request["id"], ok=ok, detail=detail, finished_at=time.time())
-        self.state = dict(self.state, camera_reset=done)
-        Path(CAMERAS + "/reset-result.new").write_text(json.dumps(done) + "\n")
-        os.replace(CAMERAS + "/reset-result.new", CAMERAS + "/reset-result")
-        print("Camera USB reset on the Orin (%s): %s" % (", ".join(request["cameras"]), detail), flush=True)
+        """One look at the camera service's requests, each done once, its result beside it."""
+        for action, do in (("reset", self.reset_cameras), ("diagnose", self.diagnose_cameras)):
+            try:
+                request = json.loads(Path(CAMERAS + "/%s-request" % action).read_text())
+            except (OSError, ValueError):  # none, or being written
+                continue
+            if request["id"] == self.state.get("camera_" + action, {}).get("id"):
+                continue
+            done = dict(do(request["cameras"]), id=request["id"], finished_at=time.time())
+            self.state = dict(self.state, **{"camera_" + action: done})
+            Path(CAMERAS + "/%s-result.new" % action).write_text(json.dumps(done, ensure_ascii=False) + "\n")
+            os.replace(CAMERAS + "/%s-result.new" % action, CAMERAS + "/%s-result" % action)
+            print("Camera %s on the Orin (%s): %s" % (action, ", ".join(request["cameras"]), done.get("detail") or done["cameras"]), flush=True)
 
     def reset_cameras(self, names):
-        """(every one done, one line): the USB devices of the cameras ``names`` reset through usbfs as the Orin's
-        account, whose they are by the cameras' USB rule; no sudo."""
+        """{ok: every one done, detail: one line}: the USB devices of the cameras ``names`` reset through usbfs as the
+        Orin's account, whose they are by the cameras' USB rule; no sudo."""
         known, _ = self.known()
         if known is None:
-            return False, "the Orin's host key is not trusted yet"
+            return dict(ok=False, detail="the Orin's host key is not trusted yet")
         done = self.ssh(known, "python3 -c '%s' %s" % (USB_RESET, " ".join(names)))
         if done.returncode:
-            return False, done.stderr.decode(errors="replace").strip().splitlines()[-1][-200:]
+            return dict(ok=False, detail=done.stderr.decode(errors="replace").strip().splitlines()[-1][-200:])
         devices = done.stdout.decode().splitlines()
         missing = [name for name in names if not any(line.startswith(name + " ") for line in devices)]
-        return not missing, "; ".join((["reset ok " + ", ".join(devices)] if devices else []) + (
-            ["no USB device of " + ", ".join(missing)] if missing else []))
+        return dict(ok=not missing, detail="; ".join((["reset ok " + ", ".join(devices)] if devices else []) + (
+            ["no USB device of " + ", ".join(missing)] if missing else [])))
+
+    def camera_facts(self):
+        """The cameras' facts on the Orin (CAMERA_FACTS), each one's place on the USB written for the camera service;
+        None when the Orin does not answer."""
+        if not self.kept or not self.kept["key"]:
+            return None
+        done = self.ssh(self.kept["key"], "python3 -", CAMERA_FACTS.encode())
+        if done.returncode:
+            return None
+        facts = json.loads(done.stdout)
+        Path(CAMERAS + "/usb.new").write_text(json.dumps({name: {key: camera[key] for key in ("path", "device", "speed", "hubs")}
+                                                          for name, camera in facts["cameras"].items()}) + "\n")
+        os.replace(CAMERAS + "/usb.new", CAMERAS + "/usb")
+        return facts
+
+    def diagnose_cameras(self, names):
+        """{cameras: {name: what the Orin shows of it, in a line}}."""
+        facts = self.camera_facts()
+        if facts is None:
+            return dict(cameras=dict.fromkeys(names, "Orin 没有回答"))
+        said = {}
+        for name in names:
+            camera, sdk = facts["cameras"].get(name), facts["sdk"]
+            lines = ["在 USB %s（%dM，经 %d 级 hub）" % (camera["path"], camera["speed"], len(camera["hubs"])) if camera
+                     else "USB 上没有它（camera_info.json 的序列号）", "厂商相机进程%s" % ("在跑" if facts["process"] else "不在")]
+            # The SDK's own log: a stream line every 5 s while it streams.
+            if camera and camera["vendor"] == "2bc5" and camera["driver"] == "usbfs":
+                color, depth = (sdk[stream] is not None and sdk[stream] <= 10 for stream in ("color", "depth"))
+                if depth and not color:
+                    lines.append("Orbbec SDK：彩色停了（%s），深度仍在，之后等帧超时 %d 次" % (
+                        "%d 秒前" % sdk["color"] if sdk["color"] is not None else "日志尾部没有它", sdk["timeouts"]))
+                else:
+                    lines.append("Orbbec SDK：" + ("彩色和深度都有帧" if color and depth else "深度停了，彩色仍在" if color else "彩色和深度都停了"))
+            said[name] = "；".join(lines)
+        return dict(cameras=said)
 
 
 def main():
