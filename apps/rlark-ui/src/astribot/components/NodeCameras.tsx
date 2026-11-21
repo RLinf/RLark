@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera } from "lucide-react";
 import { request, requestJson } from "../../api.js";
-import { cameraCells, cameraFramePath, camerasPath, publishedCameras, type CamerasReport, type CameraView } from "../lib/cameras";
+import { cameraAge, cameraCells, cameraFramePath, camerasPath, publishedCameras, type CamerasReport, type CameraView } from "../lib/cameras";
 import "./NodeCameras.css";
 
 // A robot's cameras, 2 x 2 (head, torso / wrist_left, wrist_right), for a node with a robot model only: each view's
 // newest JPEG through the Gateway and its state as the robot's camera service tells it. The console holds one
 // connection for the report and one for the frames, never a stream: over HTTP/1.1 the browser has six to the host for
-// every tab of the console, and an <img> stream is not reliably let go when it leaves the page.
+// every tab of the console, and an <img> stream is not reliably let go when it leaves the page. A hidden tab holds none.
 export function NodeCameras({ node, namespace, labels, published, zh }: {
   node: string;
   namespace: string;
@@ -18,7 +18,10 @@ export function NodeCameras({ node, namespace, labels, published, zh }: {
   const robot = Boolean(labels?.["rlark.io/robot-model"]);
   const [report, setReport] = useState<CamerasReport>();
   const [failure, setFailure] = useState("");
-  const [frames, setFrames] = useState<Partial<Record<CameraView, string>>>({});
+  // Each view's last frame: its object URL, its age when it came (X-Age-Seconds) and when that was.
+  const [frames, setFrames] = useState<Partial<Record<CameraView, { url: string; age: number; at: number }>>>({});
+  // Why a view's last frame request failed, until one succeeds.
+  const [missed, setMissed] = useState<Partial<Record<CameraView, string>>>({});
   // The views that have sent a frame, as the last report says; the frame loop asks for these in turn.
   const views = useRef<CameraView[]>([]);
 
@@ -27,11 +30,21 @@ export function NodeCameras({ node, namespace, labels, published, zh }: {
     const stop = new AbortController();
     const within = (ms: number) => AbortSignal.any([stop.signal, AbortSignal.timeout(ms)]);
     const pause = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
-    const urls: Partial<Record<CameraView, string>> = {};
+    const shown = async () => {
+      while (document.hidden && !stop.signal.aborted) {
+        await new Promise<void>((resolve) => {
+          document.addEventListener("visibilitychange", () => resolve(), { once: true, signal: stop.signal });
+          stop.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      }
+    };
+    const shot: Partial<Record<CameraView, { url: string; age: number; at: number }>> = {};
 
     // The report: asked for, answered or timed out, 2 s, again.
     void (async () => {
       while (!stop.signal.aborted) {
+        await shown();
+        if (stop.signal.aborted) return;
         await requestJson<CamerasReport>(camerasPath(node, namespace), { signal: within(5000) }).then(
           (next) => {
             if (stop.signal.aborted) return;
@@ -50,17 +63,26 @@ export function NodeCameras({ node, namespace, labels, published, zh }: {
       }
     })();
 
-    // The frames: one request at a time, each view in turn, about 5 a second each.
+    // The frames: one request at a time, each view in turn, at most 5 a second each; with four views the Gateway's
+    // round trip (authorization, Node, pod list, proxy) sets the rate.
     void (async () => {
       while (!stop.signal.aborted) {
         const started = performance.now();
         for (const view of views.current) {
-          const frame = await request(cameraFramePath(node, namespace, view), { signal: within(3000) }).then((response) => response.blob(), () => undefined);
+          await shown();
           if (stop.signal.aborted) return;
-          if (!frame) continue; // a view that sends no frame keeps its last one; the report says how old it is
-          if (urls[view]) URL.revokeObjectURL(urls[view]);
-          urls[view] = URL.createObjectURL(frame);
-          setFrames({ ...urls });
+          const frame = await request(cameraFramePath(node, namespace, view), { signal: within(3000) })
+            .then(async (response) => ({ blob: await response.blob(), age: Number(response.headers.get("X-Age-Seconds")) }))
+            .catch((error: Error) => error);
+          if (stop.signal.aborted) return;
+          if (frame instanceof Error) {
+            setMissed((missed) => ({ ...missed, [view]: frame.message }));
+            continue; // a view whose frame is not got keeps its last one, which ages
+          }
+          if (shot[view]) URL.revokeObjectURL(shot[view].url);
+          shot[view] = { url: URL.createObjectURL(frame.blob), age: frame.age, at: performance.now() };
+          setFrames({ ...shot });
+          setMissed((missed) => ({ ...missed, [view]: undefined }));
         }
         await pause(Math.max(0, 200 - (performance.now() - started)));
       }
@@ -68,29 +90,38 @@ export function NodeCameras({ node, namespace, labels, published, zh }: {
 
     return () => {
       stop.abort();
-      Object.values(urls).forEach((url) => URL.revokeObjectURL(url));
+      Object.values(shot).forEach((frame) => URL.revokeObjectURL(frame.url));
       views.current = [];
       setReport(undefined);
       setFailure("");
       setFrames({});
+      setMissed({});
     };
   }, [robot, node, namespace]);
 
   if (!robot) return null;
   const cells = failure ? cameraCells(publishedCameras(published), zh, false) : cameraCells(report, zh);
+  const now = performance.now();
   return <section className="node-detail-section node-cameras">
     <span className="node-detail-label"><Camera size={14} />{zh ? "相机" : "Cameras"}</span>
     <div className="node-cameras-grid">
-      {cells.map((cell) => <figure key={cell.view} className={`node-camera${cell.present === false ? " is-missing" : ""}`}>
-        {cell.frames && frames[cell.view]
-          ? <img src={frames[cell.view]} alt={cell.name} />
-          : <div className="node-camera-blank">{cell.badge}</div>}
-        <figcaption>
-          <strong>{cell.name}</strong>
-          {cell.present && <span className={`status status-${cell.tone}`}><i />{cell.badge}</span>}
-          {cell.present && report && <small className="muted">{cell.age}</small>}
-        </figcaption>
-      </figure>)}
+      {cells.map((cell) => {
+        const frame = cell.frames ? frames[cell.view] : undefined;
+        // A camera the robot calls fine whose frame the console has not got says so, not the camera's state.
+        const blank = !cell.frames ? cell.badge
+          : missed[cell.view] ? (zh ? "读不到画面：" : "No frame: ") + missed[cell.view]
+          : zh ? "等待画面" : "Waiting for a frame";
+        return <figure key={cell.view} className={`node-camera${cell.present === false ? " is-missing" : ""}`}>
+          {frame ? <img src={frame.url} alt={cell.name} /> : <div className="node-camera-blank">{blank}</div>}
+          <figcaption>
+            <strong>{cell.name}</strong>
+            {cell.present && <span className={`status status-${cell.tone}`}><i />{cell.badge}</span>}
+            {frame
+              ? <small className="muted">{cameraAge(frame.age + (now - frame.at) / 1000, zh)}</small>
+              : cell.present && report && <small className="muted">{cell.age}</small>}
+          </figcaption>
+        </figure>;
+      })}
     </div>
     {failure && <small role="status" className="muted">{zh ? "读不到相机状态：" : "The cameras' state is not read: "}{failure}</small>}
   </section>;
