@@ -340,7 +340,7 @@ class Recovery:
                 if view in self.stuck:
                     self.event("CameraBack", "%s is no longer stuck: it has sent for %d s" % (view, HEALTHY_SECONDS), "Normal")
                 self.start_over(view)
-            elif state == "ok" and view not in self.stuck:
+            elif state == "ok" and view not in self.ladder:  # one on its ladder says where it is until it starts over
                 self.records[view].update(step=0, attempts=0, next_attempt_at=None)
         down = [view for view, (gone, _) in self.since.items() if gone and view not in self.stuck]
         if self.request and not any(self.since[view][0] for view in self.request[2]):  # back before the Orin reset them

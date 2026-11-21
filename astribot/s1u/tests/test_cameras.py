@@ -194,12 +194,13 @@ def test_the_ladder_restarts_the_driver_resets_the_usb_and_says_stuck(tmp_path):
     assert len(robot.restarts) == 7
     robot.run(1)
     assert robot.restarts[-1] == stopped + 36 and robot.said()["cameras"]["head"]["attempts"] == 1
-    # The frames are back for a moment: said ok, and what was last done stays said.
+    # The frames are back for a moment: said ok, and where it is on the ladder stays said (s1u-03 11-21: back 5 to
+    # 70 s at a time, and a 0th step said while it went on up the ladder).
     restarted = robot.restarts[-1]
     robot.sending.add("head")
     robot.run(2)
     head = robot.said()["cameras"]["head"]
-    assert robot.said()["state"] == "ok" and head["step"] == 0 and head["attempts"] == 0 and head["next_attempt_at"] is None
+    assert robot.said()["state"] == "ok" and head["step"] == 1 and head["attempts"] == 1
     assert head["last_action"] == "driver_restart"
     # Stalled again (the Femto Bolt of 11-13 sent a burst now and then): the ladder goes on where it was, 60 s after
     # the restart, not from its start.
