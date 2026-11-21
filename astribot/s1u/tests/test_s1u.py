@@ -799,8 +799,9 @@ def test_the_orin_resets_a_camera_by_its_serial_once_per_request(tmp_path, monke
     robot.camera_pass()
     assert sent[0].startswith("python3 -c '") and sent[0].endswith("' head_rgbd") and "sudo" not in sent[0]
     result = json.loads((tmp_path / "reset-result").read_text())
-    assert set(result) == {"id", "ok", "detail", "finished_at"}  # the contract with the camera service
+    assert set(result) == {"id", "ok", "detail", "reset", "missing", "finished_at"}  # the contract with the camera service
     assert result["id"] == "a" * 32 and result["ok"] and result["detail"] == "reset ok head_rgbd bus 002 dev 008"
+    assert result["reset"] == ["head_rgbd"] and result["missing"] == []
     robot.camera_pass()
     assert len(sent) == 1  # the same request once
     # A restart of the container: the result beside the request says it was done.
@@ -814,10 +815,13 @@ def test_the_orin_resets_a_camera_by_its_serial_once_per_request(tmp_path, monke
     assert sent[-1].endswith("' head_rgbd left_wrist_rgbd")
     result = json.loads((tmp_path / "reset-result").read_text())
     assert not result["ok"] and result["detail"] == "reset ok head_rgbd bus 002 dev 008; no USB device of left_wrist_rgbd"
+    assert result["reset"] == ["head_rgbd"] and result["missing"] == ["left_wrist_rgbd"]
+    # A reset that did not run says neither: the camera service asks again later.
     (tmp_path / "reset-request").write_text(json.dumps({"id": "c" * 32, "cameras": ["head_rgbd"]}))
     answer[:] = ["", 1]
     robot.camera_pass()
-    assert json.loads((tmp_path / "reset-result").read_text())["detail"] == "PermissionError: [Errno 13]"
+    result = json.loads((tmp_path / "reset-result").read_text())
+    assert result["detail"] == "PermissionError: [Errno 13]" and "reset" not in result and "missing" not in result
     # A reset that hangs (a wedged device) ends with ssh's timeout: done all the same, and not done again.
     (tmp_path / "reset-request").write_text(json.dumps({"id": "f" * 32, "cameras": ["head_rgbd"]}))
 

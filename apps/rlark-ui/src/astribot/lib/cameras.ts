@@ -12,13 +12,13 @@ export interface CameraReport {
   state: "ok" | "slow" | "stale" | "absent";
   fps: number;
   age_seconds: number | null;
-  // Where its recovery is: 0 none, 1 driver restarts, 2 USB reset, 3 stuck (left alone until it has sent for
-  // 5 minutes again).
+  // Where its recovery is: 0 none, 1 driver restarts, 2 USB reset, 3 stuck (out of the ladder until it has sent for
+  // 5 minutes again or moved to another USB port).
   step: number;
   attempts: number;
   next_attempt_at: number | null;
   last_action: string | null;
-  // Stuck: why (相机需要断电或 USB 复位, or 疑似硬件 when a USB reset did not hold).
+  // Stuck: why (相机需要断电或 USB 复位, 疑似硬件 when a USB reset did not hold, or the Orin's USB lacks it).
   last_result: string | null;
   // Stuck: what the Orin showed of it (on the USB or not and where, the vendor's camera process, the Orbbec SDK's streams).
   diagnosis: string | null;

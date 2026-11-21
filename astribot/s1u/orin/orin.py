@@ -14,7 +14,8 @@ declares:
   which: name -> serial). Every minute, where each camera is on the USB (usb: {name: {path, device, speed, hubs}}).
   On request ({"id", "cameras": the vendor's names}), each id done once, also across a restart of this container, the
   result beside it: reset-request, when it restarted the vendor's camera driver and still had no frames, the cameras'
-  USB devices reset (reset-result {"id", "ok", "detail", "finished_at"}); diagnose-request, when it gave a camera up,
+  USB devices reset (reset-result {"id", "ok", "detail", "reset", "missing", "finished_at"}: the names reset and
+  those without a USB device, both left out when the reset did not run); diagnose-request, when it gave a camera up,
   what the Orin shows of each (diagnose-result {"id", "cameras": {name: diagnosis}, "finished_at"}): on the USB or
   not and where, whether the vendor's camera process runs, and for an Orbbec camera the SDK opens (usbfs) whether its
   log has the colour and depth streams (s1u-03 11-21: colour stopped, depth went on, no USB error);
@@ -554,8 +555,9 @@ class Orin:
             print("Camera %s on the Orin (%s): %s" % (action, ", ".join(request["cameras"]), done.get("detail") or done["cameras"]), flush=True)
 
     def reset_cameras(self, names):
-        """{ok: every one done, detail: one line}: the USB devices of the cameras ``names`` reset through usbfs as the
-        Orin's account, whose they are by the cameras' USB rule; no sudo."""
+        """{ok: every one done, detail: one line, reset: the names reset, missing: the names without a USB device}:
+        the USB devices of the cameras ``names`` reset through usbfs as the Orin's account, whose they are by the
+        cameras' USB rule; no sudo. Without reset and missing when the reset did not run."""
         known, _ = self.known()
         if known is None:
             return dict(ok=False, detail="the Orin's host key is not trusted yet")
@@ -563,9 +565,10 @@ class Orin:
         if done.returncode:
             return dict(ok=False, detail=done.stderr.decode(errors="replace").strip().splitlines()[-1][-200:])
         devices = done.stdout.decode().splitlines()
-        missing = [name for name in names if not any(line.startswith(name + " ") for line in devices)]
-        return dict(ok=not missing, detail="; ".join((["reset ok " + ", ".join(devices)] if devices else []) + (
-            ["no USB device of " + ", ".join(missing)] if missing else [])))
+        reset = [name for name in names if any(line.startswith(name + " ") for line in devices)]
+        missing = [name for name in names if name not in reset]
+        return dict(ok=not missing, reset=reset, missing=missing, detail="; ".join(
+            (["reset ok " + ", ".join(devices)] if devices else []) + (["no USB device of " + ", ".join(missing)] if missing else [])))
 
     def camera_facts(self):
         """The cameras' facts on the Orin (CAMERA_FACTS), each one's place on the USB written for the camera service;

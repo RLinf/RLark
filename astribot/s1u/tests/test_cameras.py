@@ -35,10 +35,10 @@ class Robot:
     """A body's cameras under a clock of the test's, with the ladder's doings recorded."""
 
     def __init__(self, tmp_path, body="s1u"):
-        self.now, self.restarts, self.events, self.fails = 0.0, [], [], None
+        self.now, self.restarts, self.events, self.fails, self.busy = 0.0, [], [], None, ""
         self.cameras = cameras.Cameras(BODIES[body], clock=lambda: self.now)
         self.recovery = cameras.Recovery(self.cameras, self.restart, tmp_path, lambda *event: self.events.append(event),
-                                         wall=lambda: 1795000000.0 + self.now)
+                                         wall=lambda: 1795000000.0 + self.now, busy=lambda: self.busy)
         self.sending = set(self.cameras.views)
         self.rate = dict.fromkeys(self.cameras.views, 30)
 
@@ -127,7 +127,7 @@ def test_the_ladder_restarts_the_driver_resets_the_usb_and_says_stuck(tmp_path):
     (tmp_path / "reset-result").write_text(json.dumps(dict(id="0" * 32, ok=True, detail="reset ok old")))
     robot.run(10)
     assert len(robot.restarts) == 3
-    (tmp_path / "reset-result").write_text(json.dumps(dict(id=request["id"], ok=True, detail="reset ok head_rgbd bus 002 dev 008")))
+    (tmp_path / "reset-result").write_text(json.dumps(dict(id=request["id"], ok=True, reset=["head_rgbd"], missing=[], detail="reset ok head_rgbd bus 002 dev 008")))
     robot.run(1)
     assert len(robot.restarts) == 4  # the driver once more after the reset
     assert robot.events[-2:] == [
@@ -155,19 +155,30 @@ def test_the_ladder_restarts_the_driver_resets_the_usb_and_says_stuck(tmp_path):
     assert robot.restarts[-1] == stopped + 36 and robot.said()["cameras"]["wrist_left"]["attempts"] == 1
     assert robot.events[-1] == ("CameraDriverRestart", "the camera driver restarted for wrist_left (no frames)", "Normal")
     robot.sending.add("wrist_left")
-    # Nothing more: no restart on a timer, which would blank the cameras that work.
+    # While a Run uses the robot, no restart for the stuck head: it would blank the cameras that work.
+    robot.busy = "station: r-1"
     events = len(robot.events)
     robot.run(7200)
     assert len(robot.restarts) == 5 and len(robot.events) == events and robot.said()["state"] == "stuck"
-    # A moment of frames is not out of stuck: stalled again, stuck again at once, and nothing done.
+    # Not in use: its driver once an hour, from an hour after it was given up; it stays stuck meanwhile.
+    robot.busy = ""
+    robot.run(1)
+    assert robot.restarts[-1] == robot.now and robot.events[-1] == (
+        "CameraDriverRestart", "the camera driver restarted for head (stuck, the robot not in use)", "Normal")
+    assert robot.said()["state"] == "stuck" and robot.said()["cameras"]["head"]["last_result"] == cameras.STUCK
+    retried = robot.now
+    # A moment of frames is not out of stuck: stalled again, stuck again at once, and nothing until the next hour.
     robot.sending.add("head")
     robot.run(2)
     assert robot.said()["state"] == "ok" and robot.said()["cameras"]["head"]["step"] == 3
     robot.sending.discard("head")
     robot.run(6)
     assert robot.said()["state"] == "stuck"
-    robot.run(600)
-    assert len(robot.restarts) == 5 and len(robot.events) == events
+    robot.run(retried + 3599 - robot.now)
+    assert len(robot.restarts) == 6
+    robot.run(1)
+    assert robot.restarts[-1] == retried + 3600
+    events = len(robot.events)
     # Five minutes of frames (someone powered it off and on, reseated it): out of stuck, and a stall is the ladder's
     # again, from its start since the others have sent all along.
     robot.sending.add("head")
@@ -180,7 +191,7 @@ def test_the_ladder_restarts_the_driver_resets_the_usb_and_says_stuck(tmp_path):
     robot.sending.discard("head")
     stopped = robot.now
     robot.run(35)
-    assert len(robot.restarts) == 5
+    assert len(robot.restarts) == 7
     robot.run(1)
     assert robot.restarts[-1] == stopped + 36 and robot.said()["cameras"]["head"]["attempts"] == 1
     # The frames are back for a moment: said ok, and what was last done stays said.
@@ -207,7 +218,7 @@ def test_a_camera_that_stalls_again_soon_after_its_usb_reset_is_stuck_at_once_an
     robot.sending = {"torso", "wrist_left", "wrist_right"}
     robot.run(510)
     request = json.loads((tmp_path / "reset-request").read_text())
-    (tmp_path / "reset-result").write_text(json.dumps(dict(id=request["id"], ok=True, detail="reset ok head_rgbd bus 002 dev 012")))
+    (tmp_path / "reset-result").write_text(json.dumps(dict(id=request["id"], ok=True, reset=["head_rgbd"], missing=[], detail="reset ok head_rgbd bus 002 dev 012")))
     robot.run(1)
     assert len(robot.restarts) == 4
     robot.sending.add("head")  # back 1 s after the reset, for 100 s
@@ -230,15 +241,21 @@ def test_a_camera_that_stalls_again_soon_after_its_usb_reset_is_stuck_at_once_an
     robot.sending.add("wrist_left")
     robot.run(1)
     assert robot.said()["state"] == "stuck"
-    # A new USB device alone (re-enumerated, replugged) is not out of stuck: frames are, or a fresh start of this
-    # process when the ROS master restarts.
-    (tmp_path / "usb").write_text(json.dumps({"head_rgbd": dict(path="2-2", device=3, speed=5000, hubs=[])}))
+    # A new device number on the same port (re-enumerated: every USB reset does it) is not out of stuck.
+    (tmp_path / "usb").write_text(json.dumps({"head_rgbd": dict(path="2-3.3.3", device=12, speed=5000, hubs=["0bda:0420", "0424:5806"])}))
     robot.run(1)
     assert robot.said()["state"] == "stuck" and len(robot.restarts) == 5
     # The orin container silent: the Event says so after 300 s.
     robot.run(300 - 38)
     assert robot.events[-1] == ("CameraStuck", "head: " + head["last_result"] + "；orin 容器没有回答", "Warning")
     assert not (tmp_path / "diagnose-request").exists()  # nobody waits for it any more: not done late
+    # Moved to a root port of its own, as usb_advice says: out of stuck, and its ladder from the start at once.
+    (tmp_path / "usb").write_text(json.dumps({"head_rgbd": dict(path="2-2", device=3, speed=5000, hubs=[])}))
+    robot.run(1)
+    head = robot.said()["cameras"]["head"]
+    assert robot.events[-2] == ("CameraBack", "head is no longer stuck: it moved to USB 2-2 (was 2-3.3.3)", "Normal")
+    assert robot.events[-1] == ("CameraDriverRestart", "the camera driver restarted for head (no frames)", "Normal")
+    assert robot.said()["state"] == "recovering" and head["step"] == 1 and head["attempts"] == 1 and len(robot.restarts) == 6
 
 
 def test_a_driver_restart_for_another_camera_does_not_make_a_reset_camera_suspect(tmp_path):
@@ -248,7 +265,7 @@ def test_a_driver_restart_for_another_camera_does_not_make_a_reset_camera_suspec
     robot.sending = {"torso", "wrist_left", "wrist_right"}
     robot.run(510)
     request = json.loads((tmp_path / "reset-request").read_text())
-    (tmp_path / "reset-result").write_text(json.dumps(dict(id=request["id"], ok=True, detail="reset ok head_rgbd bus 002 dev 012")))
+    (tmp_path / "reset-result").write_text(json.dumps(dict(id=request["id"], ok=True, reset=["head_rgbd"], missing=[], detail="reset ok head_rgbd bus 002 dev 012")))
     robot.run(1)
     robot.sending.add("head")
     robot.run(100)
@@ -315,14 +332,60 @@ def test_the_vendors_service_away_is_no_attempt_and_the_orins_silence_ends_the_w
     robot.sending = {"head", "torso"}
     robot.run(301)
     assert robot.said()["state"] == "ok" and not robot.recovery.ladder
-    # An orin container that does not answer: after 300 s the ladder goes on to the restart and to stuck.
+    # An orin container that does not answer: after 300 s the reset is asked again after the pause, no driver
+    # restart for a reset that did not run, and never stuck for it.
     robot.sending = {"head"}
     robot.run(6 + 30 + 60 + 120 + 240)
-    assert robot.said()["cameras"]["torso"]["step"] == 2
+    torso = robot.said()["cameras"]["torso"]
+    assert torso["step"] == 2 and len(robot.restarts) == 4
+    asked = json.loads((tmp_path / "reset-request").read_text())["id"]
     robot.run(300)
-    assert robot.said()["cameras"]["torso"]["last_result"] == "the orin container did not answer; driver restarted"
-    robot.run(60)
-    assert robot.said()["state"] == "stuck" and robot.said()["cameras"]["torso"]["last_result"] == cameras.STUCK
+    torso = robot.said()["cameras"]["torso"]
+    assert torso["last_result"] == "the orin container did not answer" and torso["next_attempt_at"] == round(robot.recovery.wall()) + 480
+    assert robot.events[-1] == ("CameraUsbReset", "USB reset of torso: the orin container did not answer", "Warning")
+    assert len(robot.restarts) == 4 and not (tmp_path / "reset-request").exists()
+    robot.run(479)
+    assert not (tmp_path / "reset-request").exists()
+    robot.run(1)
+    assert json.loads((tmp_path / "reset-request").read_text())["id"] != asked and robot.said()["state"] == "recovering"
+    # It did not run on the Orin (ssh away): asked again after 900 s, and the head that works is not blanked.
+    request = json.loads((tmp_path / "reset-request").read_text())
+    (tmp_path / "reset-result").write_text(json.dumps(dict(id=request["id"], ok=False, detail="ssh: connect timed out")))
+    robot.run(1)
+    torso = robot.said()["cameras"]["torso"]
+    assert torso["last_result"] == "ssh: connect timed out" and torso["step"] == 2 and len(robot.restarts) == 4
+    assert torso["next_attempt_at"] == round(robot.recovery.wall()) + 900 and robot.said()["state"] == "recovering"
+    # Not on the Orin's USB at all: stuck at once, saying the reset was not done.
+    robot.run(900)
+    request = json.loads((tmp_path / "reset-request").read_text())
+    (tmp_path / "reset-result").write_text(json.dumps(dict(id=request["id"], ok=False, reset=[], missing=["torso_rgbd"],
+                                                           detail="no USB device of torso_rgbd")))
+    robot.run(1)
+    torso = robot.said()["cameras"]["torso"]
+    assert robot.said()["state"] == "stuck" and torso["last_result"] == cameras.NO_DEVICE and len(robot.restarts) == 4
+    assert json.loads((tmp_path / "diagnose-request").read_text())["cameras"] == ["torso_rgbd"]
+
+
+def test_the_driver_restart_after_a_usb_reset_counts_for_every_camera_down_with_restarts_to_go(tmp_path):
+    """Not one for the reset camera and another for a camera that stalled meanwhile a second later, in the middle of
+    the first's driver start."""
+    robot = Robot(tmp_path)
+    robot.sending = {"torso", "wrist_left", "wrist_right"}
+    robot.run(475)
+    robot.sending.discard("torso")
+    robot.run(35)
+    request = json.loads((tmp_path / "reset-request").read_text())
+    assert request["cameras"] == ["head_rgbd"] and len(robot.restarts) == 3
+    robot.run(5)  # the torso down for 39 s while the orin container works
+    (tmp_path / "reset-result").write_text(json.dumps(dict(id=request["id"], ok=True, reset=["head_rgbd"], missing=[],
+                                                           detail="reset ok head_rgbd bus 002 dev 012")))
+    robot.run(1)
+    assert robot.restarts[-1] == robot.now and len(robot.restarts) == 4
+    assert robot.events[-1] == ("CameraDriverRestart", "the camera driver restarted for head, torso (after the USB reset of head)", "Normal")
+    torso = robot.said()["cameras"]["torso"]
+    assert torso["step"] == 1 and torso["attempts"] == 1 and torso["next_attempt_at"] == round(robot.recovery.wall()) + 60
+    robot.run(59)
+    assert len(robot.restarts) == 4
 
 
 def test_a_slow_camera_gets_the_driver_restart_only_and_once_an_hour(tmp_path):

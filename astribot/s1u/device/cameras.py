@@ -26,14 +26,19 @@ the Node:
        cameras blank for about 25 s), up to 3 times, 60 s apart doubling to 900 s; one restart counts for every camera
        down that has restarts to go. It is also how the driver starts after a boot: the vendor's monitor starts it on
        True. A slow camera gets this step only, once an hour.
-    2. its USB device reset on the Orin by the orin container, then the driver restarted once more (s1u_01 11-13
-       22:40: the head camera stalled inside the Orbbec SDK and no driver restart brought it back). A request the
-       frames came back before is withdrawn.
+    2. its USB device reset on the Orin by the orin container, then the driver restarted once more, which counts for
+       every other camera down that has restarts to go (s1u_01 11-13 22:40: the head camera stalled inside the
+       Orbbec SDK and no driver restart brought it back). A request the frames came back before is withdrawn. A
+       reset that did not run (ssh, the Orin or the orin container away) is asked again after the camera's pause,
+       nothing restarted; a camera the Orin's USB lacks is stuck at once (NO_DEVICE).
     3. stuck: 相机需要断电或 USB 复位. A camera that stalls again within 5 minutes of its USB reset is stuck at once:
        疑似硬件 (s1u-03 11-21: the head camera's colour stream stopped 25 s to 3 min after each reset).
 A camera's ladder starts over once it has sent for 5 minutes: one that comes back for a moment and stalls again goes
-on up it. A stuck camera is left alone, its driver restarted for nobody on a timer (each restart blanks the cameras
-that work), until it has sent for 5 minutes again; the others keep their ladder. Its Event CameraStuck carries what
+on up it. A stuck camera leaves the ladder until it has sent for 5 minutes again or moved to another USB port
+(rewired; a reset keeps the port), when its ladder starts over; the others keep theirs. Its driver is restarted once
+an hour, and only while nothing marks the robot in use (/run/rlark/in-use): each restart blanks the cameras that work
+(s1u-03 11-21: hourly under any Run, 89 restarts of every camera in 26 h), and it brought the head back for minutes
+to half an hour at a time. Its Event CameraStuck carries what
 the orin container found on the Orin (diagnosis: on the USB or not and where, the vendor's camera process, an Orbbec
 camera's colour and depth streams in the SDK's log). Nothing is done in the first 90 s.
 
@@ -67,7 +72,7 @@ from xmlrpc.client import ServerProxy
 
 import cv2
 import numpy
-from power import vital
+from power import in_use, vital
 
 # Each view by the vendor driver's name of its camera, in the wall's order.
 VENDOR = {"head": "head_rgbd", "torso": "torso_rgbd", "wrist_left": "left_wrist_rgbd", "wrist_right": "right_wrist_rgbd"}
@@ -84,11 +89,13 @@ SLOW_FPS, SLOW_SECONDS, SLOW_RESTART_SECONDS = 10.0, 30.0, 3600.0
 GRACE_SECONDS = 90.0
 SETTLE_SECONDS = 30.0  # cameras down for less are left alone: a driver restart blanks them for about 25 s
 HEALTHY_SECONDS = 300.0  # a camera's ladder starts over once it has sent this long, and a stuck one leaves stuck
+STUCK_RETRY_SECONDS = 3600.0  # stuck cameras' driver restarted this often while nothing marks the robot in use
 RESTART_SECONDS, RESTARTS = (60.0, 900.0), 3
 CALL_SECONDS = 30.0  # the vendor's monitor answers a call within this, or the call failed
 ANSWER_SECONDS = 300.0  # the orin container's answer is waited for this long
 STUCK = "相机需要断电或 USB 复位"
 SUSPECT = "疑似硬件：USB 复位后 %d 秒又停，需要断电或现场检查接线"
+NO_DEVICE = "Orin 的 USB 上没有这路相机（camera_info.json 的序列号），USB 复位没做"
 
 ACCOUNT = "/var/run/secrets/kubernetes.io/serviceaccount"
 STATE, ANNOTATION = "rlark.io/camera-state", "rlark.io/cameras"
@@ -189,8 +196,8 @@ class Recovery:
     the vendor's camera driver (it raises when the vendor's service is away); ``event(reason, message, kind)`` tells
     the Node; ``directory`` is shared with the orin container."""
 
-    def __init__(self, cameras, restart, directory, event, wall=time.time):
-        self.cameras, self.restart, self.event, self.wall = cameras, restart, event, wall
+    def __init__(self, cameras, restart, directory, event, wall=time.time, busy=in_use):
+        self.cameras, self.restart, self.event, self.wall, self.busy = cameras, restart, event, wall, busy
         self.directory = Path(directory)
         self.started = cameras.clock()
         self.records = {view: dict(step=0, attempts=0, next_attempt_at=None, last_action=None, last_result=None,
@@ -200,10 +207,12 @@ class Recovery:
         # Each camera's place on the ladder, from its first step until it has sent for HEALTHY_SECONDS.
         self.ladder = defaultdict(lambda: dict(step=0, attempts=0, pause=RESTART_SECONDS[0], next_at=0.0, reset=False))
         self.stuck = set()  # the cameras the ladder gave up on
+        self.retried_at = None  # when the stuck cameras' driver was last restarted, or a camera given up
         self.reset_at = {}  # when each camera's USB device was last reset
         self.request = None  # the USB reset asked for and not answered yet: (id, when, views)
         self.diagnosing = None  # the stuck cameras' facts asked for and not answered yet: (id, when, views)
         self.usb = {}  # each camera's USB device as the orin container last found it, by the vendor's name
+        self.paths = {}  # each camera's USB path as last found on the bus
         for action in ("reset", "diagnose"):  # an earlier run's request, which nobody waits for
             (self.directory / (action + "-request")).unlink(missing_ok=True)
 
@@ -248,6 +257,15 @@ class Recovery:
         if usb == self.usb:
             return
         self.usb = usb
+        for view in self.cameras.views:
+            # Moved to another USB port (rewired as usb_advice says, a reset keeps the port): out of stuck, its ladder
+            # from the start.
+            path = usb.get(VENDOR[view], {}).get("path")
+            if view in self.stuck and path and self.paths.get(view, path) != path:
+                self.start_over(view)
+                self.event("CameraBack", "%s is no longer stuck: it moved to USB %s (was %s)" % (view, path, self.paths[view]), "Normal")
+            if path:
+                self.paths[view] = path
         paths = {view: usb[VENDOR[view]]["path"] for view in self.cameras.views if VENDOR[view] in usb}
         hubs = defaultdict(list)  # the cameras on each hub (a camera on a root port: on that port)
         for view, path in paths.items():
@@ -262,8 +280,27 @@ class Recovery:
         for view in self.cameras.views:
             self.records[view].update(usb=usb.get(VENDOR[view]), usb_advice=advice.get(view))
 
+    def start_over(self, view):
+        """``view``'s ladder from its start, out of stuck."""
+        self.ladder.pop(view, None)
+        self.reset_at.pop(view, None)
+        self.stuck.discard(view)
+        self.records[view].update(step=0, attempts=0, next_attempt_at=None, diagnosis=None)
+
+    def book(self, views, restarted, result, now):
+        """A driver restart for ``views``: an attempt each, and their pauses doubled. The vendor's service away is no
+        attempt (a USB reset would not bring it back), and no backoff: tried again in a minute."""
+        for view in views:
+            place = self.ladder[view]
+            place.update(step=1, attempts=place["attempts"] + restarted,
+                         next_at=now + (place["pause"] if restarted else RESTART_SECONDS[0]))
+            if restarted:
+                place["pause"] = min(place["pause"] * 2, RESTART_SECONDS[1])
+        self.mark(views, now, last_action="driver_restart", last_result=result)
+
     def give_up(self, reasons, now):
         """The cameras ``reasons`` names stuck, each for its reason, and their facts asked of the orin container."""
+        self.retried_at = now
         for view, reason in reasons.items():
             self.stuck.add(view)
             self.records[view].update(step=3, attempts=self.ladder[view]["attempts"], next_attempt_at=None,
@@ -300,12 +337,9 @@ class Recovery:
             if not down and view in self.ladder and now - self.since[view][1] >= HEALTHY_SECONDS:
                 # Sent for 5 minutes: its ladder starts over, a stuck camera with it. One that comes back for a moment
                 # and stalls again goes on up the ladder, or stays stuck.
-                del self.ladder[view]
-                self.reset_at.pop(view, None)
-                self.records[view].update(step=0, attempts=0, next_attempt_at=None, diagnosis=None)
                 if view in self.stuck:
-                    self.stuck.remove(view)
                     self.event("CameraBack", "%s is no longer stuck: it has sent for %d s" % (view, HEALTHY_SECONDS), "Normal")
+                self.start_over(view)
             elif state == "ok" and view not in self.stuck:
                 self.records[view].update(step=0, attempts=0, next_attempt_at=None)
         down = [view for view, (gone, _) in self.since.items() if gone and view not in self.stuck]
@@ -314,19 +348,44 @@ class Recovery:
             self.request = None
         if now - self.started < GRACE_SECONDS:
             return
+        # Down for 30 s, each camera by its own stall: a driver restart's blank of another's is no step.
+        active = [view for view in down if now - self.since[view][1] >= SETTLE_SECONDS]
+        restart = [view for view in active if self.ladder[view]["attempts"] < RESTARTS]
         if self.request:
             result = self.answer("reset", self.request, now)
             if result is None:
                 return
             views, self.request = self.request[2], None
-            detail = result["detail"] if result else "the orin container did not answer"
-            self.event("CameraUsbReset", "USB reset of %s: %s" % (", ".join(views), detail), "Normal")
-            _, restarted = self.restart_drivers(views, "after the USB reset")
-            if result.get("ok"):  # from the restart's end: frames while the driver restarts are not the reset's
-                self.reset_at.update(dict.fromkeys(views, self.cameras.clock()))
-            for view in views:
-                self.ladder[view].update(reset=True, next_at=now + RESTART_SECONDS[0])
-            self.mark(views, now, last_action="usb_reset", last_result="%s; driver %s" % (detail, restarted))
+            detail = result.get("detail", "the orin container did not answer")
+            reset = [view for view in views if VENDOR[view] in result.get("reset", ())]
+            missing = [view for view in views if VENDOR[view] in result.get("missing", ())]
+            self.event("CameraUsbReset", "USB reset of %s: %s" % (", ".join(views), detail), "Normal" if result.get("ok") else "Warning")
+            # Not run (ssh, the Orin or the orin container away): asked again after its pause, nothing blanked.
+            unrun = [view for view in views if view not in reset + missing]
+            for view in unrun:
+                place = self.ladder[view]
+                place["next_at"] = now + place["pause"]
+                place["pause"] = min(place["pause"] * 2, RESTART_SECONDS[1])
+            self.mark(unrun, now, last_action="usb_reset", last_result=detail)
+            if missing:
+                self.give_up(dict.fromkeys(missing, NO_DEVICE), now)
+            if reset:
+                # The driver once more, which counts for every other camera down that has restarts to go.
+                others = [view for view in restart if view not in views]
+                restarted, said = self.restart_drivers(reset + others, "after the USB reset" + (
+                    " of %s" % ", ".join(reset) if others else ""))
+                # From the restart's end: frames while the driver restarts are not the reset's.
+                self.reset_at.update(dict.fromkeys(reset, self.cameras.clock()))
+                for view in reset:
+                    self.ladder[view].update(reset=True, next_at=now + RESTART_SECONDS[0])
+                self.mark(reset, now, last_action="usb_reset", last_result="%s; driver %s" % (detail, said))
+                self.book(others, restarted, said, now)
+            return
+        # Stuck and still without frames: the driver once an hour, only while nobody uses the robot.
+        dark = [view for view in self.stuck if states[view] in ("stale", "absent")]
+        if dark and now - self.retried_at >= STUCK_RETRY_SECONDS and not self.busy():
+            self.retried_at = now
+            self.restart_drivers(sorted(dark, key=VIEWS.index), "stuck, the robot not in use")
             return
         if not down:
             slow = [view for view, state in states.items() if state == "slow" and view not in self.stuck]
@@ -337,8 +396,6 @@ class Recovery:
                     self.records[view].update(step=1, attempts=1, last_action="driver_restart", last_result=result,
                                               next_attempt_at=round(self.wall() + SLOW_RESTART_SECONDS))
             return
-        # Down for 30 s, each camera by its own stall: a driver restart's blank of another's is no step.
-        active = [view for view in down if now - self.since[view][1] >= SETTLE_SECONDS]
         # Back after its USB reset and stalled again within 5 minutes: the reset does not hold, nor would a restart.
         held = {view: self.cameras.frames[view]["received"] - self.reset_at[view] for view in active if view in self.reset_at
                 and self.cameras.frames[view]["received"] is not None}
@@ -347,20 +404,10 @@ class Recovery:
             self.give_up(suspect, now)
             return
         due = [view for view in active if now >= self.ladder[view]["next_at"]]
-        restart = [view for view in active if self.ladder[view]["attempts"] < RESTARTS]
         unreset = [view for view in due if not self.ladder[view]["reset"]]
         if set(due) & set(restart):
             # One restart is every camera's that still has restarts to go.
-            restarted, result = self.restart_drivers(restart, "no frames")
-            for view in restart:
-                place = self.ladder[view]
-                # The vendor's service away is no attempt (a USB reset would not bring it back), and no backoff: tried
-                # again in a minute.
-                place.update(step=1, attempts=place["attempts"] + restarted,
-                             next_at=now + (place["pause"] if restarted else RESTART_SECONDS[0]))
-                if restarted:
-                    place["pause"] = min(place["pause"] * 2, RESTART_SECONDS[1])
-            self.mark(restart, now, last_action="driver_restart", last_result=result)
+            self.book(restart, *self.restart_drivers(restart, "no frames"), now)
         elif unreset:
             for view in unreset:
                 self.ladder[view]["step"] = 2

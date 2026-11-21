@@ -249,13 +249,17 @@ func TestS1URobotRendersTheDeviceLayerAndEachPayload(t *testing.T) {
 		t.Fatalf("station %+v, volume %+v, grace %d", station, volume, *pod.TerminationGracePeriodSeconds)
 	}
 	// The cameras: served on the node's port the Gateway reaches through the Pod's proxy, ready once it answers; it
-	// and the orin container share the directory a USB reset is asked through, and it holds nothing of the host's.
+	// and the orin container share the directory a USB reset is asked through, and of the host's it reads only whether
+	// the robot is in use (a stuck camera's driver is restarted only while it is not).
 	video, orin := pod.Containers[slices.Index(names, "video")], pod.Containers[slices.Index(names, "orin")]
 	shared := func(c corev1.Container) bool {
 		return slices.ContainsFunc(c.VolumeMounts, func(m corev1.VolumeMount) bool { return m.Name == "camera" && m.MountPath == "/camera" })
 	}
+	inUse := slices.ContainsFunc(video.VolumeMounts, func(m corev1.VolumeMount) bool {
+		return m.Name == "in-use" && m.MountPath == "/in-use" && m.ReadOnly
+	})
 	if video.ReadinessProbe.HTTPGet.Path != "/cameras" || video.ReadinessProbe.HTTPGet.Port.IntValue() != 18891 ||
-		len(video.VolumeMounts) != 1 || !shared(video) || !shared(orin) || !strings.HasSuffix(video.Command[2], "/s1u/device/cameras.py") {
+		len(video.VolumeMounts) != 2 || !shared(video) || !inUse || !shared(orin) || !strings.HasSuffix(video.Command[2], "/s1u/device/cameras.py") {
 		t.Fatalf("video %+v", video)
 	}
 	// The Pod fits what the node profile leaves the Pods, with 256 MiB for the cluster's own Pods: its requests

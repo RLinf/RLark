@@ -1263,11 +1263,11 @@ components:
         state: {type: string, enum: [ok, slow, stale, absent], description: 'slow: under 10 frames a second for 30 s; stale: no frame for 5 s; absent: none since the camera service started'}
         fps: {type: number, description: Frames a second over the last 5 s}
         age_seconds: {type: number, nullable: true, description: Seconds since the newest frame; null before the first}
-        step: {type: integer, enum: [0, 1, 2, 3], description: 'Where its recovery is: 0 none, 1 driver restarts, 2 USB reset, 3 stuck (left alone until it has sent for 5 minutes again)'}
+        step: {type: integer, enum: [0, 1, 2, 3], description: 'Where its recovery is: 0 none, 1 driver restarts, 2 USB reset, 3 stuck (out of the ladder until it has sent for 5 minutes again or moved to another USB port; its driver restarted once an hour while the robot is not in use)'}
         attempts: {type: integer, description: Driver restarts done in this round of the recovery}
         next_attempt_at: {type: integer, nullable: true, description: When the recovery acts next (Unix seconds)}
         last_action: {type: string, nullable: true, enum: [driver_restart, usb_reset, stuck]}
-        last_result: {type: string, nullable: true, description: 'Stuck: why (相机需要断电或 USB 复位; 疑似硬件 when it stalled again within 5 minutes of its USB reset)'}
+        last_result: {type: string, nullable: true, description: 'Stuck: why (相机需要断电或 USB 复位; 疑似硬件 when it stalled again within 5 minutes of its USB reset; Orin 的 USB 上没有这路相机 when the reset found no device). At step 2: the USB reset''s result, or why it did not run'}
         diagnosis: {type: string, nullable: true, description: 'Stuck: what the Orin showed of it (on the USB or not and where, the vendor camera process, the Orbbec SDK colour and depth streams)'}
         usb:
           type: object
