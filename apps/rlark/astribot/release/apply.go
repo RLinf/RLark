@@ -118,6 +118,13 @@ func (r *Run) changes(ctx context.Context, stage string, current State) ([]Chang
 			return changes, nil
 		}
 		for _, cluster := range slices.Sorted(maps.Keys(r.Desired.Clusters)) {
+			retired, err := r.retired(ctx, cluster)
+			if err != nil {
+				return nil, err
+			}
+			for _, name := range retired {
+				changes = append(changes, Change{Stage: stage, What: cluster + " namespace " + name, From: "present"})
+			}
 			for _, name := range StationDaemonSets {
 				has, made, err := r.stationDaemonSet(ctx, cluster, name)
 				if err != nil {
@@ -513,6 +520,17 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 		}
 	case "station-agents":
 		for _, name := range slices.Sorted(maps.Keys(desired.Clusters)) {
+			if r.Tree != nil {
+				retired, err := r.retired(ctx, name)
+				if err != nil {
+					return fmt.Errorf("cluster %s: %w", name, err)
+				}
+				for _, namespace := range retired {
+					if err := site.Members[name].CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+						return fmt.Errorf("cluster %s: namespace %s: %w", name, namespace, err)
+					}
+				}
+			}
 			for _, daemonSet := range StationDaemonSets {
 				// The DaemonSet's controller writes its status meanwhile: a write that conflicts reads it anew.
 				if err := r.retryWrite(ctx, func() error {
@@ -844,6 +862,22 @@ func (r *Run) stationDaemonSet(ctx context.Context, cluster, name string) (has, 
 		metav1.SetMetaDataAnnotation(&made.ObjectMeta, rolloutAnnotation, "{}")
 	}
 	return has, made, nil
+}
+
+// retired lists the RetiredNamespaces the cluster still has and is not removing already.
+func (r *Run) retired(ctx context.Context, cluster string) ([]string, error) {
+	var present []string
+	for _, name := range RetiredNamespaces {
+		namespace, err := r.Site.Members[cluster].CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) || err == nil && namespace.DeletionTimestamp != nil {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("cluster %s: namespace %s: %w", cluster, name, err)
+		}
+		present = append(present, name)
+	}
+	return present, nil
 }
 
 // stationDaemonSetView is what a run compares of a Station DaemonSet, as JSON has it.

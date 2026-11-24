@@ -1333,3 +1333,41 @@ func TestStationDaemonSetsAreMadeWhatTheTreeStates(t *testing.T) {
 		t.Errorf("a run whose Station agents were not replaced: %v", err)
 	}
 }
+
+// What a site ran by hand beside Station (station-forwarder's namespace) goes with the stage that rolls the gateways
+// that do it now, and a run without a tree leaves it.
+func TestARetiredNamespaceGoesWithTheStationAgents(t *testing.T) {
+	s := newFakeSite(t)
+	_, environment, release := writeFiles(t)
+	desired := environment.Desired(release, testClusters)
+	ctx := context.Background()
+	var out bytes.Buffer
+	s.create(s.members["office"], &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "rlark-station-system"}})
+	run := newRun(t, s, environment, desired, &out)
+	run.Tree = nil
+	if err := run.Apply(ctx); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if _, err := s.members["office"].CoreV1().Namespaces().Get(ctx, "rlark-station-system", metav1.GetOptions{}); err != nil {
+		t.Fatalf("a run without a tree removed it: %v", err)
+	}
+	run = newRun(t, s, environment, desired, &out)
+	current, _ := run.Site.Read(ctx)
+	changes, err := run.Plan(ctx, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, change := range changes {
+		lines = append(lines, strings.Join(strings.Fields(change.String()), " "))
+	}
+	if want := "station-agents office namespace rlark-station-system: present -> (none)"; !slices.Contains(lines, want) {
+		t.Fatalf("the plan is\n%s", strings.Join(lines, "\n"))
+	}
+	if err := run.Apply(ctx); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if _, err := s.members["office"].CoreV1().Namespaces().Get(ctx, "rlark-station-system", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("still there: %v", err)
+	}
+}

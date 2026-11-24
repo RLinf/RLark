@@ -70,6 +70,21 @@ astribot/release/build.sh base <RLark 提交>                      # 安装器�
 - `s1u-robot` v1.7.0（相机归 RLark）：`bodies.json` 加了 `torso`，`video` 容器换成相机服务（端口 18891），`/services/s1u-video.sock`、`/viewers`、WebRTC 和 `orin` 读的 `/run/rlark/s1u/camera-reset-request` 都没有了。它要的 Fleet 是相机那次改动之后的 main：`torso` 是录制相机，设备层不再重启相机驱动、不再调 `camera_control_command`，Dashboard 经 Gateway 看相机。发布文件里 `deviceImage` 换成按那个 Fleet 提交构建的镜像、`--fleet` 写那个提交，和这个 Addon 版本一起 `apply`。Fleet main 还在 50d1eb37 时不要上这个版本。
 - `s1u-robot` v1.7.1（相机恢复按相机走）：每路相机各自的恢复阶梯；USB 复位后 5 分钟内又停即疑似硬件、直接 stuck；stuck 的相机只在机器人空闲（`/run/rlark/in-use` 为空）时每小时重启一次驱动，`video` 容器因此只读挂载 `/run/rlark/in-use`；stuck 带 `orin` 采的诊断，每路相机带 USB 位置和改接建议。清单变了（新挂载），所以 `rlarkctl` 和 agent 镜像要按这个提交重建（Addon 目录编译在里面）。不依赖 Fleet 的改动。
 
+## 提高文档级别的改动（分两次 apply）
+
+阶段 `controller` 的门 `gateways-understand: N` 在 `station-agents`（换网关）之前：新级别的 controller 要等所有网关先认得新文档。所以给文档加字段的提交（`documentLevel` 加一）分两次上线，两次用同一个提交（同一棵树、同一个 `rlarkctl`）：
+
+1. 只换 `station-wireguard`（快速上线 `--image station-wireguard=…`），`station-controller` 沿用上一个发布：`controller` 阶段没有变化，门不查；`station-agents` 按树换掉各集群的 Station DaemonSet，网关报到新级别。
+2. 所有有文档的成员的网关都报到新级别后（NetworkEnrollment 的 `status.observation.gateway.documentLevel`；离线的节点上线后会换），从第一次的发布再生成一个只多 `--image station-controller=…` 的发布，照常 `apply`。
+
+一次带上两个镜像的发布会停在 `controller` 的门前，不改任何东西。
+
+## 发布删掉的手装对象
+
+`release.RetiredNamespaces`（`apps/rlark/astribot/release/site.go`）是站点曾在 Station 旁边手装、现在由 Station 自己做的东西所在的命名空间。带树的运行在 `station-agents` 阶段、换 Station DaemonSet 之前从每个成员集群删掉它们（计划里一行 `<集群> namespace <名字>: present -> (none)`；`--back` 不删也不恢复）；发布账号只对这几个名字有 `delete`（`astribot/release/member-rbac.yaml`）。不手工 `kubectl delete`。
+
+- `rlark-station-system`：办公室集群里的 `rlark-station-nas-forwarder`（station-forwarder，`imagePullPolicy: Never` 的手装镜像，只放 `10.254.240.4` 到 NAS 的 445）。删掉 Pod 不动它装的 iptables 规则（它从不删自己的规则），所以在新的转发生效前 196 照常能挂 NAS；声明了 `forward` 之后，cailiang 的网关删掉这些带注释 `rlark-station-forwarder-v1` 的规则。机器上的 `/var/lib/rlark-station-forwarder/` 和容器运行时里的镜像 `docker.io/library/rlark-station-forwarder` 不再有人用，留着无害，节点重装时没了。
+
 ## 上线
 
 在管理机上，以 root，在 `astribot/release/` 下：
@@ -131,4 +146,3 @@ rlarkctl release apply -e environments/live.yaml --to /var/lib/rlark/release/run
     -t <仓库>/csi-rclone/csi-driver-rclone:v0.2.0-ks3.3 /abs/new/dir
   ```
   新摘要写进 `pinned.yaml` 的 `csi-rclone`，在 `addons` 阶段上线。替换插件 Pod 会断开该节点所有 rclone 卷。Addon 设了 `nodeUpdateStrategy=OnDelete` 的集群，确认没有 Pod 在用卷后逐个节点替换；默认的 `RollingUpdate` 下，新的 `rcloneImage` 会自己滚完每个节点、断开所有挂载，所以发布新摘要前先看各集群的取值。
-- `station-forwarder`：`astribot/station-forwarder/Dockerfile`。

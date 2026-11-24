@@ -1,7 +1,7 @@
 # What the release command may do in a member cluster, as the ServiceAccount rlark-system/rlark-release whose
 # credential is the cluster's in the management plane (rlark-release-member-credentials/release-<cluster>,
 # release.IssueMemberCredential): the cluster agent's and Station's Deployments and DaemonSets it changes, the Pods and
-# Nodes it reads them back by, and the member definitions of a release's tree (crds-rbac), which it can write only
+# Nodes it reads them back by, the namespaces it retires, and the member definitions of a release's tree (crds-rbac), which it can write only
 # holding what they grant (escalate, bind). Every release writes this file again into every member cluster, so a
 # release that needs more states it here.
 apiVersion: v1
@@ -41,6 +41,11 @@ rules:
 - apiGroups: [""]
   resources: ["namespaces", "serviceaccounts"]
   verbs: ["get", "list", "create", "update", "patch"]
+# The namespaces a release removes (release.RetiredNamespaces) and no other.
+- apiGroups: [""]
+  resources: ["namespaces"]
+  resourceNames: ["rlark-station-system"]
+  verbs: ["delete"]
 - apiGroups: ["rbac.authorization.k8s.io"]
   resources: ["clusterroles", "clusterrolebindings", "roles", "rolebindings"]
   verbs: ["get", "list", "create", "update", "patch", "escalate", "bind"]

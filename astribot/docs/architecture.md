@@ -62,7 +62,7 @@
 | station-api | `rlark-local-dev-gpu` 的 `station-system`；入网的机器经 `https://10.11.14.128:18443`，Gateway 经 `https://10.254.240.1:18443` | 节点上报（TokenReview 核对 Pod→Node，写进它的 NetworkEnrollment）、入网登记、发安装包和入网码兑换（`/b/<码>`、`/v1/bootstrap/*`）、节点凭隧道密钥取文档（`/v1/network/document`）、扫到的机器（`/v1/network/discovered`） |
 | station-controller | 同上 | 每台节点的在线状态和身份变化、每台节点的隧道文档、NodeClass、Machine、NodeOperation |
 | station-agent | 每个成员集群的 DaemonSet | 心跳、登记公钥、取回文档、探测对端 |
-| station-gateway | 每台节点 | 按文档维护 WireGuard 接口、对端、路由、`/etc/hosts` 里的站点名字、给 kubelet 的 `resolv.conf`；每 10 s 协调一次 |
+| station-gateway | 每台节点 | 按文档维护 WireGuard 接口、对端、路由、`/etc/hosts` 里的站点名字、给 kubelet 的 `resolv.conf`、到场站网段的转发；每 10 s 协调一次 |
 
 两个 DaemonSet，按节点标签 `station.rlark.io/network` 放置：
 
@@ -75,14 +75,14 @@
 
 - 拓扑：叶子拨枢纽，枢纽之间按需互联，转发枢纽替叶子转发。没在 `spec.nodes` 里列出的节点都是叶子。
 - `sites[]`：`clusters`、`reaches`（能拨到哪些场站的 `Site` 端点）、`mesh`（本站枢纽之间建隧道）、`relay`、`leafUplink`（同型号叶子共用的上联，如机器人经 Orin）、`discovery`（枢纽在 `ranges` 和自己接着的每个私有 IPv4 网段里按 NodeClass 的出厂主机密钥找未入网的机器，比 /22 大的网段只扫自己地址所在的 /22，不含公网、`st-*` 隧道、容器和集群接口；每轮最多 128 个并发探测，三个 /22 最多约 25 s，每轮从上一轮开始算起隔 `intervalSeconds`；几台枢纽在同一网段时，机器跟着先报它的枢纽，那台三个周期没再看到它才换）、`dns`、`names`（本站的名字，如 `registry.rlark.internal`）。
-- `nodes[]`：`role: Hub` 加 `endpoints`（`Public` 谁都能拨，`Site` 本站和 `reaches` 它的场站能拨）、`relay`、`nodeAddress`（别人找它用的地址不是隧道地址时，如云上 VPC 地址）、`advertise`（经它可达的网段）、`uplink`、`publicKey`（还连不上 Station API 的节点先声明公钥）。
+- `nodes[]`：`role: Hub` 加 `endpoints`（`Public` 谁都能拨，`Site` 本站和 `reaches` 它的场站能拨）、`relay`、`nodeAddress`（别人找它用的地址不是隧道地址时，如云上 VPC 地址）、`advertise`（经它可达的网段：`cidr`、`sites`、`forward`，见下面“转发到场站的网段”）、`uplink`、`publicKey`（还连不上 Station API 的节点先声明公钥）。
 - 有上联（`uplink` 或本站的 `leafUplink`）的节点，文档里的 `uplinkRoutes` 是它拨的每个端点和本站 `dns` 的每台域名服务器各一条经上联网关的 /32 路由；站点不写 `dns` 时网关把机器自己的 resolv.conf 交给 kubelet，机器人上那份没有域名服务器，所以机器人所在的站点要写 `dns`。
 - `names`：全站同一地址的名字，如各集群的 `cp.<集群>.rlark.internal`、`rlark-server`、`gateway.rlark.internal`。网关写进每台节点的 `/etc/hosts`（行尾 `# rlark names`）。
 - 连接规则：两台之间有隧道，当且仅当至少一台是枢纽且至少一方能拨到另一方；能拨的一方写端点和 25 s 保活；AllowedIPs 是对端的隧道地址加它的 `nodeAddress`、`advertise`，转发枢纽对叶子再加整个池。
 - 默认 MTU 1380，接口 `st-wg0`，端口 51820。controller 每次算完检查任意两台之间有没有路，没有的列在 `status.unreachable`，条件 `FullyConnected` 为假。
-- 网关只动自己的东西：只接管别名 `rlark-station-gateway/v1` 的接口；路由用协议号 242、metric 49321；对端逐个增删改，不动没变的会话。
+- 网关只动自己的东西：只接管别名 `rlark-station-gateway/v1` 的接口；路由用协议号 242、metric 49321；对端逐个增删改，不动没变的会话；iptables 只动自己的两条链 `RLARK-STATION-FORWARD`、`RLARK-STATION-SNAT` 和进入它们的那两条（外加：有转发的网关删掉 station-forwarder 留下的、带注释 `rlark-station-forwarder-v1` 的规则，那个程序从不删自己的规则）。
 - 网关取文档的顺序：agent 或自己从 Station API 取回的 → 私钥旁的 `last-applied.json` → 安装器写的静态文件 `/etc/rlark/station/bootstrap.json`（只有主机上的网关有，给不经隧道连不上 Station API 的节点）。有 `station-api.json` 时网关每 30 s 用自己的私钥向 Station API 证明身份取文档，所以 agent 不在时也能跟上控制面的变化。
-- 文档版本 `documentLevel`（`astribot/station-gateway/main.go`、`astribot/station/network`）：给文档加字段时加一；发布要等所有网关报到新级别才换 controller（阶段 `controller` 的 `gateways-understand`）。
+- 文档版本 `documentLevel`（`astribot/station-gateway/main.go`、`astribot/station/network`）：给文档加字段时加一（3 加了 `forwards`）；发布要等所有网关报到新级别才换 controller（阶段 `controller` 的 `gateways-understand`），所以提级别的改动分两次上线，见 [release.md](release.md)。
 
 ### “在线”是三件事
 
@@ -102,9 +102,17 @@
 | 某台的网关 | 内核里的接口和会话还在，不再协调 |
 | 转发枢纽 | 经它的叶子之间不通，叶子到其他枢纽不受影响 |
 
-### station-forwarder
+### 转发到场站的网段
 
-到 NAS 的 SMB 转发：三条 iptables 规则（两条 `FORWARD`、一条 SNAT），只放一个源到一个目标的一个端口，每 10 s 补齐。配置是 JSON（`input`、`output`、`source`、`destination`、`snat`、`port`），首次运行记下哈希（`/var/lib/rlark-station-forwarder/config.sha256`），之后只认同一份；程序从不删规则，改配置要先手删三条规则和这个文件。镜像不在发布里。
+`advertise` 写了 `forward: true` 的网段（如办公室的 NAS `10.11.5.12/32`）在通告它的节点的网络上、不回隧道，那台节点替收到通告的场站转发：
+
+- controller 在通告节点的文档里写 `forwards`：每个这样的网段一条，`sources` 是收到通告的场站（`sites`，空为其他所有场站）全部成员的隧道地址。新节点入网后自动在里面，不用改声明。
+- 通告节点的网关按文档维护两条自己的链：`filter` 的 `RLARK-STATION-FORWARD`（`FORWARD` 第一条进入）只放这些源从隧道接口到这个网段、和回来的已建立连接；`nat` 的 `RLARK-STATION-SNAT`（`POSTROUTING` 第一条进入）把它们的源换成节点在这个网段上的地址（内核到这个网段的路由的接口和源地址），所以对面不用有回隧道的路由。链和文档不同就整条重写（`iptables-restore --noflush`，一次提交），相同就不动；文档里没有了就连同进入它的那条一起删掉。到这个网段的路由走回隧道或没有源地址时，这一轮协调失败。
+- 没写 `forward` 的网段（各节点的 Pod 网段）只通告路由，不转发、不换源。
+- 容器里的网关用 kube-proxy 镜像带的 iptables，按 kube-proxy 的办法选节点在用的后端（nft 或 legacy）；主机服务形式的网关用机器自己的 `iptables`。
+- 收到通告的节点经隧道发出时源地址是它的隧道地址（路由不带源，内核取隧道接口的地址）；Pod 的流量由 calico 的 natOutgoing 换成同一地址。
+
+以前办公室手装的 `rlark-station-system/rlark-station-nas-forwarder`（station-forwarder，只放 196 一个源）由发布删除：`release.RetiredNamespaces`，见 [release.md](release.md)。
 
 ## 我们加的 Addon
 

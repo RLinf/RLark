@@ -181,6 +181,14 @@ type SiteNetworkAdvertisement struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +listType=set
 	Sites []string `json:"sites,omitempty"`
+	// Forward makes the node carry the receivers' traffic on to CIDR: a
+	// network the node is attached to that has no route back to the tunnel,
+	// as an office's LAN with its NAS. The node lets in, from its tunnel, the
+	// tunnel addresses of the receiving sites' members and no other, and
+	// sends their packets on from its own address on that network
+	// (station-gateway). Without it CIDR is what the node holds itself, as
+	// its Pod network.
+	Forward bool `json:"forward,omitempty"`
 }
 
 // SiteNetworkUplink makes the node reach the endpoints it dials through a

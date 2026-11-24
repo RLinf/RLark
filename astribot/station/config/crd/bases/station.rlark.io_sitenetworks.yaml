@@ -127,6 +127,16 @@ spec:
                             maxLength: 18
                             minLength: 9
                             type: string
+                          forward:
+                            description: |-
+                              Forward makes the node carry the receivers' traffic on to CIDR: a
+                              network the node is attached to that has no route back to the tunnel,
+                              as an office's LAN with its NAS. The node lets in, from its tunnel, the
+                              tunnel addresses of the receiving sites' members and no other, and
+                              sends their packets on from its own address on that network
+                              (station-gateway). Without it CIDR is what the node holds itself, as
+                              its Pod network.
+                            type: boolean
                           sites:
                             description: Sites limits the receivers; empty means every
                               other site.

@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -33,7 +34,7 @@ const routePriority = 49321
 // so the commit that gives config a field raises this by one, and a
 // controller that writes that field is rolled out once every gateway reports
 // this level (the gate of stage controller in apps/rlark/astribot/release).
-const documentLevel = 2
+const documentLevel = 3
 
 type config struct {
 	Interface    string        `json:"interface"`
@@ -48,6 +49,7 @@ type config struct {
 	Names        []hostName    `json:"names"`
 	DNS          []string      `json:"dns"`
 	Discovery    *discovery    `json:"discovery"`
+	Forwards     []forward     `json:"forwards"`
 }
 type hostName struct {
 	Name    string `json:"name"`
@@ -167,6 +169,17 @@ func parse(data []byte) (*desired, error) {
 	for _, server := range c.DNS {
 		if net.ParseIP(server) == nil {
 			return nil, errors.New("a name server is an address")
+		}
+	}
+	for _, f := range c.Forwards {
+		destination, err := netip.ParsePrefix(f.Destination)
+		if err != nil || !destination.Addr().Is4() || destination.Bits() == 0 || len(f.Sources) == 0 {
+			return nil, errors.New("a forward requires a non-default IPv4 destination prefix and sources")
+		}
+		for _, source := range f.Sources {
+			if address, err := netip.ParseAddr(source); err != nil || !address.Is4() {
+				return nil, errors.New("a forward's sources are IPv4 addresses")
+			}
 		}
 	}
 	return d, nil
@@ -491,7 +504,7 @@ func apply(d *desired, key wgtypes.Key, prune bool) error {
 			return fmt.Errorf("remove route %s: %w", stale[i].Dst, err)
 		}
 	}
-	return nil
+	return applyForwards(d.Forwards, d.Interface)
 }
 
 // remove takes away a file this program publishes; one that is not there is gone already.

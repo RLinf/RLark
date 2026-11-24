@@ -58,8 +58,9 @@
 | 机器人不接会话，回 409 `maintenance: …` | tuner 在做维护（重启、换载荷） | 等它做完；原因在注解 `rlark.io/maintenance` |
 | Orin 停下不动，`s1u.rlark.io/orin-state` 说主机密钥变了 | Orin 重装过 | 人核对后把注解 `s1u.rlark.io/orin-host-key-confirm` 设成新指纹 |
 | rclone 卷 close 报 EIO，或改名覆盖失败 | 没用 KS3 补丁版的 rclone | `csi-driver-rclone` 的 `rcloneImage` 用 `pinned.yaml` 里的 `csi-rclone` |
-| 经转发枢纽的叶子之间不通 | 枢纽主机的 `FORWARD` 策略是 `DROP`（docker 设的），网关不改防火墙 | 在转发枢纽上放行 `st-wg0`→`st-wg0` 的转发（RLark 还没有声明式的做法，这是给 RLark 的要求） |
+| 经转发枢纽的叶子之间不通 | 枢纽主机的 `FORWARD` 策略是 `DROP`（docker 设的），网关只为 `forward` 的网段改防火墙 | 在转发枢纽上放行 `st-wg0`→`st-wg0` 的转发（RLark 还没有声明式的做法，这是给 RLark 的要求） |
 | 加入节点页“未加入的机器”是空的，机器人删掉后回不来 | 场地的发现 Hub 不在机器人所在网段（看 Machine 的 `status.entry.lastSeen` 停在哪天；Hub 本机 `ip -br addr` 有没有机器人网段的地址） | 把一台 Hub 接回机器人网段（或让机器人网段里的机器当 Hub）；Hub 没扫到入口时删除对话框会先警告 |
+| 某台云上节点挂不上办公室的 NAS（`dial tcp 10.11.5.12:445: operation was canceled`），另一台能 | 通告 NAS 的节点不替它转发：`advertise` 没写 `forward: true`，或那台的网关还不认得级别 3 的文档 | SiteNetwork 里给这条 `advertise` 加 `forward: true`；看通告节点的文档有没有 `forwards`、源里有没有这台的隧道地址，它的网关日志有没有 `reconcile failed` |
 | 网关停在某条路由上不协调 | 自己接口上有文档里没有、带协议号 242 的路由 | 开 `--prune-routes`，或手删那条路由 |
 
 ## 相机

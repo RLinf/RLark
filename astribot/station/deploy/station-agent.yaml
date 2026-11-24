@@ -148,6 +148,7 @@ spec:
               key: api-url
         - name: STATION_API_CA_FILE
           value: /var/run/secrets/station-api-ca/ca.crt
+        # NET_RAW: iptables reads the tables of a node whose rules are in the legacy backend through a raw socket.
         securityContext:
           runAsUser: 0
           allowPrivilegeEscalation: false
@@ -156,6 +157,7 @@ spec:
             - ALL
             add:
             - NET_ADMIN
+            - NET_RAW
         volumeMounts:
         - name: station-api-ca
           mountPath: /var/run/secrets/station-api-ca

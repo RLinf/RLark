@@ -7,8 +7,7 @@
 | 位置 | 内容 |
 |---|---|
 | `astribot/station/` | 场站节点：CRD 类型（`api/v1alpha1`）、station-controller、隧道拓扑计算（`network`）、节点安装器（`bootstrap`）、RBAC 和 DaemonSet 清单（`deploy`）、运维脚本（`hack`）。独立 Go module |
-| `astribot/station-gateway/` | 每台节点的 WireGuard 隧道程序。独立 Go module |
-| `astribot/station-forwarder/` | 到 NAS 的 SMB 转发。独立 Go module |
+| `astribot/station-gateway/` | 每台节点的 WireGuard 隧道程序，连同经它到办公室网段（如 NAS）的转发。独立 Go module |
 | `astribot/s1u/` | Addon `s1u-robot` 的镜像（tuner、orin、power、相机 video、clock）和测试 |
 | `astribot/csi-rclone-ks3/` | rclone CSI 节点插件的 KS3 补丁和构建脚本 |
 | `astribot/release/` | 构建（`build.sh`、`run.sh`）、发布文件（`releases/`）、环境（`environments/live.yaml`）、控制面 compose、镜像清单 |
@@ -32,7 +31,7 @@
 ```bash
 (cd api && go build ./... && go test ./...)
 (cd apps/rlark && go build ./... && go vet ./... && go test ./...)
-for m in astribot/station astribot/station-gateway astribot/station-forwarder; do (cd $m && GOWORK=off go vet ./... && GOWORK=off go test ./...); done
+for m in astribot/station astribot/station-gateway; do (cd $m && GOWORK=off go vet ./... && GOWORK=off go test ./...); done
 make verify-generated
 (cd apps/rlark-ui && npm test && npx tsc -b)
 python -m pytest astribot/s1u/tests -q
@@ -41,8 +40,7 @@ python -m pytest astribot/s1u/tests -q
 真实内核的网络测试只在一次性网络命名空间里跑：
 
 ```bash
-(cd astribot/station-gateway && unshare -Urn env GOWORK=off STATION_NETNS_TEST=1 go test -run TestKernelReconciliation ./...)
-(cd astribot/station-forwarder && unshare -Urn env GOWORK=off STATION_NETNS_TEST=1 go test -run TestFirewallIdempotence ./... && unshare -Urnm sh tests/network-namespace.sh)
+(cd astribot/station-gateway && unshare -Urn env GOWORK=off STATION_NETNS_TEST=1 go test -run TestKernel ./... && unshare -Urnm sh tests/forward-namespace.sh)
 ```
 
 `s1u-robot` 的镜像：`docker build -f astribot/s1u/Dockerfile .`；它的渲染测试 `cd apps/rlark && go test ./pkg/addons -run S1U`。

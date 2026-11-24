@@ -34,6 +34,13 @@ const (
 	templateGenerationLabel = "pod-template-generation"
 )
 
+// RetiredNamespaces are what a site ran by hand beside Station and Station now
+// does itself: a release with a tree removes them from every member cluster
+// in stage station-agents, before it rolls the gateways that take over.
+// rlark-station-system held station-forwarder, the office hub's NAS forward
+// for one cloud node, now every advertisement with forward (station-gateway).
+var RetiredNamespaces = []string{"rlark-station-system"}
+
 // StationDaemonSets are Station's DaemonSets in every member cluster;
 // stationContainers which image each container of them runs.
 var (
