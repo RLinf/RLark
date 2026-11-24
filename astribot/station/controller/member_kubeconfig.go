@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -21,6 +22,12 @@ import (
 const (
 	MemberKubeconfigSecretKey = "kubeconfig"
 	ClusterIDAnnotation       = "station.rlark.io/cluster-id"
+	// memberAPITimeout bounds one request to a member cluster API. A node
+	// operation waits on that API (the reset pod, the Node delete, the
+	// verification); without a bound, an API endpoint that is itself the
+	// node being removed leaves the operation Running forever instead of
+	// recording a Blocked condition.
+	memberAPITimeout = 30 * time.Second
 )
 
 // SecretKubeconfigSource reads verified member credentials from the management API.
@@ -120,5 +127,6 @@ func secureRESTConfigFromKubeconfig(kubeconfig []byte) (*rest.Config, error) {
 	if config.TLSClientConfig.CAFile != "" || config.TLSClientConfig.CertFile != "" || config.TLSClientConfig.KeyFile != "" {
 		return nil, errors.New("file-path TLS credentials are unsupported; embed data in the management Secret")
 	}
+	config.Timeout = memberAPITimeout
 	return config, nil
 }

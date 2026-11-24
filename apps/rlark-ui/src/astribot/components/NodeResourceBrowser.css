@@ -90,6 +90,29 @@
   gap: 4px 8px;
 }
 
+.node-removal-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  background: color-mix(in srgb, var(--blue) 8%, var(--panel));
+  font-size: 13px;
+}
+
+.node-removal-banner > span:nth-child(2) { flex: 1; }
+.node-resource-table .node-row-status { flex-wrap: wrap; }
+.node-resource-table .node-removal-pill { margin-left: 0; }
+.node-removal-banner-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); }
+.node-removal-pill { display: inline-flex; align-items: center; margin-left: 8px; padding: 3px 7px; border: 1px solid color-mix(in srgb, var(--blue) 28%, var(--line)); border-radius: 999px; color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, var(--panel)); font-size: 10px; font-weight: 600; white-space: nowrap; }
+.node-removal-pill.failed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); background: color-mix(in srgb, var(--danger) 7%, var(--panel)); }
+.node-removal-pill.succeeded { color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, var(--line)); background: color-mix(in srgb, var(--green) 7%, var(--panel)); }
+.node-removal-actions { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.node-resource-row { position: relative; }
+.node-row-removal-progress { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; overflow: hidden; pointer-events: none; }
+.node-row-removal-progress i { display: block; height: 100%; background: var(--blue); transition: width .2s ease; }
+
 .node-remove-refused {
   flex-basis: 100%;
   color: var(--muted);

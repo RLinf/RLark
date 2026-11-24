@@ -1,0 +1,2620 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RLark 管理台重构原型</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<style>
+/* ------------------------------------------------------------------
+   Design plan
+   Color: RLark purple accent on cool slate neutrals, light + dark tokens
+   Type:  Inter for UI, JetBrains Mono for IDs and machine values
+   Layout: prototype ribbon above a framed admin shell; drawers and a
+           persistent removal task dock layer over the shell.
+------------------------------------------------------------------- */
+:root {
+  --app-bg: #eef1f5;
+  --panel: #ffffff;
+  --panel-soft: #f8fafc;
+  --canvas: #f4f6f9;
+  --ink: #171b25;
+  --muted: #7c8492;
+  --soft: #a9b0bd;
+  --line: #e7ebf0;
+  --line-strong: #dce2ea;
+  --accent: #7c3aed;
+  --accent-2: #a78bfa;
+  --accent-bg: #efe9fd;
+  --accent-ink: #5b21b6;
+  --green: #168a61;
+  --green-2: #36c98f;
+  --green-bg: #e7f8f1;
+  --red: #cf3f61;
+  --red-2: #ef5a7a;
+  --red-bg: #fdeef2;
+  --orange: #c77a12;
+  --orange-bg: #fff5e5;
+  --blue-bg: #eef3ff;
+  --blue-ink: #3556b8;
+  --shadow: 0 18px 50px rgba(28, 39, 58, 0.07);
+  --shadow-soft: 0 8px 24px rgba(28, 39, 58, 0.055);
+  --shadow-float: 0 24px 70px rgba(20, 27, 45, 0.2);
+  --proto-h: 58px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --app-bg: #0b111c;
+    --panel: #151d2b;
+    --panel-soft: #182234;
+    --canvas: #0f1623;
+    --ink: #f5f7fb;
+    --muted: #9ca8ba;
+    --soft: #748196;
+    --line: #273348;
+    --line-strong: #33425b;
+    --accent: #a78bfa;
+    --accent-2: #c4b5fd;
+    --accent-bg: rgba(167, 139, 250, 0.18);
+    --accent-ink: #d6c8ff;
+    --green: #48d8a2;
+    --green-2: #48d8a2;
+    --green-bg: rgba(72, 216, 162, 0.12);
+    --red: #ff8fa8;
+    --red-2: #ff8fa8;
+    --red-bg: rgba(255, 143, 168, 0.12);
+    --orange: #f6b45e;
+    --orange-bg: rgba(246, 180, 94, 0.12);
+    --blue-bg: rgba(120, 156, 255, 0.13);
+    --blue-ink: #a8bdff;
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+    --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.22);
+    --shadow-float: 0 24px 70px rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --app-bg: #0b111c;
+  --panel: #151d2b;
+  --panel-soft: #182234;
+  --canvas: #0f1623;
+  --ink: #f5f7fb;
+  --muted: #9ca8ba;
+  --soft: #748196;
+  --line: #273348;
+  --line-strong: #33425b;
+  --accent: #a78bfa;
+  --accent-2: #c4b5fd;
+  --accent-bg: rgba(167, 139, 250, 0.18);
+  --accent-ink: #d6c8ff;
+  --green: #48d8a2;
+  --green-2: #48d8a2;
+  --green-bg: rgba(72, 216, 162, 0.12);
+  --red: #ff8fa8;
+  --red-2: #ff8fa8;
+  --red-bg: rgba(255, 143, 168, 0.12);
+  --orange: #f6b45e;
+  --orange-bg: rgba(246, 180, 94, 0.12);
+  --blue-bg: rgba(120, 156, 255, 0.13);
+  --blue-ink: #a8bdff;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.22);
+  --shadow-float: 0 24px 70px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--app-bg); }
+body {
+  margin: 0;
+  padding: 14px max(16px, env(safe-area-inset-left)) 18px max(16px, env(safe-area-inset-right));
+  background: var(--app-bg);
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+h1, h2, h3, p { margin: 0; }
+h1, h2, h3 { text-wrap: balance; }
+code, .mono { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+svg { flex: none; }
+[hidden] { display: none !important; }
+::selection { background: var(--accent-bg); color: var(--accent-ink); }
+
+:where(button, a, input, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.ico { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ico-sm { width: 14px; height: 14px; }
+
+/* Prototype ribbon */
+.proto-bar {
+  position: sticky;
+  top: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: var(--proto-h);
+  padding: 9px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-soft);
+}
+.proto-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-mark {
+  display: grid; place-items: center; width: 32px; height: 32px; flex: none;
+  border-radius: 10px; color: #fff; font-weight: 800; font-size: 15px;
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  box-shadow: 0 8px 18px rgba(124, 58, 237, 0.28);
+}
+.proto-brand div { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
+.proto-brand strong { font-size: 12px; letter-spacing: -0.1px; }
+.proto-brand span { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.proto-tabs {
+  display: flex; align-items: center; gap: 3px; padding: 3px;
+  margin-inline: auto; border: 1px solid var(--line); border-radius: 11px; background: var(--canvas);
+}
+.proto-tab {
+  border: 0; border-radius: 8px; padding: 7px 12px; background: transparent;
+  color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.proto-tab:hover { color: var(--ink); }
+.proto-tab.active { color: var(--accent-ink); background: var(--panel); box-shadow: 0 2px 8px rgba(28, 39, 58, 0.08); }
+.proto-actions { display: flex; align-items: center; gap: 7px; }
+.proto-toggle {
+  display: flex; align-items: center; gap: 6px; padding: 5px 9px;
+  border: 1px solid var(--line); border-radius: 9px; color: var(--muted);
+  font-size: 10px; font-weight: 700; white-space: nowrap; user-select: none;
+}
+.proto-toggle input { accent-color: var(--accent); width: 13px; height: 13px; margin: 0; }
+.icon-btn {
+  display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line);
+  border-radius: 9px; background: var(--panel); color: var(--muted);
+}
+.icon-btn:hover { color: var(--ink); border-color: var(--line-strong); }
+.lang-btn {
+  height: 32px; min-width: 40px; padding: 0 10px; border: 1px solid var(--line);
+  border-radius: 9px; background: var(--panel); color: var(--muted); font-size: 11px; font-weight: 800;
+}
+.lang-btn:hover { color: var(--accent); border-color: var(--accent-2); }
+
+/* App shell */
+.app-frame {
+  display: grid;
+  grid-template-columns: 228px minmax(0, 1fr);
+  height: clamp(600px, calc(100vh - 104px), 1080px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.sidebar {
+  display: flex; flex-direction: column; gap: 18px; padding: 18px 13px;
+  overflow-y: auto; border-right: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--panel), var(--panel-soft));
+}
+.side-brand { display: none; }
+.side-group { display: flex; flex-direction: column; gap: 3px; }
+.side-label {
+  padding: 0 9px 4px; color: var(--soft); font-size: 9px; font-weight: 800;
+  letter-spacing: 0.8px; text-transform: uppercase;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 9px; min-height: 36px; padding: 7px 9px;
+  border-radius: 10px; color: var(--muted); font-size: 12px; font-weight: 600;
+}
+.nav-item .ico { color: var(--soft); }
+.nav-item:hover { color: var(--ink); background: var(--canvas); }
+.nav-item.active { color: var(--accent-ink); background: var(--accent-bg); }
+.nav-item.active .ico { color: var(--accent); }
+.nav-item b {
+  margin-left: auto; padding: 1px 6px; border-radius: 999px;
+  background: var(--canvas); color: var(--muted); font-size: 9px; font-weight: 800;
+}
+.nav-item.active b { background: var(--panel); color: var(--accent-ink); }
+.side-foot { margin-top: auto; padding: 12px 9px 2px; border-top: 1px solid var(--line); }
+.side-foot p { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.side-foot strong { display: block; margin-bottom: 2px; color: var(--ink); font-size: 11px; }
+
+.workspace { display: flex; flex-direction: column; min-width: 0; overflow: hidden; background: var(--canvas); }
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 58px; padding: 10px 24px; border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.crumb { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: 11px; }
+.crumb i { color: var(--soft); font-style: normal; }
+.crumb strong { color: var(--ink); font-weight: 700; }
+.top-actions { display: flex; align-items: center; gap: 9px; }
+.env-chip, .user-chip {
+  display: flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 9px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--panel); font-size: 10px; font-weight: 600;
+}
+.env-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--green-2); box-shadow: 0 0 0 3px var(--green-bg); }
+.avatar {
+  display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%;
+  background: var(--accent-bg); color: var(--accent-ink); font-size: 9px; font-weight: 800;
+}
+.page-scroll { flex: 1; overflow-y: auto; scrollbar-gutter: stable; }
+.view { padding: 24px 26px 124px; max-width: 1560px; margin: 0 auto; }
+
+/* Page primitives */
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
+.eyebrow {
+  display: inline-flex; align-items: center; gap: 6px; color: var(--soft);
+  font-size: 9px; font-weight: 800; letter-spacing: 0.85px; text-transform: uppercase;
+}
+.page-head h1 { margin: 5px 0 6px; font-size: 28px; line-height: 1.05; letter-spacing: -1.1px; }
+.page-head p { max-width: 760px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+.head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 11px;
+  background: var(--panel); color: var(--ink); font-size: 11px; font-weight: 700; white-space: nowrap;
+  box-shadow: 0 3px 10px rgba(28, 39, 58, 0.03);
+}
+.btn:hover { border-color: var(--line-strong); background: var(--panel-soft); }
+.btn.primary {
+  border-color: transparent; color: #fff;
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  box-shadow: 0 9px 20px rgba(124, 58, 237, 0.24);
+}
+.btn.primary:hover { filter: brightness(1.04); }
+.btn.danger { border-color: transparent; color: #fff; background: linear-gradient(135deg, #ef5a7a, #cf3f61); box-shadow: 0 9px 20px rgba(207, 63, 97, 0.2); }
+.btn.danger-outline { border-color: color-mix(in srgb, var(--red) 32%, var(--line)); color: var(--red); background: var(--red-bg); }
+.btn.danger-outline:hover { border-color: var(--red); background: color-mix(in srgb, var(--red-bg) 70%, var(--red) 8%); }
+.btn.ghost { background: transparent; box-shadow: none; }
+.btn.tiny { min-height: 28px; padding: 0 8px; border-radius: 8px; font-size: 10px; }
+.btn:disabled, .icon-btn:disabled { opacity: 0.42; cursor: not-allowed; box-shadow: none; }
+.panel {
+  border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow-soft);
+}
+.muted { color: var(--muted); }
+.soft { color: var(--soft); }
+.mono-sm { font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--muted); }
+.inline-code {
+  display: inline-flex; align-items: center; max-width: 100%; padding: 2px 6px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--canvas);
+  color: var(--muted); font-family: "JetBrains Mono", monospace; font-size: 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pill {
+  display: inline-flex; align-items: center; gap: 5px; min-height: 22px; padding: 2px 8px;
+  border-radius: 999px; font-size: 10px; font-weight: 700; white-space: nowrap;
+}
+.pill i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.pill.online { color: var(--green); background: var(--green-bg); }
+.pill.offline, .pill.stopped { color: var(--muted); background: var(--canvas); }
+.pill.pending, .pill.removing { color: var(--accent-ink); background: var(--accent-bg); }
+.pill.failed { color: var(--red); background: var(--red-bg); }
+.pill.warning { color: var(--orange); background: var(--orange-bg); }
+.mini-spinner {
+  width: 10px; height: 10px; border: 1.5px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+}
+.spinner {
+  width: 15px; height: 15px; border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Category tabs, toolbar, table */
+.category-bar {
+  display: flex; align-items: center; gap: 5px; padding: 5px; margin-bottom: 12px;
+  border: 1px solid var(--line); border-radius: 13px; background: var(--panel); overflow-x: auto;
+}
+.category-tab {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 11px;
+  border: 0; border-radius: 9px; background: transparent; color: var(--muted);
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.category-tab b { padding: 0 5px; border-radius: 999px; background: var(--canvas); color: var(--soft); font-size: 9px; }
+.category-tab.active { color: var(--accent-ink); background: var(--accent-bg); }
+.category-tab.active b { background: var(--panel); color: var(--accent-ink); }
+.toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.search {
+  display: flex; align-items: center; gap: 8px; flex: 1 1 280px; min-width: 0; max-width: 480px;
+  height: 36px; padding: 0 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--soft);
+}
+.search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 11px; }
+.search input::placeholder { color: var(--soft); }
+.toolbar-right { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 10px; }
+.table-panel { overflow: hidden; }
+.table-scroll { overflow-x: auto; }
+.node-table { width: 100%; border-collapse: collapse; min-width: 1050px; }
+.node-table th {
+  padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel-soft);
+  color: var(--soft); font-size: 9px; font-weight: 800; letter-spacing: 0.45px; text-align: left;
+  text-transform: uppercase; white-space: nowrap;
+}
+.node-table td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.node-table tbody tr:last-child td { border-bottom: 0; }
+.node-table tbody tr[data-node]:hover { background: var(--panel-soft); }
+.node-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.node-name strong { font-size: 12px; font-weight: 700; }
+.status-ring { width: 7px; height: 7px; flex: none; border-radius: 50%; }
+.status-ring.online { background: var(--green-2); box-shadow: 0 0 0 3px var(--green-bg); }
+.status-ring.offline { background: var(--soft); box-shadow: 0 0 0 3px var(--canvas); }
+.cp-badge {
+  padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line));
+  border-radius: 5px; color: var(--accent-ink); background: var(--accent-bg); font-size: 8px; font-weight: 800;
+}
+.type-cell { display: flex; flex-wrap: wrap; gap: 4px; }
+.type-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 5px;
+  color: var(--blue-ink); background: var(--blue-bg); font-size: 9px; font-weight: 700; white-space: nowrap;
+}
+.type-chip.robot { color: var(--accent-ink); background: var(--accent-bg); }
+.type-chip.other { color: var(--muted); background: var(--canvas); }
+.row-meta { display: block; color: var(--soft); font-size: 9px; margin-top: 2px; }
+.ip-stack { display: flex; flex-direction: column; gap: 2px; font-size: 10px; }
+.ip-stack span { color: var(--muted); }
+.ip-stack .link { display: inline-flex; align-items: center; gap: 4px; color: var(--green); font-size: 9px; font-weight: 700; }
+.ip-stack .link.down { color: var(--red); }
+.res-stack { display: flex; flex-direction: column; gap: 2px; font-size: 10px; color: var(--muted); }
+.res-stack b { color: var(--orange); font-weight: 700; }
+.actions-cell { display: flex; align-items: center; gap: 5px; justify-content: flex-end; flex-wrap: wrap; }
+.state-chip { font-size: 9px; font-weight: 700; white-space: nowrap; }
+.state-chip.ok { color: var(--green); }
+.state-chip.pending { color: var(--accent-ink); }
+.state-chip.locked { color: var(--red); }
+.row-deleting td { background: color-mix(in srgb, var(--accent-bg) 46%, transparent); border-bottom-color: transparent; }
+.row-deleting .node-name strong { color: var(--accent-ink); }
+.row-progress-cell { padding: 0 !important; border-bottom: 1px solid var(--line) !important; }
+.row-progress { height: 3px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.row-progress i { display: block; height: 100%; width: 29%; border-radius: 0 2px 2px 0; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width 0.5s ease; }
+.banner {
+  display: flex; align-items: center; gap: 10px; padding: 10px 13px; margin-bottom: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line)); border-radius: 12px;
+  color: var(--accent-ink); background: color-mix(in srgb, var(--accent-bg) 70%, var(--panel));
+  font-size: 11px; font-weight: 600;
+}
+.banner .spinner { width: 13px; height: 13px; }
+.banner button { margin-left: auto; flex: none; white-space: nowrap; border: 0; background: transparent; color: var(--accent-ink); font-size: 10px; font-weight: 800; }
+.node-empty-note { color: var(--soft); font-size: 10px; }
+
+/* Task dock */
+.task-dock {
+  position: fixed; right: max(18px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom));
+  z-index: 90; width: min(370px, calc(100vw - 32px)); overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line)); border-radius: 15px;
+  background: var(--panel); box-shadow: var(--shadow-float);
+}
+.task-head { display: flex; align-items: center; gap: 10px; padding: 12px 13px; }
+.task-head div { flex: 1; min-width: 0; }
+.task-head strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.task-head small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; }
+.task-head .icon-btn { width: 26px; height: 26px; border-radius: 7px; }
+.task-body { padding: 0 13px 12px; }
+.task-progress { height: 4px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.task-progress i { display: block; height: 100%; width: 29%; border-radius: inherit; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width 0.5s ease; }
+.task-steps { display: flex; align-items: center; gap: 0; margin: 10px 0 8px; }
+.task-step { flex: 1; display: flex; align-items: center; }
+.task-step::before { content: ""; width: 100%; height: 1px; background: var(--line); }
+.task-step:first-child::before { display: none; }
+.task-step span {
+  display: grid; place-items: center; width: 16px; height: 16px; flex: none;
+  border: 1px solid var(--line-strong); border-radius: 50%; background: var(--panel);
+  color: transparent; font-size: 8px;
+}
+.task-step.done span { border-color: var(--green-2); background: var(--green-bg); color: var(--green); }
+.task-step.current span { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
+.task-step.current span .mini-spinner { width: 8px; height: 8px; border-width: 1px; }
+.task-step.done::before, .task-step.current::before { background: var(--accent-2); }
+.task-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.task-foot > span { color: var(--muted); font-size: 9px; font-weight: 700; }
+.task-foot div { display: flex; gap: 5px; }
+.task-dock.collapsed .task-body { display: none; }
+.task-dock.collapsed .task-head { padding-bottom: 11px; }
+.task-dock.success { border-color: color-mix(in srgb, var(--green) 32%, var(--line)); }
+.task-dock.failed { border-color: color-mix(in srgb, var(--red) 32%, var(--line)); }
+.task-dock.success .task-progress i { background: var(--green-2); }
+.task-dock.failed .task-progress i { background: var(--red-2); }
+
+/* Scrim, drawers, modal */
+.scrim {
+  position: fixed; inset: var(--proto-h) 0 0; z-index: 110;
+  background: rgba(16, 22, 32, 0.42); backdrop-filter: blur(2px);
+}
+.drawer {
+  position: fixed; top: var(--proto-h); right: 0; bottom: 0; z-index: 121;
+  display: flex; flex-direction: column; width: min(560px, 100vw);
+  border-left: 1px solid var(--line); background: var(--panel); box-shadow: -18px 0 50px rgba(16, 22, 32, 0.18);
+  animation: drawer-in 0.22s ease-out;
+}
+.station-drawer { width: min(650px, 100vw); }
+@keyframes drawer-in { from { transform: translateX(26px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+.drawer-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 20px 15px; border-bottom: 1px solid var(--line); }
+.drawer-head > div:first-child { flex: 1; min-width: 0; }
+.drawer-head h2 { margin: 5px 0 7px; font-size: 21px; letter-spacing: -0.5px; overflow-wrap: anywhere; }
+.drawer-head .icon-btn { width: 30px; height: 30px; flex: none; }
+.drawer-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 16px 20px 24px; }
+.drawer-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 9px; flex-wrap: wrap;
+  padding: 12px 20px; border-top: 1px solid var(--line); background: var(--panel);
+}
+.drawer-foot .foot-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+.foot-hint { max-width: 250px; color: var(--soft); font-size: 9px; line-height: 1.4; }
+.tabs {
+  display: flex; gap: 3px; padding: 0 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.tab-btn {
+  position: relative; min-height: 40px; padding: 0 10px; border: 0; background: transparent;
+  color: var(--muted); font-size: 11px; font-weight: 700;
+}
+.tab-btn:hover { color: var(--ink); }
+.tab-btn[aria-selected="true"] { color: var(--accent-ink); }
+.tab-btn[aria-selected="true"]::after {
+  content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px;
+  border-radius: 2px; background: var(--accent);
+}
+.section { margin-bottom: 16px; }
+.section:last-child { margin-bottom: 0; }
+.section-title { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; }
+.section-title .ico { color: var(--accent); }
+.card { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-soft); }
+.facts-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--line); }
+.fact { min-width: 0; padding: 12px; background: var(--panel); }
+.fact small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--soft); font-size: 9px; font-weight: 700; }
+.fact strong { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; }
+.detail-grid > div { min-width: 0; }
+.detail-grid .wide { grid-column: 1 / -1; }
+.detail-grid small { display: block; margin-bottom: 3px; color: var(--soft); font-size: 9px; font-weight: 700; }
+.detail-grid strong, .detail-grid .value { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 11px; font-weight: 600; }
+.detail-grid .value code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copy-btn {
+  display: grid; place-items: center; width: 23px; height: 23px; flex: none;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--soft);
+}
+.copy-btn:hover { color: var(--accent); border-color: var(--accent-2); }
+.robot-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 11px; }
+.robot-cell { padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.robot-cell small { display: block; color: var(--soft); font-size: 9px; }
+.robot-cell .pill { margin-top: 4px; }
+.action-row { display: flex; flex-wrap: wrap; gap: 6px; }
+details.rules { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line); }
+details.rules summary { cursor: pointer; color: var(--muted); font-size: 10px; font-weight: 700; }
+details.rules ul { margin: 8px 0 0; padding-left: 16px; color: var(--muted); font-size: 10px; line-height: 1.7; }
+.camera-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.camera {
+  display: flex; align-items: center; gap: 9px; padding: 10px; border: 1px solid var(--line);
+  border-radius: 11px; background: var(--canvas);
+}
+.camera-frame {
+  display: grid; place-items: center; width: 54px; height: 34px; flex: none; border-radius: 6px;
+  color: var(--soft); background: linear-gradient(135deg, color-mix(in srgb, var(--accent-bg) 70%, var(--canvas)), var(--canvas));
+}
+.camera strong { display: block; font-size: 10px; }
+.camera small { display: block; color: var(--muted); font-size: 9px; }
+.network-hero { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid color-mix(in srgb, var(--green) 24%, var(--line)); border-radius: 14px; background: var(--green-bg); color: var(--green); }
+.network-hero .icon-box { display: grid; place-items: center; width: 38px; height: 38px; flex: none; border-radius: 11px; background: var(--panel); }
+.network-hero strong { display: block; font-size: 13px; }
+.network-hero small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+.hub-list { display: flex; flex-direction: column; gap: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; }
+.hub-row { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 10px; }
+.hub-row:last-child { border-bottom: 0; }
+.hub-row strong { flex: 1; font-weight: 600; }
+.hub-row span { color: var(--muted); }
+.hub-row b { color: var(--green); font-size: 9px; }
+.cond-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 11px; }
+.cond-list { display: flex; flex-direction: column; gap: 8px; }
+.cond {
+  display: flex; align-items: flex-start; gap: 10px; padding: 11px 12px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel-soft);
+}
+.cond-dot { width: 8px; height: 8px; margin-top: 4px; flex: none; border-radius: 50%; background: var(--soft); }
+.cond-dot.ok { background: var(--green-2); box-shadow: 0 0 0 3px var(--green-bg); }
+.cond-dot.bad { background: var(--red-2); box-shadow: 0 0 0 3px var(--red-bg); }
+.cond > div { flex: 1; min-width: 0; }
+.cond strong { display: block; font-size: 11px; }
+.cond small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; line-height: 1.55; overflow-wrap: anywhere; }
+.cond-side { flex: none; text-align: right; }
+.cond-side b { display: block; color: var(--green); font-size: 9px; }
+.cond-side small { margin-top: 2px; color: var(--soft); font-size: 8px; }
+
+/* Operation drawer */
+.op-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
+.op-summary > div { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-soft); }
+.op-summary small { display: block; color: var(--soft); font-size: 9px; }
+.op-summary strong { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.stepper { display: flex; flex-direction: column; gap: 0; margin-bottom: 16px; }
+.op-step { position: relative; display: flex; gap: 11px; padding-bottom: 18px; }
+.op-step:last-child { padding-bottom: 0; }
+.op-step::before { content: ""; position: absolute; left: 10px; top: 24px; bottom: 2px; width: 1px; background: var(--line); }
+.op-step:last-child::before { display: none; }
+.op-step-icon {
+  position: relative; z-index: 1; display: grid; place-items: center; width: 21px; height: 21px; flex: none;
+  border: 1px solid var(--line-strong); border-radius: 50%; background: var(--panel); color: var(--soft);
+}
+.op-step.done .op-step-icon { border-color: var(--green-2); background: var(--green-bg); color: var(--green); }
+.op-step.current .op-step-icon { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
+.op-step.failed .op-step-icon { border-color: var(--red); background: var(--red-bg); color: var(--red); }
+.op-step-text { min-width: 0; padding-top: 1px; }
+.op-step-text strong { display: block; font-size: 11px; font-weight: 700; }
+.op-step-text small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.op-step.pending .op-step-text strong { color: var(--soft); font-weight: 600; }
+.op-step.current .op-step-text strong { color: var(--accent-ink); }
+.callout {
+  display: flex; align-items: flex-start; gap: 9px; padding: 11px 12px; border: 1px solid var(--line);
+  border-radius: 11px; background: var(--panel-soft); color: var(--muted); font-size: 10px; line-height: 1.6;
+}
+.callout .ico { margin-top: 1px; color: var(--accent); }
+.callout.warn { border-color: color-mix(in srgb, var(--red) 24%, var(--line)); background: var(--red-bg); color: var(--muted); }
+.callout.warn .ico { color: var(--red); }
+
+/* Modal */
+.modal-backdrop {
+  position: fixed; inset: var(--proto-h) 0 0; z-index: 200; display: grid; place-items: center;
+  padding: 20px; background: rgba(16, 22, 32, 0.48); backdrop-filter: blur(4px);
+}
+.modal {
+  width: min(590px, 100%); max-height: calc(100vh - var(--proto-h) - 40px); overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 20px; background: var(--panel); box-shadow: var(--shadow-float);
+  animation: modal-in 0.18s ease-out;
+}
+@keyframes modal-in { from { transform: translateY(8px) scale(0.985); opacity: 0.5; } to { transform: none; opacity: 1; } }
+.modal-head { display: flex; align-items: flex-start; gap: 12px; padding: 20px 20px 14px; }
+.modal-icon { display: grid; place-items: center; width: 38px; height: 38px; flex: none; border-radius: 11px; background: var(--red-bg); color: var(--red); }
+.modal-head > div:first-of-type { flex: 1; min-width: 0; }
+.modal-head h2 { margin: 3px 0 4px; font-size: 19px; letter-spacing: -0.4px; }
+.modal-head p { color: var(--muted); font-size: 11px; line-height: 1.55; }
+.modal-body { padding: 0 20px 17px; }
+.confirm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 13px; }
+.confirm-grid > div { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-soft); }
+.confirm-grid small { display: block; color: var(--soft); font-size: 9px; }
+.confirm-grid strong { display: block; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.consequence-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.consequence { display: flex; align-items: flex-start; gap: 7px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.consequence .ico { margin-top: 1px; color: var(--accent); }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 13px 20px; border-top: 1px solid var(--line); background: var(--panel-soft); }
+
+/* Forms */
+.cluster-layout { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.85fr); gap: 16px; align-items: start; }
+.cluster-form-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.form-card { padding: 17px 18px; border: 1px solid var(--line); border-radius: 17px; background: var(--panel); box-shadow: var(--shadow-soft); }
+.form-card-head { display: flex; gap: 11px; margin-bottom: 16px; }
+.step-badge {
+  display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 10px;
+  color: #fff; background: linear-gradient(135deg, #8b5cf6, #6d28d9); font-size: 10px; font-weight: 800;
+  box-shadow: 0 7px 16px rgba(124, 58, 237, 0.2);
+}
+.form-card-head h2 { font-size: 14px; letter-spacing: -0.2px; }
+.form-card-head p { margin-top: 2px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.field.wide { grid-column: 1 / -1; }
+.field-label { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: 0.4px; text-transform: uppercase; }
+.field-label i { color: var(--red); font-style: normal; }
+.field-label em { margin-left: auto; color: var(--soft); font-size: 8px; font-style: normal; font-weight: 700; letter-spacing: 0; text-transform: none; }
+.input, .select {
+  width: 100%; height: 40px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 9px;
+  background: var(--panel); color: var(--ink); font-size: 11px; outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.input::placeholder { color: var(--soft); }
+.input:hover, .select:hover { border-color: color-mix(in srgb, var(--accent) 28%, var(--line-strong)); }
+.input:focus, .select:focus { border-color: var(--accent-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+.input.invalid, .radio-cards.invalid { border-color: var(--red); box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 10%, transparent); }
+.input-wrap { position: relative; }
+.input-wrap .input { padding-right: 38px; }
+.input-wrap .icon-btn { position: absolute; right: 4px; top: 4px; width: 32px; height: 32px; border: 0; background: transparent; }
+.hint { color: var(--soft); font-size: 9px; line-height: 1.5; }
+.field-error { display: flex; align-items: center; gap: 5px; color: var(--red); font-size: 9px; font-weight: 600; }
+.radio-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.radio-card { position: relative; display: flex; gap: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel-soft); cursor: pointer; }
+.radio-card:hover { border-color: var(--line-strong); }
+.radio-card input { position: absolute; opacity: 0; pointer-events: none; }
+.radio-card .radio-icon { display: grid; place-items: center; width: 31px; height: 31px; flex: none; border-radius: 9px; background: var(--canvas); color: var(--muted); }
+.radio-card strong { display: block; font-size: 11px; }
+.radio-card small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; line-height: 1.4; }
+.radio-card:has(input:checked) { border-color: var(--accent-2); background: var(--accent-bg); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 9%, transparent); }
+.radio-card:has(input:checked) .radio-icon { background: var(--panel); color: var(--accent); }
+.radio-card:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.form-alert { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--red) 26%, var(--line)); border-radius: 10px; background: var(--red-bg); color: var(--red); font-size: 10px; font-weight: 600; }
+.form-alert .ico { flex: none; }
+.cluster-summary { position: sticky; top: 12px; padding: 18px; border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line)); border-radius: 17px; background: linear-gradient(160deg, var(--panel), color-mix(in srgb, var(--accent-bg) 52%, var(--panel))); box-shadow: var(--shadow-soft); }
+.cluster-summary h2 { margin: 5px 0 3px; font-size: 20px; letter-spacing: -0.6px; overflow-wrap: anywhere; }
+.cluster-summary > p { color: var(--muted); font-size: 10px; }
+.summary-rows { display: flex; flex-direction: column; gap: 0; margin-top: 14px; border-top: 1px solid color-mix(in srgb, var(--accent) 14%, var(--line)); }
+.summary-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--accent) 10%, var(--line)); font-size: 10px; }
+.summary-row span { flex: none; color: var(--muted); }
+.summary-row strong { min-width: 0; text-align: right; font-weight: 600; overflow-wrap: anywhere; }
+.summary-divider { height: 1px; margin: 12px 0; background: color-mix(in srgb, var(--accent) 14%, var(--line)); }
+.checklist { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.checklist li { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
+.checklist .check { display: grid; place-items: center; width: 16px; height: 16px; flex: none; border-radius: 50%; background: var(--green-bg); color: var(--green); }
+.summary-note { margin-top: 12px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--accent) 12%, var(--line)); color: var(--soft); font-size: 9px; line-height: 1.55; }
+.summary-actions { display: flex; flex-direction: column; gap: 7px; margin-top: 13px; }
+.summary-actions .btn { width: 100%; }
+.link-btn { width: 100%; margin-top: 8px; border: 0; background: transparent; color: var(--muted); font-size: 9px; font-weight: 700; }
+.link-btn:hover { color: var(--accent); }
+.progress-panel { margin-top: 16px; padding: 17px 18px; }
+.panel-head { display: flex; align-items: flex-start; gap: 11px; margin-bottom: 14px; }
+.panel-head > div:nth-child(2) { flex: 1; min-width: 0; }
+.panel-head h2 { font-size: 14px; letter-spacing: -0.2px; }
+.panel-head small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+.panel-head .pill { flex: none; }
+.big-progress { display: flex; align-items: center; gap: 10px; margin-bottom: 13px; }
+.big-progress .track { flex: 1; height: 5px; overflow: hidden; border-radius: 999px; background: var(--canvas); }
+.big-progress .track i { display: block; height: 100%; width: 38%; border-radius: inherit; background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
+.big-progress span { color: var(--muted); font-size: 9px; font-weight: 700; white-space: nowrap; }
+.stage-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 14px; margin: 0; padding: 0; list-style: none; }
+.stage-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 0; }
+.stage-icon { display: grid; place-items: center; width: 18px; height: 18px; flex: none; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--panel); color: var(--soft); }
+.stage-item.done .stage-icon { border-color: var(--green-2); background: var(--green-bg); color: var(--green); }
+.stage-item.current .stage-icon { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
+.stage-item.pending strong { color: var(--soft); font-weight: 500; }
+.stage-item strong { display: block; font-size: 10px; }
+.stage-item small { display: block; margin-top: 1px; color: var(--muted); font-size: 9px; }
+.history-panel { margin-top: 14px; padding: 17px 18px; }
+.history-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.history-head h2 { font-size: 13px; }
+.history-head span { color: var(--soft); font-size: 9px; font-weight: 700; }
+.history-list { display: flex; flex-direction: column; gap: 6px; }
+.history-row { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-soft); font-size: 10px; }
+.history-row strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-row small { color: var(--muted); white-space: nowrap; }
+.history-row.current { border-color: var(--accent-2); background: var(--accent-bg); }
+
+/* Toast */
+.toast {
+  position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); z-index: 400;
+  display: flex; align-items: center; gap: 8px; max-width: min(460px, calc(100vw - 32px));
+  padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--green) 28%, var(--line)); border-radius: 11px;
+  background: var(--panel); color: var(--ink); font-size: 11px; font-weight: 600;
+  box-shadow: var(--shadow-float); transform: translateX(-50%);
+}
+.toast .ico { color: var(--green); }
+.toast.error { border-color: color-mix(in srgb, var(--red) 30%, var(--line)); }
+.toast.error .ico { color: var(--red); }
+
+/* Station page background */
+.station-table { min-width: 900px; }
+.station-table th, .station-table td { text-align: left; }
+.stations-note { display: flex; align-items: center; gap: 8px; padding: 9px 11px; margin-bottom: 12px; border: 1px dashed var(--line-strong); border-radius: 10px; color: var(--muted); font-size: 10px; }
+.stations-note .ico { color: var(--accent); }
+
+@media (max-width: 1180px) {
+  .cluster-layout { grid-template-columns: minmax(0, 1fr); }
+  .cluster-summary { position: static; }
+  .vm-hide { display: none; }
+}
+@media (max-width: 980px) {
+  .app-frame { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .sidebar { display: none; }
+  .page-scroll { overflow: visible; }
+  .view { padding: 20px 18px 40px; }
+  .page-head { flex-direction: column; }
+  .topbar { padding-inline: 18px; }
+  .env-chip { display: none; }
+  .proto-tabs { order: 3; width: 100%; margin: 0; justify-content: space-between; }
+  .proto-tabs .proto-tab { flex: 1; }
+  .proto-bar { flex-wrap: wrap; }
+  .proto-brand { margin-right: auto; }
+  :root { --proto-h: 100px; }
+  .facts-strip, .robot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 680px) {
+  body { padding-inline: max(10px, env(safe-area-inset-left)) max(10px, env(safe-area-inset-right)); }
+  .proto-toggle span { display: none; }
+  .proto-toggle { padding: 5px 7px; }
+  .page-head h1 { font-size: 24px; }
+  .drawer { width: 100vw; }
+  .station-drawer { width: 100vw; }
+  .drawer-head, .drawer-body, .drawer-foot { padding-inline: 15px; }
+  .tabs { padding-inline: 15px; overflow-x: auto; }
+  .detail-grid, .field-grid, .radio-cards, .stage-list, .confirm-grid { grid-template-columns: minmax(0, 1fr); }
+  .op-summary { grid-template-columns: minmax(0, 1fr); }
+  .modal { border-radius: 16px; }
+  .modal-head, .modal-body, .modal-foot { padding-inline: 15px; }
+  .task-dock { right: 10px; bottom: 10px; width: calc(100vw - 20px); }
+  .foot-hint { display: none; }
+  .camera-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 430px) {
+  .proto-brand span { display: none; }
+  .proto-tab { padding-inline: 8px; font-size: 10px; }
+  .tb-hide { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+
+
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-network" viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="6" rx="1.5"/><rect x="2.5" y="15.5" width="6" height="6" rx="1.5"/><rect x="15.5" y="15.5" width="6" height="6" rx="1.5"/><path d="M12 8.5v3.5M5.5 15.5V12h13v3.5"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3.5" width="18" height="7" rx="2"/><rect x="3" y="13.5" width="18" height="7" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></symbol>
+  <symbol id="i-jobs" viewBox="0 0 24 24"><path d="M9 6h12M9 12h12M9 18h12"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.7 3.9 5.7 3.9 9S14.6 18.3 12 21c-2.6-2.7-3.9-5.7-3.9-9S9.4 5.7 12 3Z"/></symbol>
+  <symbol id="i-storage" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m4 17 5-5 4 4 3-3 4 4"/></symbol>
+  <symbol id="i-finger" viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-7 7v3M19 13v-3a7 7 0 0 0-3-5.7M5 17v-4a7 7 0 0 1 14 0v2.5M8.5 20v-8a3.5 3.5 0 0 1 7 0v7"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6.4"/><path d="M20 5v6h-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.4 7 10 4-1.6 7-5.6 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M4 9a12 12 0 0 1 16 0M7 12.5a8 8 0 0 1 10 0M10 16a4 4 0 0 1 4 0"/><circle cx="12" cy="19" r="1"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5M12 17.5h.01"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 6.1A10.8 10.8 0 0 1 12 6c6 0 9.5 6 9.5 6a17 17 0 0 1-3.3 3.9M6.2 7.1C3.7 8.9 2.5 12 2.5 12S6 18 12 18c1.2 0 2.3-.2 3.4-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 8.5 8.5 0 1 0 20.5 14.5Z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="m9 6 9 6-9 6V6Z"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13" r="3.2"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.2 6.2a8 8 0 1 0 11.6 0"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8 3 3-3 3-2-2-2 2-2-2-2 2"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+</svg>
+
+<div class="proto-bar">
+  <div class="proto-brand">
+    <span class="brand-mark">R</span>
+    <div>
+      <strong>RLark Admin</strong>
+      <span data-i18n="proto.subtitle">管理台重构原型</span>
+    </div>
+  </div>
+  <div class="proto-tabs" role="tablist" aria-label="Prototype views">
+    <button class="proto-tab active" role="tab" aria-selected="true" data-view="nodes" data-i18n="proto.nodes">节点删除</button>
+    <button class="proto-tab" role="tab" aria-selected="false" data-view="station" data-i18n="proto.station">场站详情</button>
+    <button class="proto-tab" role="tab" aria-selected="false" data-view="cluster" data-i18n="proto.cluster">新建集群</button>
+  </div>
+  <div class="proto-actions">
+    <label class="proto-toggle" title="仅原型演示：切换场站记录是否可删除">
+      <input type="checkbox" id="deletableToggle">
+      <span data-i18n="proto.deletable">场站可删除</span>
+    </label>
+    <button class="icon-btn" id="themeBtn" data-i18n-title="proto.theme">
+      <svg class="ico"><use href="#i-moon"></use></svg>
+    </button>
+    <button class="lang-btn" id="langBtn"><span data-lang-label>EN</span></button>
+  </div>
+</div>
+
+<div class="app-frame">
+  <aside class="sidebar">
+    <div class="side-group">
+      <span class="side-label" data-i18n="nav.workbench">工作台</span>
+      <a class="nav-item" href="#nodes"><svg class="ico"><use href="#i-grid"></use></svg><span data-i18n="nav.dashboard">管理工作台</span></a>
+    </div>
+    <div class="side-group">
+      <span class="side-label" data-i18n="nav.clusters">集群</span>
+      <a class="nav-item" data-nav="cluster" href="#cluster"><svg class="ico"><use href="#i-plus"></use></svg><span data-i18n="nav.newCluster">新建集群</span></a>
+      <a class="nav-item" href="#nodes"><svg class="ico"><use href="#i-network"></use></svg><span data-i18n="nav.clusterList">集群列表</span></a>
+      <a class="nav-item active" data-nav="nodes" href="#nodes"><svg class="ico"><use href="#i-server"></use></svg><span data-i18n="nav.nodes">节点管理</span><b>8</b></a>
+    </div>
+    <div class="side-group">
+      <span class="side-label" data-i18n="nav.operations">运维</span>
+      <a class="nav-item" href="#nodes"><svg class="ico"><use href="#i-jobs"></use></svg><span data-i18n="nav.jobs">任务管理</span></a>
+      <a class="nav-item" href="#nodes"><svg class="ico"><use href="#i-globe"></use></svg><span data-i18n="nav.domains">网络域</span></a>
+      <a class="nav-item" href="#nodes"><svg class="ico"><use href="#i-storage"></use></svg><span data-i18n="nav.storage">存储管理</span></a>
+      <a class="nav-item" href="#nodes"><svg class="ico"><use href="#i-image"></use></svg><span data-i18n="nav.images">镜像管理</span></a>
+      <a class="nav-item" data-nav="station" href="#station"><svg class="ico"><use href="#i-finger"></use></svg><span data-i18n="nav.stations">场站节点</span><b>7</b></a>
+    </div>
+    <div class="side-foot">
+      <strong data-i18n="nav.s1u">深圳公司 S1U 调试集群</strong>
+      <p data-i18n="nav.s1uMeta">8 个节点 · 6 在线 · 1 删除中</p>
+    </div>
+  </aside>
+
+  <div class="workspace">
+    <header class="topbar">
+      <div class="crumb">
+        <span data-i18n="top.ops">运维管理</span><i>/</i><strong id="crumbCurrent" data-i18n="nav.nodes">节点管理</strong>
+      </div>
+      <div class="top-actions">
+        <span class="env-chip"><i></i>s1u-robot · <span data-i18n="top.online">在线</span></span>
+        <span class="user-chip"><span class="avatar">S</span><span data-i18n="top.admin">系统管理员</span></span>
+      </div>
+    </header>
+
+    <div class="page-scroll">
+      <!-- ============================= NODES ============================= -->
+      <section class="view" id="view-nodes">
+        <div class="page-head">
+          <div>
+            <span class="eyebrow"><svg class="ico ico-sm"><use href="#i-server"></use></svg><span data-i18n="nodes.eyebrow">运维管理</span></span>
+            <h1 data-i18n="nodes.title">节点管理</h1>
+            <p data-i18n="nodes.desc">统一查看各类节点，进入详情后管理调度状态与节点标签。删除在后台继续，关闭抽屉或切换页面都不会中断进度。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn"><svg class="ico ico-sm"><use href="#i-shield"></use></svg><span data-i18n="nodes.batchCordon">批量封锁</span></button>
+            <button class="btn"><svg class="ico ico-sm"><use href="#i-grid"></use></svg><span data-i18n="nodes.batchSettings">批量设置</span></button>
+            <button class="btn primary"><svg class="ico ico-sm"><use href="#i-refresh"></use></svg><span data-i18n="common.refresh">刷新</span></button>
+          </div>
+        </div>
+
+        <div class="banner" id="removalBanner">
+          <span class="spinner"></span>
+          <span id="bannerText">正在删除 1 个节点，删除在后台继续，可关闭抽屉或切换页面。</span>
+          <button id="bannerView" data-i18n="nodes.viewTask">查看任务</button>
+        </div>
+
+        <div class="category-bar" role="tablist" aria-label="Node categories">
+          <button class="category-tab active"><svg class="ico ico-sm"><use href="#i-grid"></use></svg><span data-i18n="nodes.all">全部节点</span><b>8</b></button>
+          <button class="category-tab"><svg class="ico ico-sm"><use href="#i-server"></use></svg><span data-i18n="nodes.cloud">云算力</span><b>4</b></button>
+          <button class="category-tab"><svg class="ico ico-sm"><use href="#i-server"></use></svg><span data-i18n="nodes.edge">端算力</span><b>0</b></button>
+          <button class="category-tab"><svg class="ico ico-sm"><use href="#i-finger"></use></svg><span data-i18n="nodes.robot">机器人</span><b>3</b></button>
+          <button class="category-tab"><svg class="ico ico-sm"><use href="#i-info"></use></svg><span data-i18n="nodes.other">其他</span><b>1</b></button>
+        </div>
+
+        <div class="toolbar">
+          <div class="search">
+            <svg class="ico ico-sm"><use href="#i-search"></use></svg>
+            <input data-i18n-ph="nodes.search" placeholder="搜索节点名称、集群、IP 或任务名称...">
+          </div>
+          <div class="toolbar-right">
+            <span class="muted" data-i18n="nodes.results">8 条结果</span>
+            <button class="btn"><svg class="ico ico-sm"><use href="#i-refresh"></use></svg><span data-i18n="common.refresh">刷新</span></button>
+          </div>
+        </div>
+
+        <div class="panel table-panel">
+          <div class="table-scroll">
+            <table class="node-table">
+              <thead>
+                <tr>
+                  <th data-i18n="table.node">节点名称</th>
+                  <th data-i18n="table.type">类型</th>
+                  <th data-i18n="table.status">状态</th>
+                  <th data-i18n="table.cluster">所属集群</th>
+                  <th class="vm-hide" data-i18n="table.location">位置</th>
+                  <th data-i18n="table.ip">节点 IP</th>
+                  <th data-i18n="table.resources">资源与空闲</th>
+                  <th data-i18n="table.task">任务</th>
+                  <th data-i18n="table.schedule">调度管理</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr data-node="10-0-2-57">
+                  <td><div class="node-name"><i class="status-ring online"></i><strong>10-0-2-57</strong><span class="cp-badge" data-i18n="node.controlPlane">控制面</span></div></td>
+                  <td><div class="type-cell"><span class="type-chip"><svg class="ico ico-sm"><use href="#i-server"></use></svg><span data-i18n="nodes.cloud">云算力</span></span></div></td>
+                  <td data-cell="status"><span class="pill online"><i></i><span data-i18n="status.online">在线</span></span></td>
+                  <td><span>金山云西北宁夏裸金属集群</span><span class="row-meta mono-sm">rlark-metal · ns-metal</span></td>
+                  <td class="vm-hide muted">—</td>
+                  <td><div class="ip-stack"><span>节点 <b>10.0.2.57</b></span><span>WG 10.254.240.2</span><span class="link"><svg class="ico" style="width:10px;height:10px"><use href="#i-wifi"></use></svg><span data-i18n="node.linkUp">链路 在线</span></span></div></td>
+                  <td><div class="res-stack"><span><b>未标注</b> · 6/8 GPU</span></div></td>
+                  <td class="muted" data-i18n="node.none">无</td>
+                  <td data-cell="actions"><div class="actions-cell"><span class="state-chip ok" data-i18n="node.schedulable">可调度</span><button class="btn tiny" data-delete-node="10-0-2-57" disabled title="控制面不能删除"><svg class="ico ico-sm"><use href="#i-trash"></use></svg><span data-i18n="action.remove">删除</span></button></div></td>
+                </tr>
+
+                <tr data-node="10-0-2-196">
+                  <td><div class="node-name"><i class="status-ring online"></i><strong>10-0-2-196</strong></div></td>
+                  <td><div class="type-cell"><span class="type-chip"><svg class="ico ico-sm"><use href="#i-server"></use></svg><span data-i18n="nodes.cloud">云算力</span></span></div></td>
+                  <td data-cell="status"><span class="pill online"><i></i><span data-i18n="status.online">在线</span></span></td>
+                  <td><span>金山云西北宁夏裸金属集群</span><span class="row-meta mono-sm">rlark-metal · ns-metal</span></td>
+                  <td class="vm-hide muted">—</td>
+                  <td><div class="ip-stack"><span>节点 <b>10.0.2.196</b></span><span>WG 10.254.240.4</span><span class="link"><svg class="ico" style="width:10px;height:10px"><use href="#i-wifi"></use></svg><span data-i18n="node.linkUp">链路 在线</span></span></div></td>
+                  <td><div class="res-stack"><span><b>未标注</b> · 7/8 GPU</span></div></td>
+                  <td class="muted" data-i18n="node.none">无</td>
+                  <td data-cell="actions"><div class="actions-cell"><span class="state-chip ok" data-i18n="node.schedulable">可调度</span><button class="btn tiny" data-delete-node="10-0-2-196"><svg class="ico ico-sm"><use href="#i-trash"></use></svg><span data-i18n="action.remove">删除</span></button></div></td>
+                </tr>
+
+                <tr data-node="alexfu">
+                  <td><div class="node-name"><i class="status-ring online"></i><strong>alexfu</strong><span class="cp-badge" data-i18n="node.controlPlane">控制面</span></div></td>
+                  <td><div class="type-cell"><span class="type-chip other"><svg class="ico ico-sm"><use href="#i-info"></use></svg><span data-i18n="nodes.other">其他</span></span></div></td>
+                  <td data-cell="status"><span class="pill online"><i></i><span data-i18n="status.online">在线</span></span></td>
+                  <td><span>深圳公司 S1U 调试集群</span><span class="row-meta mono-sm">rlark-robot-s1u-01 · ns-s1u</span></td>
+                  <td class="vm-hide muted">—</td>
+                  <td><div class="ip-stack"><span>节点 <b>10.254.240.5</b></span><span>WG 10.254.240.5</span><span class="link"><svg class="ico" style="width:10px;height:10px"><use href="#i-wifi"></use></svg><span data-i18n="node.linkUp">链路 在线</span></span></div></td>
+                  <td><div class="res-stack"><span data-i18n="node.noDevices">无设备</span></div></td>
+                  <td class="muted" data-i18n="node.none">无</td>
+                  <td data-cell="actions"><div class="actions-cell"><span class="state-chip ok" data-i18n="node.schedulable">可调度</span><button class="btn tiny" data-delete-node="alexfu" disabled title="控制面不能删除"><svg class="ico ico-sm"><use href="#i-trash"></use></svg><span data-i18n="action.remove">删除</span></button></div></td>
+                </tr>
+
+                <tr data-node="s1u-01-x86">
+                  <td><div class="node-name"><i class="status-ring offline"></i><strong>s1u-01-x86</strong></div></td>
+                  <td><div class="type-cell"><span class="type-chip robot"><svg class="ico ico-sm"><use href="#i-finger"></use></svg><span data-i18n="nodes.robotType">端算力</span></span></div></td>
+                  <td data-cell="status"></td>
+                  <td><span>深圳公司 S1U 调试集群</span><span class="row-meta mono-sm">rlark-robot-s1u-01 · ns-s1u</span></td>
+                  <td class="vm-hide muted">—</td>
+                  <td><div class="ip-stack"><span>节点 <b>10.254.240.3</b></span><span>WG <span data-i18n="node.notReported">未上报</span></span><span class="link down"><svg class="ico" style="width:10px;height:10px"><use href="#i-wifi"></use></svg><span data-i18n="node.linkDown">链路 离线</span></span></div></td>
+                  <td><div class="res-stack"><span data-i18n="node.noDevices">无设备</span></div></td>
+                  <td class="muted" data-i18n="node.none">无</td>
+                  <td data-cell="actions"></td>
+                </tr>
+                <tr id="rowProgressRow"><td class="row-progress-cell" colspan="9"><div class="row-progress"><i id="rowProgressBar"></i></div></td></tr>
+
+                <tr data-node="s1u-02-x86">
+                  <td><div class="node-name"><i class="status-ring online"></i><strong>s1u-02-x86</strong></div></td>
+                  <td><div class="type-cell"><span class="type-chip robot"><svg class="ico ico-sm"><use href="#i-finger"></use></svg><span data-i18n="nodes.robotType">端算力</span></span></div></td>
+                  <td data-cell="status"><span class="pill online"><i></i><span data-i18n="status.online">在线</span></span></td>
+                  <td><span>深圳公司 S1U 调试集群</span><span class="row-meta mono-sm">rlark-robot-s1u-01 · ns-s1u</span></td>
+                  <td class="vm-hide muted">—</td>
+                  <td><div class="ip-stack"><span>节点 <b>10.254.240.7</b></span><span>WG 10.254.240.7</span><span class="link"><svg class="ico" style="width:10px;height:10px"><use href="#i-wifi"></use></svg><span data-i18n="node.hubsUp">链路 · 5 个 Hub 已连通</span></span></div></td>
+                  <td><div class="res-stack"><span data-i18n="node.noDevices">无设备</span></div></td>
+                  <td class="muted" data-i18n="node.none">无</td>
+                  <td data-cell="actions"><div class="actions-cell"><span class="state-chip ok" data-i18n="node.schedulable">可调度</span><button class="btn tiny" data-cordon><svg class="ico ico-sm"><use href="#i-shield"></use></svg><span data-i18n="action.cordon">封锁</span></button><button class="btn tiny danger-outline" data-delete-node="s1u-02-x86"><svg class="ico ico-sm"><use href="#i-trash"></use></svg><span data-i18n="action.remove">删除</span></button></div></td>
+                </tr>
+
+                <tr data-node="s1u-03-x86">
+                  <td><div class="node-name"><i class="status-ring offline"></i><strong>s1u-03-x86</strong></div></td>
+                  <td><div class="type-cell"><span class="type-chip robot"><svg class="ico ico-sm"><use href="#i-finger"></use></svg><span data-i18n="nodes.robotType">端算力</span></span></div></td>
+                  <td data-cell="status"><span class="pill failed"><i></i><span data-i18n="status.removeFailed">删除失败 · 重置机器</span></span></td>
+                  <td><span>深圳公司 S1U 调试集群</span><span class="row-meta mono-sm">rlark-robot-s1u-01 · ns-s1u</span></td>
+                  <td class="vm-hide muted">—</td>
+                  <td><div class="ip-stack"><span>节点 <b>10.254.240.8</b></span><span>WG 10.254.240.8</span><span class="link down"><svg class="ico" style="width:10px;height:10px"><use href="#i-wifi"></use></svg><span data-i18n="node.linkDown">链路 离线</span></span></div></td>
+                  <td><div class="res-stack"><span data-i18n="node.noDevices">无设备</span></div></td>
+                  <td class="muted" data-i18n="node.none">无</td>
+                  <td data-cell="actions"><div class="actions-cell"><button class="btn tiny" data-open-op="s1u-03-x86"><span data-i18n="action.view">查看</span></button><button class="btn tiny danger-outline" data-retry-node="s1u-03-x86"><span data-i18n="action.retry">重试</span></button></div></td>
+                </tr>
+
+                <tr data-node="cailiang">
+                  <td><div class="node-name"><i class="status-ring online"></i><strong>cailiang</strong><span class="cp-badge" data-i18n="node.controlPlane">控制面</span></div></td>
+                  <td><div class="type-cell"><span class="type-chip"><svg class="ico ico-sm"><use href="#i-server"></use></svg><span data-i18n="nodes.cloud">云算力</span></span></div></td>
+                  <td data-cell="status"><span class="pill online"><i></i><span data-i18n="status.online">在线</span></span></td>
+                  <td><span>深圳公司本地开发集群</span><span class="row-meta mono-sm">rlark-local · ns-local</span></td>
+                  <td class="vm-hide muted">—</td>
+                  <td><div class="ip-stack"><span>节点 <b>10.11.14.128</b></span><span>WG 10.254.240.1</span><span class="link"><svg class="ico" style="width:10px;height:10px"><use href="#i-wifi"></use></svg><span data-i18n="node.linkUp">链路 在线</span></span></div></td>
+                  <td><div class="res-stack"><span><b>未标注</b> · 1/1 GPU</span></div></td>
+                  <td class="muted" data-i18n="node.none">无</td>
+                  <td data-cell="actions"><div class="actions-cell"><span class="state-chip ok" data-i18n="node.schedulable">可调度</span><button class="btn tiny" data-delete-node="cailiang" disabled title="控制面不能删除"><svg class="ico ico-sm"><use href="#i-trash"></use></svg><span data-i18n="action.remove">删除</span></button></div></td>
+                </tr>
+
+                <tr data-node="wendychen">
+                  <td><div class="node-name"><i class="status-ring online"></i><strong>wendychen</strong></div></td>
+                  <td><div class="type-cell"><span class="type-chip"><svg class="ico ico-sm"><use href="#i-server"></use></svg><span data-i18n="nodes.cloud">云算力</span></span></div></td>
+                  <td data-cell="status"><span class="pill online"><i></i><span data-i18n="status.online">在线</span></span></td>
+                  <td><span>深圳公司本地开发集群</span><span class="row-meta mono-sm">rlark-local · ns-local</span></td>
+                  <td class="vm-hide muted">—</td>
+                  <td><div class="ip-stack"><span>节点 <b>10.11.14.135</b></span><span>WG 10.254.240.6</span><span class="link"><svg class="ico" style="width:10px;height:10px"><use href="#i-wifi"></use></svg><span data-i18n="node.linkUp">链路 在线</span></span></div></td>
+                  <td><div class="res-stack"><span><b>RTX 3090</b> · 1/1 GPU</span></div></td>
+                  <td class="muted" data-i18n="node.none">无</td>
+                  <td data-cell="actions"><div class="actions-cell"><span class="state-chip ok" data-i18n="node.schedulable">可调度</span><button class="btn tiny" data-delete-node="wendychen"><svg class="ico ico-sm"><use href="#i-trash"></use></svg><span data-i18n="action.remove">删除</span></button></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p class="node-empty-note" data-i18n="nodes.footnote">删除操作是一个可识别的 NodeOperation：阶段、失败原因与重试都记录在服务端。刷新页面后会从操作列表恢复。</p>
+      </section>
+
+      <!-- ============================= STATION ============================= -->
+      <section class="view" id="view-station" hidden>
+        <div class="page-head">
+          <div>
+            <span class="eyebrow"><svg class="ico ico-sm"><use href="#i-finger"></use></svg><span data-i18n="stations.eyebrow">场站节点</span></span>
+            <h1 data-i18n="stations.title">场站节点</h1>
+            <p data-i18n="stations.desc">一台节点在场站里的记录：身份、心跳与入网。打开详情查看身份、电源、网络与健康条件。</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn" id="openStation"><svg class="ico ico-sm"><use href="#i-finger"></use></svg><span data-i18n="stations.open">打开详情</span></button>
+            <button class="btn primary"><svg class="ico ico-sm"><use href="#i-key"></use></svg><span data-i18n="stations.addNode">加入节点</span></button>
+          </div>
+        </div>
+        <div class="stations-note"><svg class="ico ico-sm"><use href="#i-info"></use></svg><span data-i18n="stations.note">原型展示：右侧抽屉默认打开。关闭后可从表格的“详情”重新打开。</span></div>
+        <div class="panel table-panel">
+          <div class="table-scroll">
+            <table class="node-table station-table">
+              <thead>
+                <tr>
+                  <th data-i18n="table.node">节点</th>
+                  <th data-i18n="table.cluster">集群</th>
+                  <th data-i18n="table.status">状态</th>
+                  <th data-i18n="table.network">网络</th>
+                  <th data-i18n="table.admission">入网</th>
+                  <th data-i18n="table.key">WireGuard 公钥</th>
+                  <th data-i18n="table.uptime">运行时间</th>
+                  <th data-i18n="table.lastSeen">最近上报</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr data-node="cailiang"><td><div class="node-name"><i class="status-ring online"></i><strong>cailiang</strong></div></td><td>深圳公司本地开发集群</td><td><span class="pill online"><i></i><span data-i18n="status.online">在线</span></span></td><td><span class="pill online"><i></i><span data-i18n="network.verified">已验证</span></span></td><td class="muted">—</td><td><code class="inline-code">5E9Iw0BvF8…</code></td><td>19 天</td><td class="muted">24 秒前</td><td><button class="btn tiny" data-open-station>详情</button></td></tr>
+                <tr data-node="s1u-02-x86"><td><div class="node-name"><i class="status-ring online"></i><strong>s1u-02-x86</strong></div></td><td>深圳公司 S1U 调试集群</td><td><span class="pill online"><i></i><span data-i18n="status.online">在线</span></span></td><td><span class="pill online"><i></i><span data-i18n="network.verified">已验证</span></span></td><td><span class="pill online"><i></i><span data-i18n="admission.joined">已入网</span></span></td><td><code class="inline-code">Lq9xULj3hC…</code></td><td>3 天 3 小时</td><td class="muted">12 秒前</td><td><button class="btn tiny" data-open-station>详情</button></td></tr>
+                <tr data-node="s1u-03-x86"><td><div class="node-name"><i class="status-ring online"></i><strong>s1u-03-x86</strong></div></td><td>深圳公司 S1U 调试集群</td><td><span class="pill online"><i></i><span data-i18n="status.online">在线</span></span></td><td><span class="pill warning"><i></i><span data-i18n="network.probeFailed">探测失败</span></span></td><td><span class="pill online"><i></i><span data-i18n="admission.joined">已入网</span></span></td><td><code class="inline-code">Rpk1Y6IpJX…</code></td><td>5 天 8 小时</td><td class="muted">41 秒前</td><td><button class="btn tiny" data-open-station>详情</button></td></tr>
+                <tr data-node="alexfu"><td><div class="node-name"><i class="status-ring online"></i><strong>alexfu</strong></div></td><td>深圳公司 S1U 调试集群</td><td><span class="pill online"><i></i><span data-i18n="status.online">在线</span></span></td><td><span class="pill online"><i></i><span data-i18n="network.verified">已验证</span></span></td><td><span class="pill online"><i></i><span data-i18n="admission.joined">已入网</span></span></td><td><code class="inline-code">SE91w8BvF8…</code></td><td>12 天</td><td class="muted">1 分钟前</td><td><button class="btn tiny" data-open-station>详情</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================= NEW CLUSTER ============================= -->
+      <section class="view" id="view-cluster" hidden>
+        <div class="page-head">
+          <div>
+            <span class="eyebrow"><svg class="ico ico-sm"><use href="#i-plus"></use></svg><span data-i18n="cluster.eyebrow">集群管理</span></span>
+            <h1 data-i18n="cluster.title">新建集群</h1>
+            <p data-i18n="cluster.desc">给出新场地的名字和第一台机器的 SSH。RLark 登录这台机器，把它做成新场地的第一台 Hub 和新集群的控制面，装好集群 agent、Station 和插件，最后跑一个验收 Job。</p>
+          </div>
+        </div>
+
+        <div class="cluster-layout">
+          <div class="cluster-form-col">
+            <section class="form-card">
+              <div class="form-card-head">
+                <span class="step-badge">01</span>
+                <div>
+                  <h2 data-i18n="cluster.siteTitle">场地与身份</h2>
+                  <p data-i18n="cluster.siteNote">集群类型决定默认集群名与后续节点的入网方式。场地名会成为 Hub 与隧道地址的一部分。</p>
+                </div>
+              </div>
+              <div class="field" style="margin-bottom: 12px">
+                <span class="field-label" data-i18n="cluster.type">集群类型 <i>*</i></span>
+                <div class="radio-cards" id="typeGroup" role="radiogroup" aria-label="Cluster type">
+                  <label class="radio-card">
+                    <input type="radio" name="clusterType" value="gpu">
+                    <span class="radio-icon"><svg class="ico"><use href="#i-server"></use></svg></span>
+                    <span><strong data-i18n="cluster.gpu">GPU 集群</strong><small data-i18n="cluster.gpuNote">云上训练与推理，连续算力优先</small></span>
+                  </label>
+                  <label class="radio-card">
+                    <input type="radio" name="clusterType" value="robot">
+                    <span class="radio-icon"><svg class="ico"><use href="#i-finger"></use></svg></span>
+                    <span><strong data-i18n="cluster.robot">机器人集群</strong><small data-i18n="cluster.robotNote">场站机器人、端侧算力与低速网络</small></span>
+                  </label>
+                </div>
+                <span class="field-error" data-error="type" hidden></span>
+              </div>
+              <div class="field-grid">
+                <label class="field">
+                  <span class="field-label" data-i18n="cluster.site">场地名 <i>*</i></span>
+                  <input class="input" id="site" placeholder="baidu" autocomplete="off" autocapitalize="none" spellcheck="false">
+                  <small class="hint" data-i18n="cluster.siteHint">小写字母、数字和连字符；会成为 Hub 名字的一部分。</small>
+                  <span class="field-error" data-error="site" hidden></span>
+                </label>
+                <label class="field">
+                  <span class="field-label" data-i18n="cluster.name">集群名 <em data-i18n="cluster.optional">选填</em></span>
+                  <input class="input" id="clusterName" placeholder="rlark-&lt;site&gt;-&lt;type&gt;" autocomplete="off" autocapitalize="none" spellcheck="false">
+                  <small class="hint" data-i18n="cluster.nameHint">留空将使用 rlark-&lt;场地&gt;-&lt;类型&gt;。</small>
+                  <span class="field-error" data-error="cluster" hidden></span>
+                </label>
+              </div>
+              <div class="field" style="margin-top: 12px">
+                <span class="field-label" data-i18n="cluster.tunnel">隧道公网端点 <em data-i18n="cluster.optional">选填</em></span>
+                <input class="input" id="tunnel" placeholder="1.2.3.4:51820" autocomplete="off" spellcheck="false">
+                <small class="hint" data-i18n="cluster.tunnelHint">几台机器共用一个公网 IP 时填写云上转发给这台的地址；留空则使用 机器IP:51820。</small>
+                <span class="field-error" data-error="tunnel" hidden></span>
+              </div>
+            </section>
+
+            <section class="form-card">
+              <div class="form-card-head">
+                <span class="step-badge">02</span>
+                <div>
+                  <h2 data-i18n="cluster.machineTitle">第一台机器</h2>
+                  <p data-i18n="cluster.machineNote">这台机器将成为场地的第一台 Hub 与集群控制面。机器需要 systemd、tar 和 WireGuard 内核模块。</p>
+                </div>
+              </div>
+              <div class="field-grid">
+                <label class="field wide">
+                  <span class="field-label" data-i18n="cluster.address">机器 IP <i>*</i></span>
+                  <input class="input" id="address" placeholder="1.2.3.4" autocomplete="off" spellcheck="false">
+                  <span class="field-error" data-error="address" hidden></span>
+                </label>
+                <label class="field">
+                  <span class="field-label" data-i18n="cluster.port">SSH 端口 <i>*</i></span>
+                  <input class="input" id="port" value="22" inputmode="numeric" autocomplete="off">
+                  <span class="field-error" data-error="port" hidden></span>
+                </label>
+                <label class="field">
+                  <span class="field-label" data-i18n="cluster.user">SSH 账号 <i>*</i></span>
+                  <input class="input" id="user" value="root" autocomplete="off" autocapitalize="none" spellcheck="false">
+                  <span class="field-error" data-error="user" hidden></span>
+                </label>
+                <label class="field wide">
+                  <span class="field-label" data-i18n="cluster.password">SSH 密码 <i>*</i></span>
+                  <div class="input-wrap">
+                    <input class="input" id="password" type="password" autocomplete="new-password">
+                    <button type="button" class="icon-btn" id="togglePassword" aria-label="Show password" title="Show password"><svg class="ico ico-sm"><use href="#i-eye"></use></svg></button>
+                  </div>
+                  <small class="hint" data-i18n="cluster.passwordHint">口令只用于这一次，不保存。之后的机器用入网码或 SSH 入网加入。</small>
+                  <span class="field-error" data-error="password" hidden></span>
+                </label>
+              </div>
+            </section>
+
+            <div class="form-alert" id="formAlert" hidden>
+              <svg class="ico ico-sm"><use href="#i-alert"></use></svg>
+              <span id="formAlertText"></span>
+            </div>
+          </div>
+
+          <aside class="cluster-summary">
+            <span class="eyebrow" data-i18n="cluster.summary">将要创建</span>
+            <h2 id="sumName">rlark-&lt;site&gt;-&lt;type&gt;</h2>
+            <p id="sumType">—</p>
+            <div class="summary-rows">
+              <div class="summary-row"><span data-i18n="cluster.typeShort">类型</span><strong id="sumTypeValue">—</strong></div>
+              <div class="summary-row"><span data-i18n="cluster.siteShort">场地</span><strong id="sumSite">—</strong></div>
+              <div class="summary-row"><span data-i18n="cluster.nameShort">集群</span><strong id="sumCluster">—</strong></div>
+              <div class="summary-row"><span data-i18n="cluster.machineShort">第一台机器</span><strong id="sumMachine">—</strong></div>
+              <div class="summary-row"><span data-i18n="cluster.tunnelShort">隧道端点</span><strong id="sumTunnel">—</strong></div>
+            </div>
+            <div class="summary-divider"></div>
+            <ul class="checklist">
+              <li><span class="check"><svg class="ico" style="width:10px;height:10px"><use href="#i-check"></use></svg></span><span data-i18n="cluster.checkControl">把机器做成控制面</span></li>
+              <li><span class="check"><svg class="ico" style="width:10px;height:10px"><use href="#i-check"></use></svg></span><span data-i18n="cluster.checkHub">安装场地的第一台 Hub</span></li>
+              <li><span class="check"><svg class="ico" style="width:10px;height:10px"><use href="#i-check"></use></svg></span><span data-i18n="cluster.checkAgent">安装集群 agent 与 Station</span></li>
+              <li><span class="check"><svg class="ico" style="width:10px;height:10px"><use href="#i-check"></use></svg></span><span data-i18n="cluster.checkJob">跑一个验收 Job</span></li>
+            </ul>
+            <p class="summary-note" data-i18n="cluster.note">口令只用于这一次，不保存。建好之后，其他机器用入网码或 SSH 加入这个集群。</p>
+            <div class="summary-actions">
+              <button class="btn primary" id="createCluster"><svg class="ico ico-sm"><use href="#i-plus"></use></svg><span data-i18n="cluster.create">新建集群</span></button>
+              <button class="btn" id="fillExample"><svg class="ico ico-sm"><use href="#i-play"></use></svg><span data-i18n="cluster.fillExample">填入示例</span></button>
+            </div>
+            <button class="link-btn" id="resetForm" data-i18n="cluster.reset">重置表单</button>
+          </aside>
+        </div>
+
+        <section class="panel progress-panel" id="provisionPanel">
+          <div class="panel-head">
+            <span class="step-badge">02</span>
+            <div>
+              <h2 id="provisionTitle"><span data-i18n="provision.building">正在建</span> rlark-s1u-robot</h2>
+              <small id="provisionMeta"><span data-i18n="cluster.robot">机器人集群</span> · <span data-i18n="cluster.siteShort">场地</span> s1u · 10.0.0.8</small>
+            </div>
+            <span class="pill pending"><i></i><span data-i18n="cluster.running">进行中</span></span>
+          </div>
+          <div class="big-progress">
+            <div class="track"><i></i></div>
+            <span data-i18n="cluster.stepOf">阶段 3/8</span>
+          </div>
+          <ol class="stage-list">
+            <li class="stage-item done"><span class="stage-icon"><svg class="ico" style="width:10px;height:10px"><use href="#i-check"></use></svg></span><span><strong data-i18n="provision.check">检查机器</strong><small>systemd、tar、WireGuard</small></span></li>
+            <li class="stage-item done"><span class="stage-icon"><svg class="ico" style="width:10px;height:10px"><use href="#i-check"></use></svg></span><span><strong data-i18n="provision.deps">安装依赖</strong><small>容器运行时与网络工具</small></span></li>
+            <li class="stage-item current"><span class="stage-icon"><span class="mini-spinner"></span></span><span><strong data-i18n="provision.control">生成控制面</strong><small>kubeadm init</small></span></li>
+            <li class="stage-item pending"><span class="stage-icon"></span><span><strong data-i18n="provision.tunnel">创建隧道</strong><small>WireGuard 与 Hub</small></span></li>
+            <li class="stage-item pending"><span class="stage-icon"></span><span><strong data-i18n="provision.agent">安装集群 agent</strong><small>rlark-agent</small></span></li>
+            <li class="stage-item pending"><span class="stage-icon"></span><span><strong data-i18n="provision.station">安装 Station</strong><small>节点身份与心跳</small></span></li>
+            <li class="stage-item pending"><span class="stage-icon"></span><span><strong data-i18n="provision.join">加入站点网络</strong><small>入网与路由</small></span></li>
+            <li class="stage-item pending"><span class="stage-icon"></span><span><strong data-i18n="provision.verify">验收 Job</strong><small>跑一个最小任务</small></span></li>
+          </ol>
+          <div class="callout" style="margin-top: 13px">
+            <svg class="ico ico-sm"><use href="#i-info"></use></svg>
+            <span data-i18n="cluster.pollNote">进度每 3 秒刷新；离开页面后回来仍会继续。失败时会停在标红的一步，并给出重试或撤销入口。</span>
+          </div>
+        </section>
+
+        <section class="panel history-panel">
+          <div class="history-head">
+            <h2 data-i18n="cluster.history">新建过的集群</h2>
+            <span>3</span>
+          </div>
+          <div class="history-list">
+            <div class="history-row current"><span class="pill pending"><i></i><span data-i18n="cluster.running">进行中</span></span><strong>rlark-s1u-robot</strong><small>机器人集群 · s1u · 10.0.0.8</small></div>
+            <div class="history-row"><span class="pill online"><i></i><span data-i18n="cluster.made">已建好</span></span><strong>rlark-baidu-gpu</strong><small>GPU 集群 · baidu · 2026-11-20 14:02</small></div>
+            <div class="history-row"><span class="pill failed"><i></i><span data-i18n="cluster.failed">失败</span></span><strong>rlark-old-site</strong><small data-i18n="cluster.failedAt">停在安装依赖 · 2026-11-18 09:31</small></div>
+          </div>
+        </section>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ============================= TASK DOCK ============================= -->
+<div class="task-dock" id="taskDock" role="status" aria-live="polite">
+  <div class="task-head">
+    <span class="spinner" id="taskSpinner"></span>
+    <div>
+      <strong id="taskTitle">正在删除 s1u-01-x86</strong>
+      <small id="taskMeta">清空节点 · 已用 2m14s</small>
+    </div>
+    <button class="icon-btn" id="taskCollapse" aria-label="Collapse" title="Collapse"><svg class="ico"><use href="#i-chevron"></use></svg></button>
+  </div>
+  <div class="task-body">
+    <div class="task-progress"><i id="taskBar"></i></div>
+    <div class="task-steps" id="taskSteps"></div>
+    <div class="task-foot">
+      <span id="taskStepText">阶段 3/7</span>
+      <div>
+        <button class="btn tiny" id="taskAdvance"><svg class="ico" style="width:10px;height:10px"><use href="#i-play"></use></svg><span data-i18n="task.advance">推进阶段</span></button>
+        <button class="btn tiny" id="taskOpen"><span data-i18n="task.details">查看详情</span></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================= OPERATION DRAWER ============================= -->
+<div class="scrim" id="opScrim" hidden></div>
+<aside class="drawer op-drawer" id="opDrawer" role="dialog" aria-modal="true" aria-labelledby="opTitle" hidden>
+  <div class="drawer-head">
+    <div>
+      <span class="eyebrow"><svg class="ico ico-sm"><use href="#i-trash"></use></svg><span data-i18n="op.eyebrow">删除节点</span></span>
+      <h2 id="opTitle">删除 <span id="opNodeName">s1u-01-x86</span></h2>
+      <div class="drawer-meta">
+        <span class="pill removing"><i></i><span id="opPillText">删除中</span></span>
+        <code class="inline-code" id="opName">remove-a1b2c3</code>
+        <span class="mono-sm">rlark-robot-s1u-01</span>
+      </div>
+    </div>
+    <button class="icon-btn" data-close-op aria-label="Close" title="Close"><svg class="ico"><use href="#i-x"></use></svg></button>
+  </div>
+  <div class="drawer-body">
+    <div class="op-summary">
+      <div><small data-i18n="op.cluster">集群</small><strong>rlark-robot-s1u-01</strong></div>
+      <div><small data-i18n="op.current">当前步骤</small><strong id="opCurrent">清空节点</strong></div>
+      <div><small data-i18n="op.elapsed">已用时间</small><strong>2m14s</strong></div>
+    </div>
+    <div class="stepper" id="opSteps"></div>
+    <div class="callout" style="margin-bottom: 12px">
+      <svg class="ico ico-sm"><use href="#i-info"></use></svg>
+      <span data-i18n="op.note">删除在服务端继续，关闭抽屉、切换页面或刷新浏览器都不会中断。再次打开时从 NodeOperation 列表恢复进度。</span>
+    </div>
+    <div class="section">
+      <div class="section-title"><svg class="ico ico-sm"><use href="#i-shield"></use></svg><span data-i18n="op.conditions">条件</span></div>
+      <div class="cond">
+        <span class="cond-dot ok"></span>
+        <div><strong>Progressing</strong><small>StageCompleted · 清空节点完成，等待移出隧道</small></div>
+        <div class="cond-side"><b>True</b><small>刚刚</small></div>
+      </div>
+    </div>
+  </div>
+  <div class="drawer-foot">
+    <button class="btn" data-close-op data-i18n="common.close">关闭</button>
+    <button class="btn" id="opRetry" hidden><svg class="ico ico-sm"><use href="#i-refresh"></use></svg><span data-i18n="action.retry">重试</span></button>
+  </div>
+</aside>
+
+<!-- ============================= STATION DRAWER ============================= -->
+<div class="scrim" id="stationScrim" hidden></div>
+<aside class="drawer station-drawer" id="stationDrawer" role="dialog" aria-modal="true" aria-labelledby="stationTitle" hidden>
+  <div class="drawer-head">
+    <div>
+      <span class="eyebrow"><svg class="ico ico-sm"><use href="#i-finger"></use></svg><span data-i18n="station.eyebrow">身份详情</span></span>
+      <h2 id="stationTitle">s1u-02-x86</h2>
+      <div class="drawer-meta">
+        <span class="pill online"><i></i><span data-i18n="status.online">在线</span></span>
+        <span class="pill online"><i></i><svg class="ico" style="width:10px;height:10px"><use href="#i-wifi"></use></svg><span data-i18n="network.verified">网络已验证</span></span>
+        <span class="muted" data-i18n="station.lastSeen">最近上报 12 秒前</span>
+        <code class="inline-code">ns-s1u / s1u-02-x86</code>
+      </div>
+    </div>
+    <button class="icon-btn" id="stationClose" aria-label="Close" title="Close"><svg class="ico"><use href="#i-x"></use></svg></button>
+  </div>
+  <div class="tabs" role="tablist" aria-label="Station details">
+    <button class="tab-btn" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" data-tab="overview" data-i18n="station.tabOverview">概览</button>
+    <button class="tab-btn" role="tab" id="tab-network" aria-controls="panel-network" aria-selected="false" data-tab="network" data-i18n="station.tabNetwork">网络</button>
+    <button class="tab-btn" role="tab" id="tab-conditions" aria-controls="panel-conditions" aria-selected="false" data-tab="conditions" data-i18n="station.tabConditions">条件</button>
+  </div>
+  <div class="drawer-body">
+    <section id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" data-panel="overview">
+      <div class="facts-strip section">
+        <div class="fact"><small data-i18n="station.uptime">运行时间</small><strong>3 天 3 小时</strong></div>
+        <div class="fact"><small data-i18n="station.reboots">重启次数</small><strong>1</strong></div>
+        <div class="fact"><small data-i18n="station.lastSeenShort">最近上报</small><strong>12 秒前</strong></div>
+        <div class="fact"><small data-i18n="station.cluster">集群</small><strong>rlark-robot-s1u-01</strong></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><svg class="ico ico-sm"><use href="#i-user"></use></svg><span data-i18n="station.identity">身份</span></div>
+        <div class="card">
+          <div class="detail-grid">
+            <div><small data-i18n="station.nodeName">节点名</small><span class="value"><code>s1u-02-x86</code><button class="copy-btn" data-copy="s1u-02-x86" aria-label="Copy"><svg class="ico" style="width:11px;height:11px"><use href="#i-copy"></use></svg></button></span></div>
+            <div><small data-i18n="station.clusterName">集群</small><strong>深圳公司 S1U 调试集群</strong></div>
+            <div class="wide"><small>Node UID</small><span class="value"><code>31d92cc8-019f-4ded-9817-821ac6579a24</code><button class="copy-btn" data-copy="31d92cc8-019f-4ded-9817-821ac6579a24" aria-label="Copy"><svg class="ico" style="width:11px;height:11px"><use href="#i-copy"></use></svg></button></span></div>
+            <div class="wide"><small>System UUID</small><span class="value"><code>1c6f50a1-882e-815b-83c0-30c5994cd819</code><button class="copy-btn" data-copy="1c6f50a1-882e-815b-83c0-30c5994cd819" aria-label="Copy"><svg class="ico" style="width:11px;height:11px"><use href="#i-copy"></use></svg></button></span></div>
+            <div><small data-i18n="station.bootTime">启动时间</small><strong>2026-11-20 09:31</strong></div>
+            <div><small data-i18n="station.system">系统</small><strong>Ubuntu 22.04 · aarch64</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><svg class="ico ico-sm"><use href="#i-power"></use></svg><span data-i18n="station.robotPower">机器人电源</span></div>
+        <div class="card">
+          <div class="robot-grid">
+            <div class="robot-cell"><small data-i18n="station.desired">期望</small><span class="pill online"><i></i><span data-i18n="station.powered">上电</span></span></div>
+            <div class="robot-cell"><small data-i18n="station.now">现在</small><span class="pill online"><i></i><span data-i18n="station.powered">上电</span></span></div>
+            <div class="robot-cell"><small data-i18n="station.maintenance">维护</small><span class="pill online"><i></i><span data-i18n="station.none">无</span></span></div>
+            <div class="robot-cell"><small data-i18n="station.selfCheck">自检</small><span class="pill online"><i></i><span data-i18n="station.ok">正常</span></span></div>
+          </div>
+          <div class="action-row">
+            <button class="btn"><svg class="ico ico-sm"><use href="#i-power"></use></svg><span data-i18n="station.powerOn">上电</span></button>
+            <button class="btn"><svg class="ico ico-sm"><use href="#i-play"></use></svg><span data-i18n="station.driverOn">启动驱动</span></button>
+            <button class="btn"><svg class="ico ico-sm"><use href="#i-power"></use></svg><span data-i18n="station.driverOff">关闭驱动</span></button>
+            <button class="btn danger-outline"><svg class="ico ico-sm"><use href="#i-power"></use></svg><span data-i18n="station.powerOff">下电</span></button>
+            <button class="btn"><svg class="ico ico-sm"><use href="#i-finger"></use></svg><span data-i18n="station.homePose">初始姿势</span></button>
+          </div>
+          <details class="rules">
+            <summary data-i18n="station.rulesSummary">电源与维护规则</summary>
+            <ul>
+              <li data-i18n="station.rule1">期望状态保存在节点上；该上电没电、该跑驱动而驱动掉了，都会自动恢复。</li>
+              <li data-i18n="station.rule2">急停或硬件报错时不重拉。要让机器人保持下电，请在这里下电。</li>
+              <li data-i18n="station.rule3">机器人在用（有 Run 或会话占着）时下电会等它空出来；没人用时才做重启或换载荷维护。</li>
+            </ul>
+          </details>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title"><svg class="ico ico-sm"><use href="#i-camera"></use></svg><span data-i18n="station.cameras">相机</span></div>
+        <div class="camera-grid">
+          <div class="camera"><span class="camera-frame"><svg class="ico"><use href="#i-camera"></use></svg></span><span><strong data-i18n="station.camHead">头部</strong><small><span data-i18n="status.online">在线</span> · 30 fps</small></span></div>
+          <div class="camera"><span class="camera-frame"><svg class="ico"><use href="#i-camera"></use></svg></span><span><strong data-i18n="station.camLeft">左腕</strong><small><span data-i18n="status.online">在线</span> · 30 fps</small></span></div>
+          <div class="camera"><span class="camera-frame"><svg class="ico"><use href="#i-camera"></use></svg></span><span><strong data-i18n="station.camRight">右腕</strong><small><span data-i18n="status.online">在线</span> · 30 fps</small></span></div>
+          <div class="camera"><span class="camera-frame"><svg class="ico"><use href="#i-camera"></use></svg></span><span><strong data-i18n="station.camBack">背部</strong><small><span data-i18n="status.online">在线</span> · 15 fps</small></span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="panel-network" role="tabpanel" aria-labelledby="tab-network" data-panel="network" hidden>
+      <div class="network-hero section">
+        <span class="icon-box"><svg class="ico"><use href="#i-wifi"></use></svg></span>
+        <div><strong data-i18n="station.networkOk">网络已验证</strong><small data-i18n="station.networkOkNote">6 个 Hub 全部连通 · 最近探测 8 秒前</small></div>
+      </div>
+      <div class="section">
+        <div class="section-title"><svg class="ico ico-sm"><use href="#i-key"></use></svg><span data-i18n="station.tunnel">隧道与入网</span></div>
+        <div class="card">
+          <div class="detail-grid">
+            <div class="wide"><small>WireGuard 公钥</small><span class="value"><code>5E9Iw0BvF8K2pQ7mN4rT1xLc6yHs3dJa</code><button class="copy-btn" data-copy="5E9Iw0BvF8K2pQ7mN4rT1xLc6yHs3dJa" aria-label="Copy"><svg class="ico" style="width:11px;height:11px"><use href="#i-copy"></use></svg></button></span></div>
+            <div><small data-i18n="station.tunnelAddress">隧道地址</small><strong><code>10.254.240.7</code></strong></div>
+            <div><small data-i18n="station.admissionState">入网状态</small><span class="pill online"><i></i><span data-i18n="admission.joined">已入网</span></span></div>
+            <div><small data-i18n="station.issuedBy">发码人</small><strong>admin</strong></div>
+            <div><small data-i18n="station.expires">过期时间</small><strong>2026-11-20 16:53</strong></div>
+            <div class="wide"><small>SSH 登录</small><strong><code>root@10.254.240.7</code></strong></div>
+            <div class="wide"><small data-i18n="station.hostKey">主机指纹</small><strong><code>SHA256:8f3c1d9e2a7b4c6d0e5f1a2b3c4d5e6f7a8b9c0d</code></strong></div>
+          </div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title"><svg class="ico ico-sm"><use href="#i-network"></use></svg><span data-i18n="station.hubProbes">Hub 探测</span></div>
+        <div class="hub-list">
+          <div class="hub-row"><svg class="ico ico-sm" style="color:var(--green)"><use href="#i-check"></use></svg><strong>s1u-hub-01</strong><span>12 ms</span><b data-i18n="station.reachable">可达</b></div>
+          <div class="hub-row"><svg class="ico ico-sm" style="color:var(--green)"><use href="#i-check"></use></svg><strong>s1u-hub-02</strong><span>18 ms</span><b data-i18n="station.reachable">可达</b></div>
+          <div class="hub-row"><svg class="ico ico-sm" style="color:var(--green)"><use href="#i-check"></use></svg><strong>s1u-hub-03</strong><span>21 ms</span><b data-i18n="station.reachable">可达</b></div>
+          <div class="hub-row"><svg class="ico ico-sm" style="color:var(--green)"><use href="#i-check"></use></svg><strong>s1u-hub-04</strong><span>24 ms</span><b data-i18n="station.reachable">可达</b></div>
+          <div class="hub-row"><svg class="ico ico-sm" style="color:var(--green)"><use href="#i-check"></use></svg><strong>s1u-hub-05</strong><span>27 ms</span><b data-i18n="station.reachable">可达</b></div>
+          <div class="hub-row"><svg class="ico ico-sm" style="color:var(--green)"><use href="#i-check"></use></svg><strong>s1u-hub-06</strong><span>31 ms</span><b data-i18n="station.reachable">可达</b></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="panel-conditions" role="tabpanel" aria-labelledby="tab-conditions" data-panel="conditions" hidden>
+      <div class="cond-summary">
+        <span class="pill online"><i></i><span data-i18n="station.allTrue">4 正常</span></span>
+        <span class="pill offline"><i></i><span data-i18n="station.noneFalse">0 异常</span></span>
+        <span class="pill pending"><i></i><span data-i18n="station.noneUnknown">0 未知</span></span>
+      </div>
+      <div class="cond-list">
+        <div class="cond"><span class="cond-dot ok"></span><div><strong data-i18n="cond.heartbeat">心跳</strong><small>HeartbeatFresh · a fresh authenticated observation is available</small></div><div class="cond-side"><b data-i18n="cond.true">正常</b><small>3 天前</small></div></div>
+        <div class="cond"><span class="cond-dot ok"></span><div><strong data-i18n="cond.identity">身份匹配</strong><small>NodeUIDMatched · the reporting Node is the one this record is of</small></div><div class="cond-side"><b data-i18n="cond.true">正常</b><small>3 天前</small></div></div>
+        <div class="cond"><span class="cond-dot ok"></span><div><strong data-i18n="cond.network">网络已验证</strong><small>AllPeersReached · reached 6 of 6 peers through the tunnel; the other 0 are offline themselves</small></div><div class="cond-side"><b data-i18n="cond.true">正常</b><small>17 分钟前</small></div></div>
+        <div class="cond"><span class="cond-dot ok"></span><div><strong data-i18n="cond.linked">节点已就绪</strong><small>NodeReady · the corresponding RLark Node is Ready</small></div><div class="cond-side"><b data-i18n="cond.true">正常</b><small>2 天前</small></div></div>
+      </div>
+    </section>
+  </div>
+  <div class="drawer-foot">
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+      <button class="btn" id="stationFootClose" data-i18n="common.close">关闭</button>
+      <small class="foot-hint" id="stationDeleteHint" data-i18n="station.deleteDisabled">节点仍在集群中，删除记录不可用。</small>
+    </div>
+    <div class="foot-actions">
+      <button class="btn" id="reissueBtn"><svg class="ico ico-sm"><use href="#i-key"></use></svg><span data-i18n="station.reissue">重发入网码</span></button>
+      <button class="btn" id="revokeBtn"><span data-i18n="station.revoke">作废入网码</span></button>
+      <button class="btn danger-outline" id="stationDelete" disabled><svg class="ico ico-sm"><use href="#i-trash"></use></svg><span data-i18n="station.deleteRecord">删除记录</span></button>
+    </div>
+  </div>
+</aside>
+
+<!-- ============================= CONFIRM MODAL ============================= -->
+<div class="modal-backdrop" id="confirmBackdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="modal-head">
+      <span class="modal-icon"><svg class="ico"><use href="#i-trash"></use></svg></span>
+      <div>
+        <span class="eyebrow" data-i18n="confirm.eyebrow">危险操作</span>
+        <h2 id="confirmTitle">删除 s1u-02-x86</h2>
+        <p id="confirmDesc" data-i18n="confirm.desc">它会从集群删除：先停驱动、下电，停下它上面的任务，移出隧道，重置机器，再删除节点对象。</p>
+      </div>
+      <button class="icon-btn" id="confirmClose" aria-label="Close" title="Close"><svg class="ico"><use href="#i-x"></use></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="confirm-grid">
+        <div><small data-i18n="table.cluster">集群</small><strong>rlark-robot-s1u-01</strong></div>
+        <div><small data-i18n="confirm.ip">节点 IP</small><strong>10.254.240.7</strong></div>
+        <div><small data-i18n="table.type">类型</small><strong data-i18n="nodes.robotType">端算力</strong></div>
+        <div><small data-i18n="confirm.tasks">将停止的任务</small><strong>2 个 Worker</strong></div>
+        <div class="wide"><small data-i18n="confirm.record">场站记录</small><strong>ns-s1u / s1u-02-x86 · 已核实 Node UID</strong></div>
+      </div>
+      <div class="consequence-list">
+        <div class="consequence"><svg class="ico ico-sm"><use href="#i-check"></use></svg><span data-i18n="confirm.c1">机器人先停驱动、下电；有 Run 或会话在用时不会继续。</span></div>
+        <div class="consequence"><svg class="ico ico-sm"><use href="#i-check"></use></svg><span data-i18n="confirm.c2">它上面 2 个 Worker 停止，所属任务会在别处重新启动。</span></div>
+        <div class="consequence"><svg class="ico ico-sm"><use href="#i-check"></use></svg><span data-i18n="confirm.c3">移出隧道，在机器上执行 kubeadm reset，再删除节点对象。</span></div>
+        <div class="consequence"><svg class="ico ico-sm"><use href="#i-check"></use></svg><span data-i18n="confirm.c4">删除开始后在后台继续；关闭抽屉或切换页面不会中断。</span></div>
+      </div>
+      <div class="callout warn">
+        <svg class="ico ico-sm"><use href="#i-alert"></use></svg>
+        <span data-i18n="confirm.warn">控制面节点不能删除。机器连不上时，旧安装会在它下次加入时清掉；删除后 RLark 可能再也到不了它，只能到现场重新入网。</span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="confirmCancel" data-i18n="common.cancel">取消</button>
+      <button class="btn danger" id="confirmAction"><svg class="ico ico-sm"><use href="#i-trash"></use></svg><span id="confirmActionText">确认删除</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden role="status">
+  <svg class="ico ico-sm"><use href="#i-check"></use></svg>
+  <span id="toastText"></span>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const MESSAGES = {
+    zh: {
+      "proto.subtitle": "管理台重构原型",
+      "proto.nodes": "节点删除",
+      "proto.station": "场站详情",
+      "proto.cluster": "新建集群",
+      "proto.deletable": "场站可删除",
+      "proto.theme": "切换主题",
+      "nav.workbench": "工作台",
+      "nav.dashboard": "管理工作台",
+      "nav.clusters": "集群",
+      "nav.newCluster": "新建集群",
+      "nav.clusterList": "集群列表",
+      "nav.nodes": "节点管理",
+      "nav.operations": "运维",
+      "nav.jobs": "任务管理",
+      "nav.domains": "网络域",
+      "nav.storage": "存储管理",
+      "nav.images": "镜像管理",
+      "nav.stations": "场站节点",
+      "nav.s1u": "深圳公司 S1U 调试集群",
+      "nav.s1uMeta": "8 个节点 · 6 在线 · 1 删除中",
+      "top.ops": "运维管理",
+      "top.online": "在线",
+      "top.admin": "系统管理员",
+      "nodes.eyebrow": "运维管理",
+      "nodes.title": "节点管理",
+      "nodes.desc": "统一查看各类节点，进入详情后管理调度状态与节点标签。删除在后台继续，关闭抽屉或切换页面都不会中断进度。",
+      "nodes.batchCordon": "批量封锁",
+      "nodes.batchSettings": "批量设置",
+      "nodes.all": "全部节点",
+      "nodes.cloud": "云算力",
+      "nodes.edge": "端算力",
+      "nodes.robot": "机器人",
+      "nodes.other": "其他",
+      "nodes.robotType": "端算力",
+      "nodes.search": "搜索节点名称、集群、IP 或任务名称...",
+      "nodes.results": "8 条结果",
+      "nodes.viewTask": "查看任务",
+      "nodes.footnote": "删除操作是一个可识别的 NodeOperation：阶段、失败原因与重试都记录在服务端。刷新页面后会从操作列表恢复。",
+      "common.refresh": "刷新",
+      "common.close": "关闭",
+      "common.cancel": "取消",
+      "table.node": "节点名称",
+      "table.type": "类型",
+      "table.status": "状态",
+      "table.cluster": "所属集群",
+      "table.location": "位置",
+      "table.ip": "节点 IP",
+      "table.resources": "资源与空闲",
+      "table.task": "任务",
+      "table.schedule": "调度管理",
+      "table.network": "网络",
+      "table.admission": "入网",
+      "table.key": "WireGuard 公钥",
+      "table.uptime": "运行时间",
+      "table.lastSeen": "最近上报",
+      "node.controlPlane": "控制面",
+      "node.schedulable": "可调度",
+      "node.cordoned": "已封锁",
+      "node.linkUp": "链路 在线",
+      "node.linkDown": "链路 离线",
+      "node.hubsUp": "链路 · 5 个 Hub 已连通",
+      "node.noDevices": "无设备",
+      "node.none": "无",
+      "node.notReported": "未上报",
+      "node.removing": "删除中",
+      "node.removed": "已删除",
+      "node.failed": "删除失败",
+      "status.online": "在线",
+      "status.removing": "删除中",
+      "status.removeFailed": "删除失败 · 重置机器",
+      "action.remove": "删除",
+      "action.cordon": "封锁",
+      "action.retry": "重试",
+      "action.view": "查看",
+      "action.viewProgress": "查看进度",
+      "task.removing": "正在删除",
+      "task.elapsed": "已用",
+      "task.advance": "推进阶段",
+      "task.details": "查看详情",
+      "task.step": "阶段",
+      "task.done": "删除完成",
+      "task.failed": "删除失败",
+      "task.background": "删除在后台继续",
+      "op.eyebrow": "删除节点",
+      "op.cluster": "集群",
+      "op.current": "当前步骤",
+      "op.elapsed": "已用时间",
+      "op.conditions": "条件",
+      "op.note": "删除在服务端继续，关闭抽屉、切换页面或刷新浏览器都不会中断。再次打开时从 NodeOperation 列表恢复进度。",
+      "stage.check": "检查",
+      "stage.power": "机器人下电",
+      "stage.drain": "清空节点",
+      "stage.peer": "移出隧道",
+      "stage.reset": "重置机器",
+      "stage.delete": "删除节点对象",
+      "stage.verify": "确认已删除",
+      "stage.checkNote": "核对集群、场站记录与机器状态",
+      "stage.powerNote": "停驱动并下电；机器人不在使用中",
+      "stage.drainNote": "停止节点上的任务，任务会在别处重启",
+      "stage.peerNote": "把节点移出隧道并回收路由",
+      "stage.resetNote": "在机器上执行 kubeadm reset",
+      "stage.deleteNote": "删除集群与管理面的 Node 对象",
+      "stage.verifyNote": "确认节点、隧道与记录都已清理",
+      "confirm.eyebrow": "危险操作",
+      "confirm.desc": "它会从集群删除：先停驱动、下电，停下它上面的任务，移出隧道，重置机器，再删除节点对象。",
+      "confirm.ip": "节点 IP",
+      "confirm.tasks": "将停止的任务",
+      "confirm.record": "场站记录",
+      "confirm.c1": "机器人先停驱动、下电；有 Run 或会话在用时不会继续。",
+      "confirm.c2": "它上面 2 个 Worker 停止，所属任务会在别处重新启动。",
+      "confirm.c3": "移出隧道，在机器上执行 kubeadm reset，再删除节点对象。",
+      "confirm.c4": "删除开始后在后台继续；关闭抽屉或切换页面不会中断。",
+      "confirm.warn": "控制面节点不能删除。机器连不上时，旧安装会在它下次加入时清掉；删除后 RLark 可能再也到不了它，只能到现场重新入网。",
+      "confirm.action": "确认删除",
+      "stations.eyebrow": "场站节点",
+      "stations.title": "场站节点",
+      "stations.desc": "一台节点在场站里的记录：身份、心跳与入网。打开详情查看身份、电源、网络与健康条件。",
+      "stations.open": "打开详情",
+      "stations.addNode": "加入节点",
+      "stations.note": "原型展示：右侧抽屉默认打开。关闭后可从表格的“详情”重新打开。",
+      "network.verified": "已验证",
+      "network.probeFailed": "探测失败",
+      "admission.joined": "已入网",
+      "station.eyebrow": "身份详情",
+      "station.lastSeen": "最近上报 12 秒前",
+      "station.tabOverview": "概览",
+      "station.tabNetwork": "网络",
+      "station.tabConditions": "条件",
+      "station.uptime": "运行时间",
+      "station.reboots": "重启次数",
+      "station.lastSeenShort": "最近上报",
+      "station.cluster": "集群",
+      "station.identity": "身份",
+      "station.nodeName": "节点名",
+      "station.clusterName": "集群",
+      "station.bootTime": "启动时间",
+      "station.system": "系统",
+      "station.robotPower": "机器人电源",
+      "station.desired": "期望",
+      "station.now": "现在",
+      "station.maintenance": "维护",
+      "station.selfCheck": "自检",
+      "station.powered": "上电",
+      "station.none": "无",
+      "station.ok": "正常",
+      "station.powerOn": "上电",
+      "station.driverOn": "启动驱动",
+      "station.driverOff": "关闭驱动",
+      "station.powerOff": "下电",
+      "station.homePose": "初始姿势",
+      "station.rulesSummary": "电源与维护规则",
+      "station.rule1": "期望状态保存在节点上；该上电没电、该跑驱动而驱动掉了，都会自动恢复。",
+      "station.rule2": "急停或硬件报错时不重拉。要让机器人保持下电，请在这里下电。",
+      "station.rule3": "机器人在用（有 Run 或会话占着）时下电会等它空出来；没人用时才做重启或换载荷维护。",
+      "station.cameras": "相机",
+      "station.camHead": "头部",
+      "station.camLeft": "左腕",
+      "station.camRight": "右腕",
+      "station.camBack": "背部",
+      "station.networkOk": "网络已验证",
+      "station.networkOkNote": "6 个 Hub 全部连通 · 最近探测 8 秒前",
+      "station.tunnel": "隧道与入网",
+      "station.tunnelAddress": "隧道地址",
+      "station.admissionState": "入网状态",
+      "station.issuedBy": "发码人",
+      "station.expires": "过期时间",
+      "station.hostKey": "主机指纹",
+      "station.hubProbes": "Hub 探测",
+      "station.reachable": "可达",
+      "station.allTrue": "4 正常",
+      "station.noneFalse": "0 异常",
+      "station.noneUnknown": "0 未知",
+      "station.reissue": "重发入网码",
+      "station.revoke": "作废入网码",
+      "station.deleteRecord": "删除记录",
+      "station.deleteDisabled": "节点仍在集群中，删除记录不可用。",
+      "station.deleteConfirm": "删除场站节点记录 s1u-02-x86？删除后不能恢复；这个名字的节点如果还在上报，会按新机器重新登记。",
+      "cond.heartbeat": "心跳",
+      "cond.identity": "身份匹配",
+      "cond.network": "网络已验证",
+      "cond.linked": "节点已就绪",
+      "cond.true": "正常",
+      "cluster.eyebrow": "集群管理",
+      "cluster.title": "新建集群",
+      "cluster.desc": "给出新场地的名字和第一台机器的 SSH。RLark 登录这台机器，把它做成新场地的第一台 Hub 和新集群的控制面，装好集群 agent、Station 和插件，最后跑一个验收 Job。",
+      "cluster.siteTitle": "场地与身份",
+      "cluster.siteNote": "集群类型决定默认集群名与后续节点的入网方式。场地名会成为 Hub 与隧道地址的一部分。",
+      "cluster.type": "集群类型",
+      "cluster.gpu": "GPU 集群",
+      "cluster.gpuNote": "云上训练与推理，连续算力优先",
+      "cluster.robot": "机器人集群",
+      "cluster.robotNote": "场站机器人、端侧算力与低速网络",
+      "cluster.site": "场地名",
+      "cluster.siteHint": "小写字母、数字和连字符；会成为 Hub 名字的一部分。",
+      "cluster.name": "集群名",
+      "cluster.optional": "选填",
+      "cluster.nameHint": "留空将使用 rlark-<场地>-<类型>。",
+      "cluster.tunnel": "隧道公网端点",
+      "cluster.tunnelHint": "几台机器共用一个公网 IP 时填写云上转发给这台的地址；留空则使用 机器IP:51820。",
+      "cluster.machineTitle": "第一台机器",
+      "cluster.machineNote": "这台机器将成为场地的第一台 Hub 与集群控制面。机器需要 systemd、tar 和 WireGuard 内核模块。",
+      "cluster.address": "机器 IP",
+      "cluster.port": "SSH 端口",
+      "cluster.user": "SSH 账号",
+      "cluster.password": "SSH 密码",
+      "cluster.passwordHint": "口令只用于这一次，不保存。之后的机器用入网码或 SSH 入网加入。",
+      "cluster.summary": "将要创建",
+      "cluster.typeShort": "类型",
+      "cluster.siteShort": "场地",
+      "cluster.nameShort": "集群",
+      "cluster.machineShort": "第一台机器",
+      "cluster.tunnelShort": "隧道端点",
+      "cluster.checkControl": "把机器做成控制面",
+      "cluster.checkHub": "安装场地的第一台 Hub",
+      "cluster.checkAgent": "安装集群 agent 与 Station",
+      "cluster.checkJob": "跑一个验收 Job",
+      "cluster.note": "口令只用于这一次，不保存。建好之后，其他机器用入网码或 SSH 加入这个集群。",
+      "cluster.create": "新建集群",
+      "cluster.fillExample": "填入示例",
+      "cluster.reset": "重置表单",
+      "cluster.running": "进行中",
+      "cluster.made": "已建好",
+      "cluster.failed": "失败",
+      "cluster.failedAt": "停在安装依赖 · 2026-11-18 09:31",
+      "cluster.stepOf": "阶段 3/8",
+      "cluster.pollNote": "进度每 3 秒刷新；离开页面后回来仍会继续。失败时会停在标红的一步，并给出重试或撤销入口。",
+      "cluster.history": "新建过的集群",
+      "provision.check": "检查机器",
+      "provision.building": "正在建",
+      "provision.deps": "安装依赖",
+      "provision.control": "生成控制面",
+      "provision.tunnel": "创建隧道",
+      "provision.agent": "安装集群 agent",
+      "provision.station": "安装 Station",
+      "provision.join": "加入站点网络",
+      "provision.verify": "验收 Job",
+      "err.type": "选择 GPU 集群或机器人集群",
+      "err.site": "场地名只能包含小写字母、数字和连字符",
+      "err.cluster": "集群名必须以 rlark- 开头，且只包含小写字母、数字和连字符",
+      "err.address": "填写机器 IP",
+      "err.port": "端口需在 1–65535 之间",
+      "err.user": "填写 SSH 账号",
+      "err.password": "填写 SSH 密码",
+      "err.tunnel": "格式为 IPv4:端口，例如 1.2.3.4:51820",
+      "form.needFix": "还需填写 {n} 项",
+      "toast.clusterStarted": "已开始创建 rlark-s1u-robot（原型演示）",
+      "toast.nodeStarted": "已创建删除操作，进度在右下角继续",
+      "toast.nodeAdvanced": "阶段推进（原型演示）",
+      "toast.nodeDone": "s1u-01-x86 已删除（原型演示）",
+      "toast.stationDeleted": "场站记录已删除（原型演示）",
+      "toast.copied": "已复制",
+      "toast.reissue": "已重发入网码（原型演示）",
+      "toast.revoked": "已作废入网码（原型演示）",
+      "toast.valid": "表单校验通过（原型演示）"
+    },
+    en: {
+      "proto.subtitle": "Admin redesign prototype",
+      "proto.nodes": "Node removal",
+      "proto.station": "Site node",
+      "proto.cluster": "New cluster",
+      "proto.deletable": "Deletable",
+      "proto.theme": "Toggle theme",
+      "nav.workbench": "Workbench",
+      "nav.dashboard": "Dashboard",
+      "nav.clusters": "Clusters",
+      "nav.newCluster": "New cluster",
+      "nav.clusterList": "Cluster list",
+      "nav.nodes": "Nodes",
+      "nav.operations": "Operations",
+      "nav.jobs": "Jobs",
+      "nav.domains": "Domains",
+      "nav.storage": "Storage",
+      "nav.images": "Images",
+      "nav.stations": "Site nodes",
+      "nav.s1u": "Shenzhen S1U debug cluster",
+      "nav.s1uMeta": "8 nodes · 6 online · 1 removing",
+      "top.ops": "Operations",
+      "top.online": "Online",
+      "top.admin": "System admin",
+      "nodes.eyebrow": "Operations",
+      "nodes.title": "Nodes",
+      "nodes.desc": "Inspect every node and manage scheduling and labels in detail. Removal continues in the background; closing the drawer or switching pages does not stop it.",
+      "nodes.batchCordon": "Batch cordon",
+      "nodes.batchSettings": "Batch settings",
+      "nodes.all": "All nodes",
+      "nodes.cloud": "Cloud",
+      "nodes.edge": "Edge",
+      "nodes.robot": "Robot",
+      "nodes.other": "Other",
+      "nodes.robotType": "Edge compute",
+      "nodes.search": "Search node, cluster, IP or task...",
+      "nodes.results": "8 results",
+      "nodes.viewTask": "View task",
+      "nodes.footnote": "A removal is an identifiable NodeOperation: stages, failure reasons and retries live on the server. A reload restores progress from the operation list.",
+      "common.refresh": "Refresh",
+      "common.close": "Close",
+      "common.cancel": "Cancel",
+      "table.node": "Node",
+      "table.type": "Type",
+      "table.status": "Status",
+      "table.cluster": "Cluster",
+      "table.location": "Location",
+      "table.ip": "Node IP",
+      "table.resources": "Resources",
+      "table.task": "Tasks",
+      "table.schedule": "Scheduling",
+      "table.network": "Network",
+      "table.admission": "Admission",
+      "table.key": "WireGuard key",
+      "table.uptime": "Uptime",
+      "table.lastSeen": "Last seen",
+      "node.controlPlane": "Control plane",
+      "node.schedulable": "Schedulable",
+      "node.cordoned": "Cordoned",
+      "node.linkUp": "Link online",
+      "node.linkDown": "Link offline",
+      "node.hubsUp": "Link · 5 hubs reachable",
+      "node.noDevices": "No devices",
+      "node.none": "None",
+      "node.notReported": "Not reported",
+      "node.removing": "Removing",
+      "node.removed": "Removed",
+      "node.failed": "Removal failed",
+      "status.online": "Online",
+      "status.removing": "Removing",
+      "status.removeFailed": "Removal failed · resetting",
+      "action.remove": "Remove",
+      "action.cordon": "Cordon",
+      "action.retry": "Retry",
+      "action.view": "View",
+      "action.viewProgress": "Progress",
+      "task.removing": "Removing",
+      "task.elapsed": "elapsed",
+      "task.advance": "Advance",
+      "task.details": "Details",
+      "task.step": "Step",
+      "task.done": "Node removed",
+      "task.failed": "Removal failed",
+      "task.background": "Removal continues in the background",
+      "op.eyebrow": "Remove node",
+      "op.cluster": "Cluster",
+      "op.current": "Current step",
+      "op.elapsed": "Elapsed",
+      "op.conditions": "Conditions",
+      "op.note": "Removal runs on the server. Closing the drawer, switching pages or reloading the browser does not stop it; reopening restores progress from the NodeOperation list.",
+      "stage.check": "Check",
+      "stage.power": "Power off the robot",
+      "stage.drain": "Drain",
+      "stage.peer": "Leave the tunnel",
+      "stage.reset": "Reset the machine",
+      "stage.delete": "Delete the Node",
+      "stage.verify": "Verify removal",
+      "stage.checkNote": "Check the cluster, site record and machine",
+      "stage.powerNote": "Stop the driver and power off, unless in use",
+      "stage.drainNote": "Stop tasks on the node; they restart elsewhere",
+      "stage.peerNote": "Remove the node from the tunnel and routes",
+      "stage.resetNote": "Run kubeadm reset on the machine",
+      "stage.deleteNote": "Delete the Node in the cluster and management plane",
+      "stage.verifyNote": "Confirm the node, tunnel and records are gone",
+      "confirm.eyebrow": "Destructive action",
+      "confirm.desc": "It leaves the cluster: the driver stops, the robot powers off, its tasks stop, it leaves the tunnel, the machine resets, then the Node is deleted.",
+      "confirm.ip": "Node IP",
+      "confirm.tasks": "Tasks to stop",
+      "confirm.record": "Site record",
+      "confirm.c1": "The robot's driver stops and it powers off; this waits while a Run or session uses it.",
+      "confirm.c2": "Its 2 Workers stop; their tasks restart elsewhere.",
+      "confirm.c3": "It leaves the tunnel, kubeadm reset runs on the machine, and the Node is deleted.",
+      "confirm.c4": "Removal continues in the background; closing the drawer or switching pages does not stop it.",
+      "confirm.warn": "A control plane cannot be removed. If the machine cannot be reached, its old installation is cleared when it joins again; after removal RLark may not reach it and it must join from the machine itself.",
+      "confirm.action": "Remove node",
+      "stations.eyebrow": "Site nodes",
+      "stations.title": "Site nodes",
+      "stations.desc": "One node's record in the site: identity, heartbeat and admission. Open a record to inspect identity, power, network and conditions.",
+      "stations.open": "Open details",
+      "stations.addNode": "Add node",
+      "stations.note": "Prototype: the drawer is open by default. After closing it, use Details on a table row to reopen.",
+      "network.verified": "Verified",
+      "network.probeFailed": "Probe failed",
+      "admission.joined": "Joined",
+      "station.eyebrow": "Identity details",
+      "station.lastSeen": "Last seen 12s ago",
+      "station.tabOverview": "Overview",
+      "station.tabNetwork": "Network",
+      "station.tabConditions": "Conditions",
+      "station.uptime": "Uptime",
+      "station.reboots": "Reboots",
+      "station.lastSeenShort": "Last seen",
+      "station.cluster": "Cluster",
+      "station.identity": "Identity",
+      "station.nodeName": "Node name",
+      "station.clusterName": "Cluster",
+      "station.bootTime": "Boot time",
+      "station.system": "System",
+      "station.robotPower": "Robot power",
+      "station.desired": "Desired",
+      "station.now": "Now",
+      "station.maintenance": "Maintenance",
+      "station.selfCheck": "Self-check",
+      "station.powered": "Powered",
+      "station.none": "None",
+      "station.ok": "OK",
+      "station.powerOn": "Power on",
+      "station.driverOn": "Start driver",
+      "station.driverOff": "Stop driver",
+      "station.powerOff": "Power off",
+      "station.homePose": "Home pose",
+      "station.rulesSummary": "Power and maintenance rules",
+      "station.rule1": "The desired state lives on the node: motors that should be on and a driver that should run are brought back automatically.",
+      "station.rule2": "Not after an emergency stop or hardware error. To keep a robot off, power it off here.",
+      "station.rule3": "Powering off waits while a Run or session uses the robot; restarts and payload swaps happen only while it is idle.",
+      "station.cameras": "Cameras",
+      "station.camHead": "Head",
+      "station.camLeft": "Left wrist",
+      "station.camRight": "Right wrist",
+      "station.camBack": "Back",
+      "station.networkOk": "Network verified",
+      "station.networkOkNote": "All 6 hubs reachable · last probe 8s ago",
+      "station.tunnel": "Tunnel and admission",
+      "station.tunnelAddress": "Tunnel address",
+      "station.admissionState": "Admission",
+      "station.issuedBy": "Issued by",
+      "station.expires": "Expires",
+      "station.hostKey": "Host key",
+      "station.hubProbes": "Hub probes",
+      "station.reachable": "Reachable",
+      "station.allTrue": "4 true",
+      "station.noneFalse": "0 false",
+      "station.noneUnknown": "0 unknown",
+      "station.reissue": "Reissue code",
+      "station.revoke": "Revoke code",
+      "station.deleteRecord": "Delete record",
+      "station.deleteDisabled": "The node is still in its cluster, so its record cannot be deleted.",
+      "station.deleteConfirm": "Delete the site node record s1u-02-x86? It cannot be restored; a node of the name that still reports registers again as a new machine.",
+      "cond.heartbeat": "Heartbeat",
+      "cond.identity": "Identity matched",
+      "cond.network": "Network verified",
+      "cond.linked": "Node ready",
+      "cond.true": "True",
+      "cluster.eyebrow": "Clusters",
+      "cluster.title": "New cluster",
+      "cluster.desc": "Give the new site's name and its first machine's SSH. RLark logs in, makes it the site's first hub and the cluster's control plane, installs the cluster agent, Station and add-ons, then runs a check Job.",
+      "cluster.siteTitle": "Site and identity",
+      "cluster.siteNote": "The cluster type sets the default name and how later nodes join. The site name becomes part of the hub and tunnel address.",
+      "cluster.type": "Cluster type",
+      "cluster.gpu": "GPU cluster",
+      "cluster.gpuNote": "Cloud training and inference, sustained compute",
+      "cluster.robot": "Robot cluster",
+      "cluster.robotNote": "Site robots, edge compute, low-bandwidth networks",
+      "cluster.site": "Site",
+      "cluster.siteHint": "Lowercase letters, digits and hyphens; part of the hub name.",
+      "cluster.name": "Cluster name",
+      "cluster.optional": "Optional",
+      "cluster.nameHint": "Leave empty to use rlark-<site>-<type>.",
+      "cluster.tunnel": "Tunnel public endpoint",
+      "cluster.tunnelHint": "For machines behind one public IP, give the address the cloud forwards to this one; empty uses machine-IP:51820.",
+      "cluster.machineTitle": "First machine",
+      "cluster.machineNote": "This machine becomes the site's first hub and the cluster's control plane. It needs systemd, tar and the WireGuard module.",
+      "cluster.address": "Machine IP",
+      "cluster.port": "SSH port",
+      "cluster.user": "SSH account",
+      "cluster.password": "SSH password",
+      "cluster.passwordHint": "The password is used once and not stored. Later machines join by a code or over SSH.",
+      "cluster.summary": "What will be created",
+      "cluster.typeShort": "Type",
+      "cluster.siteShort": "Site",
+      "cluster.nameShort": "Cluster",
+      "cluster.machineShort": "First machine",
+      "cluster.tunnelShort": "Tunnel",
+      "cluster.checkControl": "Turn the machine into the control plane",
+      "cluster.checkHub": "Install the site's first hub",
+      "cluster.checkAgent": "Install the cluster agent and Station",
+      "cluster.checkJob": "Run a check Job",
+      "cluster.note": "The password is used once and not stored. After it is made, other machines join by a code or over SSH.",
+      "cluster.create": "Create cluster",
+      "cluster.fillExample": "Fill example",
+      "cluster.reset": "Reset form",
+      "cluster.running": "In progress",
+      "cluster.made": "Made",
+      "cluster.failed": "Failed",
+      "cluster.failedAt": "Stopped at install dependencies · 2026-11-18 09:31",
+      "cluster.stepOf": "Step 3/8",
+      "cluster.pollNote": "Progress refreshes every 3 seconds and continues when you come back. A failure stops at the red step with retry or clear actions.",
+      "cluster.history": "Clusters made",
+      "provision.check": "Check the machine",
+      "provision.building": "Building",
+      "provision.deps": "Install dependencies",
+      "provision.control": "Make the control plane",
+      "provision.tunnel": "Create the tunnel",
+      "provision.agent": "Install the cluster agent",
+      "provision.station": "Install Station",
+      "provision.join": "Join the site network",
+      "provision.verify": "Check Job",
+      "err.type": "Choose GPU or robot",
+      "err.site": "Use lowercase letters, digits and hyphens only",
+      "err.cluster": "The cluster name must start with rlark- and use lowercase letters, digits and hyphens",
+      "err.address": "Enter the machine IP",
+      "err.port": "The port must be between 1 and 65535",
+      "err.user": "Enter the SSH account",
+      "err.password": "Enter the SSH password",
+      "err.tunnel": "Use IPv4:port, for example 1.2.3.4:51820",
+      "form.needFix": "{n} fields need attention",
+      "toast.clusterStarted": "Creating rlark-s1u-robot (prototype)",
+      "toast.nodeStarted": "Removal started; progress continues in the corner",
+      "toast.nodeAdvanced": "Stage advanced (prototype)",
+      "toast.nodeDone": "s1u-01-x86 removed (prototype)",
+      "toast.stationDeleted": "Site record deleted (prototype)",
+      "toast.copied": "Copied",
+      "toast.reissue": "Join code reissued (prototype)",
+      "toast.revoked": "Join code revoked (prototype)",
+      "toast.valid": "Form is valid (prototype)"
+    }
+  };
+
+  const STAGE_KEYS = ["check", "power", "drain", "peer", "reset", "delete", "verify"];
+  const STAGE_NOTES = ["checkNote", "powerNote", "drainNote", "peerNote", "resetNote", "deleteNote", "verifyNote"];
+
+  let lang = "zh";
+  try { lang = localStorage.getItem("rlark-proto-lang") || "zh"; } catch (e) { /* ignore */ }
+  if (lang !== "zh" && lang !== "en") lang = "zh";
+
+  const state = {
+    view: "nodes",
+    node: "s1u-01-x86",
+    completed: 2,
+    phase: "running",
+    prevRow: null,
+    confirmAction: null,
+    pendingNode: "s1u-02-x86",
+    stationDeletable: false,
+  };
+
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const t = (key) => (MESSAGES[lang] && MESSAGES[lang][key]) || key;
+
+  function escapeHTML(value) {
+    return String(value).replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[ch]);
+  }
+
+  function toast(message, tone = "ok") {
+    const el = $("#toast");
+    $("#toastText").textContent = message;
+    el.classList.toggle("error", tone === "error");
+    el.hidden = false;
+    window.clearTimeout(toast._timer);
+    toast._timer = window.setTimeout(() => { el.hidden = true; }, 3600);
+  }
+
+  function applyLanguage() {
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+    $$("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+    $$("[data-i18n-ph]").forEach((el) => { el.placeholder = t(el.dataset.i18nPh); });
+    $$("[data-i18n-title]").forEach((el) => {
+      const value = t(el.dataset.i18nTitle);
+      el.title = value;
+      el.setAttribute("aria-label", value);
+    });
+    const langLabel = $("[data-lang-label]");
+    if (langLabel) langLabel.textContent = lang === "zh" ? "EN" : "中";
+    renderTask();
+    syncSummary();
+  }
+
+  function setView(name) {
+    if (!["nodes", "station", "cluster"].includes(name)) name = "nodes";
+    state.view = name;
+    $$(".view").forEach((el) => { el.hidden = el.id !== "view-" + name; });
+    $$(".proto-tab").forEach((el) => {
+      const active = el.dataset.view === name;
+      el.classList.toggle("active", active);
+      el.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    $$(".nav-item[data-nav]").forEach((el) => el.classList.toggle("active", el.dataset.nav === name));
+    const crumb = $("#crumbCurrent");
+    crumb.dataset.i18n = name === "nodes" ? "nav.nodes" : name === "station" ? "nav.stations" : "nav.newCluster";
+    crumb.textContent = t(crumb.dataset.i18n);
+    if (name !== "station") closeStation();
+    else openStation();
+    const dock = $("#taskDock");
+    const narrow = window.matchMedia("(max-width: 680px)").matches;
+    if (dock) dock.classList.toggle("collapsed", name === "cluster" || narrow);
+    if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+    syncDockVisibility();
+  }
+
+  function setTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("rlark-proto-theme", theme); } catch (e) { /* ignore */ }
+    const btn = $("#themeBtn");
+    btn.querySelector("use").setAttribute("href", theme === "dark" ? "#i-sun" : "#i-moon");
+    btn.title = theme === "dark" ? (lang === "zh" ? "切换到亮色" : "Switch to light") : t("proto.theme");
+    btn.setAttribute("aria-label", btn.title);
+  }
+
+  function initialTheme() {
+    let saved = null;
+    try { saved = localStorage.getItem("rlark-proto-theme"); } catch (e) { /* ignore */ }
+    if (saved === "dark" || saved === "light") return saved;
+    return "light";
+  }
+
+  /* ---------- removal progress ---------- */
+  function stageLabel(index) { return t("stage." + STAGE_KEYS[index]); }
+  function stageNote(index) { return t("stage." + STAGE_NOTES[index]); }
+  function stageState(index) {
+    if (state.phase === "success") return "done";
+    if (state.phase === "failed") return index < state.completed ? "done" : index === state.completed ? "failed" : "pending";
+    if (index < state.completed) return "done";
+    if (index === state.completed) return "current";
+    return "pending";
+  }
+
+  function activateRemoval(name, restore = true) {
+    if (restore) restoreRow();
+    const row = document.querySelector('tr[data-node="' + name + '"]');
+    if (!row) return;
+    const statusCell = row.querySelector('[data-cell="status"]');
+    const actionsCell = row.querySelector('[data-cell="actions"]');
+    state.prevRow = {
+      row,
+      status: statusCell ? statusCell.innerHTML : "",
+      actions: actionsCell ? actionsCell.innerHTML : "",
+    };
+    row.classList.add("row-deleting");
+    if (!document.getElementById("rowProgressRow")) {
+      const progressRow = document.createElement("tr");
+      progressRow.id = "rowProgressRow";
+      progressRow.innerHTML = '<td class="row-progress-cell" colspan="9"><div class="row-progress"><i id="rowProgressBar"></i></div></td>';
+      row.after(progressRow);
+    }
+    state.node = name;
+    renderTask();
+  }
+
+  function restoreRow() {
+    if (!state.prevRow) return;
+    const { row, status, actions } = state.prevRow;
+    const statusCell = row.querySelector('[data-cell="status"]');
+    const actionsCell = row.querySelector('[data-cell="actions"]');
+    if (statusCell) statusCell.innerHTML = status;
+    if (actionsCell) actionsCell.innerHTML = actions;
+    row.classList.remove("row-deleting");
+    const progressRow = document.getElementById("rowProgressRow");
+    if (progressRow) progressRow.remove();
+    state.prevRow = null;
+    bindRowActions(row);
+  }
+
+  function renderTask() {
+    const dock = $("#taskDock");
+    const completed = state.completed;
+    const total = STAGE_KEYS.length;
+    const pct = Math.round((completed / total) * 100);
+    const success = state.phase === "success";
+    const failed = state.phase === "failed";
+    const current = Math.min(completed, total - 1);
+
+    $("#taskTitle").textContent = (success ? t("task.done") : failed ? t("task.failed") : t("task.removing") + " " + state.node);
+    $("#taskMeta").textContent = (success ? t("task.done") : failed ? t("task.failed") : stageLabel(current) + " · " + t("task.elapsed") + " 2m14s");
+    $("#taskBar").style.width = (success ? 100 : pct) + "%";
+    $("#taskStepText").textContent = t("task.step") + " " + Math.min(completed + 1, total) + "/" + total;
+    dock.classList.toggle("success", success);
+    dock.classList.toggle("failed", failed);
+    const spinner = $("#taskSpinner");
+    spinner.style.display = success || failed ? "none" : "";
+    $("#taskAdvance").disabled = success || failed;
+    $("#opRetry").hidden = !failed;
+
+    const steps = $("#taskSteps");
+    steps.innerHTML = STAGE_KEYS.map((key, index) => {
+      const st = stageState(index);
+      const mark = st === "done" ? '<svg class="ico" style="width:8px;height:8px"><use href="#i-check"></use></svg>'
+        : st === "current" ? '<span class="mini-spinner"></span>' : "";
+      return '<span class="task-step ' + st + '"><span>' + mark + "</span></span>";
+    }).join("");
+
+    const row = document.querySelector('tr[data-node="' + state.node + '"]');
+    if (row && state.prevRow) {
+      const statusCell = row.querySelector('[data-cell="status"]');
+      const actionsCell = row.querySelector('[data-cell="actions"]');
+      if (statusCell) {
+        statusCell.innerHTML = success
+          ? '<span class="pill online"><i></i><span>' + escapeHTML(t("node.removed")) + "</span></span>"
+          : failed
+            ? '<span class="pill failed"><i></i><span>' + escapeHTML(t("node.failed") + " · " + stageLabel(current)) + "</span></span>"
+            : '<span class="pill removing"><span class="mini-spinner"></span><span>' + escapeHTML(t("node.removing") + " · " + stageLabel(current)) + "</span></span>";
+      }
+      if (actionsCell) {
+        actionsCell.innerHTML = success
+          ? '<div class="actions-cell"><span class="state-chip ok">' + escapeHTML(t("node.removed")) + "</span></div>"
+          : failed
+            ? '<div class="actions-cell"><button class="btn tiny" data-open-op="' + escapeHTML(state.node) + '">' + escapeHTML(t("action.view")) + '</button><button class="btn tiny danger-outline" data-retry-node="' + escapeHTML(state.node) + '">' + escapeHTML(t("action.retry")) + "</button></div>"
+            : '<div class="actions-cell"><span class="state-chip pending">' + escapeHTML(t("node.removing")) + '</span><button class="btn tiny" data-open-op="' + escapeHTML(state.node) + '">' + escapeHTML(t("action.viewProgress")) + "</button></div>";
+      }
+      const bar = $("#rowProgressBar");
+      if (bar) bar.style.width = (success ? 100 : pct) + "%";
+      row.setAttribute("aria-busy", success || failed ? "false" : "true");
+    }
+
+    $("#opNodeName").textContent = state.node;
+    $("#opPillText").textContent = success ? t("task.done") : failed ? t("task.failed") : t("status.removing");
+    $("#opCurrent").textContent = success ? t("stage.verify") : stageLabel(current);
+    const opPill = $("#opDrawer .pill");
+    opPill.className = "pill " + (success ? "online" : failed ? "failed" : "removing");
+    opPill.innerHTML = (success || failed ? '<i></i><span id="opPillText">' : '<span class="mini-spinner"></span><span id="opPillText">') + escapeHTML(success ? t("task.done") : failed ? t("task.failed") : t("status.removing")) + "</span>";
+
+    const opSteps = $("#opSteps");
+    opSteps.innerHTML = STAGE_KEYS.map((key, index) => {
+      const st = stageState(index);
+      const mark = st === "done" ? '<svg class="ico" style="width:10px;height:10px"><use href="#i-check"></use></svg>'
+        : st === "current" ? '<span class="mini-spinner"></span>'
+        : st === "failed" ? '<svg class="ico" style="width:10px;height:10px"><use href="#i-x"></use></svg>'
+        : '<span style="width:5px;height:5px;border-radius:50%;background:currentColor"></span>';
+      return '<div class="op-step ' + st + '"><span class="op-step-icon">' + mark + '</span><div class="op-step-text"><strong>' + escapeHTML(stageLabel(index)) + "</strong><small>" + escapeHTML(stageNote(index)) + "</small></div></div>";
+    }).join("");
+
+    const banner = $("#removalBanner");
+    if (success || failed) banner.hidden = true;
+    else {
+      banner.hidden = false;
+      $("#bannerText").textContent = lang === "zh"
+        ? "正在删除 1 个节点 · " + stageLabel(current) + " · 删除在后台继续，可关闭抽屉或切换页面。"
+        : "Removing 1 node · " + stageLabel(current) + " · removal continues in the background if you close the drawer or switch pages.";
+    }
+    bindRowActions(document);
+    syncDockVisibility();
+  }
+
+  function syncDockVisibility() {
+    const dock = $("#taskDock");
+    const visible = !state.dockHidden;
+    dock.hidden = !visible;
+  }
+
+  function advanceRemoval() {
+    if (state.phase !== "running") return;
+    if (state.completed >= STAGE_KEYS.length - 1) {
+      state.completed = STAGE_KEYS.length;
+      state.phase = "success";
+      toast(t("toast.nodeDone"));
+      renderTask();
+      const row = document.querySelector('tr[data-node="' + state.node + '"]');
+      if (row) window.setTimeout(() => {
+        row.style.opacity = "0";
+        row.style.transition = "opacity .4s";
+        const progressRow = document.getElementById("rowProgressRow");
+        if (progressRow) progressRow.remove();
+        window.setTimeout(() => { row.remove(); state.prevRow = null; syncDockVisibility(); }, 420);
+      }, 1800);
+      return;
+    }
+    state.completed += 1;
+    toast(t("toast.nodeAdvanced"));
+    renderTask();
+  }
+
+  function openOpDrawer(name) {
+    if (name) state.node = name;
+    renderTask();
+    $("#opScrim").hidden = false;
+    $("#opDrawer").hidden = false;
+    $("#opDrawer").querySelector("[data-close-op]").focus();
+  }
+  function closeOpDrawer() {
+    $("#opScrim").hidden = true;
+    $("#opDrawer").hidden = true;
+  }
+
+  /* ---------- station ---------- */
+  function openStation() {
+    $("#stationScrim").hidden = false;
+    $("#stationDrawer").hidden = false;
+    const selected = $("#stationDrawer .tab-btn[aria-selected='true']") || $("#tab-overview");
+    selectTab(selected.dataset.tab);
+    $("#stationClose").focus();
+  }
+  function closeStation() {
+    $("#stationScrim").hidden = true;
+    $("#stationDrawer").hidden = true;
+  }
+  function selectTab(name) {
+    $$("#stationDrawer .tab-btn").forEach((btn) => {
+      const active = btn.dataset.tab === name;
+      btn.setAttribute("aria-selected", active ? "true" : "false");
+      btn.tabIndex = active ? 0 : -1;
+    });
+    $$("#stationDrawer [data-panel]").forEach((panel) => { panel.hidden = panel.dataset.panel !== name; });
+  }
+
+  function syncStationDelete() {
+    const enabled = state.stationDeletable;
+    const btn = $("#stationDelete");
+    btn.disabled = !enabled;
+    $("#stationDeleteHint").hidden = enabled;
+  }
+
+  /* ---------- confirm ---------- */
+  function openConfirm(options) {
+    state.confirmAction = options.onConfirm;
+    $("#confirmTitle").textContent = options.title;
+    $("#confirmDesc").textContent = options.desc;
+    $("#confirmActionText").textContent = options.actionText;
+    $("#confirmBackdrop").hidden = false;
+    $("#confirmAction").focus();
+  }
+  function closeConfirm() {
+    state.confirmAction = null;
+    $("#confirmBackdrop").hidden = true;
+  }
+
+  function setupNodeDelete(name) {
+    state.pendingNode = name;
+    openConfirm({
+      title: (lang === "zh" ? "删除 " : "Remove ") + name,
+      desc: t("confirm.desc"),
+      actionText: t("confirm.action"),
+      onConfirm: () => {
+        state.node = name;
+        state.completed = 0;
+        state.phase = "running";
+        state.dockHidden = false;
+        activateRemoval(name, true);
+        closeConfirm();
+        toast(t("toast.nodeStarted"));
+      },
+    });
+  }
+
+  function setupStationDelete() {
+    openConfirm({
+      title: lang === "zh" ? "删除场站记录 s1u-02-x86" : "Delete site record s1u-02-x86",
+      desc: t("station.deleteConfirm"),
+      actionText: t("station.deleteRecord"),
+      onConfirm: () => {
+        closeConfirm();
+        closeStation();
+        toast(t("toast.stationDeleted"));
+      },
+    });
+  }
+
+  /* ---------- new cluster ---------- */
+  function clusterTypeValue() {
+    const checked = document.querySelector('input[name="clusterType"]:checked');
+    return checked ? checked.value : "";
+  }
+  function typeLabel(value) {
+    return value === "gpu" ? t("cluster.gpu") : value === "robot" ? t("cluster.robot") : "—";
+  }
+  function defaultName(site, type) {
+    return "rlark-" + (site || "<site>") + "-" + (type || "<type>");
+  }
+  function syncSummary() {
+    const type = clusterTypeValue();
+    const site = $("#site").value.trim();
+    const name = $("#clusterName").value.trim() || defaultName(site, type);
+    const address = $("#address").value.trim();
+    const port = $("#port").value.trim() || "22";
+    const user = $("#user").value.trim() || "root";
+    const tunnel = $("#tunnel").value.trim() || (address || "<IP>") + ":51820";
+    $("#sumName").textContent = name;
+    $("#sumType").textContent = type ? typeLabel(type) + " · " + (lang === "zh" ? "场地 " : "site ") + (site || "—") : "—";
+    $("#sumTypeValue").textContent = type ? typeLabel(type) : "—";
+    $("#sumSite").textContent = site || "—";
+    $("#sumCluster").textContent = name;
+    $("#sumMachine").textContent = user + "@" + (address || "<IP>") + ":" + port;
+    $("#sumTunnel").textContent = tunnel;
+    $("#clusterName").placeholder = defaultName(site, type);
+  }
+
+  function setError(key, message) {
+    const el = document.querySelector('[data-error="' + key + '"]');
+    if (el) {
+      el.hidden = !message;
+      el.textContent = message || "";
+    }
+    let control = null;
+    if (key === "type") control = $("#typeGroup");
+    else if (key === "cluster") control = $("#clusterName");
+    else control = document.getElementById(key);
+    if (control) control.classList.toggle("invalid", Boolean(message));
+  }
+
+  function validateClusterForm() {
+    const problems = {};
+    const type = clusterTypeValue();
+    const site = $("#site").value.trim();
+    const cluster = $("#clusterName").value.trim();
+    const address = $("#address").value.trim();
+    const port = Number($("#port").value.trim());
+    const user = $("#user").value.trim();
+    const password = $("#password").value;
+    const tunnel = $("#tunnel").value.trim();
+    const label = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
+    if (!type) problems.type = t("err.type");
+    if (!label.test(site)) problems.site = t("err.site");
+    if (cluster && (!cluster.startsWith("rlark-") || !label.test(cluster))) problems.cluster = t("err.cluster");
+    if (!address || /[\s@]/.test(address)) problems.address = t("err.address");
+    if (!Number.isInteger(port) || port < 1 || port > 65535) problems.port = t("err.port");
+    if (!user) problems.user = t("err.user");
+    if (!password) problems.password = t("err.password");
+    if (tunnel && !/^(\d{1,3}\.){3}\d{1,3}:\d{1,5}$/.test(tunnel)) problems.tunnel = t("err.tunnel");
+    ["type", "site", "cluster", "address", "port", "user", "password", "tunnel"].forEach((key) => setError(key, problems[key] || ""));
+    const count = Object.keys(problems).length;
+    const alert = $("#formAlert");
+    alert.hidden = count === 0;
+    $("#formAlertText").textContent = t("form.needFix").replace("{n}", String(count));
+    return count === 0;
+  }
+
+  function clearAllErrors() {
+    ["type", "site", "cluster", "address", "port", "user", "password", "tunnel"].forEach((key) => setError(key, ""));
+    $("#formAlert").hidden = true;
+  }
+
+  function submitCluster(event) {
+    if (event) event.preventDefault();
+    if (!validateClusterForm()) {
+      let first = $(".invalid");
+      if (first && first.id === "typeGroup") first = first.querySelector("input");
+      if (first) first.focus();
+      return;
+    }
+    toast(t("toast.clusterStarted"));
+    $("#provisionPanel").scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function fillExample() {
+    const gpu = document.querySelector('input[name="clusterType"][value="robot"]');
+    if (gpu) gpu.checked = true;
+    $("#site").value = "s1u";
+    $("#clusterName").value = "";
+    $("#address").value = "10.0.0.8";
+    $("#port").value = "22";
+    $("#user").value = "root";
+    $("#password").value = "demo-1234";
+    $("#tunnel").value = "";
+    clearAllErrors();
+    syncSummary();
+    toast(lang === "zh" ? "已填入示例数据" : "Example data filled");
+  }
+
+  function resetForm() {
+    document.querySelectorAll('input[name="clusterType"]').forEach((input) => { input.checked = false; });
+    ["site", "clusterName", "tunnel", "address", "password"].forEach((id) => { document.getElementById(id).value = ""; });
+    $("#port").value = "22";
+    $("#user").value = "root";
+    clearAllErrors();
+    syncSummary();
+  }
+
+  /* ---------- copy ---------- */
+  async function copyText(value) {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast(t("toast.copied"));
+    } catch (e) {
+      toast(t("toast.copied"));
+    }
+  }
+
+  /* ---------- focus and keys ---------- */
+  function focusables(root) {
+    return $$('button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])', root)
+      .filter((el) => !el.disabled && el.offsetParent !== null);
+  }
+  function trapFocus(event, root) {
+    if (event.key !== "Tab") return;
+    const items = focusables(root);
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
+
+  /* ---------- bindings ---------- */
+  const boundActions = new WeakSet();
+  function bindRowActions(root) {
+    $$("[data-delete-node]", root).forEach((btn) => {
+      if (boundActions.has(btn)) return;
+      boundActions.add(btn);
+      btn.addEventListener("click", () => setupNodeDelete(btn.dataset.deleteNode));
+    });
+    $$("[data-open-op]", root).forEach((btn) => {
+      if (boundActions.has(btn)) return;
+      boundActions.add(btn);
+      btn.addEventListener("click", () => openOpDrawer(btn.dataset.openOp));
+    });
+    $$("[data-retry-node]", root).forEach((btn) => {
+      if (boundActions.has(btn)) return;
+      boundActions.add(btn);
+      btn.addEventListener("click", () => {
+        state.node = btn.dataset.retryNode;
+        state.completed = 0;
+        state.phase = "running";
+        activateRemoval(state.node, true);
+        toast(t("toast.nodeStarted"));
+      });
+    });
+  }
+
+  function init() {
+    setTheme(initialTheme());
+    applyLanguage();
+    bindRowActions(document);
+
+    state.dockHidden = false;
+    state.completed = 2;
+    activateRemoval("s1u-01-x86", false);
+
+    $$(".proto-tab").forEach((tab) => tab.addEventListener("click", () => setView(tab.dataset.view)));
+    $$(".nav-item[data-nav]").forEach((item) => item.addEventListener("click", (event) => {
+      event.preventDefault();
+      setView(item.dataset.nav);
+    }));
+    $$(".nav-item[href^='#']").forEach((item) => {
+      if (item.dataset.nav) return;
+      item.addEventListener("click", (event) => {
+        event.preventDefault();
+        const hash = item.getAttribute("href").slice(1);
+        if (hash === "cluster") setView("cluster");
+        else if (hash === "station") setView("station");
+        else setView("nodes");
+      });
+    });
+    $$(".category-tab").forEach((tab) => tab.addEventListener("click", () => {
+      $$(".category-tab").forEach((other) => other.classList.remove("active"));
+      tab.classList.add("active");
+    }));
+
+    $("#themeBtn").addEventListener("click", () => {
+      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      setTheme(next);
+    });
+    $("#langBtn").addEventListener("click", () => {
+      lang = lang === "zh" ? "en" : "zh";
+      try { localStorage.setItem("rlark-proto-lang", lang); } catch (e) { /* ignore */ }
+      applyLanguage();
+    });
+
+    $("#taskAdvance").addEventListener("click", advanceRemoval);
+    $("#taskOpen").addEventListener("click", () => openOpDrawer());
+    $("#bannerView").addEventListener("click", () => openOpDrawer());
+    $("#taskCollapse").addEventListener("click", () => {
+      const dock = $("#taskDock");
+      dock.classList.toggle("collapsed");
+      const collapsed = dock.classList.contains("collapsed");
+      $("#taskCollapse").querySelector("use").setAttribute("href", collapsed ? "#i-chevron" : "#i-chevron");
+      $("#taskCollapse").setAttribute("aria-label", collapsed ? t("task.details") : "Collapse");
+    });
+
+    $("#opScrim").addEventListener("click", closeOpDrawer);
+    $$("[data-close-op]").forEach((btn) => btn.addEventListener("click", closeOpDrawer));
+
+    $("#stationClose").addEventListener("click", closeStation);
+    $("#stationFootClose").addEventListener("click", closeStation);
+    $("#stationScrim").addEventListener("click", closeStation);
+    $("#openStation").addEventListener("click", openStation);
+    $$("[data-open-station]").forEach((btn) => btn.addEventListener("click", openStation));
+    $$("#stationDrawer .tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => selectTab(btn.dataset.tab));
+      btn.addEventListener("keydown", (event) => {
+        const tabs = $$("#stationDrawer .tab-btn");
+        const index = tabs.indexOf(btn);
+        if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+          event.preventDefault();
+          const next = (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+          selectTab(tabs[next].dataset.tab);
+          tabs[next].focus();
+        } else if (event.key === "Home" || event.key === "End") {
+          event.preventDefault();
+          const next = event.key === "Home" ? tabs[0] : tabs[tabs.length - 1];
+          selectTab(next.dataset.tab);
+          next.focus();
+        }
+      });
+    });
+    $("#deletableToggle").addEventListener("change", (event) => {
+      state.stationDeletable = event.target.checked;
+      syncStationDelete();
+    });
+    $("#stationDelete").addEventListener("click", setupStationDelete);
+    $("#reissueBtn").addEventListener("click", () => toast(t("toast.reissue")));
+    $("#revokeBtn").addEventListener("click", () => toast(t("toast.revoked")));
+    $$("[data-copy]").forEach((btn) => btn.addEventListener("click", () => copyText(btn.dataset.copy)));
+    $("#confirmClose").addEventListener("click", closeConfirm);
+    $("#confirmCancel").addEventListener("click", closeConfirm);
+    $("#confirmBackdrop").addEventListener("click", (event) => {
+      if (event.target === $("#confirmBackdrop")) closeConfirm();
+    });
+    $("#confirmAction").addEventListener("click", () => {
+      const action = state.confirmAction;
+      if (action) action();
+    });
+
+    const formInputs = ["site", "clusterName", "tunnel", "address", "port", "user", "password"];
+    formInputs.forEach((id) => {
+      const el = document.getElementById(id);
+      el.addEventListener("input", () => {
+        if (el.classList.contains("invalid")) setError(id, "");
+        syncSummary();
+      });
+    });
+    $$('input[name="clusterType"]').forEach((input) => input.addEventListener("change", () => {
+      setError("type", "");
+      syncSummary();
+    }));
+    $$(".cluster-form-col .input").forEach((input) => input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") submitCluster(event);
+    }));
+    $("#createCluster").addEventListener("click", submitCluster);
+    $("#fillExample").addEventListener("click", fillExample);
+    $("#resetForm").addEventListener("click", resetForm);
+    $("#togglePassword").addEventListener("click", () => {
+      const input = $("#password");
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      $("#togglePassword").querySelector("use").setAttribute("href", show ? "#i-eye-off" : "#i-eye");
+      $("#togglePassword").setAttribute("aria-label", show ? "Hide password" : "Show password");
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        if (!$("#confirmBackdrop").hidden) { closeConfirm(); return; }
+        if (!$("#opDrawer").hidden) { closeOpDrawer(); return; }
+        if (!$("#stationDrawer").hidden) { closeStation(); return; }
+      }
+      if (!$("#confirmBackdrop").hidden) trapFocus(event, $(".modal"));
+      else if (!$("#opDrawer").hidden) trapFocus(event, $("#opDrawer"));
+      else if (!$("#stationDrawer").hidden) trapFocus(event, $("#stationDrawer"));
+    }, true);
+
+    window.addEventListener("hashchange", () => {
+      const name = location.hash.replace("#", "");
+      if (["nodes", "station", "cluster"].includes(name) && name !== state.view) setView(name);
+    });
+
+    const initial = location.hash.replace("#", "");
+    setView(["nodes", "station", "cluster"].includes(initial) ? initial : "nodes");
+    syncStationDelete();
+    syncSummary();
+    renderTask();
+  }
+
+  init();
+})();
+</script>
+
+</body>
+</html>

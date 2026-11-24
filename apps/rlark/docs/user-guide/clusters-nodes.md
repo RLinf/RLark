@@ -53,6 +53,8 @@ Use **Refresh** on the Nodes page to update the full filtered node list in place
 !!! note "Node categories"
 The platform groups Workers using RLark category labels for cloud, edge, and robot resources. Legacy category values and nodes that explicitly advertise supported resources remain visible. Kubernetes control-plane nodes are excluded from the platform Worker view.
 
+Administrators can remove a node from the admin console. Removal is a server-owned node operation with observable stages; it continues when the confirmation drawer is closed and can be reopened from the node row or the task card. See [Removing a Node](../admin-guide/nodes.md#removing-a-node).
+
 ## Result
 
 You should now have a cluster and, when needed, a node selector that matches online, schedulable Workers with sufficient capacity. Use them in [Submit and Manage a Job](jobs.md).

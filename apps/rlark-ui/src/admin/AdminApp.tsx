@@ -36,6 +36,7 @@ import {
   UNAUTHORIZED_EVENT,
 } from "../api";
 import { authApi } from "../backend";
+import { RemovalProgressProvider } from "../astribot/components/RemovalProgress";
 
 export function AdminLogin({
   lang,
@@ -278,6 +279,7 @@ export function AdminApp() {
         "app-shell theme-" + theme + (collapsed ? " sidebar-collapsed" : "")
       }
     >
+      <RemovalProgressProvider zh={zh} compact={adminPage !== "clusters-nodes"}>
       <aside className="sidebar">
         <Logo lang={lang} />
         <nav>
@@ -459,6 +461,7 @@ export function AdminApp() {
         )}
         <PlatformFooter />
       </main>
+      </RemovalProgressProvider>
     </div>
   );
 }

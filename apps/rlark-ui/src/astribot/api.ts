@@ -39,8 +39,8 @@ export interface StationItem {
 
 export interface NodeOperation {
   // annotations: what a removal's PowerOff stage found (station.rlark.io/power-off).
-  metadata: { name: string; namespace: string; annotations?: Record<string, string> };
-  spec: { action: "Join" | "Remove"; nodeName: string };
+  metadata: { name: string; namespace: string; annotations?: Record<string, string>; creationTimestamp?: string; uid?: string };
+  spec: { action: "Join" | "Remove"; nodeName: string; clusterID?: string; requestID?: string; nodeUID?: string };
   status?: {
     phase?: "Pending" | "Running" | "Blocked" | "Succeeded" | "Failed";
     stage?: string;

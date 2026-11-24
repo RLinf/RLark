@@ -40,6 +40,18 @@ The **Image Registries** page stores private-registry credentials and selects th
 
 ![Console overview](../images/ui/console-overview.png)
 
+### Node Removal Progress
+
+On **Nodes**, an administrator removes a node with the row's **Remove** action. The console asks for confirmation and then creates a node operation on the control plane. Closing the confirmation drawer or leaving the page does not cancel it: the row shows **Removing** with the current stage, and a task card in the lower-right corner follows the operation. The card collapses and opens a detail drawer with every stage and its condition. Reloading the page restores progress from the operation list. If a stage fails, or the member cluster API cannot be reached, the detail drawer shows the reason and offers **Retry**. While a removal is pending or running, the console does not submit a second one for the same node; the Gateway also rejects a duplicate with `409 NODE_OPERATION_IN_PROGRESS`. A control-plane node cannot be removed.
+
+### Site Node Details
+
+On **Site Nodes**, selecting a record opens a drawer with **Overview**, **Network**, and **Conditions** tabs. The fixed footer keeps the actions reachable: reissue or revoke a join code, and delete the record when it is eligible. Node UIDs, the WireGuard public key, the tunnel address, and the SSH host fingerprint are copyable. Deleting a record does not remove a node that still reports under the name; it registers again with its next report.
+
+### Creating a Cluster
+
+The **New Cluster** page collects the site and its first machine in two sections and keeps a **What will be created** summary beside the form. Required fields are marked, and invalid input is explained under the field instead of only disabling the button. Enter submits the form. After submission, the progress card shows the provisioning stage and earlier attempts; leaving the page does not cancel provisioning.
+
 ### Finding the Right Page
 
 | Question                                       | Go to                              |

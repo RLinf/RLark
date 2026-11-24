@@ -71,6 +71,38 @@ func TestCreateNodeOperationRejectsRequestIDReuse(t *testing.T) {
 	}
 }
 
+func TestCreateNodeOperationRejectsASecondRemovalWhileOneIsActive(t *testing.T) {
+	client := stationHandlerClient(stationHandlerCluster("cluster-a", "agent-a"))
+	gateway := &Gateway{astribotState: astribotState{stationClient: client}, kubeClient: rlarkfake.NewSimpleClientset()}
+	first := nodeOperationTestRequest()
+	if got := nodeOperationCall(gateway, first); got.Code != http.StatusAccepted {
+		t.Fatalf("first status=%d body=%s", got.Code, got.Body.String())
+	}
+	second := first
+	second.RequestID = "request-002"
+	if got := nodeOperationCall(gateway, second); got.Code != http.StatusConflict {
+		t.Fatalf("an active removal accepted a duplicate: status=%d body=%s", got.Code, got.Body.String())
+	}
+	// A different node is not blocked by the first node's operation.
+	other := second
+	other.RequestID, other.NodeName = "request-003", "worker-b"
+	if got := nodeOperationCall(gateway, other); got.Code != http.StatusAccepted {
+		t.Fatalf("another node status=%d body=%s", got.Code, got.Body.String())
+	}
+	// A terminal operation may be retried with a new request ID.
+	stored, err := client.Resource(nodeOperationGVR).Namespace("agent-a").Get(t.Context(), nodeOperationName(first.ClusterID, first.RequestID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.Object["status"] = map[string]any{"phase": "Blocked"}
+	if _, err := client.Resource(nodeOperationGVR).Namespace("agent-a").Update(t.Context(), stored, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := nodeOperationCall(gateway, second); got.Code != http.StatusAccepted {
+		t.Fatalf("retry after a terminal operation status=%d body=%s", got.Code, got.Body.String())
+	}
+}
+
 func TestNodeOperationRouteRequiresAdministratorJWT(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	key := []byte(strings.Repeat("k", 32))

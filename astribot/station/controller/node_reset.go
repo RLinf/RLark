@@ -65,10 +65,19 @@ func (r InClusterNodeReset) Reset(ctx context.Context, op *stationv1alpha1.NodeO
 	}
 	pods := member.CoreV1().Pods(nodeResetNamespace)
 	pod, err := pods.Get(ctx, nodeResetPodName(op), metav1.GetOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("read the reset pod: %w", err)
+	}
+	if err == nil && pod.Status.Phase == corev1.PodFailed {
+		return false, fmt.Errorf("the reset could not be started on the node: %s %s", pod.Status.Reason, pod.Status.Message)
+	}
+	// A kubelet that stopped reporting cannot run the reset pod. The machine
+	// clears what it kept when it joins again, so a pod left Pending on the
+	// node must not hold the operation Running forever.
+	if !nodeReady(node) {
+		return true, nil
+	}
 	if apierrors.IsNotFound(err) {
-		if !nodeReady(node) {
-			return true, nil
-		}
 		want, err := nodeResetPod(ctx, member, op)
 		if err != nil {
 			return false, err
@@ -77,13 +86,9 @@ func (r InClusterNodeReset) Reset(ctx context.Context, op *stationv1alpha1.NodeO
 			return false, fmt.Errorf("start the reset on the node: %w", err)
 		}
 		return false, nil
-	} else if err != nil {
-		return false, fmt.Errorf("read the reset pod: %w", err)
 	}
-	if pod.Status.Phase == corev1.PodFailed {
-		return false, fmt.Errorf("the reset could not be started on the node: %s %s", pod.Status.Reason, pod.Status.Message)
-	}
-	return pod.Status.Phase == corev1.PodSucceeded && !nodeReady(node), nil
+	// The node still reports: wait for the reset to stop its kubelet.
+	return false, nil
 }
 
 // nodeResetPod is a pod on the node, in the host's namespaces, with the

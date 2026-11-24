@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   CircleCheck,
@@ -79,11 +79,16 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
   const [siteNodes, setSiteNodes] = useState<Record<string, SiteNode>>({});
   const [admissions, setAdmissions] = useState<NodeAdmission[]>([]);
   const [admissionError, setAdmissionError] = useState("");
+  const [siteDataState, setSiteDataState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [showNodeOperations, setShowNodeOperations] = useState(false);
   const [deletePending, setDeletePending] = useState("");
+  const [admissionPending, setAdmissionPending] = useState<"reissue" | "revoke" | "">("");
+  const [drawerRefreshError, setDrawerRefreshError] = useState("");
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [now, setNow] = useState(() => Date.now());
   const activeRequest = useRef<AbortController | null>(null);
+  const drawerTrigger = useRef<HTMLElement | null>(null);
+  const drawerDeleteRequest = useRef(false);
 
   const load = async (append = false) => {
     if (append) setLoadingMore(true);
@@ -104,7 +109,7 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
       if (!append) void loadSiteData(latestClusters, controller.signal);
       setItems((current) => (append ? [...current, ...response.items] : response.items));
       setContinueToken(response.continue ?? "");
-      if (!append && !response.items.some((item) => keyOf(item) === selectedID)) setSelectedID("");
+      if (!append && !response.items.some((item) => keyOf(item) === selectedID)) closeDrawer();
     } catch (reason) {
       if (controller.signal.aborted) return;
       setError((reason as Error).message);
@@ -119,9 +124,19 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
     }
   };
 
+  const closeDrawer = useCallback(() => {
+    if (drawerDeleteRequest.current || admissionPending) return;
+    setSelectedID("");
+    window.requestAnimationFrame(() => {
+      if (drawerTrigger.current?.isConnected) drawerTrigger.current.focus();
+      else document.querySelector<HTMLElement>(".stations-toolbar button")?.focus();
+    });
+  }, [admissionPending]);
+
   // One call per cluster for its site nodes and one for its admissions; a cluster whose Station API does not
   // answer just shows no network facts.
   const loadSiteData = async (latestClusters: ClusterSummary[], signal: AbortSignal) => {
+    setSiteDataState("loading");
     const targets = latestClusters.filter((cluster) => (!clusterID || cluster.id === clusterID) && !cluster.agentNamespaceConflict);
     const results = await Promise.all(targets.map((cluster) => Promise.allSettled([siteNodesApi.list(cluster.id, signal), nodeAdmissionsApi.list(cluster.id, signal)])));
     if (signal.aborted) return;
@@ -130,12 +145,14 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
     let failure = "";
     for (const [nodes, admitted] of results) {
       if (nodes.status === "fulfilled") for (const node of nodes.value.items) nextNodes[`${node.cluster_id}/${node.node_name}`] = node;
+      else failure = (nodes.reason as Error).message;
       if (admitted.status === "fulfilled") nextAdmissions.push(...admitted.value.items);
       else failure = (admitted.reason as Error).message;
     }
     setSiteNodes(nextNodes);
     setAdmissions(nextAdmissions);
     setAdmissionError(failure);
+    setSiteDataState(failure ? "unavailable" : "ready");
   };
 
   useEffect(() => {
@@ -159,19 +176,24 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
 
   // The record of a removed node, of a node in Conflict or of a name no node reports under and RLark has no Node of
   // is deleted when an administrator asks; a node that comes back registers again with its next report.
-  const removeRecord = async (item: StationItem, itemClusterID: string) => {
-    if (deletePending || !window.confirm(zh
+  const removeRecord = async (item: StationItem) => {
+    const itemCluster = clusterForStation(clusters, item.metadata.namespace);
+    const hasNode = `${item.metadata.namespace}/${item.metadata.name}` in nodesByKey;
+    if (deletePending || !itemCluster || !stationDeletable(item, hasNode) || !window.confirm(zh
       ? `删除场站节点记录 ${item.metadata.name}（节点 UID ${item.spec.nodeUID.slice(0, 8)}）？删除后不能恢复；这个名字的节点如果还在上报，会按新机器重新登记。`
       : `Delete the site node record ${item.metadata.name} (Node UID ${item.spec.nodeUID.slice(0, 8)})? It cannot be brought back; a node of the name that still reports registers again as a new machine.`)) return;
     setDeletePending(keyOf(item));
     setError("");
     try {
-      await selfHealApi.deleteStation(item.metadata.name, itemClusterID);
+      drawerDeleteRequest.current = true;
+      await selfHealApi.deleteStation(item.metadata.name, itemCluster.id);
       await load(false);
     } catch (reason) {
       setError((reason as Error).message);
     } finally {
       setDeletePending("");
+      drawerDeleteRequest.current = false;
+      if (selectedID === keyOf(item)) closeDrawer();
     }
   };
 
@@ -186,6 +208,33 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
   ].some((value) => value.toLocaleLowerCase().includes(query)));
   const selected = items.find((item) => keyOf(item) === selectedID);
   const selectedLabels = selected && siteNodeOf(selected)?.labels;
+  const selectedCluster = selected && clusterForStation(clusters, selected.metadata.namespace);
+  const selectedAdmission = selected && admissions.find((entry) => entry.cluster_id === selectedCluster?.id && entry.node_name === selected.metadata.name);
+
+  useEffect(() => {
+    if (!selectedID) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !drawerDeleteRequest.current && !admissionPending) closeDrawer();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedID, admissionPending, closeDrawer]);
+
+  const actAdmission = async (kind: "reissue" | "revoke") => {
+    if (!selected || !selectedCluster || admissionPending || deletePending) return;
+    if (kind === "revoke" && !window.confirm(zh ? `作废 ${selected.metadata.name} 的入网码？` : `Revoke the join code of ${selected.metadata.name}?`)) return;
+    setAdmissionPending(kind);
+    setDrawerRefreshError("");
+    try {
+      if (kind === "reissue") onJoin(await nodeAdmissionsApi.reissue(selected.metadata.name, selectedCluster.id));
+      else await nodeAdmissionsApi.revoke(selected.metadata.name, selectedCluster.id);
+      await load(false);
+    } catch (reason) {
+      setDrawerRefreshError((reason as Error).message);
+    } finally {
+      setAdmissionPending("");
+    }
+  };
 
   const power = useRobotPower(zh, () => load(false));
   // The robots of the list a batch may act on, and those chosen.
@@ -296,12 +345,12 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
                 const admission = admissions.find((entry) => entry.cluster_id === itemCluster?.id && entry.node_name === item.metadata.name);
                 const publicKey = siteNode?.network?.public_key ?? admission?.public_key;
                 return (
-                  <tr key={key} className={`clickable-row${selectedID === key ? " selected" : ""}`} onClick={() => setSelectedID(key)}>
+                  <tr key={key} className={`clickable-row${selectedID === key ? " selected" : ""}`} onClick={(event) => { drawerTrigger.current = event.currentTarget.querySelector<HTMLButtonElement>(".stations-name") ?? event.currentTarget; setSelectedID(key); }}>
                     <td onClick={(event) => event.stopPropagation()}>
                       {isRobotNode(siteNode?.labels) && <input type="checkbox" aria-label={zh ? `选中 ${nodeLabel(nodeOf(item))}` : `Select ${nodeLabel(nodeOf(item))}`} checked={chosen.has(key)} onChange={(event) => setChosen((before) => { const next = new Set(before); if (event.target.checked) next.add(key); else next.delete(key); return next; })} />}
                     </td>
                     <td className="stations-name-cell">
-                      <button type="button" className="stations-name" onClick={() => setSelectedID(key)}>
+                      <button type="button" className="stations-name" onClick={(event) => { drawerTrigger.current = event.currentTarget; setSelectedID(key); }}>
                         <strong><NodeName node={nodeOf(item)} /></strong>
                       </button>
                       {isControlPlaneLabels(siteNode?.labels) && <span className="control-plane-badge" title={zh ? "这台是所在集群的控制面" : "This node is its cluster's control plane"}>{zh ? "控制面" : "Control plane"}</span>}
@@ -310,7 +359,7 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
                     <td>{itemCluster?.name ?? <span className="muted">{zh ? "集群未确定" : "Cluster unresolved"}</span>}</td>
                     <td onClick={(event) => deletable && event.stopPropagation()}>
                       <span className={`status ${stationStatusClass(itemPhase)}`}><i />{stationPhaseLabel(itemPhase, zh)}</span>
-                      {deletable && itemCluster && <button type="button" className="table-action-button danger station-record-delete" onClick={() => void removeRecord(item, itemCluster.id)} disabled={!!deletePending}>
+                      {deletable && itemCluster && <button type="button" className="table-action-button danger station-record-delete" onClick={(event) => { event.stopPropagation(); void removeRecord(item); }} disabled={!!deletePending}>
                         {deletePending === key ? (zh ? "删除中…" : "Deleting…") : (zh ? "删除记录" : "Delete record")}
                       </button>}
                     </td>
@@ -336,18 +385,29 @@ export function StationsPage({ copy: c, onJoin }: { copy: Copy; onJoin: (reissue
       {selected && <StationDrawer
         key={selectedID}
         station={selected}
-        cluster={clusterForStation(clusters, selected.metadata.namespace)}
+        cluster={selectedCluster}
         node={nodeOf(selected)}
+        siteNode={siteNodeOf(selected)}
+        admission={selectedAdmission}
+        hasNode={`${selected.metadata.namespace}/${selected.metadata.name}` in nodesByKey}
+        siteDataState={siteDataState}
+        refreshError={drawerRefreshError || (admissionError && siteDataState === "unavailable" ? admissionError : "")}
         labels={selectedLabels}
         cameras={siteNodeOf(selected)?.cameras}
         now={now}
         zh={zh}
+        deleting={deletePending === selectedID}
+        admissionPending={admissionPending}
         power={{
           pending: power.pending,
           message: power.message,
           press: (action, label) => void power.set([{ node: selected.metadata.name, namespace: selected.metadata.namespace, desired: robotPowerAfter(action, robotPowerDesired(selectedLabels)) }], label),
         }}
-        onClose={() => setSelectedID("")}
+        onClose={closeDrawer}
+        onDelete={() => void removeRecord(selected)}
+        onReissue={() => void actAdmission("reissue")}
+        onRevoke={() => void actAdmission("revoke")}
+        onRefresh={() => { setDrawerRefreshError(""); void load(false); }}
       />}
     </div>
   );

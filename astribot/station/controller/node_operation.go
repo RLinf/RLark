@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	stationv1alpha1 "github.com/rlinf/rlark/astribot/station/api/v1alpha1"
@@ -50,7 +51,11 @@ func (r *NodeOperationReconciler) Reconcile(ctx context.Context, req reconcile.R
 	if op.DeletionTimestamp != nil {
 		return reconcile.Result{}, nil
 	}
-	if op.Status.Phase == "Succeeded" || op.Status.Phase == "Failed" {
+	// Blocked is terminal: the stage stopped with a recorded reason. An
+	// administrator retries by asking for a new operation (a new request ID),
+	// which starts at Preflight and cannot race this one. Retrying here would
+	// let a second operation run concurrently.
+	if op.Status.Phase == "Succeeded" || op.Status.Phase == "Failed" || op.Status.Phase == "Blocked" {
 		return reconcile.Result{}, nil
 	}
 	registration, err := r.registrations.ResolveNamespace(ctx, op.Namespace)
@@ -136,9 +141,38 @@ func (r *NodeOperationReconciler) Reconcile(ctx context.Context, req reconcile.R
 	return reconcile.Result{Requeue: true}, nil
 }
 
+// removalStageUsesMemberAPI reports whether a removal stage waits on the
+// member cluster API. A Join's own stages use SSH instead.
+func removalStageUsesMemberAPI(stage string) bool {
+	switch stage {
+	case "Preflight", "PowerOff", "Drain", "RemovePeer", "Reset", "DeleteNode", "VerifyRemoval":
+		return true
+	default:
+		return false
+	}
+}
+
+// memberClusterUnreachable separates a member API that cannot be reached from
+// a stage that failed for another reason. Without this distinction the
+// operation message would send an administrator to controller logs while the
+// real cause is an offline cluster or an API endpoint on the node itself.
+func memberClusterUnreachable(stage string, err error) bool {
+	if !removalStageUsesMemberAPI(stage) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
 func nodeOperationFailureCondition(stage string, err error) (string, string) {
 	if problem := machineProblem(err); problem != "" {
 		return problem, "Node operation stage " + stage + " could not log in to the machine: " + err.Error()
+	}
+	if memberClusterUnreachable(stage, err) {
+		return "MemberClusterUnreachable", "Node operation stage " + stage + " could not reach the member cluster API before the timeout. The cluster, its API endpoint, or its credentials may be offline; retry once the cluster is reachable."
 	}
 	switch {
 	case errors.Is(err, ErrInstallerFailed):

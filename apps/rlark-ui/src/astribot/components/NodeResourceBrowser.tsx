@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, ChevronRight, Info, LayoutGrid, LockOpen, Trash2 } from "lucide-react";
 import type { Phase } from "../../data";
 import type { Copy } from "../../i18n";
@@ -26,6 +26,8 @@ import { NodeNetworkAddresses } from "../components/NodeNetworkAddresses";
 import { useNodeNetworks } from "../components/useNodeNetworks";
 import { isControlPlaneLabels } from "../../utils/nodeVisibility";
 import { RemoveNodeDialog } from "../pages/RemoveNodeDialog";
+import { useRemovalProgress } from "./removalProgressContext";
+import { removalOutcome, removalStageLabel, removalStageProgress } from "../lib/nodeRemoval";
 import {
   nodeLinkHealth,
   nodeNetworkKey,
@@ -77,8 +79,31 @@ export function NodeResourceBrowser({
   onClearSelection?: () => void;
 }) {
   const nodeNetworks = useNodeNetworks(nodes);
+  const { registerClusters, registerNodes, entries: removalEntries, completionRevision, entryFor, openDrawer, retry } = useRemovalProgress();
   const [removingNode, setRemovingNode] = useState<CRDNode | null>(null);
   const zh = c.nav.overview === "总览";
+  const clusterIDs = useMemo(() => clusters.map((cluster) => cluster.id), [clusters]);
+  const lastCompletionRevision = useRef(0);
+  useEffect(() => {
+    registerClusters(clusterIDs);
+    for (const cluster of clusters) {
+      const clusterNodes = nodes.filter((node) => node.metadata.namespace === cluster.agentNamespace);
+      registerNodes(cluster.id, clusterNodes.map((node) => ({
+        name: node.metadata.name,
+        // The management Node CR's metadata.uid is not the member Kubernetes
+        // Node UID a NodeOperation names; only the site-node record has that.
+        // Leave the UID out so an operation is matched by name, creation time
+        // and age instead of being hidden by two unrelated UIDs.
+        creationTimestamp: node.metadata.creationTimestamp,
+      })));
+    }
+  }, [clusterIDs, clusters, nodes, registerClusters, registerNodes]);
+  useEffect(() => {
+    if (completionRevision && completionRevision !== lastCompletionRevision.current) {
+      lastCompletionRevision.current = completionRevision;
+      void onRefresh?.();
+    }
+  }, [completionRevision, onRefresh]);
   const [category, setCategory] = useState<CategoryFilter>(initialCategory);
   const [query, setQuery] = useState(initialQuery);
   // 表头列多选筛选；空数组 = 全部
@@ -294,6 +319,12 @@ export function NodeResourceBrowser({
         className={`panel node-resource-table-panel refreshable-region${refreshing ? " is-refreshing" : ""}`}
         aria-busy={refreshing}
       >
+        {(() => {
+          const activeRemovalCount = removalEntries.filter((entry) => clusterIDs.includes(entry.clusterID) && (!entry.operation || removalOutcome(entry.operation) === "active")).length;
+          if (!activeRemovalCount) return null;
+          const firstActive = removalEntries.find((entry) => clusterIDs.includes(entry.clusterID) && (!entry.operation || removalOutcome(entry.operation) === "active"));
+          return <div className="node-removal-banner"><span className="node-removal-banner-dot" /><span>{zh ? `正在删除 ${activeRemovalCount} 个节点` : `Removing ${activeRemovalCount} ${activeRemovalCount === 1 ? "node" : "nodes"}`}</span><button type="button" className="plain-button" onClick={() => firstActive && openDrawer(firstActive.clusterID, firstActive.nodeName)}>{zh ? "查看任务" : "View tasks"}</button></div>;
+        })()}
         <div className="node-resource-table-summary">
           <div>
             <strong>{tabs.find((tab) => tab.value === category)?.label}</strong>
@@ -379,6 +410,16 @@ export function NodeResourceBrowser({
                   : "Last online time unavailable";
               const nodeCategories = getNodeCategories(node);
               const namespace = clusterOf(node) || "—";
+              const nodeClusterID = clusters.find((cluster) => cluster.agentNamespace === node.metadata.namespace)?.id ?? "";
+              // The provider already applied the operation to this node by
+              // name, creation time and age. Do not compare the member Node
+              // UID to the management Node CR's metadata.uid here.
+              const removalEntry = nodeClusterID ? entryFor(nodeClusterID, node.metadata.name) : undefined;
+              const removalPhase = removalEntry?.operation?.status?.phase;
+              const removalActive = !!removalEntry && (!removalEntry.operation || removalOutcome(removalEntry.operation) === "active");
+              const removalFailed = removalPhase === "Failed" || removalPhase === "Blocked";
+              const removalDone = removalPhase === "Succeeded";
+              const removalPercent = removalStageProgress(removalEntry?.operation?.status?.stage);
               const workload = nodeWorkloads[node.metadata.name];
               const jobCount = workload?.jobs.length ?? 0;
               const workerCount = workload?.workers ?? 0;
@@ -454,6 +495,16 @@ export function NodeResourceBrowser({
                   </span>
                   <span className="node-row-status">
                     <StatusBadge phase={phase} copy={c} />
+                    {removalEntry && (removalActive || removalFailed || removalDone) && (
+                      <span
+                        className={`node-removal-pill${removalActive ? " active" : removalFailed ? " failed" : " succeeded"}`}
+                        title={zh
+                          ? removalActive ? `删除中 · ${removalStageLabel(removalEntry.operation?.status?.stage ?? "Preflight", true)}` : removalFailed ? "删除已停下，可打开详情重试" : "已删除"
+                          : removalActive ? `Removing · ${removalStageLabel(removalEntry.operation?.status?.stage ?? "Preflight", false)}` : removalFailed ? "Removal stopped; open details to retry" : "Removed"}
+                      >
+                        {removalActive ? (zh ? "删除中" : "Removing") : removalFailed ? (zh ? "已停下" : "Stopped") : (zh ? "已删除" : "Removed")}
+                      </span>
+                    )}
                     {phase === "Offline" && (
                       <span className="node-offline-info-wrap">
                         <button
@@ -550,7 +601,7 @@ export function NodeResourceBrowser({
                             ? "secondary-button node-scheduling-button"
                             : "secondary-button danger node-scheduling-button"
                         }
-                        disabled={updatingNode === node.metadata.name}
+                        disabled={updatingNode === node.metadata.name || removalActive}
                         onClick={(event) => {
                           event.stopPropagation();
                           onToggleScheduling(node);
@@ -573,7 +624,12 @@ export function NodeResourceBrowser({
                               ? "封锁"
                               : "Cordon"}
                       </button>
-                      {removable && (
+                      {removable && removalEntry && (removalActive || removalFailed) ? (
+                        <span className="node-removal-actions">
+                          <button type="button" className="secondary-button node-scheduling-button" onClick={(event) => { event.stopPropagation(); openDrawer(nodeClusterID, node.metadata.name); }}>{zh ? "查看进度" : "View progress"}</button>
+                          {removalFailed && <button type="button" className="secondary-button danger node-scheduling-button" onClick={(event) => { event.stopPropagation(); void retry(nodeClusterID, node.metadata.name); }}>{zh ? "重试" : "Retry"}</button>}
+                        </span>
+                      ) : removable && !removalDone && (
                         <button
                           type="button"
                           className="secondary-button danger node-scheduling-button"
@@ -595,6 +651,7 @@ export function NodeResourceBrowser({
                   ) : (
                     <ChevronRight size={15} className="node-row-chevron" />
                   )}
+                  {removalActive && <span className="node-row-removal-progress" aria-label={zh ? "删除进度" : "Removal progress"}><i style={{ width: `${removalPercent}%` }} /></span>}
                 </div>
               );
             })}
@@ -678,7 +735,6 @@ export function NodeResourceBrowser({
         zh={zh}
         node={removingNode}
         onClose={() => setRemovingNode(null)}
-        onRemoved={() => void onRefresh?.()}
       />
     )}
     </>

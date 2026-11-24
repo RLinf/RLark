@@ -119,6 +119,25 @@ func TestSecureRESTConfigRejectsUnverifiedOrHostPathCredentials(t *testing.T) {
 	}
 }
 
+func TestSecureRESTConfigBoundsEveryMemberAPIRequest(t *testing.T) {
+	data, err := clientcmd.Write(clientcmdapi.Config{
+		Clusters:       map[string]*clientcmdapi.Cluster{"member": {Server: "https://member.example:6443"}},
+		Contexts:       map[string]*clientcmdapi.Context{"member": {Cluster: "member", AuthInfo: "user"}},
+		CurrentContext: "member",
+		AuthInfos:      map[string]*clientcmdapi.AuthInfo{"user": {Token: "token"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := secureRESTConfigFromKubeconfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Timeout != memberAPITimeout {
+		t.Fatalf("member API timeout=%v want=%v", config.Timeout, memberAPITimeout)
+	}
+}
+
 type mutableKubeconfigSource struct{ data []byte }
 
 func (s *mutableKubeconfigSource) Kubeconfig(context.Context, string) ([]byte, error) {

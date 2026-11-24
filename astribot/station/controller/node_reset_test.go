@@ -78,3 +78,19 @@ func TestANodeThatNoLongerReportsIsLeftForItsNextJoin(t *testing.T) {
 		t.Fatalf("another node of the name: %v", err)
 	}
 }
+
+// A reset pod started while the node still reported stays Pending once the
+// machine is powered off. The node is reset when it joins again; the pod must
+// not keep the removal Running forever.
+func TestAPendingResetPodDoesNotHoldANodeThatStoppedReporting(t *testing.T) {
+	ctx := context.Background()
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n", UID: "node-uid"},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionUnknown}}}}
+	op := &stationv1alpha1.NodeOperation{ObjectMeta: metav1.ObjectMeta{UID: "01234567-89ab-cdef-0123-456789abcdef"},
+		Spec: stationv1alpha1.NodeOperationSpec{Action: "Remove", ClusterID: "cluster-a", NodeName: "n", NodeUID: "node-uid"}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "rlark-system", Name: nodeResetPodName(op)}}
+	member := k8sfake.NewSimpleClientset(node, pod)
+	if done, err := (InClusterNodeReset{Members: nodeMemberClients{"cluster-a": member}}).Reset(ctx, op); !done || err != nil {
+		t.Fatalf("a node that stopped reporting: %v %v", done, err)
+	}
+}

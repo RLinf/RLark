@@ -55,6 +55,34 @@ func (g *Gateway) handleCreateNodeOperation(c *gin.Context) {
 	}
 	name := nodeOperationName(request.ClusterID, request.RequestID)
 	resource := g.stationClient.Resource(nodeOperationGVR).Namespace(namespace)
+	// One removal at a time per node: a second operation while one is still
+	// pending or running would power, drain, reset, and delete concurrently.
+	// A terminal failure may be retried with a new request ID.
+	operations, listErr := resource.List(c.Request.Context(), metav1.ListOptions{})
+	if listErr != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "node operations could not be listed"})
+		return
+	}
+	for index := range operations.Items {
+		existing := &operations.Items[index]
+		if existing.GetName() == name {
+			continue
+		}
+		action, _, _ := unstructured.NestedString(existing.Object, "spec", "action")
+		nodeName, _, _ := unstructured.NestedString(existing.Object, "spec", "nodeName")
+		if action != "Remove" || nodeName != request.NodeName {
+			continue
+		}
+		phase, _, _ := unstructured.NestedString(existing.Object, "status", "phase")
+		if phase == "Succeeded" || phase == "Failed" || phase == "Blocked" {
+			continue
+		}
+		c.JSON(http.StatusConflict, gin.H{
+			"code":  "NODE_OPERATION_IN_PROGRESS",
+			"error": fmt.Sprintf("node %s already has a removal in progress (%s); wait for it to finish or retry after it stops", request.NodeName, existing.GetName()),
+		})
+		return
+	}
 	// A removal logs in nowhere: station-controller resets the node from inside its cluster.
 	// Without a UID it is of whatever is under the name: the Node its cluster
 	// has then, or what RLark keeps of a name that has none (a join that never finished).
