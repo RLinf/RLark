@@ -353,6 +353,7 @@ func TestDocumentLevelNamesTheDocument(t *testing.T) {
 	levels := []string{
 		1: "address dns interface listenPort mtu names names.address names.name peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
 		2: "address discovery discovery.hostKeys discovery.intervalSeconds discovery.ports discovery.ranges discovery.relayFrom discovery.relayPort dns interface listenPort mtu names names.address names.name peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
+		3: "address discovery discovery.hostKeys discovery.intervalSeconds discovery.ports discovery.ranges discovery.relayFrom discovery.relayPort dns forwards forwards.destination forwards.sources interface listenPort mtu names names.address names.name peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
 	}
 	var fields []string
 	var walk func(prefix string, of reflect.Type)
@@ -396,5 +397,39 @@ func TestOnlyTheHubsOfASiteThatDeclaresDiscoveryLook(t *testing.T) {
 	result, err = Compute(topology, members)
 	if err != nil || result.Configs["robots/cp"].Discovery != nil || len(result.Problems["robots/cp"]) != 1 || !strings.Contains(result.Problems["robots/cp"][0], "office/gone") {
 		t.Fatalf("discovery from a node that is no member: %v %+v %v", err, result.Configs["robots/cp"].Discovery, result.Problems)
+	}
+}
+
+// The office's hub forwards to its NAS for every member of the cloud site,
+// the members of the robots' site and its own included in none; a prefix a
+// node holds itself (its Pod network) is advertised and not forwarded.
+func TestAHubForwardsToWhatItAdvertisesForTheReceivingSites(t *testing.T) {
+	topology, members := liveTopology()
+	members[0].Advertise = []Advertisement{
+		{CIDR: "10.11.5.12/32", Sites: []string{"ksyun"}, Forward: true},
+		{CIDR: "10.11.4.7/32", Forward: true},
+		{CIDR: "10.11.4.7/32", Sites: []string{"lab"}, Forward: true},
+	}
+	members = append(members, Member{ID: "rlark-ksyun-gpu/10-0-2-9", Site: "ksyun", Role: RoleHub, PublicKey: "cloud-9", Address: "10.254.240.9",
+		NodeAddress: "10.0.2.9", Endpoints: []Endpoint{{Address: "36.103.180.169:51829", Scope: ScopePublic}}})
+	result, err := Compute(topology, members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Forward{
+		{Destination: "10.11.5.12/32", Sources: []string{"10.254.240.2", "10.254.240.4", "10.254.240.9"}},
+		{Destination: "10.11.4.7/32", Sources: []string{"10.254.240.2", "10.254.240.3", "10.254.240.4", "10.254.240.9"}},
+	}
+	if got := result.Configs["rlark-local-dev-gpu/cailiang"].Forwards; !reflect.DeepEqual(got, want) {
+		t.Errorf("the office hub forwards %+v", got)
+	}
+	for id, config := range result.Configs {
+		if id != "rlark-local-dev-gpu/cailiang" && config.Forwards != nil {
+			t.Errorf("%s forwards %+v", id, config.Forwards)
+		}
+	}
+	// A new cloud node is let through as soon as it is a member.
+	if !slices.Contains(result.Configs["rlark-ksyun-gpu/10-0-2-9"].Routes, "10.11.5.12/32") {
+		t.Errorf("the new cloud node has no route to the NAS: %v", result.Configs["rlark-ksyun-gpu/10-0-2-9"].Routes)
 	}
 }

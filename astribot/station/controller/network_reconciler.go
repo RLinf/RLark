@@ -343,7 +343,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 			member.Endpoints = append(member.Endpoints, network.Endpoint{Address: endpoint.Address, Scope: network.EndpointScope(endpoint.Scope)})
 		}
 		for _, advertisement := range node.Advertise {
-			member.Advertise = append(member.Advertise, network.Advertisement{CIDR: advertisement.CIDR, Sites: advertisement.Sites})
+			member.Advertise = append(member.Advertise, network.Advertisement{CIDR: advertisement.CIDR, Sites: advertisement.Sites, Forward: advertisement.Forward})
 		}
 		if node.Uplink != nil {
 			member.Uplink = &network.Uplink{Gateway: node.Uplink.Gateway}
@@ -375,7 +375,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 			member.Endpoints = append(member.Endpoints, network.Endpoint{Address: endpoint.Address, Scope: network.EndpointScope(endpoint.Scope)})
 		}
 		for _, advertisement := range node.Advertise {
-			member.Advertise = append(member.Advertise, network.Advertisement{CIDR: advertisement.CIDR, Sites: advertisement.Sites})
+			member.Advertise = append(member.Advertise, network.Advertisement{CIDR: advertisement.CIDR, Sites: advertisement.Sites, Forward: advertisement.Forward})
 		}
 		members = append(members, member)
 	}

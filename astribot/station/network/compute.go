@@ -98,6 +98,9 @@ type Advertisement struct {
 	CIDR string
 	// Sites limits the receivers; empty means every other site.
 	Sites []string
+	// Forward has the member carry the receivers' traffic on to CIDR, a
+	// network beyond it: its document lists the receivers in Forwards.
+	Forward bool
 }
 
 type Uplink struct {
@@ -131,7 +134,7 @@ type Member struct {
 // that gives NodeConfig a field raises this, the gateway's level and the gate
 // of stage controller in apps/rlark/astribot/release/stages.yaml together, and the
 // gateways are rolled out before the controller that writes the field.
-const DocumentLevel = 2
+const DocumentLevel = 3
 
 // NodeConfig is the document station-gateway reconciles. Field names match
 // astribot/station-gateway.
@@ -152,6 +155,19 @@ type NodeConfig struct {
 	DNS []string `json:"dns,omitempty"`
 	// Discovery is set on the hubs of a site that declares it.
 	Discovery *Discovery `json:"discovery,omitempty"`
+	// Forwards are the networks beyond this node it carries the tunnel's
+	// traffic on to, each for the members it advertises them to.
+	Forwards []Forward `json:"forwards,omitempty"`
+}
+
+// Forward is what station-gateway lets through the node to Destination: the
+// packets that come in from the tunnel from one of Sources, which leave from
+// the node's own address on Destination's network, and their answers.
+type Forward struct {
+	Destination string `json:"destination"`
+	// Sources are the tunnel addresses of the members of the sites the
+	// prefix is advertised to, lowest first.
+	Sources []string `json:"sources"`
 }
 
 type HostName struct {
@@ -440,6 +456,7 @@ func Compute(topology Topology, members []Member) (Result, error) {
 				})
 			}
 		}
+		config.Forwards = forwards(self, nodes)
 		result.Configs[self.ID] = config
 	}
 
@@ -483,6 +500,35 @@ func beyond(far *node, site string, pool netip.Prefix) []netip.Prefix {
 		}
 	}
 	return prefixes
+}
+
+// forwards lists, for every prefix self advertises with Forward, the tunnel
+// addresses of the members of the sites it is advertised to: those its
+// station-gateway lets through to the prefix.
+func forwards(self *node, nodes []*node) []Forward {
+	var out []Forward
+	for _, advertisement := range self.Advertise {
+		prefix, err := netip.ParsePrefix(advertisement.CIDR)
+		if !advertisement.Forward || err != nil || !prefix.Addr().Is4() || prefix.Bits() == 0 {
+			continue
+		}
+		destination := prefix.Masked().String()
+		at := slices.IndexFunc(out, func(f Forward) bool { return f.Destination == destination })
+		if at < 0 {
+			out = append(out, Forward{Destination: destination})
+			at = len(out) - 1
+		}
+		for _, receiver := range nodes {
+			address := receiver.address.String()
+			if receiver.Site != self.Site && (len(advertisement.Sites) == 0 || slices.Contains(advertisement.Sites, receiver.Site)) && !slices.Contains(out[at].Sources, address) {
+				out[at].Sources = append(out[at].Sources, address)
+			}
+		}
+	}
+	for i := range out {
+		slices.SortFunc(out[i].Sources, func(a, b string) int { return netip.MustParseAddr(a).Compare(netip.MustParseAddr(b)) })
+	}
+	return slices.DeleteFunc(out, func(f Forward) bool { return len(f.Sources) == 0 })
 }
 
 // dialable reports whether two members share a tunnel: at least one is

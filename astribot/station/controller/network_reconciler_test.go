@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -272,8 +273,14 @@ func TestLiveSiteDeclarationEnrollsTheSixNodes(t *testing.T) {
 			t.Errorf("%s: %+v", node.node, status)
 			continue
 		}
-		if config := configOf(t, status); len(config.Peers) != node.peers {
+		config := configOf(t, status)
+		if len(config.Peers) != node.peers {
 			t.Errorf("%s has %d peers, want %d", node.node, len(config.Peers), node.peers)
+		}
+		// The office hub forwards to the NAS for every cloud node.
+		if want := []network.Forward{{Destination: "10.11.5.12/32", Sources: []string{"10.254.240.2", "10.254.240.4"}}}; node.node == "cailiang" && !reflect.DeepEqual(config.Forwards, want) ||
+			node.node != "cailiang" && config.Forwards != nil {
+			t.Errorf("%s forwards %+v", node.node, config.Forwards)
 		}
 	}
 	if err := c.Get(context.Background(), testNetworkKey, &siteNetwork); err != nil {
