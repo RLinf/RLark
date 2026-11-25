@@ -46,7 +46,7 @@ func SetManagementOwnedLabels(entries []string) error {
 // like the node's category, and so are what people ask of a node through the management plane (its rollout wave
 // and a restart), its accelerator, and the labels the site names.
 func isSiteOwnedNodeLabel(key string) bool {
-	if strings.HasPrefix(key, nodeRobotLabelPrefix) || key == nodeRolloutWaveLabel || key == nodeRestartRequestLabel || key == nodeAcceleratorLabel {
+	if strings.HasPrefix(key, nodeRobotLabelPrefix) || key == nodeRolloutWaveLabel || key == nodeRestartRequestLabel || key == nodeAcceleratorLabel || key == "rlark.io/station-mark" {
 		return true
 	}
 	for _, entry := range siteOwnedLabels {
@@ -59,7 +59,7 @@ func isSiteOwnedNodeLabel(key string) bool {
 
 // isSiteOwnedNodeAnnotation: what the management plane says of a robot beside its labels (who set its desired power).
 func isSiteOwnedNodeAnnotation(key string) bool {
-	return strings.HasPrefix(key, nodeRobotLabelPrefix)
+	return strings.HasPrefix(key, nodeRobotLabelPrefix) || key == "rlark.io/station-mark-set"
 }
 
 // nodeReport is one report of a node onto its management Node, written as a merge patch of only the fields the

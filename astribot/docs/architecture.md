@@ -234,6 +234,7 @@ Station 容器：机器人被一个 Run 占用时，带站点令牌向 `stationC
 | 节点身份、地址、在线 | `GET /api/v1/site-nodes[/{node}]?cluster_id=&label=k=v`：`node_uid`、`phase`、`online`、`tunnel`、`rlark_node`、`boot_time`、`reboots`、`network.address`（别的节点找它用的地址）、`robot_id`、全部标签 |
 | 用机器人 | 占用接口（上一节）；机器人上的 Station 容器读占用，向 `stationControlURL` 取连接参数 |
 | 机器人电源 | `PUT .../nodes/{name}/robot-power` |
+| 工位停用、维修或解除 | `PUT .../nodes/{name}/station-mark`，网关记录原因、操作者和时间。标记同时释放既有认领，拒绝新的认领和续租，直到解除标记 |
 | 数据、模型 | 按名字引用的存储 |
 | 令牌、密钥 | Job 密钥 |
 | 设备层、Station 的镜像 | `s1u-robot` 的 `deviceImage`（Fleet 的 `fleet/robot`），随 RLark 的发布上线 |

@@ -66,6 +66,7 @@ func requireOperator() gin.HandlerFunc {
 // registerRobotRoutes: what of a robot is not the administrator's alone.
 func (g *Gateway) registerRobotRoutes(nodes gin.IRouter) {
 	nodes.PUT("/:name/robot-power", requireOperator(), g.handleSetRobotPower)
+	nodes.PUT("/:name/station-mark", requireOperator(), g.handleSetStationMark)
 	nodes.POST("/:name/robot-pose", requireOperator(), g.handleRobotPose)
 	nodes.PUT("/:name/robot-claim", g.handleClaimRobot)
 	nodes.DELETE("/:name/robot-claim", g.handleReleaseRobot)
@@ -123,6 +124,10 @@ func (g *Gateway) handleClaimRobot(c *gin.Context) {
 		existing, err := g.accessors["nodes"].get(ctx, namespace, name, metav1.GetOptions{})
 		if err != nil {
 			respondKubeError(c, err.Error(), err)
+			return
+		}
+		if mark := existing.(metav1.Object).GetLabels()[stationMarkLabel]; mark != "" {
+			respondErrorWithDetails(c, http.StatusConflict, CodeRobotClaimBusy, "the station is marked "+mark, map[string]any{"current": nil, "mark": mark})
 			return
 		}
 		current, held := robotClaimOf(existing.(metav1.Object))

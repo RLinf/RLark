@@ -1027,6 +1027,38 @@ paths:
         '404': {description: Cluster not found}
         '409': {description: 'Another cluster already uses the name as its display name or ID ("display name already used by <id>")'}
 
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/station-mark:
+    put:
+      tags: [Node]
+      summary: Mark a robot Station for repair or disable it, or clear its mark (administrator or operator)
+      description: >-
+        Stores the mark as rlark.io/station-mark and records mark, reason, actor and time in
+        rlark.io/station-mark-set. Setting a mark atomically releases the existing robot claim.
+        New claims and renewals are rejected while the mark remains. An empty mark clears it.
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mark]
+              properties:
+                mark: {type: string, enum: [repair, disabled, '']}
+                reason: {type: string, description: Required for repair and disabled}
+                holder: {type: string, description: When given, an existing claim must belong to this Run}
+      responses:
+        '200':
+          description: The updated node
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '400': {description: Invalid mark or reason, or the node is not a robot}
+        '403': {description: Operator access is required}
+        '404': {description: Node not found}
   /api/v1/rlinf.io/v1alpha1/nodes/{name}/robot-power:
     put:
       tags: [Node]

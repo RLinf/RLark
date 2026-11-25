@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +31,11 @@ func nodeUpdateAllowed(c *gin.Context, a *resourceAccessor, namespace, name stri
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotClaimRefused)
 		return false
 	}
+	if value, _ := robotLabelIn(body, stationMarkLabel); value != labels[stationMarkLabel] ||
+		nodeAnnotations(body)[stationMarkAnnotation] != existing.(metav1.Object).GetAnnotations()[stationMarkAnnotation] {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, stationMarkRefused)
+		return false
+	}
 	if value, _ := displayNameIn(body); value != existing.(*rlarkiov1alpha1.Node).Spec.DisplayName {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, nodeDisplayNameRefused)
 		return false
@@ -47,6 +53,11 @@ func nodePatchAllowed(c *gin.Context, a *resourceAccessor, namespace, name strin
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotClaimRefused)
 		return false
 	}
+	_, marked := robotLabelIn(body, stationMarkLabel)
+	if _, annotated := nodeAnnotations(body)[stationMarkAnnotation]; marked || annotated {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, stationMarkRefused)
+		return false
+	}
 	value, named := displayNameIn(body)
 	if !named {
 		return true
@@ -61,4 +72,14 @@ func nodePatchAllowed(c *gin.Context, a *resourceAccessor, namespace, name strin
 		return false
 	}
 	return true
+}
+
+func nodeAnnotations(body []byte) map[string]string {
+	var object struct {
+		Metadata struct {
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
+	}
+	_ = json.Unmarshal(body, &object)
+	return object.Metadata.Annotations
 }
