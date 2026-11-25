@@ -40,12 +40,12 @@ kind: DeployConfig
 plane: control
 kubernetes:
   kubeconfig: ~/.kube/config
-  gateway-image: rlark:latest
-  controller-manager-image: rlark:latest
-  server-image: rlark:latest
+  gateway-image: ghcr.io/rlinf/rlark:v0.1.0
+  controller-manager-image: ghcr.io/rlinf/rlark:v0.1.0
+  server-image: ghcr.io/rlinf/rlark:v0.1.0
   kcp-image: kcp:v0.30.0
   postgresql-image: postgres:15
-  ui-image: rlark-ui:latest
+  ui-image: ghcr.io/rlinf/rlark-ui:v0.1.0
   storage:
     type: pvc
     storage-class: ""

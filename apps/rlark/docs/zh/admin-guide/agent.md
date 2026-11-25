@@ -29,8 +29,8 @@ cert:
   agent-key: /path/to/agent-key.pem
 kubernetes:
   kubeconfig: ~/.kube/config
-  agent-image: rlark:latest
-  image: rlark:latest
+  agent-image: ghcr.io/rlinf/rlark:v0.1.0
+  image: ghcr.io/rlinf/rlark:v0.1.0
   # containerd-socket: /run/k3s/containerd/containerd.sock
 ```
 

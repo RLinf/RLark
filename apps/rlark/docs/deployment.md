@@ -32,10 +32,10 @@ Helm charts provide an alternative to `rlarkadm` for Kubernetes deployments. Two
 helm install rlark-control-plane ./charts/rlark-control-plane \
   --namespace rlark-system \
   --create-namespace \
-  --set images.gateway=rlark:latest \
-  --set images.controllerManager=rlark:latest \
-  --set images.server=rlark:latest \
-  --set images.ui=rlark-ui:latest
+  --set images.gateway=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.controllerManager=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.server=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.ui=ghcr.io/rlinf/rlark-ui:v0.1.0
 ```
 
 With KCP mode (default), a post-install hook Job extracts `admin.kubeconfig` from KCP, installs CRDs, and creates the `rlark-ui-auth` secret. Admin credentials are printed in the hook Job logs:
@@ -53,10 +53,10 @@ helm install rlark-control-plane ./charts/rlark-control-plane \
   --set managementApi=kubernetes \
   --set kcp.enabled=false \
   --set etcd.enabled=false \
-  --set images.gateway=rlark:latest \
-  --set images.controllerManager=rlark:latest \
-  --set images.server=rlark:latest \
-  --set images.ui=rlark-ui:latest
+  --set images.gateway=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.controllerManager=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.server=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.ui=ghcr.io/rlinf/rlark-ui:v0.1.0
 ```
 
 With `managementApi=kubernetes`, CRDs are installed directly into the target cluster by the chart. In the default kcp mode, a post-install hook installs CRDs into KCP instead.
@@ -216,11 +216,11 @@ kind: DeployConfig
 plane: control
 kubernetes:
   kubeconfig: /path/to/control-kubeconfig
-  gateway-image: rlark:latest
-  controller-manager-image: rlark:latest
-  server-image: rlark:latest
+  gateway-image: ghcr.io/rlinf/rlark:v0.1.0
+  controller-manager-image: ghcr.io/rlinf/rlark:v0.1.0
+  server-image: ghcr.io/rlinf/rlark:v0.1.0
   kcp-image: kcp:v0.30.0
-  ui-image: rlark-ui:latest
+  ui-image: ghcr.io/rlinf/rlark-ui:v0.1.0
   storage:
     type: pvc
     storage-class: ""
@@ -248,8 +248,8 @@ cert:
     -----END PRIVATE KEY-----
 kubernetes:
   kubeconfig: /path/to/data-kubeconfig
-  agent-image: rlark:latest
-  image: rlark:latest       # Optional; enables Pod networking and SSH support
+  agent-image: ghcr.io/rlinf/rlark:v0.1.0
+  image: ghcr.io/rlinf/rlark:v0.1.0       # Optional; enables Pod networking and SSH support
 ```
 
 ## 3. Kubernetes Deployment

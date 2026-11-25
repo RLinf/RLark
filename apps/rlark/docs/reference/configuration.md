@@ -221,7 +221,7 @@ rlark-agent \
   --client-cert=/etc/rlark/agent-cert.pem \
   --client-key=/etc/rlark/agent-key.pem \
   --ca-cert=/etc/rlark/ca-cert.pem \
-  --image=rlark:latest \
+  --image=ghcr.io/rlinf/rlark:v0.1.0 \
   --node-name=worker-01
 ```
 
@@ -240,7 +240,7 @@ options:
   client-key: certs/agent-key.pem
   ca-cert: certs/ca.pem
   kubeconfig: kubeconfig
-  image: rlark:latest
+  image: ghcr.io/rlinf/rlark:v0.1.0
   restartable-init-containers: false
   task-runtime-resync-period: 0s
 ```
@@ -469,12 +469,12 @@ apiVersion: rlark.io/v1alpha1
 kind: DeployConfig
 plane: control
 kubernetes:
-  gateway-image: rlark:latest
-  controller-manager-image: rlark:latest
-  server-image: rlark:latest
+  gateway-image: ghcr.io/rlinf/rlark:v0.1.0
+  controller-manager-image: ghcr.io/rlinf/rlark:v0.1.0
+  server-image: ghcr.io/rlinf/rlark:v0.1.0
   kcp-image: kcp:v0.30.0
   postgresql-image: postgres:15
-  ui-image: rlark-ui:latest
+  ui-image: ghcr.io/rlinf/rlark-ui:v0.1.0
   replicas: 1
 db:
   host: postgresql
@@ -497,6 +497,6 @@ cert:
   agent-key: /path/to/agent-key.pem
 kubernetes:
   kubeconfig: ~/.kube/config
-  agent-image: rlark:latest
-  image: rlark:latest
+  agent-image: ghcr.io/rlinf/rlark:v0.1.0
+  image: ghcr.io/rlinf/rlark:v0.1.0
 ```

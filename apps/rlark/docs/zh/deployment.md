@@ -32,10 +32,10 @@ Helm Chart 是 `rlarkadm` 的替代方案，适合已经使用 Helm 管理集群
 helm install rlark-control-plane ./charts/rlark-control-plane \
   --namespace rlark-system \
   --create-namespace \
-  --set images.gateway=rlark:latest \
-  --set images.controllerManager=rlark:latest \
-  --set images.server=rlark:latest \
-  --set images.ui=rlark-ui:latest
+  --set images.gateway=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.controllerManager=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.server=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.ui=ghcr.io/rlinf/rlark-ui:v0.1.0
 ```
 
 KCP 模式（默认）下，post-install hook Job 会自动从 KCP 提取 `admin.kubeconfig`、安装 CRD、创建 `rlark-ui-auth` secret。管理员密码可通过以下命令查看：
@@ -53,10 +53,10 @@ helm install rlark-control-plane ./charts/rlark-control-plane \
   --set managementApi=kubernetes \
   --set kcp.enabled=false \
   --set etcd.enabled=false \
-  --set images.gateway=rlark:latest \
-  --set images.controllerManager=rlark:latest \
-  --set images.server=rlark:latest \
-  --set images.ui=rlark-ui:latest
+  --set images.gateway=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.controllerManager=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.server=ghcr.io/rlinf/rlark:v0.1.0 \
+  --set images.ui=ghcr.io/rlinf/rlark-ui:v0.1.0
 ```
 
 `managementApi=kubernetes` 模式下，CRD 由 Chart 直接安装到目标集群。默认 kcp 模式下，由 post-install hook 将 CRD 安装到 KCP。
@@ -216,11 +216,11 @@ kind: DeployConfig
 plane: control
 kubernetes:
   kubeconfig: /path/to/control-kubeconfig
-  gateway-image: rlark:latest
-  controller-manager-image: rlark:latest
-  server-image: rlark:latest
+  gateway-image: ghcr.io/rlinf/rlark:v0.1.0
+  controller-manager-image: ghcr.io/rlinf/rlark:v0.1.0
+  server-image: ghcr.io/rlinf/rlark:v0.1.0
   kcp-image: kcp:v0.30.0
-  ui-image: rlark-ui:latest
+  ui-image: ghcr.io/rlinf/rlark-ui:v0.1.0
   storage:
     type: pvc
     storage-class: ""
@@ -248,8 +248,8 @@ cert:
     -----END PRIVATE KEY-----
 kubernetes:
   kubeconfig: /path/to/data-kubeconfig
-  agent-image: rlark:latest
-  image: rlark:latest       # 可选；启用 Pod 网络和 SSH 支持
+  agent-image: ghcr.io/rlinf/rlark:v0.1.0
+  image: ghcr.io/rlinf/rlark:v0.1.0       # 可选；启用 Pod 网络和 SSH 支持
 ```
 
 ## 3. Kubernetes 部署
