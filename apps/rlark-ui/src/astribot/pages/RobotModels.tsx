@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Box, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
+import { Box, RefreshCw, Trash2 } from "lucide-react";
 import { robotModelsApi, type RobotModelItem } from "../api";
 import "./RobotModels.css";
 
@@ -52,7 +52,7 @@ export function RobotModelsPage({ zh, navigate }: { zh: boolean; navigate: (id: 
   };
 
   return <section className="table-page robot-models-page">
-    <header className="page-header"><div><h1>{zh ? "机器人型号目录" : "Robot model catalog"}</h1><p>{zh ? "本体定义由型号目录维护。选择型号查看关节、末端与传感器规格。" : "Body definitions live in the model catalog. Select a model to inspect joints, end-effectors and sensors."}</p></div>
+    <header className="page-header"><div><h1>{zh ? "机器人型号目录" : "Robot model catalog"}</h1><p>{zh ? "型号在这里只做展示与删除；新增由后台 apply 维护。入网流程与节点上报按这里的型号 ID 对齐。" : "Models are listed and deleted here; new models are applied on the backend. Join flows and node reports align on these model IDs."}</p></div>
       <div className="page-actions"><button type="button" className="secondary-button" onClick={() => refresh()}><RefreshCw size={15} />{zh ? "刷新" : "Refresh"}</button><button type="button" className="secondary-button" onClick={() => navigate("stations", "network")}>{zh ? "扫描设置" : "Discovery settings"}</button><button type="button" className="secondary-button" onClick={() => navigate("stations")}>{zh ? "返回站点" : "Back to stations"}</button></div>
     </header>
     {error && <p className="error-message" role="alert">{error}</p>}
@@ -60,11 +60,10 @@ export function RobotModelsPage({ zh, navigate }: { zh: boolean; navigate: (id: 
       {models.map((model) => {
         const guarded = model.references.nodeClasses + model.references.nodes + model.references.machines + model.references.nodeAdmissions + model.references.nodeJoins > 0;
         return <div className="robot-model-tile" key={model.name}>
-          <button type="button" className="robot-model-open" onClick={() => navigate("stations", `models/${model.name}`)}>
+          <div className="robot-model-open">
             <span className="robot-model-tile-icon"><Box size={18} /></span>
             <span className="robot-model-tile-copy"><strong>{model.displayName || model.name}</strong><small>{model.vendor ? `${model.vendor} · ` : ""}<code>{model.name}</code></small><span>{referenceSummary(model, zh)}</span></span>
-            <ChevronRight size={17} aria-hidden="true" />
-          </button>
+          </div>
           <button type="button" className="robot-model-delete" title={guarded ? (zh ? "有引用的型号不能删除" : "Referenced models cannot be deleted") : (zh ? "删除" : "Delete")} disabled={guarded || busy === model.name} onClick={() => remove(model)}>{busy === model.name ? "…" : <Trash2 size={15} />}</button>
         </div>;
       })}
