@@ -38,7 +38,7 @@ In compose, `astribot-iam` listens on 8081 inside the internal network only, wit
      --env-file /var/lib/rlark/control-plane.env up -d --no-deps astribot-iam rlark-ui
    ```
 
-4. Verify: `curl -fsS http://127.0.0.1:80/api/iam/healthz` (through nginx); open `http://<console>/admin/iam` and sign in to the IAM page with `admin / astribot`.
+4. Verify: `curl -fsS http://127.0.0.1/api/iam/login` (through nginx, proves the route; the service own /healthz is on the container network); open `http://<console>/admin/iam` and sign in to the IAM page with `admin / astribot`.
 
 ## Default accounts and first password change
 

@@ -46,7 +46,7 @@ func (c Compose) running(ctx context.Context, format string) (map[string]string,
 	for service := range composeVariables {
 		out, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Running}} "+format, service).CombinedOutput()
 		if err != nil {
-			if strings.Contains(string(out), "No such object") {
+			if strings.Contains(strings.ToLower(string(out)), "no such object") {
 				continue
 			}
 			return nil, fmt.Errorf("docker inspect %s: %w", service, err)
@@ -216,7 +216,7 @@ func (c Compose) removeOrphan(ctx context.Context, service string) error {
 	format := `{{index .Config.Labels "com.docker.compose.project"}} {{index .Config.Labels "com.docker.compose.service"}}`
 	out, err := exec.CommandContext(ctx, "docker", "inspect", "--format", format, service).CombinedOutput()
 	if err != nil {
-		if strings.Contains(string(out), "No such object") {
+		if strings.Contains(strings.ToLower(string(out)), "no such object") {
 			return nil
 		}
 		return fmt.Errorf("docker inspect orphan %s: %w", service, err)
