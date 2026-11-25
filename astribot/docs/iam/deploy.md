@@ -4,13 +4,13 @@ Astribot IAM (`astribot-iam`) is the identity layer of the RLark console: human 
 
 ## Current shape: IAM is the front door
 
-Since 2026-11-25 the console's nginx (`astribot/release/rlark-ui.nginx.conf`) admits every page and every business `/api/*` call only through IAM (`auth_request` → `/internal/authorize`), and people sign in at `/login`:
+Since 2026-11-25 the console's nginx (`astribot/release/rlark-ui.nginx.conf`) asks IAM's `/internal/admit` for page requests and `/internal/authorize` for requests matched by its `/api/` location. People sign in at `/login`:
 
-- `/login` is a static page in the console image (`astribot/release/login.html`). A page asked for without a session is answered `302 /login?next=<address>`; after signing in the browser returns to that address. An address under `/admin` is returned to only by the admin role. `next` is read as the rest of the query, so it has to be the last parameter.
+- `/login` is a static page in the console image (`astribot/release/login.html`). A page asked for without a session is answered `302 /login?next=<address>`; after signing in the browser returns to that address. An address under `/admin` is returned to only by the admin role. `next` is read as the rest of the query, so it has to be the last parameter. Opening `/login` also clears the browser's IAM session cookie, including when IAM did not confirm revocation during sign-out; the page is never cached, so this holds on a revisit.
 - The console image built by `astribot/release/rlark-ui.Dockerfile` sets `VITE_IAM_PORTAL=1`, which turns on the portal guard (`apps/rlark-ui/src/astribot/iam/portal.ts`). The guard:
-  - restores the session in a tab that has the cookie but not the token (a new tab, a bookmark) through `GET /api/iam/session`, instead of asking for the password again;
-  - takes the console's own "Sign out" (the avatar menu, on every page): it revokes the session (`POST /api/iam/logout`) and returns to `/login`;
-  - takes the console to `/login` when a call answers 401 (the session expired, or was ended by a password change, a reset, or a disable);
+  - starts every tab from the cookie's session (`GET /api/iam/session`): a new tab, a bookmark, or a tab that still holds an older token enters without the password again, and a tab that holds a token renders with it when IAM cannot be reached;
+  - takes the console's own "Sign out" (the avatar menu, on every page): it revokes the session (`POST /api/iam/logout`), returns to `/login`, and the other tabs of the origin leave as well;
+  - takes the console to `/login` when a call answers 401 (the session expired, or was ended by a password change, a reset, or a disable), and checks the session again when the browser restores a tab from its back/forward cache;
   - never shows the native RLark sign-in page.
 - A console built another way (the stock `apps/rlark-ui` image) does not set the variable and keeps the native sign-in.
 - A business call reaches the gateway with the role's service-account token, which nginx injects; the token the browser holds authorizes nothing by itself.
@@ -83,6 +83,9 @@ The control plane PostgreSQL's regular backups already cover the three `astribot
 ## Known limitations
 
 - Every human account is IAM's: the native sign-in page is not reachable, and the native admin/user accounts only serve to provision the gateway service accounts.
+- The static page shell is admitted for every signed-in role. Data remains role-limited by API authorization. The console sends non-admin users away from `/admin` in the client, so that page restriction is client-side behavior.
+- `/internal/authorize` trusts callers that can reach the IAM container network. A caller there with a valid session can obtain that role's upstream token, so IAM must not publish a host port.
+- If IAM does not confirm session revocation during sign-out, the browser still exits and `/login` clears its cookie, while the server-side session remains valid until expiry.
 - With IAM down the console's pages and business calls answer 5xx from nginx; the sign-in page is static and still loads, and signing in fails until IAM is back.
 - IAM does not change RLark's tenancy/ownership model; users of the same role see the same business resources as before.
 - A principal holding a gateway service-account token, or one that can reach 19000 directly, still bypasses IAM (the machine API stays for Fleet by plan).

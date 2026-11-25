@@ -4,13 +4,13 @@ Astribot IAM（`astribot-iam`）是 RLark 控制台的身份层：人类账号�
 
 ## 当前形态：IAM 是主入口
 
-自 2026-11-25 起，控制台的 nginx（`astribot/release/rlark-ui.nginx.conf`）只放行通过 IAM 的页面请求和业务 `/api/*` 调用（`auth_request` → `/internal/authorize`），人们在 `/login` 登录：
+自 2026-11-25 起，控制台的 nginx（`astribot/release/rlark-ui.nginx.conf`）对页面请求询问 IAM 的 `/internal/admit`，对命中 `/api/` location 的请求询问 `/internal/authorize`，人们在 `/login` 登录：
 
-- `/login` 是控制台镜像里的静态页（`astribot/release/login.html`）。没有会话时访问页面，得到 `302 /login?next=<原地址>`；登录后浏览器回到该地址。`/admin` 下的地址只有 admin 角色才会被带回。`next` 读取的是查询串余下的全部内容，因此它必须是最后一个参数。
+- `/login` 是控制台镜像里的静态页（`astribot/release/login.html`）。没有会话时访问页面，得到 `302 /login?next=<原地址>`；登录后浏览器回到该地址。`/admin` 下的地址只有 admin 角色才会被带回。`next` 读取的是查询串余下的全部内容，因此它必须是最后一个参数。打开 `/login` 也会清除浏览器里的 IAM 会话 cookie，包括 IAM 登出时未确认撤销的情况；这个页面从不缓存，所以再次访问时同样生效。
 - 由 `astribot/release/rlark-ui.Dockerfile` 构建的控制台镜像设置了 `VITE_IAM_PORTAL=1`，由此启用门户守卫（`apps/rlark-ui/src/astribot/iam/portal.ts`）。守卫会：
-  - 在标签页只有 cookie、没有 token 时（新标签页、书签）通过 `GET /api/iam/session` 恢复会话，不再要求重新输入密码；
-  - 接管控制台自己的「退出登录」（每个页面右上角的头像菜单）：撤销会话（`POST /api/iam/logout`）并回到 `/login`；
-  - 在调用返回 401 时（会话过期，或因改密、重置、停用而失效）把控制台带到 `/login`；
+  - 让每个标签页都以 cookie 的会话为准启动（`GET /api/iam/session`）：新标签页、书签，或还存着旧 token 的标签页，都不用重新输入密码；IAM 够不到时，已经持有 token 的标签页照常渲染；
+  - 接管控制台自己的「退出登录」（每个页面右上角的头像菜单）：撤销会话（`POST /api/iam/logout`），回到 `/login`，同源的其它标签页也一并离开；
+  - 在调用返回 401 时（会话过期，或因改密、重置、停用而失效）把控制台带到 `/login`；浏览器从前进/后退缓存恢复标签页时重新确认会话；
   - 从不显示 RLark 原生登录页。
 - 以其他方式构建的控制台（原生的 `apps/rlark-ui` 镜像）不设置该变量，保留原生登录。
 - 业务调用到达网关时带的是该角色的 service account token，由 nginx 注入；浏览器持有的 token 本身不授权任何操作。
@@ -83,6 +83,9 @@ compose 里 `astribot-iam` 只在内部网络监听 8081，不发布宿主端口
 ## 已知限制
 
 - 所有人类账号都在 IAM 里：原生登录页不可达，原生 admin/user 账号只用于供给网关 service account。
+- 静态页面外壳对所有已登录角色放行，数据仍由接口按角色限制。控制台会在客户端把非管理员从 `/admin` 送回 `/`，因此页面限制是客户端行为。
+- `/internal/authorize` 信任能连接到 IAM 容器网络的调用方。在该网络持有有效会话即可取得对应角色的上游 token，因此 IAM 不能发布宿主端口。
+- 退出时如果 IAM 没有确认撤销会话，浏览器仍会退出并由 `/login` 清除 cookie，但服务端会话会保留到过期。
 - IAM 不可用时，控制台的页面和业务调用由 nginx 应答 5xx；登录页是静态页仍能打开，但 IAM 恢复前登录会失败。
 - IAM 不改变 RLark 的租户/资源归属模型；同角色用户看到的业务资源范围与原生一致。
 - 持有网关 service account token 或能直连 19000 的主体仍可绕过 IAM（机器接口按计划保留给 Fleet）。

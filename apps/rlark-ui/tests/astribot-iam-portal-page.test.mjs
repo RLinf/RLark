@@ -53,7 +53,7 @@ test("the admin console is not the way back for another role", () => {
 });
 
 test("a request without a session is redirected to the portal, carrying its address", () => {
-  assert.match(nginx, /location \/ \{\s+auth_request \/_iam_auth;\s+error_page 401 = @iam_login;/);
+  assert.match(nginx, /location \/ \{\s+auth_request \/_iam_page;\s+error_page 401 = @iam_login;/);
   assert.match(nginx, /location @iam_login \{\s+return 302 \/login\?next=\$request_uri;\s+\}/);
   assert.match(nginx, /^\s+absolute_redirect off;$/m);
   // A redirect in the body of a 302 without Location keeps the address bar on the page that was refused.
@@ -63,12 +63,18 @@ test("a request without a session is redirected to the portal, carrying its addr
 test("the console shell is always confirmed with the server", () => {
   assert.match(
     nginx,
-    /location = \/index\.html \{\s+auth_request \/_iam_auth;\s+error_page 401 = @iam_login;\s+add_header Cache-Control "no-cache";/,
+    /location = \/index\.html \{\s+auth_request \/_iam_page;\s+error_page 401 = @iam_login;\s+add_header Cache-Control "no-cache";/,
   );
 });
 
-test("the portal page and its artwork are public, the authorization check stays internal", () => {
-  assert.match(nginx, /location = \/login \{\s+try_files \/login\.html =404;/);
-  assert.match(nginx, /location = \/_iam_auth \{\s+internal;/);
-  assert.match(nginx, /proxy_set_header X-Original-URI \$request_uri;/);
+test("page and API authorization use separate internal IAM endpoints", () => {
+  assert.match(nginx, /location = \/login \{[\s\S]*?add_header Set-Cookie "astribot_session=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax" always;[\s\S]*?try_files \/login\.html =404;/);
+  assert.match(nginx, /location \/api\/ \{\s+auth_request \/_iam_api;/);
+  assert.match(nginx, /location = \/_iam_page \{\s+internal;\s+proxy_pass \$\{ASTRIBOT_IAM_URL\}\/internal\/admit;[\s\S]*?proxy_set_header X-Original-URI \$request_uri;/);
+  assert.match(nginx, /location = \/_iam_api \{\s+internal;\s+proxy_pass \$\{ASTRIBOT_IAM_URL\}\/internal\/authorize;[\s\S]*?proxy_set_header X-Original-URI \$request_uri;/);
+});
+
+test("the portal page is always fetched, so that it can end the browser's session", () => {
+  // A copy replayed from the browser's cache carries no Set-Cookie.
+  assert.match(nginx, /location = \/login \{[\s\S]*?add_header Set-Cookie "astribot_session=;[^"]*" always;\s+(?:#[^\n]*\n\s*)?add_header Cache-Control "no-store" always;/);
 });
