@@ -29,9 +29,11 @@ type MachineSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	Site string `json:"site"`
-	// +kubebuilder:validation:MinLength=1
+	// NodeClass is the legacy class hint. Empty means Station API observed a
+	// host that no registered class fingerprint identifies.
+	// +optional
 	// +kubebuilder:validation:MaxLength=63
-	NodeClass string `json:"nodeClass"`
+	NodeClass string `json:"nodeClass,omitempty"`
 	// +kubebuilder:validation:Enum=Discovery;Registration
 	Source string `json:"source"`
 	// Admit is the administrator's decision that the machine is to be a
@@ -43,6 +45,16 @@ type MachineAdmit struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	ClusterID string `json:"clusterID"`
+	// Type is the operator's selected onboarding path. Empty retains the
+	// legacy interpretation: a class-backed machine is a Robot.
+	// +kubebuilder:validation:Enum=Robot;Server
+	Type MachineType `json:"type,omitempty"`
+	// NodeClass is the class selected at admission. Empty uses spec.nodeClass.
+	// +kubebuilder:validation:MaxLength=63
+	NodeClass string `json:"nodeClass,omitempty"`
+	// Model is the selected robot model or the operator's server model hint.
+	// +kubebuilder:validation:MaxLength=63
+	Model string `json:"model,omitempty"`
 	// Labels replace the values of labels the machine's class declares, for
 	// this machine: the body of a robot that is not the usual one.
 	// +kubebuilder:validation:MaxProperties=8
@@ -103,6 +115,10 @@ const (
 	MachineAccessUnconfigured = "AccessUnconfigured"
 	// The machine's join stopped; Status.Message says where.
 	MachineJoinBlocked = "JoinBlocked"
+	// The Server admission exists, but its NodeJoin has not appeared yet.
+	MachineJoinNotStarted = "JoinNotStarted"
+	// The selected NodeClass points at a RobotModel that is not registered.
+	MachineUnknownModel = "UnknownModel"
 )
 
 type MachineStatus struct {
@@ -131,6 +147,17 @@ type MachineStatus struct {
 	// Operation is the NodeOperation that joins the machine.
 	// +kubebuilder:validation:MaxLength=253
 	Operation string `json:"operation,omitempty"`
+	// NodeJoin is the NodeJoin progress projected by station-controller.
+	NodeJoin *MachineNodeJoinStatus `json:"nodeJoin,omitempty"`
+	// ObservedIdentity is read from the node's authenticated observation, never
+	// copied from the desired admission.
+	ObservedIdentity *MachineIdentity `json:"observedIdentity,omitempty"`
+	// IdentityVerified is True, False or Unknown for the current observation.
+	// +kubebuilder:validation:Enum=True;False;Unknown
+	IdentityVerified string `json:"identityVerified,omitempty"`
+	// IdentityReason explains a mismatch or the absence of an observation.
+	// +kubebuilder:validation:MaxLength=64
+	IdentityReason string `json:"identityReason,omitempty"`
 }
 
 type MachineEntry struct {
@@ -140,11 +167,50 @@ type MachineEntry struct {
 	MAC string `json:"mac,omitempty"`
 	// +kubebuilder:validation:MaxLength=50
 	HostKeyFingerprint string `json:"hostKeyFingerprint,omitempty"`
+	// Port is the SSH port where the Hub saw the host. Zero is a legacy value.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port,omitempty"`
+	// HostKeyAlgorithm is the negotiated SSH host-key algorithm.
+	// +kubebuilder:validation:MaxLength=64
+	HostKeyAlgorithm string `json:"hostKeyAlgorithm,omitempty"`
+	// Banner is the bounded SSH server identification line, evidence only.
+	// +kubebuilder:validation:MaxLength=200
+	Banner string `json:"banner,omitempty"`
 	// Via is the relay of the hub that saw the device, "tunnel-address:port":
 	// where the management plane reaches Address from.
 	// +kubebuilder:validation:MaxLength=21
 	Via      string       `json:"via,omitempty"`
 	LastSeen *metav1.Time `json:"lastSeen,omitempty"`
+}
+
+// +kubebuilder:validation:Enum=Robot;Server
+type MachineType string
+
+const (
+	MachineTypeRobot  MachineType = "Robot"
+	MachineTypeServer MachineType = "Server"
+)
+
+// MachineIdentity is what an authenticated node observed of its own type.
+type MachineIdentity struct {
+	// +kubebuilder:validation:Enum=Robot;Server
+	Category string `json:"category,omitempty"`
+	// +kubebuilder:validation:MaxLength=63
+	Model string `json:"model,omitempty"`
+	// +kubebuilder:validation:Enum=node-labels;node-info
+	Source     string       `json:"source,omitempty"`
+	ReportedAt *metav1.Time `json:"reportedAt,omitempty"`
+}
+
+// MachineNodeJoinStatus is the bounded NodeJoin projection on a Machine.
+type MachineNodeJoinStatus struct {
+	// +kubebuilder:validation:MaxLength=32
+	Phase string `json:"phase,omitempty"`
+	// +kubebuilder:validation:MaxLength=64
+	Stage string `json:"stage,omitempty"`
+	// +kubebuilder:validation:MaxLength=512
+	Reason string `json:"reason,omitempty"`
 }
 
 // +kubebuilder:object:root=true

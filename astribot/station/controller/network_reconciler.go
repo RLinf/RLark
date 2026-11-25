@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 
 	stationv1alpha1 "github.com/rlinf/rlark/astribot/station/api/v1alpha1"
 	"github.com/rlinf/rlark/astribot/station/network"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -92,6 +94,63 @@ func (r *NetworkReconciler) SetupWithManager(mgr manager.Manager) error {
 		Complete(r)
 }
 
+const (
+	relayTokenNamespace = "default"
+	relayTokenPrefix    = "station-relay-token-"
+)
+
+func relayTokenName(site string) string { return relayTokenPrefix + site }
+
+func validRelayToken(value []byte) bool {
+	decoded, err := base64.StdEncoding.DecodeString(string(value))
+	return err == nil && len(decoded) == 32 && base64.StdEncoding.EncodeToString(decoded) == string(value)
+}
+
+// gatewayRelayCondition reads one high-entropy token per discovery-enabled site.
+// The token is never put in status or error text, and only a document level
+// that explicitly supports it receives the value.
+func (r *NetworkReconciler) gatewayRelayCondition(ctx context.Context, spec stationv1alpha1.SiteNetworkSpec) (metav1.Condition, bool) {
+	var enabled []string
+	var missing []string
+	var invalid, unreadable []string
+	for _, site := range spec.Sites {
+		if site.Discovery == nil || !site.Discovery.Enabled {
+			continue
+		}
+		enabled = append(enabled, site.Name)
+		secret := &corev1.Secret{}
+		name := relayTokenName(site.Name)
+		if err := r.reader.Get(ctx, types.NamespacedName{Namespace: relayTokenNamespace, Name: name}, secret); apierrors.IsNotFound(err) {
+			missing = append(missing, name)
+			continue
+		} else if err != nil {
+			unreadable = append(unreadable, name)
+			continue
+		}
+		token := secret.Data["token"]
+		if !validRelayToken(token) {
+			invalid = append(invalid, name)
+			continue
+		}
+	}
+	if len(enabled) == 0 {
+		return metav1.Condition{}, false
+	}
+	condition := metav1.Condition{Type: "GatewayRelayReady", Status: metav1.ConditionTrue, Reason: "TokensAvailable", Message: "Gateway relay tokens are configured for discovery-enabled sites"}
+	switch {
+	case len(unreadable) > 0:
+		condition.Status, condition.Reason = metav1.ConditionFalse, "SecretUnreadable"
+		condition.Message = "Gateway relay is unavailable; grant read access to Secret(s): " + strings.Join(unreadable, ", ")
+	case len(missing) > 0:
+		condition.Status, condition.Reason = metav1.ConditionFalse, "SecretMissing"
+		condition.Message = "Gateway relay is unavailable; create Secret(s): " + strings.Join(missing, ", ")
+	case len(invalid) > 0:
+		condition.Status, condition.Reason = metav1.ConditionFalse, "TokenInvalid"
+		condition.Message = "Gateway relay is unavailable; Secret token must be base64 for 32 random bytes: " + strings.Join(invalid, ", ")
+	}
+	return condition, true
+}
+
 // Reconcile answers every enrollment. station-api writes admissions while this
 // runs; losing such a race is not an error, the network is computed again.
 func (r *NetworkReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
@@ -133,6 +192,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	if err := r.keepMemberCredentials(ctx, spec); err != nil {
 		return reconcile.Result{}, err
 	}
+	relayCondition, relayEnabled := r.gatewayRelayCondition(ctx, spec)
 	// What the hubs of a site with discovery look for: the factory host keys
 	// of every NodeClass, at the SSH ports of their entry devices, and at each
 	// site the keys its own machines' entry devices are known by. A machine
@@ -159,7 +219,7 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 	}
 	machineKeys := map[string][]string{}
 	for _, machine := range machines.Items {
-		if key := machine.Status.Entry.HostKeyFingerprint; key != "" {
+		if key := machine.Status.Entry.HostKeyFingerprint; key != "" && machine.Spec.NodeClass != "" {
 			machineKeys[machine.Spec.Site] = append(machineKeys[machine.Spec.Site], key)
 		}
 	}
@@ -171,12 +231,21 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		if site.LeafUplink != nil {
 			topology.Sites[len(topology.Sites)-1].LeafUplink = &network.Uplink{Gateway: site.LeafUplink.Gateway}
 		}
-		if site.Discovery != nil && site.Discovery.Enabled && len(looked.HostKeys) > 0 {
+		if site.Discovery != nil && site.Discovery.Enabled && (len(looked.HostKeys) > 0 ||
+			network.DocumentLevel >= 3 && site.Discovery.IncludeUnclassified) {
 			discovery := looked
+			discovery.DiscoveryDocumentLevel = network.DocumentLevel
 			discovery.HostKeys = append(slices.Clone(looked.HostKeys), machineKeys[site.Name]...)
 			slices.Sort(discovery.HostKeys)
 			discovery.HostKeys = slices.Compact(discovery.HostKeys)
 			discovery.Ranges, discovery.IntervalSeconds = site.Discovery.Ranges, int(site.Discovery.IntervalSeconds)
+			if network.DocumentLevel >= 3 {
+				discovery.IncludeUnclassified = site.Discovery.IncludeUnclassified
+				discovery.SSHPorts = make([]int, len(site.Discovery.SSHPorts))
+				for i, port := range site.Discovery.SSHPorts {
+					discovery.SSHPorts[i] = int(port)
+				}
+			}
 			topology.Sites[len(topology.Sites)-1].DiscoveryFrom = site.Discovery.From.ClusterID + "/" + site.Discovery.From.NodeName
 			topology.Sites[len(topology.Sites)-1].Discovery = &discovery
 		}
@@ -658,6 +727,11 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		}
 	}
 	conditions := []metav1.Condition{ready, connected}
+	if relayEnabled {
+		conditions = append(conditions, relayCondition)
+	} else {
+		apimeta.RemoveStatusCondition(&status.Conditions, "GatewayRelayReady")
+	}
 	if looking {
 		conditions = append(conditions, stale)
 	} else {

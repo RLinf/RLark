@@ -3,6 +3,9 @@ import type { Copy } from "../i18n";
 import type { IssuedNodeAdmission } from "./lib/siteNodeDisplay";
 import { JoinNodePage } from "./pages/JoinNode";
 import { StationsPage } from "./pages/Stations";
+import { SiteNetworkSettingsPage } from "./pages/SiteNetworkSettings";
+import { RobotModelsPage } from "./pages/RobotModels";
+import { IAMPage } from "./iam/IAMPage";
 
 // The admin pages this fork adds. AdminApp always renders it, so its state lives as long as AdminApp's.
 export function AstribotAdminPages({ page, sub, copy, zh, navigate }: {
@@ -16,11 +19,15 @@ export function AstribotAdminPages({ page, sub, copy, zh, navigate }: {
   const [reissued, setReissued] = useState<IssuedNodeAdmission>();
   // An SSH join to show on that page, from the admission records.
   const [sshJoin, setSSHJoin] = useState<{ clusterID: string; name: string }>();
+  if (page === "iam") return <IAMPage zh={zh} />;
   if (page !== "stations") return null;
+  if (sub === "network") return <SiteNetworkSettingsPage zh={zh} navigate={navigate} />;
+  if (sub === "models") return <RobotModelsPage zh={zh} navigate={navigate} />;
   if (sub !== "join") {
     return (
       <StationsPage
         copy={copy}
+        onModels={() => navigate("stations", "models")}
         onJoin={(issued, join) => {
           setReissued(issued);
           setSSHJoin(join);
@@ -34,6 +41,7 @@ export function AstribotAdminPages({ page, sub, copy, zh, navigate }: {
       zh={zh}
       reissued={reissued}
       sshJoin={sshJoin}
+      onScanSettings={() => navigate("stations", "network")}
       onBack={() => {
         setReissued(undefined);
         setSSHJoin(undefined);

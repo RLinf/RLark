@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RLark · 场站节点</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #171b25;
+      --muted: #7c8492;
+      --soft: #a9b0bd;
+      --line: #e7ebf0;
+      --line-strong: #dce2ea;
+      --panel: #fff;
+      --canvas: #f4f6f9;
+      --hover: #f5f0fe;
+      --blue: #7c3aed;
+      --blue-2: #a78bfa;
+      --blue-bg: #efe9fd;
+      --green: #36c98f;
+      --green-soft: #e7f8f1;
+      --red: #ef5a7a;
+      --orange: #f59e35;
+      --shadow-soft: 0 8px 24px rgba(28,39,58,.055);
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; min-height: 100%; margin: 0; overflow-x: clip; }
+    body { background: var(--canvas); color: var(--ink); font: 13px/1.45 Inter, "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif; }
+    button, input, select { font: inherit; }
+    button, select { color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .48; }
+    :focus-visible { outline: 3px solid var(--blue-2); outline-offset: 2px; }
+    .theme-dark {
+      color-scheme: dark;
+      --ink: #f5f7fb;
+      --muted: #9ca8ba;
+      --line: #273348;
+      --line-strong: #34435a;
+      --panel: #151d2b;
+      --canvas: #0f1623;
+      --blue: #a78bfa;
+      --blue-bg: rgba(167,139,250,.18);
+      --hover: rgba(167,139,250,.08);
+    }
+    .shell-sidebar { position: fixed; z-index: 30; inset: 0 auto 0 0; width: 256px; display: flex; flex-direction: column; padding: 19px 16px 14px; border-right: 1px solid var(--line); background: var(--panel); }
+    .brand { display: flex; align-items: center; gap: 10px; min-height: 45px; margin: 0 10px 24px; color: var(--blue); font-size: 25px; font-weight: 800; letter-spacing: -.7px; }
+    .brand-mark { width: 35px; height: 35px; display: grid; place-items: center; border: 2px solid var(--blue); border-radius: 50%; }
+    .brand-mark svg { width: 22px; }
+    .nav-caption { margin: 0 10px 8px; color: var(--soft); font-size: 10px; font-weight: 800; }
+    .nav-list { display: grid; gap: 4px; }
+    .nav-item { display: flex; align-items: center; gap: 12px; min-height: 43px; padding: 0 11px; border-radius: 12px; color: #596579; font-weight: 650; text-decoration: none; white-space: nowrap; }
+    .nav-item svg { width: 17px; height: 17px; flex: none; }
+    .nav-item:hover { background: var(--hover); color: var(--ink); }
+    .nav-item.active { background: var(--blue-bg); color: var(--blue); }
+    .nav-item.active::before { position: absolute; left: 0; width: 4px; height: 28px; border-radius: 0 4px 4px 0; background: var(--blue); content: ""; }
+    .sidebar-bottom { margin-top: auto; }
+    .sidebar-bottom button.nav-item { width: 100%; border: 0; background: transparent; font: inherit; text-align: left; }
+    body.sidebar-collapsed .shell-sidebar { width: 80px; align-items: center; padding-right: 8px; padding-left: 8px; }
+    body.sidebar-collapsed .brand { width: 42px; justify-content: center; margin-right: 0; margin-left: 0; font-size: 0; }
+    body.sidebar-collapsed .brand-word, body.sidebar-collapsed .nav-caption, body.sidebar-collapsed .nav-item span { display: none; }
+    body.sidebar-collapsed .nav-item { justify-content: center; width: 46px; margin-right: auto; margin-left: auto; padding: 0; }
+    body.sidebar-collapsed .nav-item.active::before { left: -8px; }
+    body.sidebar-collapsed .shell-main { width: calc(100% - 80px); margin-left: 80px; }
+    .shell-main { width: calc(100% - 256px); min-height: 100vh; margin-left: 256px; }
+    .topbar { position: sticky; z-index: 20; top: 0; height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 0 28px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    .topbar-current { display: grid; gap: 2px; }
+    .topbar-current small { color: var(--soft); font-size: 10px; font-weight: 700; }
+    .topbar-current strong { font-size: 14px; }
+    .topbar-actions { display: flex; align-items: center; gap: 8px; }
+    .topbar-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
+    .topbar-toggle button { min-height: 28px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; }
+    .topbar-toggle button.active { background: var(--blue-bg); color: var(--blue); }
+    .topbar-icon { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); }
+    .avatar { width: 34px; height: 34px; display: grid; place-items: center; border: 2px solid var(--panel); border-radius: 50%; background: #f6d8c5; color: #604632; font-size: 11px; font-weight: 800; }
+    .page-content { display: grid; align-content: start; gap: 18px; min-width: 0; padding: 28px; padding-bottom: 52px; }
+    .hero { position: relative; min-height: 158px; display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 24px 28px; overflow: hidden; border: 1px solid rgba(124,58,237,.12); border-radius: 22px; background: radial-gradient(circle at 78% -25%, rgba(124,58,237,.16), transparent 40%), linear-gradient(135deg, var(--panel) 28%, var(--blue-bg) 100%); box-shadow: var(--shadow-soft); }
+    .hero::after { position: absolute; top: -172px; right: 8%; width: 260px; height: 260px; border: 40px solid rgba(124,58,237,.045); border-radius: 50%; content: ""; pointer-events: none; }
+    .hero-copy, .hero-side { position: relative; z-index: 1; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 750; }
+    .hero h1 { margin: 6px 0; font-size: 28px; line-height: 1.15; letter-spacing: -.5px; }
+    .hero p { max-width: 620px; margin: 0; color: var(--muted); font-size: 13px; }
+    .hero-side { display: grid; justify-items: end; gap: 11px; min-width: 260px; }
+    .toast { position: fixed; z-index: 100; right: 18px; bottom: 18px; max-width: min(440px,calc(100vw - 32px)); padding: 11px 15px; border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow-soft); }
+    .review-toggle { position: fixed; z-index: 110; right: 14px; bottom: 14px; display: flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--muted); box-shadow: var(--shadow-soft); font-size: 10px; font-weight: 700; }
+    .review-panel { position: fixed; z-index: 110; right: 14px; bottom: 14px; width: min(370px,calc(100vw - 28px)); display: grid; gap: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow-soft); }
+    .review-panel[hidden], .review-toggle[hidden] { display: none; }
+    .review-head { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 10px; font-weight: 750; }
+    .review-controls { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; }
+    .review-controls label { display: grid; gap: 4px; color: var(--muted); font-size: 9px; }
+    .review-controls select { width: 100%; min-width: 0; height: 31px; padding: 0 7px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); font-size: 10px; }
+    .review-close { padding: 2px 5px; border: 0; background: transparent; color: var(--muted); }
+    @media (max-width: 760px) {
+      .shell-sidebar { width: 72px; align-items: center; padding: 14px 8px; }
+      body.sidebar-collapsed .shell-sidebar { width: 72px; }
+      .brand { width: 42px; height: 42px; justify-content: center; margin: 0 0 22px; font-size: 0; }
+      .brand-mark { width: 35px; height: 35px; }
+      .brand-word, .nav-caption, .nav-item span { display: none; }
+      .nav-list { width: 100%; }
+      .nav-item { position: relative; justify-content: center; width: 46px; min-height: 46px; margin: 0 auto; padding: 0; }
+      .nav-item svg { width: 19px; height: 19px; }
+      .nav-item.active::before { left: -8px; }
+      .sidebar-bottom .nav-item { margin-top: 0; }
+      .shell-main { width: calc(100% - 72px); margin-left: 72px; }
+      body.sidebar-collapsed .shell-main { width: calc(100% - 72px); margin-left: 72px; }
+      .topbar { height: 72px; padding: 0 16px; }
+      .topbar-actions { gap: 5px; }
+      .topbar-toggle button { padding: 0 7px; }
+      .topbar-icon, .avatar { display: none; }
+      .page-content { gap: 13px; padding: 18px 16px 74px; }
+    }
+
+    .stations-results { display: grid; gap: 15px; min-width: 0; }
+    [hidden] { display: none !important; }
+    .theme-dark .nav-item { color: var(--muted); }
+    .theme-dark .nav-item.active { color: var(--blue); }
+    .stations-page { padding-bottom: 80px; }
+    .stations-page > *, .stations-hero-copy { min-width: 0; }
+    .stations-heading, .stations-toolbar, .stations-cluster-head, .stations-card-head,
+    .stations-actions, .stations-meta, .stations-camera-caption {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+    }
+    .stations-heading, .stations-cluster-head, .stations-card-head {
+      justify-content: space-between;
+    }
+    .stations-heading h2, .stations-cluster-head h3, .stations-card-head h3 { margin: 0; }
+    .stations-heading h2 { font-size: 17px; }
+    .stations-cluster-head h3 { font-size: 15px; overflow-wrap: anywhere; }
+    .stations-card-head h3 { font-size: 15px; overflow-wrap: anywhere; }
+    .stations-hero-health { color: var(--muted); font-size: 12px; }
+    .stations-hero-health strong { display: block; color: var(--ink); }
+    .stations-button, .stations-toolbar select, .stations-toolbar input[type="search"] {
+      min-height: 36px; max-width: 100%; padding: 6px 11px; border: 1px solid var(--line);
+      border-radius: 10px; background: var(--panel); color: var(--ink); font-weight: 650;
+    }
+    .stations-button:hover:not(:disabled) { background: var(--hover); }
+    .stations-primary, .stations-primary:hover:not(:disabled) { color: white; background: var(--blue); border-color: var(--blue); }
+    .theme-dark .stations-primary { color: var(--canvas); }
+    .stations-danger { color: color-mix(in srgb, var(--red) 65%, var(--ink)); }
+    .stations-overview-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+    .stations-overview-card {
+      display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 76px; padding: 12px 16px;
+      border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow-soft);
+    }
+    .stations-overview-card > svg { flex: none; color: var(--blue); }
+    .stations-overview-card strong { display: block; color: var(--ink); font-size: 21px; line-height: 1.1; }
+    .stations-muted, .stations-overview-card small { color: var(--muted); }
+    .stations-filters { display: grid; gap: 9px; }
+    .stations-phase-tabs, .stations-detail-tabs {
+      display: flex; gap: 4px; overflow-x: auto; padding: 4px; scrollbar-width: thin;
+      border: 1px solid var(--line); border-radius: 11px; background: var(--panel);
+    }
+    .stations-phase-tabs { justify-self: start; max-width: 100%; }
+    .stations-tab {
+      flex: none; padding: 7px 9px; border: 0; border-radius: 7px; color: var(--muted);
+      background: transparent; white-space: nowrap; font-weight: 700;
+    }
+    .stations-tab[aria-selected="true"], .stations-tab[aria-pressed="true"] { background: var(--blue-bg); color: var(--blue); }
+    .stations-toolbar input[type="search"] { flex: 0 1 330px; min-width: 0; width: 100%; }
+    .stations-toolbar select { width: min(270px,100%); }
+    .stations-region, .stations-cluster, .stations-admissions, .stations-operations {
+      min-width: 0; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); box-shadow: var(--shadow-soft);
+    }
+    .stations-region > .stations-heading, .stations-admissions > .stations-heading { padding: 14px 16px; }
+    .stations-cluster-head { padding: 12px 15px; border-bottom: 1px solid var(--line); }
+    .stations-cluster-list { display: grid; gap: 12px; }
+    .stations-robot-grid, .stations-node-grid {
+      display: grid;
+      justify-content: start; align-items: start; gap: 12px; padding: 12px;
+      --station-track: clamp(340px, calc((100vw - 385px) / 4), 460px);
+      grid-template-columns: repeat(auto-fill, minmax(340px, var(--station-track, 460px)));
+    }
+    .stations-node-card {
+      max-width: 460px; width: 100%; min-width: 0; padding: 13px; border: 1px solid var(--line);
+      border-radius: 14px; background: var(--panel); display: grid; gap: 10px; overflow-wrap: anywhere;
+    }
+    .stations-node-card.is-selected { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue-bg); }
+    .stations-card-head { align-items: flex-start; }
+    .stations-card-identity { min-width: 0; flex: 1; }
+    .stations-card-identity h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+    .stations-card-identity code { display: inline-block; margin-top: 3px; }
+    .stations-chip, .status {
+      display: inline-flex; gap: 5px; align-items: center; padding: 2px 7px; border-radius: 999px;
+      background: var(--canvas); color: var(--ink); font-size: 11px; font-weight: 650; max-width: 100%;
+    }
+    .status i { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--muted); }
+    .status-online { background: color-mix(in srgb,var(--green) 17%,var(--panel)); }
+    .status-online i { background: var(--green); }
+    .status-pending { background: color-mix(in srgb,var(--orange) 19%,var(--panel)); }
+    .status-pending i { background: var(--orange); }
+    .status-failed { background: color-mix(in srgb,var(--red) 16%,var(--panel)); }
+    .status-failed i { background: var(--red); }
+    .stations-control-plane { color: var(--blue); background: var(--blue-bg); }
+    .stations-mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; overflow-wrap: anywhere; }
+    .stations-facts {
+      display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px;
+      margin: 0; padding: 9px; border-radius: 9px; background: var(--canvas);
+    }
+    .stations-facts > div, .stations-detail-fields > div { min-width: 0; }
+    .stations-facts dt, .stations-detail-fields dt { color: var(--muted); font-size: 11px; }
+    .stations-facts dd, .stations-detail-fields dd { margin: 2px 0 0; font-weight: 650; }
+    .stations-power-facts { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .stations-details { display: grid; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+    .stations-detail-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; margin: 10px 0; }
+    .stations-field-wide { grid-column: 1 / -1; }
+    .stations-copy { display: flex; align-items: flex-start; justify-content: space-between; gap: 5px; }
+    .stations-copy button { flex: none; padding: 2px 5px; min-height: 26px; font-size: 11px; }
+    .stations-condition-list, .stations-link-list, .stations-operation-list { margin: 0; padding: 0; list-style: none; }
+    .stations-condition-list li, .stations-link-list li, .stations-operation-list li {
+      display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line);
+    }
+    .stations-condition-list small { display: block; color: var(--muted); }
+    .stations-condition-status { flex: none; text-align: right; }
+    .stations-conflict { padding: 8px; border: 1px solid var(--red); border-radius: 9px; background: color-mix(in srgb,var(--red) 9%,var(--panel)); }
+    .stations-detail-footer { display: grid; gap: 6px; padding-top: 9px; border-top: 1px solid var(--line); }
+    .stations-detail-footer .stations-button, .stations-card-actions .stations-button { font-size: 11px; }
+    .stations-inline-title { margin: 8px 0 4px; font-size: 12px; }
+    .stations-camera-wall { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
+    .stations-camera {
+      display: grid; align-content: start; gap: 4px; min-width: 0; padding: 5px;
+      border: 1px solid var(--line); border-radius: 9px; background: var(--canvas); color: var(--ink); text-align: left;
+    }
+    .stations-camera-caption { align-items: flex-start; gap: 3px; font-size: 11px; }
+    .stations-camera-caption strong { margin-right: auto; }
+    .stations-camera-frame { display: grid; place-items: center; overflow: hidden; aspect-ratio: 2 / 1; border-radius: 5px; background: var(--panel); color: var(--muted); }
+    .stations-camera-frame svg { display: block; width: 100%; height: 100%; }
+    .stations-camera-frame.is-stale svg { filter: grayscale(.9); opacity: .7; }
+    .stations-camera-note { font-size: 11px; color: var(--muted); }
+    .stations-camera-dialog {
+      width: min(620px,calc(100% - 30px)); padding: 15px; border: 1px solid var(--line);
+      border-radius: 18px; background: var(--panel); color: var(--ink); box-shadow: var(--shadow-soft);
+    }
+    .stations-camera-dialog::backdrop { background: rgb(12 18 29 / 60%); }
+    .stations-camera-dialog .stations-camera-frame { margin: 10px 0; }
+    .stations-admissions { overflow: hidden; }
+    .stations-table-scroll { overflow-x: auto; }
+    .stations-table { width: 100%; min-width: 930px; border-collapse: collapse; text-align: left; font-size: 12px; }
+    .stations-table th, .stations-table td { padding: 8px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+    .stations-table th { background: var(--canvas); color: var(--muted); }
+    .stations-table td small { display: block; }
+    .stations-operations, .stations-state { padding: 12px 16px; }
+    .stations-state { color: var(--muted); margin: 0; }
+    input[type="checkbox"] { accent-color: var(--blue); width: 16px; height: 16px; margin: 0; vertical-align: middle; }
+    .stations-check-label { display: inline-flex; align-items: center; gap: 6px; }
+    .toast { bottom: 56px; }
+    @media (max-width: 1640px) {
+      .stations-robot-grid, .stations-node-grid { --station-track: clamp(340px,calc((100vw - 385px) / 3),460px); }
+    }
+    @media (max-width: 1300px) {
+      .stations-robot-grid, .stations-node-grid { --station-track: clamp(340px,calc((100vw - 365px) / 2),460px); }
+    }
+    @media (max-width: 1050px) and (min-width: 761px) {
+      .stations-robot-grid, .stations-node-grid { --station-track: 340px; }
+    }
+    @media (max-width: 900px) { .stations-overview-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+    @media (max-width: 760px) {
+      .hero { min-height: 0; align-items: flex-start; flex-direction: column; gap: 10px; padding: 16px; }
+      .hero h1 { font-size: 23px; }
+      .hero-side { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; }
+      .stations-toolbar { display: grid; grid-template-columns: minmax(0,1fr); }
+      .stations-toolbar select { width: 100%; }
+      .stations-robot-grid, .stations-node-grid {
+        grid-template-columns: repeat(auto-fill,minmax(300px, min(460px, calc((100% - 12px) / 2))));
+      }
+    }
+    @media (max-width: 720px) {
+      .stations-robot-grid, .stations-node-grid { grid-template-columns: minmax(0,460px); }
+    }
+    @media (max-width: 480px) {
+      .stations-robot-grid, .stations-node-grid { padding: 7px; }
+      .stations-node-card { padding: 9px; }
+      .stations-overview-card { min-height: 62px; padding: 8px; gap: 6px; }
+      .stations-facts { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .stations-detail-fields { grid-template-columns: minmax(0,1fr); }
+      .stations-tab { padding: 6px; }
+      .topbar { gap: 5px; padding: 0 8px; }
+      .topbar-toggle { gap: 1px; padding: 3px; }
+      .topbar-toggle button { padding: 0 5px; }
+    }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute;overflow:hidden">
+    <symbol id="i-mark" viewBox="0 0 32 32"><path d="M4 17c2-6 10-7 12-1 2-6 10-5 12 1-2 7-9 10-12 10S6 24 4 17Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="10" r="3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-cluster" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="m3 7 9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></symbol>
+    <symbol id="i-fingerprint" viewBox="0 0 24 24"><path d="M12 11a2 2 0 0 0-2 2c0 3-.4 5.5-1.5 7M14 13c0 3.2-.3 5.7-1 7M6 15a6 6 0 1 1 12 0c0 2-.2 3.8-.7 5M4 13a8 8 0 1 1 16 0M12 5a8 8 0 0 0-8 8"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9 2 2-2 2 2 2-3 3-2-2-3 3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.6.9l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.6-.9l-1.7.7-1.4-2.4 1.4-1.1a7 7 0 0 1 0-1.9l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.6-.9l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.6.9l1.7-.7 1.4 2.4-1.4 1.1a7 7 0 0 1 0 1.9Z" transform="translate(-1 -2)"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.2 9A7 7 0 0 1 18 6l2 6M4 12l2 6a7 7 0 0 0 11.8-3"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10M6.2 5.5a8 8 0 1 0 11.6 0"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m10.3 3.7-8 14A2 2 0 0 0 4 20.7h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 3h.01"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 1 1 4.2 1.8c-1 .8-1.8 1.2-1.8 2.7M12 17h.01"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></symbol>
+  </svg>
+  <aside class="shell-sidebar" aria-label="RLark navigation">
+    <div class="brand"><span class="brand-mark"><svg fill="none"><use href="#i-mark"/></svg></span><span class="brand-word">RLark</span></div>
+    <div class="nav-caption" data-copy="admin">管理后台</div>
+    <nav class="nav-list">
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-grid"/></svg><span data-copy="dashboard">管理工作台</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-cluster"/></svg><span data-copy="clusters">集群管理</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-list"/></svg><span data-copy="tasks">任务管理</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-globe"/></svg><span data-copy="network">网络域</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-box"/></svg><span data-copy="storage">存储管理</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-image"/></svg><span data-copy="images">镜像管理</span></a>
+      <a class="nav-item active" aria-current="page" href="#page-content"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-fingerprint"/></svg><span data-copy="stations">场站节点</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-key"/></svg><span data-copy="ssh">SSH 公钥</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-settings"/></svg><span data-copy="settings">系统配置</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-list"/></svg><span data-copy="reference">接口参考</span></a>
+    </nav>
+    <div class="sidebar-bottom"><button class="nav-item" type="button" id="sidebar-toggle" aria-expanded="true"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-chevron"/></svg><span data-copy="collapse">收起侧栏</span></button></div>
+  </aside>
+  <main class="shell-main">
+    <header class="topbar">
+      <div class="topbar-current"><small data-copy="current">当前页面</small><strong data-copy="stations">场站节点</strong></div>
+      <div class="topbar-actions">
+        <div class="topbar-toggle" aria-label="Language"><button type="button" data-lang="zh" class="active">中</button><button type="button" data-lang="en">EN</button></div>
+        <div class="topbar-toggle" aria-label="Theme"><button type="button" data-theme="light" class="active">浅色</button><button type="button" data-theme="dark">◐ 深色</button></div>
+        <button class="topbar-icon" id="notifications" type="button" aria-label="Notifications"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button>
+        <span class="avatar" aria-label="Administrator">AD</span>
+      </div>
+    </header>
+    <div class="page-content" id="page-content"></div>
+  </main>
+  <button class="review-toggle" id="review-toggle" type="button" aria-expanded="false">◉ <span data-copy="review">评审设置</span></button>
+  <section class="review-panel" id="review-panel" aria-label="Prototype review controls" hidden>
+    <div class="review-head"><span data-copy="review">评审设置</span><button class="review-close" id="review-close" type="button" aria-label="Close review settings">×</button></div>
+    <div class="review-controls">
+      <label><span data-copy="scenario">场景</span><select id="scenario"><option value="dense">Dense</option><option value="sparse">Sparse</option><option value="empty">Empty</option></select></label>
+      <label><span data-copy="theme">主题</span><select id="theme"><option value="light">Light</option><option value="dark">Dark</option></select></label>
+      <label><span data-copy="language">语言</span><select id="language"><option value="zh">中文</option><option value="en">English</option></select></label>
+    </div>
+  </section>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <dialog class="stations-camera-dialog" id="camera-dialog"></dialog>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const state = {
+      scenario: ["dense", "sparse", "empty"].includes(params.get("scenario")) ? params.get("scenario") : "dense",
+      lang: params.get("lang") === "en" ? "en" : "zh",
+      theme: params.get("theme") === "dark" ? "dark" : "light",
+      phase: "all", cluster: "", query: "", operations: false,
+      open: new Map(), chosen: new Set(),
+    };
+    const words = {
+      admin:["管理后台","Administration"], dashboard:["管理工作台","Admin workspace"], clusters:["集群管理","Clusters"],
+      tasks:["任务管理","Tasks"], network:["网络","Network"], storage:["存储管理","Storage"], images:["镜像管理","Image registries"],
+      stations:["场站节点","Site nodes"], ssh:["SSH 公钥","SSH keys"], settings:["系统配置","System settings"],
+      reference:["接口参考","API reference"], collapse:["收起侧栏","Collapse sidebar"], current:["当前页面","Current page"],
+      review:["评审设置","Review controls"], scenario:["场景","Scenario"], theme:["主题","Theme"], language:["语言","Language"],
+      dense:["密集","Dense"], sparse:["稀疏","Sparse"], empty:["空状态","Empty"], dark:["深色","Dark"], light:["浅色","Light"],
+      overview:["概览","Overview"], conditions:["条件","Conditions"], node:["节点","Node"], cluster:["集群","Cluster"],
+      loaded:["已加载记录","Loaded records"], Bound:["在线","Online"], Offline:["离线","Offline"], Conflict:["冲突","Conflict"],
+      Retired:["已移除","Retired"], all:["全部","All"], add:["加入节点","Add node"], refresh:["刷新","Refresh"],
+      search:["搜索节点、UID 或集群","Search node, UID or cluster"], allClusters:["所有集群","All clusters"],
+      operations:["节点操作","Node operations"], robots:["机器人","Robots"], robotCluster:["机器人集群","Robot cluster"], selectAll:["全选可见机器人","Select all visible robots"],
+      powerStart:["上电并启动驱动","Power on and start driver"], powerStop:["关闭驱动并下电","Stop driver and power off"],
+      pose:["初始姿势","Home pose"], powerOn:["上电","Power on"], powerOff:["下电","Power off"],
+      driverOn:["启动驱动","Start driver"], driverOff:["关闭驱动","Stop driver"], desired:["期望","Desired"], actual:["现在","Now"],
+      ready:["驱动就绪","Driver ready"], powered:["已上电","Powered"], off:["已下电","Powered off"], estop:["急停","Emergency stop"],
+      selfCheck:["自检","Self-check"], maintenance:["维护","Maintenance"], manual:["等待人工检查","Awaiting inspection"],
+      pass:["通过","Passed"], pending:["等待","Pending"], failed:["失败","Failed"], verified:["已验证","Verified"],
+      probeFailed:["探测失败","Probe failed"], unknown:["未知","Unknown"], admission:["入网","Admission"],
+      Joined:["已入网","Joined"], Expired:["已过期或作废","Expired or revoked"], Pending:["待使用","Pending"],
+      Redeemed:["卡住","Redeemed · stuck"], noCode:["未使用入网码","No admission code"],
+      model:["机型","Model"], uptime:["运行时间","Uptime"], reboots:["重启","Reboots"], seen:["最近上报","Last seen"],
+      expand:["展开详情","Expand details"], fold:["收起详情","Collapse details"], cp:["控制面","Control plane"],
+      record:["记录名","Record name"], copy:["复制","Copy"], copied:["已复制","Copied"],
+      tunnel:["隧道地址","Tunnel address"], key:["WireGuard 公钥","WireGuard public key"],
+      issuer:["发码人","Issued by"], issued:["发码时间","Issued"], expires:["过期时间","Expires"],
+      hostKey:["SSH 主机指纹","SSH host fingerprint"], links:["节点链路","Node links"], reachable:["可达","Reachable"],
+      reissue:["重发入网码","Reissue code"], revoke:["作废入网码","Revoke code"], delete:["删除记录","Delete record"],
+      restart:["清掉重来","Start over"], retry:["重试","Retry"], status:["状态","State"], actions:["操作","Actions"],
+      ledger:["入网记录","Admission records"], close:["关闭","Close"], description:["查看场站机器的身份、连接与入网状态。展开卡片查看完整详情。","Review machine identity, connectivity and admission. Expand a card for full details."],
+      health:["集群健康","Cluster health"], chooseCluster:["请先选择具体集群","Select a specific cluster first"],
+      noRobots:["没有匹配的机器人","No matching robots"], noNodes:["没有匹配的场站节点","No matching site nodes"],
+      noRecords:["还没有入网记录","No admission records yet"], noOperations:["该集群暂无操作记录","No operations for this cluster"],
+      ledgerHint:["发码和使用状态 · 入网码本身不会保存","Issuance and redemption status · codes are never stored"],
+      deleteReason:["集群中仍有同名 Node，需先完成节点移除后才能删除记录。","A Node with this name is still present. Remove it before deleting this record."],
+      poseReason:["选中的机器人都要已上电、驱动在跑","Every chosen robot must be powered with its driver running"],
+      noSelection:["先选择一台机器人","Select a robot first"], demo:["原型演示，不发请求","Prototype demo. No request sent."],
+      conflict:["节点 UID 变了","Node UID changed"], conflictDetail:["当前上报的 UID 与记录不一致，此记录不进入隧道网。","The reported UID differs from this record. The record stays out of the tunnel network."],
+      Observed:["已观测","Observed"], IdentityMatched:["身份匹配","Identity matched"], NetworkVerified:["网络已验证","Network verified"], RLarkLinked:["RLark 已连接","RLark linked"], Rebooted:["已重启","Rebooted"],
+      head:["头部","Head"], torso:["躯干","Torso"], left:["左腕","Left wrist"], right:["右腕","Right wrist"],
+      normal:["正常","Live"], low:["帧率低","Low frame rate"], stale:["画面过期","Stale frame"], recovering:["恢复中","Recovering"],
+      stuck:["卡住","Stuck"], noFrame:["无画面","No image"], absent:["本体无此相机","Camera not fitted"],
+      reset:["需要断电或 USB 复位","Power cycle or USB reset required"], camera:["相机","Cameras"],
+      joinOperation:["加入节点","Join node"], removeOperation:["移除节点","Remove node"],
+      joinFailed:["SSH 入网停在隧道配置","SSH join stopped at tunnel configuration"],
+      notifications:["暂无新通知","No new notifications"],
+    };
+    const t = key => words[key][state.lang === "zh" ? 0 : 1];
+    const zh = () => state.lang === "zh";
+    const icon = name => `<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+    const clusters = [
+      { id:"rlark-ksyun-gpu", ns:"ns-metal", name:["金山云西北宁夏裸金属集群","Kingsoft Cloud Ningxia Bare Metal"] },
+      { id:"rlark-local-dev-gpu", ns:"ns-local", name:["深圳公司本地开发集群","Shenzhen local development"] },
+      { id:"rlark-robot-s1u-01", ns:"ns-s1u", name:["深圳公司S1U调试集群","Shenzhen S1U lab"] },
+    ];
+    const clusterName = cluster => cluster.name[zh() ? 0 : 1];
+    const nodes = [
+      { name:"10-0-2-57", cluster:0, cp:true, admission:"Joined" },
+      { name:"10-0-2-196", cluster:0 },
+      { name:"calliang", cluster:1, cp:true, network:"probeFailed", admission:"Joined" },
+      { name:"wendychen", cluster:1, admission:"Expired" },
+      { name:"alexfu", cluster:2, cp:true },
+      { name:"s1u-01-x86", cluster:2, robot:true, actual:"ready", desired:"ready", check:"pass", admission:"Joined", cameras:["normal","normal","low","normal"] },
+      { name:"s1u-02-x86", cluster:2, robot:true, phase:"Offline", network:"unknown", actual:"powered", desired:"ready", check:"pending", cameras:["stale","recovering","noFrame","absent"] },
+      { name:"s1u-03-x86", cluster:2, robot:true, phase:"Conflict", network:"probeFailed", actual:"estop", desired:"off", check:"failed", maintenance:true, admission:"Redeemed", cameras:["normal","stuck","noFrame","normal"] },
+    ].map((node, index) => ({
+      id: index + 1, phase:"Bound", network:"verified", cp:false, reboots:index % 3,
+      uid:`3f712a0${index}-af6d-4c1c-9307-29a809b3da0${index}`,
+      system:`d49b0c2${index}-53df-44fe-b14e-14e6524c231${index}`,
+      wg:`B5RwJ8qmVszSa08Nb30Ck6wHx9JpfQAeTwR6G2eC10${index}=`,
+      tunnel:`10.254.240.${20 + index}`, ...node,
+    }));
+    const retiredRobot = { ...nodes[6], phase:"Retired" };
+    const scenarioNodes = () => state.scenario === "empty" ? [] : state.scenario === "sparse" ? [nodes[0], nodes[5], retiredRobot] : nodes;
+    const byName = name => scenarioNodes().find(node => node.name === name);
+    const byId = id => scenarioNodes().find(node => node.id === Number(id));
+    const isRobot = node => node.robot && node.phase !== "Retired";
+    // A cluster with an active robot is the robot-cluster section; everything else is ordinary inventory.
+    const robotClustersOf = () => new Set(scenarioNodes().filter(isRobot).map(node => node.cluster));
+    // Every non-robot node opens its details by default, including the control plane inside the robot cluster.
+    function openDefaultDetails() {
+      for (const node of scenarioNodes()) {
+        if (!isRobot(node)) state.open.set(node.name, "overview");
+      }
+    }
+    const model = node => node.robot ? "Astribot S1U" : node.cluster === 0 ? "GPU" : "—";
+    const seen = node => node.phase === "Offline" ? (zh() ? "2 小时前" : "2h ago") : (zh() ? `${node.id * 8} 秒前` : `${node.id * 8}s ago`);
+    const uptime = node => node.phase === "Bound" ? (zh() ? `${node.id} 天 4 小时` : `${node.id}d 4h`) : "—";
+    const phaseTone = { Bound:"online", Offline:"pending", Conflict:"failed", Retired:"stopped" };
+    const networkTone = { verified:"online", probeFailed:"failed", unknown:"stopped" };
+    const admissionTone = { Joined:"online", Expired:"failed", Pending:"pending", Redeemed:"failed", noCode:"stopped" };
+    const pill = (label, tone) => `<span class="status status-${tone}"><i aria-hidden="true"></i>${label}</span>`;
+    const chip = value => `<span class="stations-chip">${value}</span>`;
+    const demoButton = (label, attrs = "", kind = "") => `<button type="button" class="stations-button ${kind}" data-demo ${attrs}>${label}</button>`;
+    const forbidden = reason => `disabled title="${reason}"`;
+    const facts = pairs => pairs.map(([label, value, wide]) => `<div${wide ? ' class="stations-field-wide"' : ""}><dt>${label}</dt><dd>${value}</dd></div>`).join("");
+    const code = value => `<code class="stations-mono">${value}</code>`;
+    const copy = value => value ? `<span class="stations-copy">${code(value)}<button class="stations-button" type="button" data-copy-value="${value}">${t("copy")}</button></span>` : "—";
+    const admission = node => pill(t(node.admission ?? "noCode"), admissionTone[node.admission ?? "noCode"]);
+    const network = node => pill(t(node.network), networkTone[node.network]);
+    const timing = node => [[t("uptime"),uptime(node)],[t("reboots"),node.reboots],[t("seen"),seen(node)]];
+    const hostKey = node => `SHA256:h3GxpQ5FwUu32tTMo0sErSj72l9aW1L1f85A7eD3Kr${node.id}`;
+    const sshLogin = node => `astri@${node.tunnel}:22`;
+    const expiry = "2026-11-25 13:17";
+    const pendingAdmission = { name:"s1u-04-x86", cluster:2, admission:"Pending" };
+    const visible = () => scenarioNodes().filter(node => {
+      const cluster = clusters[node.cluster];
+      const phaseMatch = state.phase === "all" ? node.phase !== "Retired" : state.phase === node.phase;
+      const searchText = [node.name, node.uid, node.system, cluster.id, cluster.ns, ...cluster.name].join(" ").toLowerCase();
+      return phaseMatch && (!state.cluster || state.cluster === cluster.id) && searchText.includes(state.query.trim().toLowerCase());
+    });
+
+    const cameraPositions = ["head","torso","left","right"];
+    function frame(position, status) {
+      if (["absent","noFrame","recovering"].includes(status)) {
+        return `<span class="stations-camera-frame">${icon("image")}</span>`;
+      }
+      const offset = cameraPositions.indexOf(position) * 13;
+      return `<span class="stations-camera-frame${status === "stale" || status === "stuck" ? " is-stale" : ""}">
+        <svg viewBox="0 0 240 120" aria-hidden="true">
+          <rect width="240" height="120" fill="#172534"/>
+          <path d="M0 120 73 62h95l72 58Z" fill="#394957"/>
+          <path d="M0 21h240M0 42h240M74 0v62m94-62v62M0 108h240M26 86h185M65 120l29-58m80 58-29-58" fill="none" stroke="#6d8793" opacity=".55"/>
+          <g transform="translate(${offset},0)"><rect x="64" y="45" width="36" height="30" rx="4" fill="#72999e"/><path d="M89 75 118 97l28-25" fill="none" stroke="#a5b8bb" stroke-width="9"/><circle cx="118" cy="97" r="7" fill="#405562"/></g>
+          <path d="M9 26V10h17m188 0h17v16M9 94v16h17m188 0h17V94" fill="none" stroke="#b8ced2" opacity=".65"/>
+        </svg></span>`;
+    }
+    const cameraTone = { normal:"online", low:"pending", stale:"pending", recovering:"pending", stuck:"failed", noFrame:"stopped", absent:"stopped" };
+    function cameraWall(node) {
+      return `<section aria-label="${t("camera")}"><h4 class="stations-inline-title">${t("camera")}</h4>
+        <div class="stations-camera-wall">${node.cameras.map((status, index) => {
+          const position = cameraPositions[index];
+          const content = `${frame(position,status)}<span class="stations-camera-caption"><strong>${t(position)}</strong>${pill(t(status),cameraTone[status])}</span>${status === "stuck" ? `<small class="stations-camera-note">${t("reset")}</small>` : ""}`;
+          return status === "absent" ? `<div class="stations-camera">${content}</div>`
+            : `<button type="button" class="stations-camera" data-camera="${node.id}/${index}" aria-haspopup="dialog" aria-label="${node.name} · ${t(position)} · ${t(status)}">${content}</button>`;
+        }).join("")}</div></section>`;
+    }
+    function conditionList(node) {
+      const conditionStates = [
+        ["Observed",node.phase === "Offline" ? "Unknown" : "True"],
+        ["IdentityMatched",node.phase === "Conflict" ? "False" : "True"],
+        ["NetworkVerified",({verified:"True",probeFailed:"False",unknown:"Unknown"})[node.network]],
+        ["RLarkLinked",node.phase === "Offline" ? "Unknown" : "True"],
+        ["Rebooted",node.reboots ? "True" : "Unknown"],
+      ].sort((a,b) => Number(a[1] === "True") - Number(b[1] === "True") || a[0].localeCompare(b[0]));
+      return `<ul class="stations-condition-list">${conditionStates.map(([label,value]) =>
+        `<li><div><strong>${t(label)}</strong><small>${label}</small></div><div class="stations-condition-status">${pill(value, value === "True" ? "online" : value === "False" ? "failed" : "pending")}<small>${seen(node)}</small></div></li>`).join("")}</ul>`;
+    }
+    function detailBody(node, tab) {
+      if (tab === "conditions") return conditionList(node);
+      if (tab === "network") {
+        const hasCode = Boolean(node.admission);
+        return `<dl class="stations-detail-fields">${facts([
+          ["NetworkVerified",network(node)], [t("admission"),admission(node)], [t("key"),copy(node.wg),true],
+          [t("tunnel"),copy(node.tunnel)], [t("issuer"),hasCode ? "admin" : "—"],
+          [t("expires"),hasCode ? expiry : "—"], ["SSH "+(zh() ? "登录" : "login"),hasCode ? code(sshLogin(node)) : "—"],
+          [t("hostKey"),copy(hasCode ? hostKey(node) : ""),true],
+          ...(node.admission === "Redeemed" ? [[t("status"),t("joinFailed"),true]] : []),
+        ])}</dl><h4 class="stations-inline-title">${t("links")}</h4>
+        <ul class="stations-link-list">${["hub-shenzhen-01","hub-ningxia-01"].map((hub,index) => {
+          const reachable = node.network === "verified" || (node.network === "probeFailed" && index === 0);
+          return `<li>${code(hub)} ${reachable ? pill(t("reachable"),"online") : network(node)}</li>`;
+        }).join("")}</ul>`;
+      }
+      return `<dl class="stations-facts">${facts([...timing(node),[t("cluster"),clusterName(clusters[node.cluster])]])}</dl>
+        <dl class="stations-detail-fields">${facts([
+          [t("record"),copy(node.name)], [t("cluster"),copy(clusters[node.cluster].id)],
+          ["Node UID",copy(node.uid),true], ["System UUID",copy(node.system),true],
+        ])}</dl>
+        ${isRobot(node) ? `<div class="stations-actions">${["powerOn","driverOn","driverOff","powerOff"].map(action => demoButton(t(action))).join("")}</div>` : ""}`;
+    }
+    const detailTabs = ["overview","network","conditions"];
+    function details(node) {
+      const selected = state.open.get(node.name) ?? "overview";
+      const deletable = node.phase !== "Bound";
+      return `<section class="stations-details" id="details-${node.id}" aria-labelledby="expand-${node.id}" ${state.open.has(node.name) ? "" : "hidden"}>
+        ${node.phase === "Conflict" ? `<div class="stations-conflict"><strong>${t("conflict")}</strong><br>${t("conflictDetail")}</div>` : ""}
+        <div class="stations-detail-tabs" role="tablist" aria-label="${t("overview")} · ${t("network")} · ${t("conditions")}">
+          ${detailTabs.map(tab => `<button type="button" class="stations-tab" role="tab" data-detail-tab="${tab}" id="tab-${node.id}-${tab}" aria-controls="panel-${node.id}-${tab}" aria-selected="${tab === selected}" tabindex="${tab === selected ? 0 : -1}">${t(tab)}</button>`).join("")}
+        </div>
+        ${detailTabs.map(tab => `<div role="tabpanel" tabindex="0" id="panel-${node.id}-${tab}" aria-labelledby="tab-${node.id}-${tab}" ${tab === selected ? "" : "hidden"}>${state.open.has(node.name) ? detailBody(node,tab) : ""}</div>`).join("")}
+        <footer class="stations-detail-footer"><div class="stations-actions">
+          ${demoButton(t("reissue"))}
+          ${demoButton(t("revoke"),node.admission ? "" : forbidden(t("noCode")))}
+          ${demoButton(t("delete"),deletable ? "" : `disabled aria-describedby="delete-reason-${node.id}"`,"stations-danger")}
+        </div>${deletable ? "" : `<small id="delete-reason-${node.id}" class="stations-muted">${t("deleteReason")}</small>`}</footer>
+      </section>`;
+    }
+    function card(node) {
+      const robot = isRobot(node);
+      const chosen = robot && state.chosen.has(node.name);
+      const expanded = state.open.has(node.name);
+      return `<article class="stations-node-card${chosen ? " is-selected" : ""}" data-node="${node.id}" data-name="${node.name}">
+        <header class="stations-card-head">
+          ${robot ? `<input type="checkbox" data-choose="${node.name}" aria-label="${zh() ? "选中" : "Select"} ${node.name}" ${chosen ? "checked" : ""}>` : ""}
+          <div class="stations-card-identity"><h3>${node.name} ${node.cp ? `<span class="stations-chip stations-control-plane">${t("cp")}</span>` : ""}</h3>
+            <code class="stations-mono" title="${node.uid}">${node.uid.slice(0,8)}…${node.uid.slice(-4)}</code></div>
+          ${pill(t(node.phase),phaseTone[node.phase])}
+        </header>
+        ${robot ? `<div class="stations-meta">${chip(clusterName(clusters[node.cluster]))}${chip(model(node))}${network(node)}${admission(node)}</div>
+          <dl class="stations-facts stations-power-facts">${facts([
+            [t("desired"),t(node.desired)], [t("actual"),pill(t(node.actual),node.actual === "ready" ? "online" : node.actual === "estop" ? "failed" : "pending")],
+            [t("selfCheck"),pill(t(node.check),node.check === "pass" ? "online" : node.check === "failed" ? "failed" : "pending")],
+            ...(node.maintenance ? [[t("maintenance"),t("manual")]] : []),
+          ])}</dl>` : `<dl class="stations-facts">${facts([[t("network"),network(node)],[t("admission"),admission(node)],[t("model"),model(node)]])}</dl>`}
+        <dl class="stations-facts">${facts(timing(node))}</dl>
+        ${robot ? cameraWall(node) : ""}
+        <div class="stations-actions stations-card-actions">
+          ${robot ? demoButton(t(node.actual === "off" ? "powerOn" : "powerOff")) + demoButton(t("pose"),node.actual === "ready" ? "" : forbidden(t("poseReason"))) : ""}
+          <button class="stations-button" type="button" id="expand-${node.id}" data-expand="${node.id}" aria-controls="details-${node.id}" aria-expanded="${expanded}">${t(expanded ? "fold" : "expand")}</button>
+        </div>${details(node)}
+      </article>`;
+    }
+    function robotSection(nodes, robots) {
+      const chosen = robots.filter(node => state.chosen.has(node.name));
+      const batchDisabled = chosen.length ? "" : forbidden(t("noSelection"));
+      const poseDisabled = chosen.length && chosen.every(node => node.actual === "ready") ? "" : forbidden(t(chosen.length ? "poseReason" : "noSelection"));
+      const caption = zh() ? `已选 ${chosen.length} / ${robots.length} 台` : `${chosen.length} / ${robots.length} selected`;
+      const clusterChips = [...new Set(nodes.map(node => node.cluster))].map(index => chip(clusterName(clusters[index]))).join("");
+      return `<section class="stations-region" aria-labelledby="robots-title">
+        <header class="stations-heading"><div class="stations-meta"><h2 id="robots-title">${t("robotCluster")}</h2><span id="robot-count" aria-live="polite">${chip(caption)}</span>${clusterChips}</div>
+          <div class="stations-actions"><label class="stations-check-label"><input type="checkbox" id="choose-all" ${robots.length && chosen.length === robots.length ? "checked" : ""} ${robots.length ? "" : "disabled"}>${t("selectAll")}</label>
+          ${demoButton(t("powerStart"),batchDisabled)}${demoButton(t("powerStop"),batchDisabled)}${demoButton(t("pose"),`id="batch-pose" ${poseDisabled}`)}</div>
+        </header>
+        ${nodes.length ? `<div class="stations-robot-grid">${nodes.map(card).join("")}</div>` : `<p class="stations-state">${t("noRobots")}</p>`}
+      </section>`;
+    }
+    function clusterSection(cluster, items) {
+      return `<section class="stations-cluster"><header class="stations-cluster-head">
+        <div><h3>${clusterName(cluster)}</h3><small class="stations-muted">${code(cluster.id)} · Namespace ${code(cluster.ns)}</small></div>
+        <div class="stations-meta">${pill(`${t("Bound")} ${items.filter(node => node.phase === "Bound").length}/${items.length}`,"online")}
+        ${chip(`${t("Conflict")} ${items.filter(node => node.phase === "Conflict").length}`)}</div>
+      </header><div class="stations-node-grid">${items.map(card).join("")}</div></section>`;
+    }
+    function ledger() {
+      const records = [...scenarioNodes().filter(node => node.admission), ...(state.scenario === "dense" ? [pendingAdmission] : [])]
+        .filter(node => !state.cluster || state.cluster === clusters[node.cluster].id);
+      return `<section class="stations-admissions" aria-labelledby="admissions-title"><header class="stations-heading">
+        <div><h2 id="admissions-title">${t("ledger")}</h2><small class="stations-muted">${t("ledgerHint")}</small></div>${chip(records.length)}
+      </header>${records.length ? `<div class="stations-table-scroll" tabindex="0" role="region" aria-labelledby="admissions-title"><table class="stations-table">
+        <thead><tr>${["node","cluster","status","issuer","issued","expires","key","tunnel","actions"].map(key => `<th scope="col">${t(key)}</th>`).join("")}</tr></thead>
+        <tbody>${records.map(node => `<tr><td><strong>${node.name}</strong>${node.tunnel ? `<small class="stations-muted">${code(sshLogin(node))} · ${code(hostKey(node))}</small>` : ""}${node.admission === "Redeemed" ? demoButton(t("joinFailed")) : ""}</td>
+          <td>${clusterName(clusters[node.cluster])}</td><td>${admission(node)}</td><td>admin</td><td>2026-11-24 13:17</td>
+          <td>${expiry}</td><td>${node.wg ? code(node.wg.slice(0,10)+"…") : "—"}</td><td>${node.tunnel ? code(node.tunnel) : "—"}</td><td><div class="stations-actions">
+          ${demoButton(t("reissue"))}${node.admission === "Pending" ? demoButton(t("revoke")) : ""}
+          ${node.admission === "Redeemed" ? demoButton(t("restart"),"","stations-danger") : ""}</div></td></tr>`).join("")}</tbody>
+        </table></div>` : `<p class="stations-state">${t("noRecords")}</p>`}</section>`;
+    }
+    function operationPanel() {
+      const record = state.scenario === "dense" && state.cluster === clusters[2].id;
+      return `<section class="stations-operations" id="operations" ${state.operations ? "" : "hidden"}>
+        <div class="stations-heading"><h2>${t("operations")}</h2>${demoButton(t("refresh"))}</div>
+        ${record ? `<ul class="stations-operation-list"><li><details><summary>s1u-03-x86 · ${t("joinOperation")}</summary><p>${t("joinFailed")}</p>${demoButton(t("retry"))}</details>${pill(t("failed"),"failed")}</li>
+          <li><details><summary>s1u-01-x86 · ${t("joinOperation")}</summary><p>${t("Joined")}</p></details>${pill(t("Joined"),"online")}</li>
+          <li><details><summary>s1u-00-x86 · ${t("removeOperation")}</summary><p>${t("Retired")}</p></details>${pill(t("Retired"),"stopped")}</li></ul>`
+          : `<p class="stations-muted">${t("noOperations")}</p>`}
+      </section>`;
+    }
+    function renderContent() {
+      const matching = visible();
+      const robots = matching.filter(isRobot);
+      // A cluster with robots is shown whole in the robot-cluster section: its robots and its other nodes
+      // (the control-plane machine, a retired record) stay together, one row, apart from the other clusters.
+      const robotClusterSet = robotClustersOf();
+      const robotClusterNodes = matching.filter(node => robotClusterSet.has(node.cluster));
+      const inventory = matching.filter(node => !robotClusterSet.has(node.cluster));
+      document.getElementById("stations-results").innerHTML = operationPanel() + robotSection(robotClusterNodes, robots)
+        + `<section class="stations-cluster-list" aria-label="${t("node")}">${inventory.length ? clusters.map((cluster,index) => {
+          const items = inventory.filter(node => node.cluster === index);
+          return items.length ? clusterSection(cluster,items) : "";
+        }).join("") : `<p class="stations-state">${robotClusterNodes.length ? (zh() ? "没有其他场站节点" : "No other site nodes") : t("noNodes")}</p>`}</section>` + ledger();
+      const all = document.getElementById("choose-all");
+      all.indeterminate = robots.some(node => state.chosen.has(node.name)) && !all.checked;
+      document.getElementById("operations-toggle").setAttribute("aria-expanded",String(state.operations));
+    }
+    function render() {
+      document.documentElement.lang = zh() ? "zh-CN" : "en";
+      document.body.classList.toggle("theme-dark",state.theme === "dark");
+      document.title = "RLark · " + t("stations");
+      document.querySelectorAll("[data-copy]").forEach(element => { element.textContent = t(element.dataset.copy); });
+      document.querySelectorAll(".nav-item").forEach(element => {
+        element.setAttribute("aria-label",element.textContent.trim());
+      });
+      document.querySelectorAll(".topbar-toggle button").forEach(button => {
+        const active = button.dataset.lang === state.lang || button.dataset.theme === state.theme;
+        button.classList.toggle("active",active);
+        button.setAttribute("aria-pressed",String(active));
+        if (button.dataset.theme) button.textContent = t(button.dataset.theme);
+      });
+      for (const key of ["scenario","theme","language"]) {
+        const select = document.getElementById(key);
+        if (key !== "language") Array.from(select.options).forEach(option => { option.textContent = t(option.value); });
+        select.value = key === "language" ? state.lang : state[key];
+      }
+      const all = scenarioNodes();
+      const count = phase => all.filter(node => node.phase === phase).length;
+      const stats = [["loaded","server",all.length],["Bound","check",count("Bound")],["Offline","help",count("Offline")],["Conflict","alert",count("Conflict")]];
+      document.getElementById("page-content").innerHTML = `
+        <section class="hero stations-hero"><div class="hero-copy stations-hero-copy"><span class="eyebrow">${icon("fingerprint")} ${t("stations")}</span>
+          <h1>${t("stations")}</h1><p>${t("description")}</p></div>
+          <div class="hero-side"><div class="stations-hero-health"><strong>${t("health")}</strong>
+            ${pill(`${t("Bound")} ${count("Bound")} / ${all.length}`,count("Conflict") || count("Offline") ? "pending" : all.length ? "online" : "stopped")}</div>
+            ${demoButton(t("add"),"", "stations-primary")}</div></section>
+        <section class="stations-overview-grid" aria-label="${t("overview")}">${stats.map(([label,symbol,value]) => `<div class="stations-overview-card">${icon(symbol)}<div><small>${t(label)}</small><strong>${value}</strong></div></div>`).join("")}</section>
+        <div class="stations-filters">
+          <div class="stations-phase-tabs" role="group" aria-label="${t("status")}">${["all","Bound","Offline","Conflict","Retired"].map(phase =>
+            `<button type="button" class="stations-tab" data-phase="${phase}" aria-pressed="${state.phase === phase}">${t(phase)} ${phase === "all" ? all.filter(node => node.phase !== "Retired").length : count(phase)}</button>`).join("")}</div>
+          <div class="stations-toolbar"><input type="search" id="search" placeholder="${t("search")}" aria-label="${t("search")}">
+            <select id="cluster" aria-label="${t("cluster")}"><option value="">${t("allClusters")}</option>
+              ${clusters.map(cluster => `<option value="${cluster.id}">${clusterName(cluster)}</option>`).join("")}</select>
+            ${demoButton(icon("refresh") + " " + t("refresh"))}
+            <button type="button" id="operations-toggle" class="stations-button" aria-controls="operations" ${state.cluster ? "" : forbidden(t("chooseCluster"))}>${t("operations")}</button></div>
+        </div><div class="stations-results" id="stations-results"></div>`;
+      document.getElementById("search").value = state.query;
+      document.getElementById("cluster").value = state.cluster;
+      renderContent();
+    }
+    function syncURL() {
+      const url = new URL(location.href);
+      for (const key of ["scenario","theme","lang"]) url.searchParams.set(key,state[key]);
+      const last = Array.from(state.open.keys()).at(-1);
+      if (last) url.searchParams.set("expand",last);
+      else url.searchParams.delete("expand");
+      history.replaceState(null,"",url);
+    }
+    let toastTimer;
+    function toast(message = t("demo")) {
+      const element = document.getElementById("toast");
+      element.textContent = message;
+      element.hidden = false;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { element.hidden = true; },2500);
+    }
+    function toggleDetails(node) {
+      if (state.open.has(node.name)) state.open.delete(node.name);
+      else state.open.set(node.name,"overview");
+      const button = document.getElementById("expand-"+node.id);
+      button.setAttribute("aria-expanded",String(state.open.has(node.name)));
+      button.textContent = t(state.open.has(node.name) ? "fold" : "expand");
+      document.getElementById("details-"+node.id).outerHTML = details(node);
+      syncURL();
+      button.focus();
+    }
+    function selectDetailTab(button) {
+      const section = button.closest(".stations-details");
+      state.open.set(button.closest("[data-node]").dataset.name,button.dataset.detailTab);
+      section.querySelectorAll("[role=tab]").forEach(tab => {
+        const active = tab === button;
+        tab.setAttribute("aria-selected",String(active));
+        tab.tabIndex = active ? 0 : -1;
+        document.getElementById(tab.getAttribute("aria-controls")).hidden = !active;
+      });
+      button.focus();
+    }
+
+    const dialog = document.getElementById("camera-dialog");
+    let cameraTrigger;
+    dialog.addEventListener("close",() => cameraTrigger?.focus());
+    dialog.addEventListener("click",event => { if (event.target === dialog) dialog.close(); });
+    document.getElementById("page-content").classList.add("stations-page");
+    document.addEventListener("click",async event => {
+      const button = event.target.closest("button, a[data-demo]");
+      if (!button) return;
+      if (button.matches("[data-demo]")) { event.preventDefault(); toast(); return; }
+      if (button.dataset.expand) { toggleDetails(byId(button.dataset.expand)); return; }
+      if (button.dataset.detailTab) { selectDetailTab(button); return; }
+      if (button.dataset.camera) {
+        const [id,index] = button.dataset.camera.split("/").map(Number);
+        const node = byId(id), position = cameraPositions[index], status = node.cameras[index];
+        cameraTrigger = button;
+        dialog.setAttribute("aria-labelledby","camera-title");
+        dialog.innerHTML = `<div class="stations-heading"><h2 id="camera-title">${node.name} · ${t(position)}</h2><button id="close-camera" class="stations-button" type="button" autofocus>${t("close")}</button></div>
+          ${frame(position,status)}${pill(t(status),cameraTone[status])}${status === "stuck" ? `<p>${t("reset")}</p>` : ""}`;
+        dialog.showModal();
+        return;
+      }
+      if (button.dataset.copyValue) {
+        try { await navigator.clipboard.writeText(button.dataset.copyValue); toast(t("copied")); }
+        catch { toast(zh() ? "无法访问剪贴板" : "Clipboard unavailable"); }
+        return;
+      }
+      if (button.dataset.phase) {
+        state.phase = button.dataset.phase;
+        document.querySelectorAll("[data-phase]").forEach(tab => tab.setAttribute("aria-pressed",String(tab === button)));
+        renderContent();
+        return;
+      }
+      switch (button.id) {
+        case "close-camera": dialog.close(); return;
+        case "notifications": toast(t("notifications")); return;
+        case "operations-toggle": state.operations = !state.operations; renderContent(); return;
+        case "sidebar-toggle": {
+          const collapsed = document.body.classList.toggle("sidebar-collapsed");
+          button.setAttribute("aria-expanded",String(!collapsed));
+          return;
+        }
+        case "review-toggle":
+        case "review-close": {
+          const open = button.id === "review-toggle";
+          document.getElementById("review-panel").hidden = !open;
+          const toggle = document.getElementById("review-toggle");
+          toggle.setAttribute("aria-expanded",String(open));
+          toggle.hidden = open;
+          document.getElementById(open ? "scenario" : "review-toggle").focus();
+          return;
+        }
+      }
+      if (button.dataset.lang || button.dataset.theme) {
+        if (button.dataset.lang) state.lang = button.dataset.lang;
+        if (button.dataset.theme) state.theme = button.dataset.theme;
+        syncURL();
+        render();
+      }
+    });
+    document.addEventListener("input",event => {
+      if (event.target.id !== "search") return;
+      state.query = event.target.value;
+      renderContent();
+    });
+    document.addEventListener("change",event => {
+      const input = event.target;
+      if (input.id === "cluster") {
+        state.cluster = input.value;
+        state.operations = false;
+        const toggle = document.getElementById("operations-toggle");
+        toggle.disabled = !state.cluster;
+        toggle.title = state.cluster ? "" : t("chooseCluster");
+        renderContent();
+      } else if (input.id === "choose-all" || input.dataset.choose) {
+        const targets = input.dataset.choose ? [input.dataset.choose] : visible().filter(isRobot).map(node => node.name);
+        targets.forEach(name => input.checked ? state.chosen.add(name) : state.chosen.delete(name));
+        const selector = input.id ? "#choose-all" : `[data-choose="${input.dataset.choose}"]`;
+        renderContent();
+        document.querySelector(selector)?.focus();
+      } else if (["scenario","theme","language"].includes(input.id)) {
+        state[input.id === "language" ? "lang" : input.id] = input.value;
+        if (input.id === "scenario") {
+          state.phase = "all"; state.cluster = ""; state.query = ""; state.operations = false;
+          state.open.clear(); state.chosen.clear(); openDefaultDetails();
+        }
+        syncURL();
+        render();
+      }
+    });
+    document.addEventListener("keydown",event => {
+      if (dialog.open) return;
+      const card = event.target.closest("[data-node]");
+      if (event.key === "Escape" && card && state.open.has(card.dataset.name)) {
+        event.preventDefault();
+        toggleDetails(byId(card.dataset.node));
+      }
+      if (!event.target.matches("[data-detail-tab]")) return;
+      const tabs = Array.from(event.target.parentElement.querySelectorAll("[role=tab]"));
+      const index = tabs.indexOf(event.target);
+      const next = { ArrowLeft:(index+tabs.length-1)%tabs.length, ArrowRight:(index+1)%tabs.length, Home:0, End:tabs.length-1 }[event.key];
+      if (next === undefined) return;
+      event.preventDefault();
+      selectDetailTab(tabs[next]);
+    });
+    openDefaultDetails();
+    const preopened = byName(params.get("expand"));
+    if (scenarioNodes().includes(preopened)) state.open.set(preopened.name,"overview");
+    render();
+  </script>
+</body>
+</html>

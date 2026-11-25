@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RLark 场站节点原型评审</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1623;
+    --bar: #151d2b;
+    --line: #273348;
+    --ink: #f5f7fb;
+    --muted: #9ca8ba;
+    --accent: #a78bfa;
+    --accent-bg: rgba(167, 139, 250, 0.16);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+  body { display: flex; flex-direction: column; background: var(--bg); color: var(--ink); }
+  header {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px;
+    min-height: 52px; padding: 8px 18px;
+    border-bottom: 1px solid var(--line); background: var(--bar);
+  }
+  .brand { display: flex; align-items: baseline; gap: 9px; margin-right: auto; }
+  .brand strong { font-size: 13px; letter-spacing: -0.01em; white-space: nowrap; }
+  .brand span { color: var(--muted); font-size: 11px; }
+  .group { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.03); }
+  .group button {
+    min-height: 28px; padding: 0 10px; border: 0; border-radius: 6px;
+    background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+  }
+  .group button[aria-pressed="true"] { background: var(--accent-bg); color: var(--ink); box-shadow: inset 0 0 0 1px rgba(167,139,250,.35); }
+  .group button:focus-visible, .open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .open { color: var(--muted); font-size: 11px; font-weight: 700; text-decoration: none; padding: 7px 9px; border-radius: 7px; white-space: nowrap; }
+  .open:hover { background: var(--accent-bg); color: var(--ink); }
+  main { flex: 1; min-height: 0; background: #eef1f5; }
+  iframe { display: block; width: 100%; height: 100%; border: 0; background: #eef1f5; }
+  @media (max-width: 720px) {
+    header { gap: 8px; padding: 8px 12px; }
+    .brand span { display: none; }
+    .group button { padding: 0 8px; font-size: 10.5px; }
+    .open { width: 100%; text-align: right; padding: 2px 0; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand"><strong>RLark 场站节点原型</strong><span>方向 A / B · 场站节点 / 加入节点</span></div>
+    <div class="group" role="group" aria-label="设计方向">
+      <button type="button" data-direction="a" aria-pressed="true">方向 A · 原生工作台</button>
+      <button type="button" data-direction="b" aria-pressed="false">方向 B · 集群看板</button>
+    </div>
+    <div class="group" role="group" aria-label="页面">
+      <button type="button" data-page="stations" aria-pressed="true">场站节点</button>
+      <button type="button" data-page="join" aria-pressed="false">加入节点</button>
+    </div>
+    <a class="open" id="open" target="_blank" rel="noopener">单独打开 ↗</a>
+  </header>
+  <main><iframe id="view" title="RLark 原型"></iframe></main>
+  <script>
+    (() => {
+      const files = {
+        a: { stations: "site-ops-a-stations.html", join: "site-ops-a-join.html" },
+        b: { stations: "site-ops-b-stations.html", join: "site-ops-b-join.html" },
+      };
+      const state = { direction: "a", page: "stations" };
+      const view = document.getElementById("view");
+      const open = document.getElementById("open");
+      const render = () => {
+        view.src = files[state.direction][state.page];
+        open.href = view.src;
+        document.querySelectorAll("[data-direction]").forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.direction === state.direction));
+        });
+        document.querySelectorAll("[data-page]").forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.page === state.page));
+        });
+      };
+      document.querySelectorAll("[data-direction]").forEach((button) => {
+        button.addEventListener("click", () => { state.direction = button.dataset.direction; render(); });
+      });
+      document.querySelectorAll("[data-page]").forEach((button) => {
+        button.addEventListener("click", () => { state.page = button.dataset.page; render(); });
+      });
+      render();
+    })();
+  </script>
+</body>
+</html>

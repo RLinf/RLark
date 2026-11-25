@@ -45,6 +45,8 @@ func TestKubernetesObservationSinkWritesOnlyTheObservationOfTheNodesRecord(t *te
 	evidence.ClusterID = "cluster-a"
 	evidence.NodeName = "node-a"
 	evidence.SystemUUID = "system-a"
+	evidence.NodeLabels = map[string]string{"station.rlark.io/machine-type": "robot", "station.rlark.io/machine-model": "s1u"}
+	evidence.NodeInfo.Architecture, evidence.NodeInfo.OSImage, evidence.NodeInfo.KernelVersion = "amd64", "Ubuntu", "6.8"
 	evidence.NodePressures = []string{"DiskPressure"}
 	observation := Observation{
 		BootTime:  &receivedAt,
@@ -72,6 +74,12 @@ func TestKubernetesObservationSinkWritesOnlyTheObservationOfTheNodesRecord(t *te
 	reported := created["status"].(map[string]interface{})["observation"].(map[string]interface{})
 	if reported["reportedAt"] != receivedAt.UTC().Format(time.RFC3339Nano) || reported["nodeUID"] != "n" || reported["wireguard"].(map[string]interface{})["interface"] != "st-wg0" {
 		t.Fatalf("the report: %v", reported)
+	}
+	identity := reported["identity"].(map[string]interface{})
+	hardware := reported["hardware"].(map[string]interface{})
+	if identity["category"] != "Robot" || identity["model"] != "s1u" || identity["source"] != "node-labels" || identity["reportedAt"] != receivedAt.UTC().Format(time.RFC3339Nano) ||
+		hardware["architecture"] != "amd64" || hardware["osImage"] != "Ubuntu" || hardware["kernelVersion"] != "6.8" {
+		t.Fatalf("authenticated identity/hardware observation: identity=%v hardware=%v", identity, hardware)
 	}
 	programs, _ := json.Marshal(map[string]any{"gateway": reported["gateway"], "agent": reported["agent"], "pressures": reported["pressures"]})
 	if want := `{"agent":{"digest":"` + strings.Repeat("cd", 32) + `"},"gateway":{"digest":"` + strings.Repeat("ab", 32) + `","documentLevel":2},"pressures":["DiskPressure"]}`; string(programs) != want {

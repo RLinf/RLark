@@ -127,6 +127,10 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 		stationNodeOperations.GET("", g.handleListNodeOperations)
 		stationNodeOperations.GET("/:name", g.handleGetNodeOperation)
 	}
+	adminAPI.GET("/station/site-network", g.handleGetSiteNetwork)
+	adminAPI.PUT("/station/site-network/sites/:site/discovery", g.handleUpdateSiteDiscovery)
+	adminAPI.GET("/station/robot-models", g.handleListRobotModels)
+	adminAPI.DELETE("/station/robot-models/:name", g.handleDeleteRobotModel)
 	nodeAdmissions := adminAPI.Group("/station/node-admissions")
 	{
 		nodeAdmissions.GET("", g.handleListNodeAdmissions)

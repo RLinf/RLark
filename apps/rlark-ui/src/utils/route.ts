@@ -18,6 +18,7 @@ const adminPages = new Set([
   "image-registries",
   "stations",
   "ssh-keys",
+  "iam",
 ]);
 
 export function isAdminPath(pathname: string) {

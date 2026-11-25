@@ -77,6 +77,16 @@ spec:
                       this machine: the body of a robot that is not the usual one.
                     maxProperties: 8
                     type: object
+                  model:
+                    description: Model is the selected robot model or the operator's
+                      server model hint.
+                    maxLength: 63
+                    type: string
+                  nodeClass:
+                    description: NodeClass is the class selected at admission. Empty
+                      uses spec.nodeClass.
+                    maxLength: 63
+                    type: string
                   requestedAt:
                     description: |-
                       RequestedAt is when; asking again for a machine whose join stopped
@@ -89,14 +99,28 @@ spec:
                     maxLength: 256
                     minLength: 1
                     type: string
+                  type:
+                    allOf:
+                    - enum:
+                      - Robot
+                      - Server
+                    - enum:
+                      - Robot
+                      - Server
+                    description: |-
+                      Type is the operator's selected onboarding path. Empty retains the
+                      legacy interpretation: a class-backed machine is a Robot.
+                    type: string
                 required:
                 - clusterID
                 - requestedAt
                 - requestedBy
                 type: object
               nodeClass:
+                description: |-
+                  NodeClass is the legacy class hint. Empty means Station API observed a
+                  host that no registered class fingerprint identifies.
                 maxLength: 63
-                minLength: 1
                 type: string
               site:
                 maxLength: 63
@@ -108,7 +132,6 @@ spec:
                 - Registration
                 type: string
             required:
-            - nodeClass
             - site
             - source
             type: object
@@ -125,6 +148,15 @@ spec:
                   address:
                     maxLength: 15
                     type: string
+                  banner:
+                    description: Banner is the bounded SSH server identification line,
+                      evidence only.
+                    maxLength: 200
+                    type: string
+                  hostKeyAlgorithm:
+                    description: HostKeyAlgorithm is the negotiated SSH host-key algorithm.
+                    maxLength: 64
+                    type: string
                   hostKeyFingerprint:
                     maxLength: 50
                     type: string
@@ -134,6 +166,13 @@ spec:
                   mac:
                     maxLength: 17
                     type: string
+                  port:
+                    description: Port is the SSH port where the Hub saw the host.
+                      Zero is a legacy value.
+                    format: int32
+                    maximum: 65535
+                    minimum: 0
+                    type: integer
                   via:
                     description: |-
                       Via is the relay of the hub that saw the device, "tunnel-address:port":
@@ -141,6 +180,19 @@ spec:
                     maxLength: 21
                     type: string
                 type: object
+              identityReason:
+                description: IdentityReason explains a mismatch or the absence of
+                  an observation.
+                maxLength: 64
+                type: string
+              identityVerified:
+                description: IdentityVerified is True, False or Unknown for the current
+                  observation.
+                enum:
+                - "True"
+                - "False"
+                - Unknown
+                type: string
               inspectedAt:
                 description: |-
                   InspectedAt is when RLark last logged in to the machine to read what
@@ -156,9 +208,44 @@ spec:
                   entry device, as it was first read through the verified entry device.
                 maxLength: 50
                 type: string
+              nodeJoin:
+                description: NodeJoin is the NodeJoin progress projected by station-controller.
+                properties:
+                  phase:
+                    maxLength: 32
+                    type: string
+                  reason:
+                    maxLength: 512
+                    type: string
+                  stage:
+                    maxLength: 64
+                    type: string
+                type: object
               nodeName:
                 maxLength: 253
                 type: string
+              observedIdentity:
+                description: |-
+                  ObservedIdentity is read from the node's authenticated observation, never
+                  copied from the desired admission.
+                properties:
+                  category:
+                    enum:
+                    - Robot
+                    - Server
+                    type: string
+                  model:
+                    maxLength: 63
+                    type: string
+                  reportedAt:
+                    format: date-time
+                    type: string
+                  source:
+                    enum:
+                    - node-labels
+                    - node-info
+                    type: string
+                type: object
               operation:
                 description: Operation is the NodeOperation that joins the machine.
                 maxLength: 253

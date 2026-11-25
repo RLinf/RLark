@@ -189,6 +189,18 @@ spec:
                 required:
                 - hostKeyFingerprints
                 type: object
+              kind:
+                allOf:
+                - enum:
+                  - Robot
+                  - Server
+                - enum:
+                  - Robot
+                  - Server
+                description: |-
+                  Kind is the onboarding category. Empty preserves existing class behavior
+                  and is inferred from the legacy robot labels.
+                type: string
               labels:
                 additionalProperties:
                   type: string
@@ -201,6 +213,12 @@ spec:
                   installed anew.
                 maxProperties: 32
                 type: object
+              model:
+                description: |-
+                  Model references RobotModel.metadata.name. Legacy classes may omit it
+                  and infer a model from rlark.io/robot-model.
+                maxLength: 63
+                type: string
               naming:
                 description: |-
                   Naming is how a machine of the class that is admitted from the list of

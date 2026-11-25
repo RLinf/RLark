@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -48,10 +49,13 @@ type discoveredRequest struct {
 // factory's of a machine that has not joined, or the one a machine's entry
 // device was given when it joined (astribot/station-gateway).
 type discoveredHost struct {
-	Address string `json:"address"`
-	Port    int    `json:"port"`
-	MAC     string `json:"mac"`
-	HostKey string `json:"host_key"`
+	Address          string `json:"address"`
+	Port             int    `json:"port"`
+	MAC              string `json:"mac"`
+	HostKey          string `json:"host_key"`
+	HostKeyAlgorithm string `json:"host_key_algorithm,omitempty"`
+	Banner           string `json:"ssh_banner,omitempty"`
+	Unclassified     bool   `json:"unclassified,omitempty"`
 }
 
 // ServeDiscovered takes what a hub of a site that declares discovery found on
@@ -76,7 +80,11 @@ func (d *NetworkDocuments) ServeDiscovered(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if status != http.StatusOK {
-		writeError(w, status, "this node does not look for machines")
+		message := "this node does not look for machines"
+		if status == http.StatusTooManyRequests {
+			message = "the site has reached its unclassified Machine limit"
+		}
+		writeError(w, status, message)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"hosts": len(request.Hosts)})
@@ -101,6 +109,7 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		return 0, fmt.Errorf("read the SiteNetwork: %w", err)
 	}
 	declared := false
+	includeUnclassified := false
 	var interval time.Duration
 	sites, _, _ := unstructured.NestedSlice(network.Object, "spec", "sites")
 	for _, entry := range sites {
@@ -108,12 +117,33 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		enabled, _, _ := unstructured.NestedBool(entry, "discovery", "enabled")
 		if entry["name"] == site && enabled {
 			declared = true
+			includeUnclassified, _, _ = unstructured.NestedBool(entry, "discovery", "includeUnclassified")
 			seconds, _, _ := unstructured.NestedInt64(entry, "discovery", "intervalSeconds")
 			interval = time.Duration(seconds) * time.Second
 		}
 	}
 	if !declared || text(hub, "status", "role") != "Hub" || tunnel == "" {
 		return http.StatusForbidden, nil
+	}
+	// Exclude every enrolled member address we can authoritatively observe in
+	// the Hub's management namespace. A discovery report is evidence, not a
+	// request to turn an existing member into a candidate.
+	enrolledAddresses := map[string]struct{}{}
+	knownEnrollments, err := d.Client.Resource(networkEnrollmentGVR).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("list enrolled members: %w", err)
+	}
+	for i := range knownEnrollments.Items {
+		if text(&knownEnrollments.Items[i], "status", "site") != site || text(&knownEnrollments.Items[i], "status", "phase") != "Enrolled" {
+			continue
+		}
+		addresses, _, _ := unstructured.NestedStringSlice(knownEnrollments.Items[i].Object, "spec", "addresses")
+		for _, address := range addresses {
+			enrolledAddresses[address] = struct{}{}
+		}
+		if address, _, _ := unstructured.NestedString(knownEnrollments.Items[i].Object, "status", "address"); address != "" {
+			enrolledAddresses[address] = struct{}{}
+		}
 	}
 	now := clock(d.Now)
 	// When the hub last reported, on its enrollment: station-controller says
@@ -151,21 +181,64 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		return 0, fmt.Errorf("list NodeAdmissions: %w", err)
 	}
 	ownKey := map[[2]string]string{}
+	knownMachineKeys := map[string]struct{}{}
 	for i := range admissions.Items {
 		clusterID := text(&admissions.Items[i], "spec", "clusterID")
-		ownKey[[2]string{clusterID, admissions.Items[i].GetName()}] = admissions.Items[i].GetAnnotations()[entryHostKeyAnnotation]
+		key := admissions.Items[i].GetAnnotations()[entryHostKeyAnnotation]
+		ownKey[[2]string{clusterID, admissions.Items[i].GetName()}] = key
+		if key != "" {
+			knownMachineKeys[key] = struct{}{}
+		}
 	}
 	machines := d.Client.Resource(machineGVR).Namespace("station-system")
+	existingMachines, err := machines.List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("list Machines: %w", err)
+	}
+	unclassifiedCount := 0
+	atCapacity := false
+	reported := make(map[string]bool, len(hosts))
+	for i := range existingMachines.Items {
+		candidate := &existingMachines.Items[i]
+		candidateSite := text(candidate, "spec", "site")
+		candidateClass := text(candidate, "spec", "nodeClass")
+		candidatePhase := text(candidate, "status", "phase")
+		admit, _, _ := unstructured.NestedMap(candidate.Object, "spec", "admit")
+		if candidateSite == site && candidateClass == "" && len(admit) == 0 && (candidatePhase == "" || candidatePhase == "Discovered") {
+			unclassifiedCount++
+		}
+	}
 	for _, host := range hosts {
 		class := classOf[host.HostKey]
-		if ip := net.ParseIP(host.Address); ip == nil || ip.To4() == nil || !hardwareAddressPattern.MatchString(host.MAC) || !hostKeyPattern.MatchString(host.HostKey) {
+		ip := net.ParseIP(host.Address)
+		mac, macErr := net.ParseMAC(host.MAC)
+		if ip == nil || ip.To4() == nil || macErr != nil || len(mac) != 6 || mac[0]&1 != 0 || !hardwareAddressPattern.MatchString(strings.ToLower(host.MAC)) ||
+			!hostKeyPattern.MatchString(host.HostKey) || host.Port < 1 || host.Port > 65535 || len(host.Banner) > 200 || len(host.HostKeyAlgorithm) > 64 {
 			continue
 		}
-		name := site + "-" + strings.ReplaceAll(host.MAC, ":", "")
+		name := site + "-" + strings.ReplaceAll(strings.ToLower(host.MAC), ":", "")
+		if reported[name] {
+			continue
+		}
 		machine, err := machines.Get(ctx, name, metav1.GetOptions{})
-		// A key that is no class's factory key says which machine it is only
-		// where that machine is known by it.
-		if class == "" && (apierrors.IsNotFound(err) || err == nil && text(machine, "status", "entry", "hostKeyFingerprint") != host.HostKey) {
+		if err != nil && !apierrors.IsNotFound(err) {
+			return 0, fmt.Errorf("read Machine %s: %w", name, err)
+		}
+		// A machine's entry key is continuity evidence after join, never a
+		// class match. Do not rediscover such a key as a generic candidate.
+		_, isKnownNodeKey := knownMachineKeys[host.HostKey]
+		isSameKnownMachine := err == nil && text(machine, "status", "entry", "hostKeyFingerprint") == host.HostKey
+		if class == "" && !isSameKnownMachine {
+			_, enrolled := enrolledAddresses[host.Address]
+			if !includeUnclassified || !host.Unclassified || isKnownNodeKey || enrolled || !privateDiscoveryIP(ip) || !validDiscoverySSH(host) {
+				continue
+			}
+		}
+		if err == nil && (text(machine, "spec", "site") != site || text(machine, "spec", "source") != "Discovery") {
+			continue
+		}
+		if class == "" && !isSameKnownMachine && apierrors.IsNotFound(err) && unclassifiedCount >= 512 {
+			atCapacity = true
 			continue
 		}
 		via := net.JoinHostPort(tunnel, strconv.Itoa(discoveryRelayPort))
@@ -178,15 +251,32 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 				continue
 			}
 		}
+		created := false
 		if apierrors.IsNotFound(err) {
+			machineSpec := map[string]interface{}{"site": site, "source": "Discovery"}
+			if class != "" {
+				machineSpec["nodeClass"] = class
+			}
 			machine, err = machines.Create(ctx, &unstructured.Unstructured{Object: map[string]interface{}{
 				"apiVersion": stationGroup + "/" + stationVersion, "kind": "Machine",
 				"metadata": map[string]interface{}{"name": name, "namespace": "station-system"},
-				"spec":     map[string]interface{}{"site": site, "nodeClass": class, "source": "Discovery"},
+				"spec":     machineSpec,
 			}}, metav1.CreateOptions{})
+			created = err == nil
+			if apierrors.IsAlreadyExists(err) {
+				machine, err = machines.Get(ctx, name, metav1.GetOptions{})
+			}
 		}
 		if err != nil {
 			return 0, fmt.Errorf("keep Machine %s: %w", name, err)
+		}
+		if class != "" && text(machine, "spec", "nodeClass") == "" && (text(machine, "status", "phase") == "" || text(machine, "status", "phase") == "Discovered") {
+			if admit, _, _ := unstructured.NestedMap(machine.Object, "spec", "admit"); len(admit) == 0 {
+				_ = unstructured.SetNestedField(machine.Object, class, "spec", "nodeClass")
+				if machine, err = machines.Update(ctx, machine, metav1.UpdateOptions{}); err != nil {
+					return 0, fmt.Errorf("classify unadmitted Machine %s: %w", name, err)
+				}
+			}
 		}
 		hostKey := host.HostKey
 		// A machine that shows its class's factory key is written with it:
@@ -195,18 +285,40 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		if key := ownKey[[2]string{text(machine, "status", "clusterID"), text(machine, "status", "nodeName")}]; key != "" && class == "" {
 			hostKey = key
 		}
-		entry := map[string]interface{}{"address": host.Address, "mac": host.MAC, "hostKeyFingerprint": hostKey,
+		entry := map[string]interface{}{"address": host.Address, "mac": strings.ToLower(host.MAC), "hostKeyFingerprint": hostKey,
+			"port": int64(host.Port), "hostKeyAlgorithm": host.HostKeyAlgorithm, "banner": host.Banner,
 			"via": via, "lastSeen": now.UTC().Format(time.RFC3339)}
 		// A machine that shows up changed is looked at anew.
-		for _, field := range []string{"address", "hostKeyFingerprint", "via"} {
-			if text(machine, "status", "entry", field) != entry[field] {
+		for _, field := range []string{"address", "port", "hostKeyFingerprint", "hostKeyAlgorithm", "via"} {
+			if previous, _, _ := unstructured.NestedFieldNoCopy(machine.Object, "status", "entry", field); !reflect.DeepEqual(previous, entry[field]) {
 				unstructured.RemoveNestedField(machine.Object, "status", "inspectedAt")
 			}
 		}
 		_ = unstructured.SetNestedMap(machine.Object, entry, "status", "entry")
+		if created && class == "" {
+			unclassifiedCount++
+		}
 		if _, err := machines.UpdateStatus(ctx, machine, metav1.UpdateOptions{}); err != nil && !apierrors.IsConflict(err) {
 			return 0, fmt.Errorf("write what was seen of Machine %s: %w", name, err)
 		}
+		reported[name] = true
+	}
+	if atCapacity {
+		return http.StatusTooManyRequests, nil
 	}
 	return http.StatusOK, nil
+}
+
+// Keep the API-side checks aligned with the Hub's private IPv4 discovery.
+func privateDiscoveryIP(ip net.IP) bool {
+	return ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+func validDiscoverySSH(host discoveredHost) bool {
+	switch host.HostKeyAlgorithm {
+	case "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "ssh-rsa":
+		return strings.HasPrefix(host.Banner, "SSH-") && !strings.ContainsAny(host.Banner, "\r\n")
+	default:
+		return false
+	}
 }

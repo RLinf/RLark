@@ -1,12 +1,14 @@
 package stationidentity
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -86,7 +88,7 @@ func documentHolder(kind, namespace, name, phase, key, config string) *unstructu
 
 func testNetworkDocuments(t *testing.T, now *time.Time, objects ...runtime.Object) (*API, *dynamicfake.FakeDynamicClient) {
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{networkEnrollmentGVR: "NetworkEnrollmentList", nodeAdmissionGVR: "NodeAdmissionList", nodeClassGVR: "NodeClassList", machineGVR: "MachineList"}, objects...)
+		map[schema.GroupVersionResource]string{networkEnrollmentGVR: "NetworkEnrollmentList", nodeAdmissionGVR: "NodeAdmissionList", nodeClassGVR: "NodeClassList", machineGVR: "MachineList", siteNetworkGVR: "SiteNetworkList"}, objects...)
 	documents, err := NewNetworkDocuments(client, EnrolledKeys(client))
 	if err != nil {
 		t.Fatal(err)
@@ -154,6 +156,81 @@ func TestNetworkDocumentIsGivenForAProofOfTheNodesKey(t *testing.T) {
 	if response := apiRequest(api, http.MethodPost, "/v1/network/document", `{"public_key":"c2hvcnQ="}`, ""); response.Code != http.StatusBadRequest {
 		t.Fatalf("no key: %d", response.Code)
 	}
+}
+
+func TestHubDocumentGetsRelayTokenWithoutPersistingIt(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	node := newDocumentNode(t)
+	token := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x6b}, 32))
+	hub := documentHolder("NetworkEnrollment", "robots", "cp", "Enrolled", node.public(), `{"interface":"st-wg0","discovery":{"ranges":["10.0.0.0/24"],"includeUnclassified":false}}`)
+	_ = unstructured.SetNestedField(hub.Object, "Hub", "status", "role")
+	_ = unstructured.SetNestedField(hub.Object, "office", "status", "site")
+	secret := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]interface{}{"namespace": "default", "name": "station-relay-token-office"}, "data": map[string]interface{}{"token": base64.StdEncoding.EncodeToString([]byte(token))}}}
+	api, client := testNetworkDocuments(t, &now, hub, secret)
+	status, challenge := node.ask(api, "", "")
+	if status != http.StatusUnauthorized {
+		t.Fatal(status)
+	}
+	status, answer := node.ask(api, challenge.Challenge, node.prove(challenge))
+	var config map[string]json.RawMessage
+	if status != http.StatusOK || json.Unmarshal(answer.Config, &config) != nil {
+		t.Fatalf("document response %d %s", status, answer.Config)
+	}
+	var discovery map[string]json.RawMessage
+	_ = json.Unmarshal(config["discovery"], &discovery)
+	var got string
+	_ = json.Unmarshal(discovery["relayToken"], &got)
+	if got != token {
+		t.Fatalf("Hub relay token %q", got)
+	}
+	stored, err := client.Resource(networkEnrollmentGVR).Namespace("robots").Get(context.Background(), "cp", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains([]byte(mustJSON(t, stored.Object)), []byte(token)) {
+		t.Fatal("token persisted in enrollment status")
+	}
+	if answer.ConfigHash != documentHash(t, answer.Config) {
+		t.Fatal("token-enriched config hash is stale")
+	}
+}
+
+func TestLeafDocumentDoesNotReceiveRelayToken(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	node := newDocumentNode(t)
+	token := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x6b}, 32))
+	leaf := documentHolder("NetworkEnrollment", "robots", "leaf", "Enrolled", node.public(), `{"discovery":{"ranges":["10.0.0.0/24"]}}`)
+	_ = unstructured.SetNestedField(leaf.Object, "Leaf", "status", "role")
+	_ = unstructured.SetNestedField(leaf.Object, "office", "status", "site")
+	secret := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]interface{}{"namespace": "default", "name": "station-relay-token-office"}, "data": map[string]interface{}{"token": base64.StdEncoding.EncodeToString([]byte(token))}}}
+	api, _ := testNetworkDocuments(t, &now, leaf, secret)
+	status, challenge := node.ask(api, "", "")
+	status, answer := node.ask(api, challenge.Challenge, node.prove(challenge))
+	if status != http.StatusOK || bytes.Contains(answer.Config, []byte(token)) {
+		t.Fatalf("Leaf received relay token: %s", answer.Config)
+	}
+}
+
+func TestReleaseATwoHubDocumentDoesNotReceiveRelayToken(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	node := newDocumentNode(t)
+	token := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x6b}, 32))
+	hub := documentHolder("NetworkEnrollment", "robots", "cp", "Enrolled", node.public(), `{"discovery":{"ranges":["10.0.0.0/24"]}}`)
+	_ = unstructured.SetNestedField(hub.Object, "Hub", "status", "role")
+	_ = unstructured.SetNestedField(hub.Object, "office", "status", "site")
+	secret := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]interface{}{"namespace": "default", "name": "station-relay-token-office"}, "data": map[string]interface{}{"token": base64.StdEncoding.EncodeToString([]byte(token))}}}
+	api, _ := testNetworkDocuments(t, &now, hub, secret)
+	_, challenge := node.ask(api, "", "")
+	status, answer := node.ask(api, challenge.Challenge, node.prove(challenge))
+	if status != http.StatusOK || bytes.Contains(answer.Config, []byte("relayToken")) || bytes.Contains(answer.Config, []byte(token)) {
+		t.Fatalf("Release A document was enriched: %s", answer.Config)
+	}
+}
+
+func documentHash(t *testing.T, raw []byte) string {
+	t.Helper()
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // A Station API started since the challenge was given does not know it.

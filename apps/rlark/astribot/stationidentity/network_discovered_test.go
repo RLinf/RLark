@@ -63,7 +63,7 @@ func TestAHubsDiscoveredHostsBecomeMachinesOfTheClassWhoseKeyTheyShow(t *testing
 	}
 	machine := &list.Items[0]
 	spec, _, _ := unstructured.NestedStringMap(machine.Object, "spec")
-	entry, _, _ := unstructured.NestedStringMap(machine.Object, "status", "entry")
+	entry, _, _ := unstructured.NestedMap(machine.Object, "status", "entry")
 	if spec["site"] != "lab" || spec["nodeClass"] != "s1u" || spec["source"] != "Discovery" || entry["address"] != "192.168.31.56" || entry["via"] != "10.254.240.5:18022" ||
 		entry["hostKeyFingerprint"] != factory || entry["lastSeen"] != now.UTC().Format(time.RFC3339) {
 		t.Fatalf("the Machine: %v %v", spec, entry)
@@ -108,7 +108,7 @@ func TestAHubsDiscoveredHostsBecomeMachinesOfTheClassWhoseKeyTheyShow(t *testing
 	_ = report(hub, `[{"address":"192.168.31.140","port":22,"mac":"48:b0:2d:5c:9a:11","host_key":"`+rotated+`"},
 		{"address":"192.168.31.141","port":22,"mac":"48:b0:2d:00:00:02","host_key":"`+rotated+`"}]`)
 	machine, _ = machines.Get(context.Background(), "lab-48b02d5c9a11", metav1.GetOptions{})
-	entry, _, _ = unstructured.NestedStringMap(machine.Object, "status", "entry")
+	entry, _, _ = unstructured.NestedMap(machine.Object, "status", "entry")
 	if entry["address"] != "192.168.31.140" || entry["hostKeyFingerprint"] != rotated || entry["lastSeen"] != now.UTC().Format(time.RFC3339) {
 		t.Fatalf("a joined machine whose lease changed: %v", entry)
 	}
@@ -132,7 +132,7 @@ func TestAHubsDiscoveredHostsBecomeMachinesOfTheClassWhoseKeyTheyShow(t *testing
 	}
 	_ = report(hub, `[{"address":"192.168.31.140","port":22,"mac":"48:b0:2d:5c:9a:11","host_key":"`+factory+`"}]`)
 	machine, _ = machines.Get(context.Background(), "lab-48b02d5c9a11", metav1.GetOptions{})
-	entry, _, _ = unstructured.NestedStringMap(machine.Object, "status", "entry")
+	entry, _, _ = unstructured.NestedMap(machine.Object, "status", "entry")
 	if entry["hostKeyFingerprint"] != factory || entry["lastSeen"] != now.UTC().Format(time.RFC3339) {
 		t.Fatalf("a joined machine reported with the factory's key: %v", entry)
 	}
@@ -169,5 +169,49 @@ func TestAHubsDiscoveredHostsBecomeMachinesOfTheClassWhoseKeyTheyShow(t *testing
 	}
 	if list, _ := machines.List(context.Background(), metav1.ListOptions{}); len(list.Items) != 1 {
 		t.Fatalf("Machines after a leaf's report: %d", len(list.Items))
+	}
+}
+
+func TestOptedInHubCreatesCredentialFreeUnclassifiedMachine(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	hubNode := newDocumentNode(t)
+	hub := documentHolder("NetworkEnrollment", "robots", "cp", "Enrolled", hubNode.public(), `{}`)
+	_ = unstructured.SetNestedField(hub.Object, "lab", "status", "site")
+	_ = unstructured.SetNestedField(hub.Object, "Hub", "status", "role")
+	_ = unstructured.SetNestedField(hub.Object, "10.254.240.5", "status", "tunnelAddress")
+	network := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "station.rlark.io/v1alpha1", "kind": "SiteNetwork",
+		"metadata": map[string]interface{}{"name": "default", "namespace": "station-system"}, "spec": map[string]interface{}{"sites": []interface{}{map[string]interface{}{
+			"name": "lab", "discovery": map[string]interface{}{"enabled": true, "includeUnclassified": true, "ranges": []interface{}{"192.168.31.0/24"}, "intervalSeconds": int64(30)}}}}}}
+	api, client := testNetworkDocuments(t, &now, hub, network)
+	hosts := `[{"address":"192.168.31.56","port":2222,"mac":"48:b0:2d:5c:9a:11","host_key":"SHA256:` + strings.Repeat("f", 43) + `","host_key_algorithm":"ssh-ed25519","ssh_banner":"SSH-2.0-test","unclassified":true},` +
+		`{"address":"192.168.31.56","port":2222,"mac":"48:b0:2d:5c:9a:11","host_key":"SHA256:` + strings.Repeat("f", 43) + `","host_key_algorithm":"ssh-ed25519","ssh_banner":"SSH-2.0-test","unclassified":true}]`
+	request := func(challenge, proof string) int {
+		body := `{"public_key":"` + hubNode.public() + `","challenge":"` + challenge + `","proof":"` + proof + `","hosts":` + hosts + `}`
+		return apiRequest(api, http.MethodPost, "/v1/network/discovered", body, "").Code
+	}
+	// Ask for the proof challenge using the discovery endpoint itself.
+	body := `{"public_key":"` + hubNode.public() + `","hosts":[]}`
+	response := apiRequest(api, http.MethodPost, "/v1/network/discovered", body, "")
+	var challenged documentAnswer
+	if err := json.Unmarshal(response.Body.Bytes(), &challenged); err != nil || response.Code != http.StatusUnauthorized {
+		t.Fatalf("challenge %d %s %v", response.Code, response.Body, err)
+	}
+	if code := request(challenged.Challenge, hubNode.prove(challenged)); code != http.StatusOK {
+		t.Fatalf("report status %d", code)
+	}
+	list, err := client.Resource(machineGVR).Namespace("station-system").List(context.Background(), metav1.ListOptions{})
+	if err != nil || len(list.Items) != 1 {
+		t.Fatalf("candidate list %v %v", list.Items, err)
+	}
+	item := &list.Items[0]
+	if nodeClass, found, _ := unstructured.NestedString(item.Object, "spec", "nodeClass"); found || nodeClass != "" {
+		t.Fatalf("unclassified candidate has NodeClass %q", nodeClass)
+	}
+	entry, _, _ := unstructured.NestedMap(item.Object, "status", "entry")
+	if entry["port"] != int64(2222) || entry["hostKeyAlgorithm"] != "ssh-ed25519" || entry["banner"] != "SSH-2.0-test" {
+		t.Fatalf("SSH evidence missing: %v", entry)
+	}
+	if spec, _, _ := unstructured.NestedMap(item.Object, "spec"); spec["access"] != nil {
+		t.Fatalf("candidate acquired credentials: %v", spec)
 	}
 }

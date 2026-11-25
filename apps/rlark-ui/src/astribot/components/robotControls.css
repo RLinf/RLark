@@ -20,3 +20,9 @@
 .robot-controls-error {
   color: var(--red);
 }
+
+.robot-pose-hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}

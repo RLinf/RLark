@@ -36,9 +36,13 @@ type NodeObservation struct {
 	// +kubebuilder:validation:MaxLength=128
 	NodeUID string `json:"nodeUID"`
 	// SystemUUID is evidence only and must not be used to authorize a binding.
-	SystemUUID string                `json:"systemUUID,omitempty"`
-	BootTime   *metav1.Time          `json:"bootTime,omitempty"`
-	Wireguard  *WireguardObservation `json:"wireguard,omitempty"`
+	SystemUUID string `json:"systemUUID,omitempty"`
+	// Identity is derived by Station API from the Node it authenticated, not
+	// accepted as an arbitrary client assertion.
+	Identity  *NodeIdentityObservation `json:"identity,omitempty"`
+	Hardware  *HardwareObservation     `json:"hardware,omitempty"`
+	BootTime  *metav1.Time             `json:"bootTime,omitempty"`
+	Wireguard *WireguardObservation    `json:"wireguard,omitempty"`
 	// +kubebuilder:validation:MaxItems=256
 	Probes []StationProbe `json:"probes,omitempty"`
 	// Gateway is the station-gateway of the node, as that program states it
@@ -56,6 +60,30 @@ type NodeObservation struct {
 	// +kubebuilder:validation:items:Enum=DiskPressure;MemoryPressure;PIDPressure
 	// +listType=set
 	Pressures []string `json:"pressures,omitempty"`
+}
+
+type NodeIdentityObservation struct {
+	// +kubebuilder:validation:Enum=Robot;Server
+	Category string `json:"category,omitempty"`
+	// +kubebuilder:validation:MaxLength=63
+	Model string `json:"model,omitempty"`
+	// +kubebuilder:validation:Enum=node-labels;node-info
+	Source string `json:"source,omitempty"`
+	// ReportedAt is Station API receipt time.
+	ReportedAt metav1.Time `json:"reportedAt"`
+}
+
+type HardwareObservation struct {
+	// +kubebuilder:validation:MaxLength=64
+	Architecture string `json:"architecture,omitempty"`
+	// +kubebuilder:validation:MaxLength=256
+	OSImage string `json:"osImage,omitempty"`
+	// +kubebuilder:validation:MaxLength=256
+	KernelVersion string `json:"kernelVersion,omitempty"`
+	// +kubebuilder:validation:MaxLength=256
+	SystemVendor string `json:"systemVendor,omitempty"`
+	// +kubebuilder:validation:MaxLength=256
+	ProductName string `json:"productName,omitempty"`
 }
 
 type GatewayProgram struct {

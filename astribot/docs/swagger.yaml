@@ -347,8 +347,13 @@ paths:
       tags: [Station]
       summary: Join a machine by logging in to it with SSH, in stages (administrator only); the password is used by this join only
       description: >-
-        The Gateway logs in to the machine at once with the account given (password, also as keyboard-interactive
-        answers), checks the account may use sudo with the same password, reads the node name from the machine's host
+        For a scanned Machine, the Gateway first dials its discovered SSH address directly and uses its pinned
+        fingerprint and host-key algorithm. Only a network-unreachable or timeout failure falls back through the
+        Machine's site Hub, using the site's relay token from the management Secret. The relay receives only the
+        token and target address; SSH credentials remain in the encrypted SSH session to the target. Authentication,
+        host-key and sudo failures do not retry through the relay. A manual NodeJoin without machine_name remains a
+        direct SSH connection. The Gateway logs in with the account given (password, also as keyboard-interactive
+        answers), checks the account may use sudo with the supplied sudo_password or login password, reads the node name from the machine's host
         name unless one is given, and records the join as a NodeJoin (<cluster>.<node>, label rlark.io/cluster). It
         then runs the stages in the background from that login and writes each one's state, message and readback
         into status.stages: precheck (the machine, and whether it reaches Station API at the address the code's line
@@ -357,7 +362,8 @@ paths:
         machine's own tunnel; the peers' reports say how far its key has gone), install (a code, and its line run with
         sudo as the unit rlark-join, followed to its end; its lines are the stage's message), node-ready, station
         (NetworkEnrollment Enrolled, admission Joined) and gpu. The three tunnel stages are Skipped for a machine that
-        reaches Station API. The password is kept nowhere: not on any object, Secret, log or event.
+        reaches Station API. Login and sudo passwords are request-memory only and are never stored on an object,
+        Secret, log or event.
       requestBody:
         required: true
         content:
@@ -368,10 +374,17 @@ paths:
               additionalProperties: false
               properties:
                 cluster_id: {type: string}
+                machine_name: {type: string, description: Scanned Machine name; binds this NodeJoin to the candidate and enables its site's relay fallback}
+                host_key: {type: string, description: Pinned SSH fingerprint read during discovery}
+                host_key_algorithm: {type: string, description: Pinned SSH host-key algorithm read during discovery}
+                machine_type: {type: string, enum: [Server]}
+                machine_model: {type: string, description: Optional server model hint}
+                labels: {type: object, additionalProperties: {type: string}}
                 address: {type: string, description: The machine's IP address or host name}
                 port: {type: integer, minimum: 1, maximum: 65535, description: Default 22}
                 user: {type: string, maxLength: 64}
                 password: {type: string, format: password, maxLength: 4096, description: The login password; sudo is given the same}
+                sudo_password: {type: string, format: password, maxLength: 4096, description: Optional separate sudo password; request memory only, never stored}
                 node_name: {type: string, description: "Default: the machine's host name, in lower case"}
                 tunnel_endpoint: {type: string, description: "The IPv4 ip:port other sites dial for the machine's tunnel, when it joins through one; default the address at port 51820"}
       responses:
@@ -381,7 +394,7 @@ paths:
         '404': {description: Cluster not found}
         '409': {description: "A join of the node is left (retry or clear it), or another runs on the machine"}
         '422': {description: "reason LoginRejected: the machine did not accept the user with this password"}
-        '502': {description: "reason Unreachable: no SSH login at the address"}
+        '502': {description: "reason Unreachable, RelayUnavailable or RelayRejected; scanned candidates try the site relay only after direct network failure"}
     get:
       tags: [Station]
       summary: List a cluster's SSH joins, running ones first, then the newest (administrator only)
@@ -415,6 +428,7 @@ paths:
               additionalProperties: false
               properties:
                 password: {type: string, format: password, description: "Required when the stage logs in to the machine (precheck, bundle, declare, tunnel, install)"}
+                sudo_password: {type: string, format: password, description: Optional separate sudo password; request memory only}
                 user: {type: string, description: "The account to log in to the machine with from now on"}
                 machine_gone: {type: boolean, description: Not used by a retry}
       responses:
@@ -440,6 +454,7 @@ paths:
               additionalProperties: false
               properties:
                 password: {type: string, format: password}
+                sudo_password: {type: string, format: password, description: Optional separate sudo password; request memory only}
                 user: {type: string}
                 machine_gone: {type: boolean, description: The machine is not there to be put back}
       responses:
@@ -472,6 +487,8 @@ paths:
                         name: {type: string}
                         site: {type: string}
                         node_class: {type: string}
+                        machine_type: {type: string, enum: [Robot, Server, Unknown]}
+                        machine_model: {type: string}
                         source: {type: string, enum: [Discovery, Registration]}
                         phase: {type: string, enum: [Discovered, Admitted, Joined]}
                         problem: {type: string, description: "What is wrong with the machine, as CredentialRejected; absent when nothing is"}
@@ -479,6 +496,10 @@ paths:
                         serial: {type: string}
                         inspected_at: {type: string, format: date-time, description: "When RLark last logged in to the machine's entry device and reached the computer behind it; absent until it has, and again when the machine shows up changed"}
                         node_host_key_fingerprint: {type: string, description: The host key of the computer behind the entry device, read through it}
+                        host_key: {type: string, description: SSH fingerprint of the scanned entry candidate}
+                        host_key_algorithm: {type: string}
+                        port: {type: integer}
+                        banner: {type: string}
                         address: {type: string}
                         mac: {type: string, description: The hardware address of the entry device the machine was last seen through}
                         last_seen: {type: string, format: date-time}
@@ -495,12 +516,79 @@ paths:
                           properties:
                             phase: {type: string, enum: [Pending, Running, Blocked, Succeeded, Failed]}
                             stage: {type: string, description: The last stage it completed}
+                        node_join: {type: object, properties: {phase: {type: string}, stage: {type: string}, reason: {type: string}}}
+                        observed_identity: {type: object, properties: {category: {type: string}, model: {type: string}, source: {type: string}}}
+                        identity_verified: {type: string, enum: [True, False, Unknown]}
+                        identity_reason: {type: string}
                   classes:
                     type: object
                     additionalProperties:
                       type: object
                       properties:
+                        kind: {type: string, enum: [Robot, Server]}
+                        model: {type: string}
                         labels: {type: object, additionalProperties: {type: string}}
+                        taints: {type: array, items: {type: string}}
+                        naming: {type: object, additionalProperties: true}
+                        hasDiscovery: {type: boolean}
+                        hostKeyFingerprints: {type: array, items: {type: string}}
+                        entryPort: {type: integer}
+                        access: {type: object, description: Configured booleans only; never includes credential values}
+        '502': {description: Management API request failed}
+  /api/v1/station/site-network:
+    get:
+      tags: [Station]
+      summary: Read SiteNetwork discovery settings and public network status (administrator only)
+      description: SiteNetwork status.declared.config is removed. NodeClass responses contain discovery port and host-key fingerprints, never access credentials.
+      responses:
+        '200': {description: Site network view, content: {application/json: {schema: {$ref: '#/components/schemas/SiteNetworkView'}}}}
+        '404': {description: SiteNetwork is not initialized}
+        '502': {description: Management API request failed}
+  /api/v1/station/robot-models:
+    get:
+      tags: [Station]
+      summary: List configured robot models and their reference counts (administrator only)
+      description: The directory is control-plane managed. The console can list and delete models, but cannot create or edit them.
+      responses:
+        '200': {description: Robot models and references from NodeClasses, site nodes, Machines, NodeAdmissions and NodeJoins}
+        '502': {description: Management API request failed}
+  /api/v1/station/robot-models/{name}:
+    delete:
+      tags: [Station]
+      summary: Delete an unreferenced robot model (administrator only)
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+      responses:
+        '204': {description: Deleted}
+        '404': {description: RobotModel not found}
+        '409': {description: The model is referenced by a NodeClass or node record}
+        '502': {description: Management API request failed}
+  /api/v1/station/site-network/sites/{site}/discovery:
+    put:
+      tags: [Station]
+      summary: Replace one site's discovery settings (administrator only)
+      description: Requires the current resourceVersion. The update changes only the named site's discovery field. A concurrent update returns 409 and is not retried.
+      parameters:
+        - {name: site, in: path, required: true, schema: {type: string, maxLength: 63}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resourceVersion, discovery]
+              additionalProperties: false
+              properties:
+                resourceVersion: {type: string, minLength: 1}
+                discovery:
+                  nullable: true
+                  oneOf:
+                    - {$ref: '#/components/schemas/SiteDiscoveryInput'}
+      responses:
+        '200': {description: Updated SiteNetwork view, content: {application/json: {schema: {$ref: '#/components/schemas/SiteNetworkView'}}}}
+        '400': {description: Invalid request or discovery settings}
+        '404': {description: SiteNetwork or site not found}
+        '409': {description: SiteNetwork changed since it was read}
         '502': {description: Management API request failed}
   /api/v1/station/machines/admit:
     post:
@@ -522,6 +610,10 @@ paths:
               properties:
                 cluster_id: {type: string}
                 machines: {type: array, minItems: 1, maxItems: 500, items: {type: string}}
+                node_class: {type: string, description: Robot NodeClass profile}
+                machine_type: {type: string, enum: [Robot], description: Server machines must use NodeJoin}
+                machine_model: {type: string, description: RobotModel for the selected Robot profile}
+                model: {type: string, description: Compatibility alias for machine_model}
                 labels: {type: object, additionalProperties: {type: string}, description: "Replace, for these machines, the values of labels their class declares"}
       responses:
         '200':
@@ -1257,6 +1349,71 @@ paths:
 
 components:
   schemas:
+    SiteNetworkView:
+      type: object
+      required: [resourceVersion, generation, sites, members, nodeClasses, status]
+      properties:
+        resourceVersion: {type: string}
+        generation: {type: integer, format: int64}
+        sites:
+          type: array
+          items:
+            type: object
+            required: [name, clusters]
+            properties:
+              name: {type: string}
+              clusters: {type: array, items: {type: string}}
+              discovery: {allOf: [{$ref: '#/components/schemas/SiteDiscovery'}], nullable: true}
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              clusterID: {type: string}
+              nodeName: {type: string}
+              role: {type: string}
+              site: {type: string}
+              address: {type: string}
+        nodeClasses:
+          type: array
+          items:
+            type: object
+            required: [name, hasAccess, hasDiscovery, hostKeyFingerprints]
+            properties:
+              name: {type: string}
+              hasAccess: {type: boolean}
+              hasDiscovery: {type: boolean}
+              entryPort: {type: integer}
+              hostKeyFingerprints: {type: array, items: {type: string}}
+        status: {type: object, description: 'SiteNetwork status with status.declared[].config removed'}
+    SiteDiscovery:
+      type: object
+      required: [enabled, ranges, intervalSeconds, from]
+      properties:
+        enabled: {type: boolean}
+        ranges: {type: array, minItems: 1, maxItems: 8, items: {type: string, format: cidr}}
+        intervalSeconds: {type: integer, minimum: 10, maximum: 3600}
+        from: {$ref: '#/components/schemas/SiteDiscoveryFrom'}
+        includeUnclassified: {type: boolean, description: Enables credential-free SSH candidate discovery only}
+        sshPorts: {type: array, maxItems: 4, uniqueItems: true, items: {type: integer, minimum: 1, maximum: 65535}}
+    SiteDiscoveryInput:
+      type: object
+      required: [enabled, ranges, from]
+      description: intervalSeconds defaults to 30 when omitted
+      properties:
+        enabled: {type: boolean}
+        ranges: {type: array, minItems: 1, maxItems: 8, items: {type: string, format: cidr}}
+        intervalSeconds: {type: integer, minimum: 10, maximum: 3600}
+        from: {$ref: '#/components/schemas/SiteDiscoveryFrom'}
+        includeUnclassified: {type: boolean, description: Enables credential-free SSH candidate discovery only}
+        sshPorts: {type: array, maxItems: 4, uniqueItems: true, items: {type: integer, minimum: 1, maximum: 65535}}
+    SiteDiscoveryFrom:
+      type: object
+      required: [clusterID, nodeName]
+      additionalProperties: false
+      properties:
+        clusterID: {type: string, minLength: 1, maxLength: 128}
+        nodeName: {type: string, minLength: 1, maxLength: 253}
     RobotCamera:
       type: object
       properties:

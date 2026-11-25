@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>场站节点精致化评审 · 当前 / A / B</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f1623;
+    --bar: #151d2b;
+    --line: #273348;
+    --ink: #f5f7fb;
+    --muted: #9ca8ba;
+    --accent: #a78bfa;
+    --accent-bg: rgba(167, 139, 250, 0.16);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+  body { display: flex; flex-direction: column; background: var(--bg); color: var(--ink); }
+  header {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px;
+    min-height: 50px; padding: 8px 18px;
+    border-bottom: 1px solid var(--line); background: var(--bar);
+  }
+  .brand { display: flex; align-items: baseline; gap: 9px; margin-right: auto; }
+  .brand strong { font-size: 13px; letter-spacing: -0.01em; white-space: nowrap; }
+  .brand span { color: var(--muted); font-size: 11px; }
+  .group { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.03); }
+  .group button {
+    min-height: 28px; padding: 0 10px; border: 0; border-radius: 6px;
+    background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+  }
+  .group button[aria-pressed="true"] { background: var(--accent-bg); color: var(--ink); box-shadow: inset 0 0 0 1px rgba(167,139,250,.35); }
+  .group button:focus-visible, a.open:focus-visible, .verdict-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  a.open, .verdict-toggle {
+    color: var(--muted); font-size: 11px; font-weight: 700; text-decoration: none;
+    padding: 7px 9px; border-radius: 7px; white-space: nowrap; cursor: pointer;
+    border: 0; background: transparent; font-family: inherit;
+  }
+  a.open:hover, .verdict-toggle:hover { background: var(--accent-bg); color: var(--ink); }
+  main { flex: 1; min-height: 0; position: relative; background: #eef1f5; }
+  iframe { display: none; width: 100%; height: 100%; border: 0; background: #eef1f5; }
+  iframe.active { display: block; }
+  .note {
+    display: none; position: absolute; inset: 0; overflow: auto;
+    background: #eef1f5; color: #1d2733; padding: 28px 32px; font-size: 13px; line-height: 1.7;
+  }
+  .note.active { display: block; }
+  .note h2 { font-size: 16px; margin: 0 0 6px; }
+  .note h3 { font-size: 13px; margin: 18px 0 4px; }
+  .note p { margin: 4px 0; max-width: 78em; }
+  .note ul { margin: 4px 0 8px 18px; padding: 0; max-width: 78em; }
+  .note a { color: #6d28d9; }
+  .verdict {
+    display: none; position: absolute; right: 0; top: 0; bottom: 0; width: min(560px, 92vw);
+    background: #121a27; color: #e7ecf3; border-left: 1px solid var(--line);
+    overflow: auto; padding: 18px 20px 28px; font-size: 12.5px; line-height: 1.65; z-index: 5;
+    box-shadow: -12px 0 28px rgba(0,0,0,.35);
+  }
+  .verdict.active { display: block; }
+  .verdict h2 { font-size: 14px; margin: 0 0 8px; }
+  .verdict h3 { font-size: 12.5px; margin: 14px 0 4px; color: var(--accent); }
+  .verdict table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; font-size: 11.5px; }
+  .verdict th, .verdict td { border: 1px solid var(--line); padding: 4px 7px; text-align: left; vertical-align: top; }
+  .verdict th { color: var(--muted); font-weight: 700; background: rgba(255,255,255,.02); }
+  .verdict li { margin: 2px 0; }
+  .verdict .placeholder { color: var(--muted); font-style: italic; }
+  .verdict-close {
+    position: sticky; top: 0; float: right; margin: -6px -8px 0 0;
+    border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; padding: 4px 8px; border-radius: 6px;
+  }
+  .verdict-close:hover { color: var(--ink); background: var(--accent-bg); }
+  @media (max-width: 720px) {
+    header { gap: 8px; padding: 8px 12px; }
+    .brand span { display: none; }
+    .group button { padding: 0 8px; font-size: 10.5px; }
+    .note { padding: 18px 16px; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand"><strong>场站节点精致化评审</strong><span>当前生产 vs 方向 A（对齐/密度） vs 方向 B（构图/信息）</span></div>
+    <div class="group" role="group" aria-label="视图">
+      <button type="button" data-view="current" aria-pressed="true">当前生产</button>
+      <button type="button" data-view="a" aria-pressed="false">方向 A · 对齐与密度</button>
+      <button type="button" data-view="b" aria-pressed="false">方向 B · 构图与信息</button>
+    </div>
+    <button type="button" class="verdict-toggle" id="verdict-toggle" aria-expanded="false" aria-controls="verdict">互评结论与决策清单</button>
+    <a class="open" href="http://10.11.14.128/admin/stations" target="_blank" rel="noopener">打开生产页面 ↗</a>
+  </header>
+  <main>
+    <div class="note active" id="view-current">
+      <h2>先看什么</h2>
+      <p>这一轮解决的是 2000 宽显示器上「卡片少、面板宽、右侧大片空」的问题。请在右上角切到 <strong>方向 A</strong> 和 <strong>方向 B</strong>，用它们页面内置的 <code>2000 / 1440 / 390</code>、亮暗、中/EN 开关逐个对比（原型自带控件，均为静态演示数据，不发真实请求）。</p>
+      <h3>当前生产的问题（截图 Image #34 时点）</h3>
+      <ul>
+        <li>面板全宽无上限：机器人 3 张卡后空出第 4 列（约 430px），库存 2 张卡后空约 920px。</li>
+        <li>s1u-01 因「回位不可用」提示把页脚撑高约 18px，同行卡片底部不齐，展开按钮被挤到第二行。</li>
+        <li>工具栏搜索近半宽、计数跑中间、「加入节点」贴边；页签条撑满只用 40%；分区标题与卡片标题同字号。</li>
+        <li>控制面条 / 批量行 / 卡片网格三种宽度；库存第二集群多一条重复分隔线。</li>
+      </ul>
+      <h3>方向 A · 对齐与密度（node-removal Codex）</h3>
+      <ul>
+        <li>1480px 内容列；机器人固定 3 列 ×460、库存 4 列 ×360（窄宽降 3/2/1）。</li>
+        <li>展开按钮移到卡片头部右侧（icon）；机器人页脚固定两行：操作 + 16px 提示槽，同行卡片底部严格对齐；库存卡去掉页脚。</li>
+        <li>页签左对齐收窄、工具栏一行 40px 控件、分区标题层级化；不新增任何信息块。</li>
+      </ul>
+      <h3>方向 B · 构图与信息（station-cluster Codex）</h3>
+      <ul>
+        <li>沿用 A 的卡片契约（1480 列、3×460 / 4 列库存、header 展开、页脚提示槽）。</li>
+        <li>库存行没满时用「集群摘要」卡补满剩余轨道：在线比例条、节点/入网/驱动/相机统计，链接到入网记录；满行时不渲染。</li>
+        <li>集群头部加统计条；首版省略了页面级右栏，保卡片宽度。</li>
+      </ul>
+      <h3>注意</h3>
+      <ul>
+        <li>两版相机器画面均为示意帧（A 为插画式示意，B 为参考截图帧），生产里是真实慢速预览。</li>
+        <li>电源/驱动/回位/记录操作均为本地模拟，只验证交互形态，不下发命令。</li>
+        <li>互评结论（两位 Codex 交叉评审）与决策清单见右上「互评结论与决策清单」。</li>
+      </ul>
+    </div>
+    <iframe id="view-a" data-src="/apps/rlark-ui/prototype/stations-refine-a.html" title="方向 A 原型"></iframe>
+    <iframe id="view-b" data-src="/apps/rlark-ui/prototype/stations-refine-b.html" title="方向 B 原型"></iframe>
+    <aside class="verdict" id="verdict" aria-label="互评结论与决策清单">
+      <button type="button" class="verdict-close" id="verdict-close" aria-label="关闭">×</button>
+      <h2>互评结论与决策清单</h2>
+      <p class="placeholder" id="verdict-status">两位 Codex 正在交叉评审对方原型（A 评 B、B 评 A），完成后这里会给出总分、优缺点和基底建议。你也可以先看原型本身。</p>
+      <div id="verdict-body">
+        <h3>评分对比（rubric 1–5）</h3>
+        <table id="verdict-scores"><thead><tr><th>维度</th><th>A 评 B</th><th>B 评 A</th></tr></thead><tbody>
+          <tr><td>宽屏问题</td><td>4</td><td>2</td></tr>
+          <tr><td>对齐</td><td>4</td><td>4</td></tr>
+          <tr><td>层级与精致度</td><td>4</td><td>3</td></tr>
+          <tr><td>卡片契约</td><td>4</td><td>2</td></tr>
+          <tr><td>行为契约</td><td>4</td><td>1</td></tr>
+          <tr><td>生产可行性</td><td>3</td><td>3</td></tr>
+          <tr><td>与对方差异/合并价值</td><td>4</td><td>3</td></tr>
+          <tr><td><strong>合计</strong></td><td><strong>26/35</strong></td><td><strong>18/35</strong></td></tr>
+        </tbody></table>
+        <h3>A 评 B（node-removal → station-cluster）</h3>
+        <div id="verdict-ab">
+          <p><strong>总分 26/35。</strong>优点：1480 居中列、末行摘要与网格右缘重合（717px/0px 偏差）、详情/相机/回位/电源交互闭环全部实测通过、token 无未定义项。</p>
+          <p><strong>P2 缺陷：</strong></p>
+          <ul>
+            <li>组头统计与摘要卡重复（在线/冲突/节点/入网两处都出现）——摘要应只留健康条 + 一个有决策价值的异常指标 + 入网入口。</li>
+            <li>库存轨道实测 352.5px（1440 下 330.5px），没达到 360 契约——padding/gap 挤压，需重新分配。</li>
+            <li>工具栏「机器人型号」与「加入节点」之间 ~278px 断带——主操作组应连续。</li>
+            <li>统计口径是「已加载集合」，接生产分页时要区分 loaded/total，未知不能显示 0。</li>
+          </ul>
+          <p><strong>P3：</strong>390 英文下集群统计条换行成高块，首卡下移到 y≈754——小屏应收紧为一行短摘要。</p>
+        </div>
+        <h3>B 评 A（station-cluster → node-removal）</h3>
+        <div id="verdict-ba">
+          <p><strong>总分 18/35。</strong>优点：默认卡片对齐/控制密度、亮暗 token 零硬编码、header 展开按钮 + 库存去页脚省空间。</p>
+          <p><strong>P1（原型行为偏差，多为演示简化所致）：</strong></p>
+          <ul>
+            <li>批量操作把筛选后隐藏的机器人也包含进确认框（全选读全局集合）。</li>
+            <li>回位在指针移出/键盘失焦后仍保持按住状态。</li>
+            <li>展开详情把同排其余卡片挤走（整行分块没保住）。</li>
+            <li>控制面展开无详情面板；库存详情的入网事实与卡片矛盾、操作可用性缺失。</li>
+          </ul>
+          <p><strong>P2：</strong>toast 不可关且无 role/焦点丢失、库存末行仍空 732px、宽屏详情第四块落第二行右侧两列空置、相机异常放大态被标绿、四态计数与内容不一致、390 入网表横滚 498px 无提示、英文相机字幕裁切。</p>
+          <p style="color:#9ca8ba">注：以上行为项大多源自 A 原型用 innerHTML 整页重绘的演示简化；生产 React 版（CardGrid 分块、useRobotPower、RobotPoseButton、StationDetailPanel）已正确处理这些契约，最终落地以生产组件为准。</p>
+        </div>
+        <h3>基底建议（两边已交，结论一致：混合）</h3>
+        <div id="verdict-base">
+          <p><strong>A 的建议：</strong>以 A 为布局与交互基底，取 B 的条件摘要。</p>
+          <p><strong>B 的建议：</strong>以 B 的构图为基底，吸收 A 的卡片密度和入网记录表。</p>
+          <p><strong>两边合并清单其实重合，即最终合成规格：</strong>A 的几何骨架（1480 列、3×460、页脚提示槽、工具栏连续操作组、完整入网表字段）+ B 的构图（末行未满时轻量摘要卡、组头「驱动就绪/相机异常」两指标）+ 生产行为组件（CardGrid 分块、useRobotPower、RobotPoseButton、StationDetailPanel 的既有契约——两份互评指出的行为偏差在最终实现里以生产组件为准，不随原型走）。</p>
+          <p>这个规格就是视觉轮 brief 的骨架：两版在此之上只比视觉层。</p>
+        </div>
+        <h3>需要你拍板</h3>
+        <ul>
+          <li>基底方向：<strong>A</strong>（只做对齐/密度，不加信息块）/ <strong>B</strong>（对齐 + 库存摘要卡 + 集群统计条）/ <strong>混合</strong>。</li>
+          <li>若选 B/混合：摘要卡只放库存行，还是机器人集群头部也加统计条？</li>
+          <li>机器人卡片底部 16px 空提示行（对齐用）接受吗？还是只在有话可说时显示、接受 1 行高度差？</li>
+          <li>展开按钮：卡片头部 icon（两版方向）还是保留页脚文字按钮（当前生产）？</li>
+          <li>内容列宽 1480px 可以吗？</li>
+          <li>入网记录表：A 是全列（状态/发码人/时间/公钥/隧道），B 首屏精简为 4 列——取哪边？</li>
+        </ul>
+      </div>
+    </aside>
+  </main>
+<script>
+(function () {
+  var buttons = Array.prototype.slice.call(document.querySelectorAll("[data-view]"));
+  var views = { current: document.getElementById("view-current"), a: document.getElementById("view-a"), b: document.getElementById("view-b") };
+  var loaded = { current: true, a: false, b: false };
+  function show(name) {
+    buttons.forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.view === name)); });
+    Object.keys(views).forEach(function (key) {
+      var el = views[key];
+      var on = key === name;
+      if (key === "current") { el.classList.toggle("active", on); return; }
+      if (on && !loaded[key]) { el.src = el.dataset.src; loaded[key] = true; }
+      el.classList.toggle("active", on);
+    });
+  }
+  buttons.forEach(function (b) { b.addEventListener("click", function () { show(b.dataset.view); }); });
+  var verdict = document.getElementById("verdict");
+  var toggle = document.getElementById("verdict-toggle");
+  document.getElementById("verdict-close").addEventListener("click", function () {
+    verdict.classList.remove("active"); toggle.setAttribute("aria-expanded", "false");
+  });
+  toggle.addEventListener("click", function () {
+    var on = verdict.classList.toggle("active");
+    toggle.setAttribute("aria-expanded", String(on));
+  });
+  show("current");
+})();
+</script>
+</body>
+</html>

@@ -84,7 +84,7 @@ func TestObservationStatesTheProgram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"observedAt":"2026-11-14T01:02:03Z","gateway":{"documentLevel":2,"digest":"` + strings.Repeat("ab", 32) + `"},"interface":"st-wg0","publicKey":"","addresses":["10.254.240.9/32"],"peers":[]}`
+	want := `{"observedAt":"2026-11-14T01:02:03Z","gateway":{"documentLevel":3,"digest":"` + strings.Repeat("ab", 32) + `"},"interface":"st-wg0","publicKey":"","addresses":["10.254.240.9/32"],"peers":[]}`
 	if string(data) != want {
 		t.Fatalf("observation = %s, want %s", data, want)
 	}
@@ -111,6 +111,7 @@ func TestDocumentLevelNamesTheDocument(t *testing.T) {
 	levels := []string{
 		1: "address dns interface listenPort mtu names names.address names.name nodeUID peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.nodeUID peers.publicKey publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
 		2: "address discovery discovery.hostKeys discovery.intervalSeconds discovery.ports discovery.ranges discovery.relayFrom discovery.relayPort dns interface listenPort mtu names names.address names.name nodeUID peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.nodeUID peers.publicKey publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
+		3: "address discovery discovery.hostKeys discovery.includeUnclassified discovery.intervalSeconds discovery.ports discovery.ranges discovery.relayFrom discovery.relayPort discovery.relayToken discovery.sshPorts dns interface listenPort mtu names names.address names.name nodeUID peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.nodeUID peers.publicKey publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
 	}
 	var fields []string
 	var walk func(prefix string, of reflect.Type)

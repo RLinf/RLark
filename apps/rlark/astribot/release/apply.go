@@ -530,7 +530,7 @@ func (r *Run) act(ctx context.Context, stage string, current State) error {
 	case "server":
 		return r.setPlane(ctx, current, "rlark-server", "rlark-controller-manager")
 	case "console":
-		return r.setPlane(ctx, current, "rlark-ui")
+		return r.setPlane(ctx, current, "astribot-iam", "rlark-ui")
 	case "addons":
 		for _, cluster := range slices.Sorted(maps.Keys(desired.Clusters)) {
 			for _, name := range addonOrder(desired.Clusters[cluster].Addons, r.Desired) {

@@ -18,6 +18,14 @@ type NodeClass struct {
 }
 
 type NodeClassSpec struct {
+	// Kind is the onboarding category. Empty preserves existing class behavior
+	// and is inferred from the legacy robot labels.
+	// +kubebuilder:validation:Enum=Robot;Server
+	Kind NodeClassKind `json:"kind,omitempty"`
+	// Model references RobotModel.metadata.name. Legacy classes may omit it
+	// and infer a model from rlark.io/robot-model.
+	// +kubebuilder:validation:MaxLength=63
+	Model string `json:"model,omitempty"`
 	// Labels and Taints (key=value:effect) are what a node of the class
 	// registers with. A change of Labels reaches the nodes that have joined
 	// as far as the cluster agent carries management labels to the cluster
@@ -46,6 +54,14 @@ type NodeClassSpec struct {
 	// +listType=set
 	Addons []string `json:"addons,omitempty"`
 }
+
+// +kubebuilder:validation:Enum=Robot;Server
+type NodeClassKind string
+
+const (
+	NodeClassKindRobot  NodeClassKind = "Robot"
+	NodeClassKindServer NodeClassKind = "Server"
+)
 
 // NodeClassNaming gives every machine of the class the next number its
 // cluster has not used. The number stays with the machine's serial: a

@@ -17,7 +17,7 @@ import (
 // handlerMachine is a Machine RLark has read: its entry device let it in and the computer behind it answered.
 func handlerMachine(name, phase, problem, serial string) *unstructured.Unstructured {
 	status := map[string]interface{}{"phase": phase, "serial": serial, "inspectedAt": "2027-01-15T07:58:00Z", "nodeHostKeyFingerprint": "SHA256:x86",
-		"entry": map[string]interface{}{"address": "192.168.31.56", "mac": "48:b0:2d:5c:9a:11", "lastSeen": "2027-01-15T08:00:" + name[len(name)-2:] + "Z"}}
+		"entry": map[string]interface{}{"address": "192.168.31.56", "port": int64(22), "hostKeyFingerprint": "SHA256:entry", "hostKeyAlgorithm": "ssh-ed25519", "mac": "48:b0:2d:5c:9a:11", "lastSeen": "2027-01-15T08:00:" + name[len(name)-2:] + "Z"}}
 	if problem != "" {
 		status["problem"] = problem
 	}
@@ -31,7 +31,7 @@ func TestMachinesAreListedAndAdmittedEachForItself(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	class := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeClass", "metadata": map[string]interface{}{"name": "s1u"},
-		"spec": map[string]interface{}{"labels": map[string]interface{}{"rlark.io/robot-model": "s1u", "rlark.io/robot-body": "s1u"}},
+		"spec": map[string]interface{}{"kind": "Robot", "model": "s1u", "discovery": map[string]interface{}{"hostKeyFingerprints": []interface{}{"SHA256:entry"}}, "labels": map[string]interface{}{"rlark.io/robot-model": "s1u", "rlark.io/robot-body": "s1u"}},
 	}}
 	earlier := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission", "metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "agent-a"},

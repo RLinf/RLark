@@ -20,6 +20,10 @@ type Evidence struct {
 	// reading of the machine's firmware): it tells a reinstalled machine from
 	// another one, and is evidence only.
 	SystemUUID string
+	// NodeLabels and NodeInfo are read server-side after token verification;
+	// callers cannot submit them as identity evidence.
+	NodeLabels map[string]string
+	NodeInfo   corev1.NodeSystemInfo
 	// NodePressures are the pressure conditions that are True on that Node.
 	NodePressures []string
 }
@@ -97,7 +101,8 @@ func Authenticate(ctx context.Context, client kubernetes.Interface, reg Registra
 	}
 	// The Node is in hand for its UID; its system UUID and pressure are stored
 	// with the report it vouches for, so no agent is given a way to read or to state them.
-	e := Evidence{ClusterID: reg.ClusterID, NodeName: node.Name, NodeUID: string(node.UID), SystemUUID: node.Status.NodeInfo.SystemUUID, NodePressures: []string{}}
+	e := Evidence{ClusterID: reg.ClusterID, NodeName: node.Name, NodeUID: string(node.UID), SystemUUID: node.Status.NodeInfo.SystemUUID,
+		NodeLabels: node.Labels, NodeInfo: node.Status.NodeInfo, NodePressures: []string{}}
 	for _, condition := range node.Status.Conditions {
 		if condition.Status == corev1.ConditionTrue && slices.Contains([]corev1.NodeConditionType{corev1.NodeDiskPressure, corev1.NodeMemoryPressure, corev1.NodePIDPressure}, condition.Type) {
 			e.NodePressures = append(e.NodePressures, string(condition.Type))

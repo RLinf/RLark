@@ -3,6 +3,7 @@
 import type { CRDNode } from "../types.js";
 import { displayNameError } from "./lib/displayName.js";
 import type { StorageClass } from "./lib/storageClass.js";
+import { mockAdmissions, mockSiteNodes, mockStationCameraFrame, mockStationCameraReport, mockStations } from "./mockStations.js";
 
 // The demo storages: RLark's two and an SMB share.
 export const mockStorageClasses: StorageClass[] = [
@@ -114,6 +115,27 @@ const mockClusterProvisions = [
   },
 ];
 
+const mockSiteNetwork = {
+  resourceVersion: "mock-rv-12", generation: 12,
+  sites: [
+    { name: "office", clusters: ["rlark-local-dev-gpu"], discovery: { enabled: false, ranges: ["10.11.12.0/22"], intervalSeconds: 30, from: { clusterID: "rlark-local-dev-gpu", nodeName: "cailiang" } } },
+    { name: "lab", clusters: ["rlark-robot-s1u-01"], discovery: { enabled: true, ranges: ["192.168.31.0/24", "10.11.12.0/22"], intervalSeconds: 30, from: { clusterID: "rlark-local-dev-gpu", nodeName: "cailiang" } } },
+    { name: "ksyun", clusters: ["rlark-ksyun-gpu"] },
+  ],
+  members: [
+    { clusterID: "rlark-local-dev-gpu", nodeName: "cailiang", role: "Hub", site: "office", address: "10.254.240.1" },
+    { clusterID: "rlark-local-dev-gpu", nodeName: "wendychen", role: "Hub", site: "office", address: "10.254.240.6" },
+    { clusterID: "rlark-robot-s1u-01", nodeName: "alexfu", role: "Hub", site: "lab", address: "10.254.240.5" },
+    { clusterID: "rlark-ksyun-gpu", nodeName: "10-0-2-57", role: "Hub", site: "ksyun", address: "10.254.240.2" },
+  ],
+  nodeClasses: [{ name: "s1u", hasAccess: true, hasDiscovery: true, entryPort: 22, hostKeyFingerprints: ["SHA256:mock-factory-key"] }],
+  status: { observedGeneration: 11, members: 4, unreachable: [], conditions: [
+    { type: "Ready", status: "True", reason: "Computed", message: "" },
+    { type: "FullyConnected", status: "True", reason: "AllPairsReachable", message: "" },
+    { type: "DiscoveryStale", status: "False", reason: "HubsReport", message: "" },
+  ] },
+};
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -132,6 +154,46 @@ export interface MockState {
 
 // The answer to a request on one of our routes; undefined for RLark's own.
 export async function astribotMockRoute(method: string, path: string, request: Request, state: MockState) {
+  if (method === "GET" && path === "/api/v1/station/site-network") return json(mockSiteNetwork);
+  const discoveryRoute = path.match(/^\/api\/v1\/station\/site-network\/sites\/([^/]+)\/discovery$/);
+  if (method === "PUT" && discoveryRoute) {
+    const body = await request.json();
+    if (body.resourceVersion !== mockSiteNetwork.resourceVersion) return json({ code: "RESOURCE_CONFLICT", message: "The site network changed meanwhile." }, 409);
+    const siteName = decodeURIComponent(discoveryRoute[1]);
+    const site = mockSiteNetwork.sites.find((item) => item.name === siteName);
+    if (!site) return json({ code: "RESOURCE_NOT_FOUND", message: "site not found" }, 404);
+    site.discovery = body.discovery;
+    mockSiteNetwork.resourceVersion = `mock-rv-${Number(mockSiteNetwork.resourceVersion.split("-").at(-1)) + 1}`;
+    mockSiteNetwork.generation += 1;
+    return json({ resourceVersion: mockSiteNetwork.resourceVersion, site });
+  }
+  // The site-node page's fixtures: the same shapes the Gateway serves, so the real cards and detail render.
+  const query = new URL(request.url).searchParams;
+  if (method === "GET" && path === "/api/v1/station/stations") return json({ items: mockStations });
+  if (method === "GET" && path === "/api/v1/site-nodes") {
+    const cluster = query.get("cluster_id");
+    return json({ items: mockSiteNodes.filter((node) => !cluster || node.cluster_id === cluster) });
+  }
+  if (method === "GET" && path === "/api/v1/station/node-admissions") {
+    const cluster = query.get("cluster_id");
+    return json({ items: mockAdmissions.filter((item) => !cluster || item.cluster_id === cluster) });
+  }
+  if (method === "GET" && path === "/api/v1/station/node-operations") return json({ items: [] });
+  const cameraReport = path.match(/^\/api\/v1\/rlinf\.io\/v1alpha1\/nodes\/([^/]+)\/cameras$/);
+  if (method === "GET" && cameraReport) return json(mockStationCameraReport(decodeURIComponent(cameraReport[1])));
+  const cameraFrame = path.match(/^\/api\/v1\/rlinf\.io\/v1alpha1\/nodes\/[^/]+\/cameras\/([^/]+)\.jpg$/);
+  if (method === "GET" && cameraFrame)
+    return new Response(mockStationCameraFrame(cameraFrame[1]), { headers: { "Content-Type": "image/svg+xml" } });
+  const admissionAction = path.match(/^\/api\/v1\/station\/node-admissions\/([^/]+)\/(reissue|revoke)$/);
+  if (method === "POST" && admissionAction) {
+    const name = decodeURIComponent(admissionAction[1]);
+    const cluster = query.get("cluster_id") ?? "";
+    if (admissionAction[2] === "revoke") return json({ admission: { cluster_id: cluster, node_name: name, state: "Expired", expires_at: new Date().toISOString() } });
+    return json({ node_name: name, cluster_id: cluster, code: "MOCK-JOIN-CODE", expires_at: new Date(Date.now() + 86400_000).toISOString(), public_key: "", tunnel_address: "" });
+  }
+  if (method === "DELETE" && /^\/api\/v1\/station\/stations\/[^/]+$/.test(path)) return json({});
+  if (method === "PUT" && /\/robot-power$/.test(path)) return json({});
+  if (method === "POST" && /\/robot-pose$/.test(path)) return json({});
   if (path.startsWith("/api/v1/station/") || path.startsWith("/api/v1/site-nodes"))
     return json({ error: "Station is unavailable in mock mode" }, 503);
   if (method === "GET" && path === "/api/v1/cluster-provisions")

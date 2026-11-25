@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -85,11 +86,12 @@ func (s skipped) Error() string { return string(s) }
 // nodeJoinRun is one join of a machine, from the stage it starts at to the last or to the one that fails. The
 // password is held here only, and cleared when the run ends.
 type nodeJoinRun struct {
-	g         *Gateway
-	name      string
-	namespace string
-	password  []byte
-	machine   provisionMachine
+	g            *Gateway
+	name         string
+	namespace    string
+	password     []byte
+	sudoPassword []byte
+	machine      provisionMachine
 
 	progressSent time.Time
 }
@@ -148,6 +150,7 @@ func (r *nodeJoinRun) run(ctx context.Context, from string) {
 	audit := log.FromContext(ctx).WithName("audit")
 	defer r.g.nodeJoins.end(r.name)
 	defer clear(r.password)
+	defer clear(r.sudoPassword)
 	defer func() {
 		if r.machine != nil {
 			_ = r.machine.Close()
@@ -226,7 +229,7 @@ func (r *nodeJoinRun) needMachine(ctx context.Context, j *rlarkv1alpha1.NodeJoin
 	if len(r.password) == 0 {
 		return nil, errors.New("这一步要登录机器：重试时给出它的 SSH 口令")
 	}
-	machine, _, err := r.g.provisionDial(ctx, joinMachine(j), r.password, j.Status.HostKey)
+	machine, _, err := r.g.dialNodeJoinMachine(ctx, j, r.password, r.sudoPassword)
 	if err != nil {
 		return nil, fmt.Errorf("登录 %s@%s：%w", j.Spec.Machine.User, j.Spec.Machine.Address, err)
 	}
@@ -414,7 +417,13 @@ func (r *nodeJoinRun) install(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (s
 		return r.installReadback(ctx, admission, sshJoinExit+"0"), nil
 	default:
 		login := j.Spec.Machine.User + "@" + net.JoinHostPort(j.Spec.Machine.Address, strconv.Itoa(int(j.Spec.Machine.Port)))
-		issued, _, refused := r.g.admitNode(ctx, j.Spec.RequestedBy, r.namespace, &issueNodeAdmissionRequest{ClusterID: cluster, NodeName: node},
+		joinLabels := map[string]string{}
+		_ = json.Unmarshal([]byte(j.Annotations[nodeJoinInstallLabelsAnnotation]), &joinLabels)
+		machineIntent := map[string]interface{}{"category": "Server"}
+		if model := j.Annotations[nodeJoinModelAnnotation]; model != "" {
+			machineIntent["model"] = model
+		}
+		issued, _, refused := r.g.admitNode(ctx, j.Spec.RequestedBy, r.namespace, &issueNodeAdmissionRequest{ClusterID: cluster, NodeName: node, Labels: joinLabels, Machine: machineIntent},
 			map[string]string{nodeAdmissionSSHLoginAnnotation: login, nodeAdmissionSSHHostKeyAnnotation: j.Status.HostKey})
 		if refused != nil {
 			return "", fmt.Errorf("发入网码：%w", refused)
@@ -570,7 +579,7 @@ func (r *nodeJoinRun) gpu(ctx context.Context, j *rlarkv1alpha1.NodeJoin) (strin
 // loginRefused is a refused login or sudo as an answer: 422 for a password the machine refuses (not 401, which would
 // end the console's own login).
 func loginRefused(failure *nodessh.Error) *requestError {
-	status := map[string]int{nodessh.Unreachable: 502, nodessh.LoginRejected: 422}[failure.Reason]
+	status := map[string]int{nodessh.Unreachable: 502, nodeJoinRelayUnavailable: 502, nodessh.RelayRejected: 502, nodessh.LoginRejected: 422}[failure.Reason]
 	if status == 0 {
 		status = 403
 	}

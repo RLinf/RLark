@@ -321,6 +321,7 @@ const json = (body: unknown, status = 200) =>
 function clusterPayload() {
   return clusters.map((cluster) => ({
     ...cluster,
+    agentNamespace: cluster.id,
     id: cluster.name,
     name: cluster.name,
   })).map(withMockDisplayName);

@@ -22,6 +22,7 @@ var composeVariables = map[string]string{
 	"rlark-controller-manager": "RLARK_CONTROLLER_MANAGER_IMAGE",
 	"rlark-gateway":            "RLARK_GATEWAY_IMAGE",
 	"rlark-ui":                 "RLARK_UI_IMAGE",
+	"astribot-iam":             "ASTRIBOT_IAM_IMAGE",
 }
 
 // Compose is the control plane as docker compose runs it on the management
@@ -43,8 +44,11 @@ func (c Compose) Configs(ctx context.Context) (map[string]string, error) {
 func (c Compose) running(ctx context.Context, format string) (map[string]string, error) {
 	read := map[string]string{}
 	for service := range composeVariables {
-		out, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Running}} "+format, service).Output()
+		out, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.State.Running}} "+format, service).CombinedOutput()
 		if err != nil {
+			if strings.Contains(string(out), "No such object") {
+				continue
+			}
 			return nil, fmt.Errorf("docker inspect %s: %w", service, err)
 		}
 		running, value, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
@@ -166,11 +170,18 @@ func (c Compose) Set(ctx context.Context, service, image string) error {
 	if err != nil {
 		return err
 	}
+	compose := []string{"compose", "-p", c.Project, "-f", c.File, "--env-file", c.Env}
+	services, err := exec.CommandContext(ctx, "docker", append(compose, "config", "--services")...).Output()
+	if err != nil {
+		return fmt.Errorf("docker compose config --services: %w", err)
+	}
+	if !slices.Contains(strings.Fields(string(services)), service) {
+		return c.removeOrphan(ctx, service)
+	}
 	variables[composeVariables[service]] = image
 	if err := replaceFile(c.Env, envFile(variables), 0o600); err != nil {
 		return err
 	}
-	compose := []string{"compose", "-p", c.Project, "-f", c.File, "--env-file", c.Env}
 	out, err := exec.CommandContext(ctx, "docker", append(compose, "up", "-d", "--quiet-pull", "--no-deps", service)...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker compose up %s: %w: %s", service, err, out)
@@ -197,6 +208,24 @@ func (c Compose) Set(ctx context.Context, service, image string) error {
 		if out, err := exec.CommandContext(ctx, "docker", append(compose, "restart", name)...).CombinedOutput(); err != nil {
 			return fmt.Errorf("docker compose restart %s: %w: %s", name, err, out)
 		}
+	}
+	return nil
+}
+
+func (c Compose) removeOrphan(ctx context.Context, service string) error {
+	format := `{{index .Config.Labels "com.docker.compose.project"}} {{index .Config.Labels "com.docker.compose.service"}}`
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "--format", format, service).CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(out), "No such object") {
+			return nil
+		}
+		return fmt.Errorf("docker inspect orphan %s: %w", service, err)
+	}
+	if got, want := strings.TrimSpace(string(out)), c.Project+" "+service; got != want {
+		return fmt.Errorf("refuse to remove container %s: compose ownership is %q, want %q", service, got, want)
+	}
+	if out, err := exec.CommandContext(ctx, "docker", "rm", "-f", service).CombinedOutput(); err != nil {
+		return fmt.Errorf("docker rm orphan %s: %w: %s", service, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

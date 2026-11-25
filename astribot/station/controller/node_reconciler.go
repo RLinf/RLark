@@ -133,6 +133,18 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 		linked = metav1.Condition{Type: "RLarkLinked", Status: metav1.ConditionTrue, Reason: "NodeReady", Message: "the corresponding RLark Node is Ready"}
 	}
 	setNodeCondition(node, now, linked)
+	admission := &stationv1alpha1.NodeAdmission{}
+	var identityAdmission *stationv1alpha1.NodeAdmission
+	if err := r.reader.Get(ctx, client.ObjectKeyFromObject(enrollment), admission); err == nil {
+		identityAdmission = admission
+	} else if !apierrors.IsNotFound(err) {
+		return reconcile.Result{}, fmt.Errorf("read NodeAdmission for identity verification: %w", err)
+	}
+	identity, err := machineIdentityCondition(ctx, r.reader, identityAdmission, observation, now, fresh)
+	if err != nil {
+		return reconcile.Result{}, fmt.Errorf("compare observed machine identity: %w", err)
+	}
+	setNodeCondition(node, now, identity)
 	if err := r.patchNode(ctx, enrollment, node); err != nil {
 		return reconcile.Result{}, err
 	}

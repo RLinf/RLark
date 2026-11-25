@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -17,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/util/retry"
 )
@@ -25,12 +27,19 @@ import (
 const nodeJoinClusterLabel = "rlark.io/cluster"
 
 type createNodeJoinRequest struct {
-	ClusterID string `json:"cluster_id"`
-	Address   string `json:"address"`
+	ClusterID        string            `json:"cluster_id"`
+	MachineName      string            `json:"machine_name,omitempty"`
+	HostKey          string            `json:"host_key,omitempty"`
+	HostKeyAlgorithm string            `json:"host_key_algorithm,omitempty"`
+	MachineType      string            `json:"machine_type,omitempty"`
+	MachineModel     string            `json:"machine_model,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+	Address          string            `json:"address"`
 	// Port is the machine's SSH port, 22 when it is not given.
-	Port     int32  `json:"port,omitempty"`
-	User     string `json:"user"`
-	Password string `json:"password"`
+	Port         int32  `json:"port,omitempty"`
+	User         string `json:"user"`
+	Password     string `json:"password"`
+	SudoPassword string `json:"sudo_password,omitempty"`
 	// NodeName is the node's name; empty takes the machine's host name.
 	NodeName string `json:"node_name,omitempty"`
 	// TunnelEndpoint is the ip:port other sites dial for the machine's tunnel, when it joins through one; empty, the
@@ -41,9 +50,10 @@ type createNodeJoinRequest struct {
 // nodeJoinRequest retries a join from the stage it stopped at, or clears it. User, when given, is the account to log
 // in with from now on; MachineGone (clear) says the machine is not there to be put back.
 type nodeJoinRequest struct {
-	Password    string `json:"password"`
-	User        string `json:"user"`
-	MachineGone bool   `json:"machine_gone"`
+	Password     string `json:"password"`
+	SudoPassword string `json:"sudo_password,omitempty"`
+	User         string `json:"user"`
+	MachineGone  bool   `json:"machine_gone"`
 }
 
 // handleCreateNodeJoin answers POST /api/v1/station/node-joins: it logs in to the machine once, at once, so that a
@@ -54,30 +64,107 @@ func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
 	if !decodeOneJSON(c, maxNodeAdmissionRequestBytes, &request, false) {
 		return
 	}
+	portProvided := request.Port != 0
 	password := []byte(request.Password)
+	sudoPassword := []byte(request.SudoPassword)
 	request.Password = ""
+	request.SudoPassword = ""
 	if request.Port == 0 {
 		request.Port = 22
 	}
 	request.TunnelEndpoint = strings.TrimSpace(request.TunnelEndpoint)
 	if request.ClusterID == "" || request.Address == "" || net.ParseIP(request.Address) == nil && len(validation.IsDNS1123Subdomain(request.Address)) > 0 ||
 		request.Port < 1 || request.Port > 65535 || request.User == "" || len(request.User) > 64 || strings.ContainsAny(request.User, " \t\r\n\x00'\"\\$`") ||
-		len(password) == 0 || len(password) > 4096 || request.TunnelEndpoint != "" && !validTunnelEndpoint(request.TunnelEndpoint) {
+		len(password) == 0 || len(password) > 4096 || len(sudoPassword) > 4096 || request.TunnelEndpoint != "" && !validTunnelEndpoint(request.TunnelEndpoint) {
 		clear(password)
+		clear(sudoPassword)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster_id, address (an IP address or host name), port, user and password are required; tunnel_endpoint is an IPv4 ip:port"})
 		return
 	}
 	namespace, err := g.stationNamespace(c, request.ClusterID)
 	if err != nil {
 		clear(password)
+		clear(sudoPassword)
 		return
+	}
+	var candidate *unstructured.Unstructured
+	if request.MachineName != "" {
+		candidate, err = g.stationClient.Resource(machineGVR).Namespace(machineNamespace).Get(c.Request.Context(), request.MachineName, metav1.GetOptions{})
+		if err != nil {
+			clear(password)
+			clear(sudoPassword)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "scanned Machine is unavailable"})
+			return
+		}
+		candidateAddress, _, _ := unstructured.NestedString(candidate.Object, "status", "entry", "address")
+		candidatePort, _, _ := unstructured.NestedInt64(candidate.Object, "status", "entry", "port")
+		candidateKey, _, _ := unstructured.NestedString(candidate.Object, "status", "entry", "hostKeyFingerprint")
+		candidateAlgorithm, _, _ := unstructured.NestedString(candidate.Object, "status", "entry", "hostKeyAlgorithm")
+		candidatePhase, _, _ := unstructured.NestedString(candidate.Object, "status", "phase")
+		candidateCluster, _, _ := unstructured.NestedString(candidate.Object, "status", "clusterID")
+		candidateNode, _, _ := unstructured.NestedString(candidate.Object, "status", "nodeName")
+		if candidatePort == 0 {
+			candidatePort = 22
+		}
+		if candidatePhase == "Joined" || candidateCluster != "" || candidateNode != "" {
+			clear(password)
+			clear(sudoPassword)
+			c.JSON(http.StatusConflict, gin.H{"error": "scanned Machine is already a joined node"})
+			return
+		}
+		if (request.MachineType != "" && request.MachineType != "Server") || candidateAddress == "" || candidateKey == "" || candidateAlgorithm == "" ||
+			(request.Address != "" && request.Address != candidateAddress) || (portProvided && int64(request.Port) != candidatePort) ||
+			(request.HostKey != "" && request.HostKey != candidateKey) || (request.HostKeyAlgorithm != "" && request.HostKeyAlgorithm != candidateAlgorithm) {
+			clear(password)
+			clear(sudoPassword)
+			c.JSON(http.StatusConflict, gin.H{"error": "scanned candidate identity changed; refresh discovery and review the host key"})
+			return
+		}
+		request.Address, request.Port, request.HostKey, request.HostKeyAlgorithm, request.MachineType = candidateAddress, int32(candidatePort), candidateKey, candidateAlgorithm, "Server"
+		if _, present, _ := unstructured.NestedMap(candidate.Object, "spec", "admit"); present {
+			clear(password)
+			clear(sudoPassword)
+			c.JSON(http.StatusConflict, gin.H{"error": "scanned Machine already has an admission"})
+			return
+		}
+	} else if request.MachineType != "" && request.MachineType != "Server" {
+		clear(password)
+		clear(sudoPassword)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "NodeJoin only accepts Server machines"})
+		return
+	}
+	if request.MachineType == "" {
+		request.MachineType = "Server"
+	}
+	for key, value := range request.Labels {
+		if len(validation.IsQualifiedName(key)) > 0 || len(validation.IsValidLabelValue(value)) > 0 {
+			clear(password)
+			clear(sudoPassword)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "labels must be valid Kubernetes labels"})
+			return
+		}
 	}
 	ctx := c.Request.Context()
 	login, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	machine, hostKey, err := g.provisionDial(login, rlarkv1alpha1.ClusterProvisionMachine{Address: request.Address, Port: request.Port, User: request.User}, password, "")
+	var machine provisionMachine
+	var hostKey string
+	if candidate != nil {
+		annotations, annotationErr := nodeJoinAnnotations(request, request.HostKey)
+		if annotationErr != nil {
+			clear(password)
+			clear(sudoPassword)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid NodeJoin metadata"})
+			return
+		}
+		probe := &rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}, Spec: rlarkv1alpha1.NodeJoinSpec{Machine: rlarkv1alpha1.NodeJoinMachine{Address: request.Address, Port: request.Port, User: request.User}}}
+		machine, hostKey, err = g.dialNodeJoinMachine(login, probe, password, sudoPassword)
+	} else {
+		machine, hostKey, err = g.provisionDial(login, rlarkv1alpha1.ClusterProvisionMachine{Address: request.Address, Port: request.Port, User: request.User}, password, "")
+	}
 	if err != nil {
 		clear(password)
+		clear(sudoPassword)
 		var failure *nodessh.Error
 		if errors.As(err, &failure) {
 			loginRefused(failure).respond(c)
@@ -91,6 +178,7 @@ func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
 		if !started {
 			_ = machine.Close()
 			clear(password)
+			clear(sudoPassword)
 		}
 	}()
 	if request.NodeName == "" {
@@ -126,23 +214,69 @@ func (g *Gateway) handleCreateNodeJoin(c *gin.Context) {
 			return
 		}
 	}
+	if candidate != nil {
+		resource := g.stationClient.Resource(machineGVR).Namespace(machineNamespace)
+		latest, err := resource.Get(ctx, candidate.GetName(), metav1.GetOptions{})
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "scanned Machine changed before its admission was recorded; refresh and retry"})
+			return
+		}
+		latestAddress, _, _ := unstructured.NestedString(latest.Object, "status", "entry", "address")
+		latestPort, _, _ := unstructured.NestedInt64(latest.Object, "status", "entry", "port")
+		latestKey, _, _ := unstructured.NestedString(latest.Object, "status", "entry", "hostKeyFingerprint")
+		latestAlgorithm, _, _ := unstructured.NestedString(latest.Object, "status", "entry", "hostKeyAlgorithm")
+		latestSite, _, _ := unstructured.NestedString(latest.Object, "spec", "site")
+		initialSite, _, _ := unstructured.NestedString(candidate.Object, "spec", "site")
+		if latestPort == 0 {
+			latestPort = 22
+		}
+		_, alreadyAdmitted, _ := unstructured.NestedMap(latest.Object, "spec", "admit")
+		if latestAddress != request.Address || latestPort != int64(request.Port) || latestKey != request.HostKey || latestAlgorithm != request.HostKeyAlgorithm || latestSite != initialSite || alreadyAdmitted {
+			c.JSON(http.StatusConflict, gin.H{"error": "scanned candidate identity changed; refresh discovery and review before joining"})
+			return
+		}
+		patch, _ := json.Marshal(map[string]interface{}{
+			"metadata": map[string]string{"resourceVersion": latest.GetResourceVersion()},
+			"spec":     map[string]interface{}{"admit": machineAdmissionForServer(request, c.GetString(authSubjectKey), time.Now().UTC().Format(time.RFC3339))},
+		})
+		if _, err := resource.Patch(ctx, latest.GetName(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "scanned Machine changed before its admission was recorded; refresh and retry"})
+			return
+		}
+	}
+	annotations, annotationErr := nodeJoinAnnotations(request, hostKey)
+	if annotationErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid NodeJoin metadata"})
+		return
+	}
+	labels := map[string]string{nodeJoinClusterLabel: request.ClusterID}
+	if candidate != nil {
+		labels[nodeJoinMachineAnnotation] = candidate.GetName()
+	}
 	j, err := client.Create(ctx, &rlarkv1alpha1.NodeJoin{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{nodeJoinClusterLabel: request.ClusterID}},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels, Annotations: annotations},
 		Spec: rlarkv1alpha1.NodeJoinSpec{
 			ClusterID: request.ClusterID, NodeName: request.NodeName, RequestedBy: c.GetString(authSubjectKey),
 			Machine: rlarkv1alpha1.NodeJoinMachine{Address: request.Address, Port: request.Port, User: request.User, TunnelEndpoint: request.TunnelEndpoint},
 		},
 	}, metav1.CreateOptions{})
 	if err != nil {
+		if candidate != nil {
+			_ = g.clearMachineAdmission(ctx, candidate.GetName(), request.ClusterID, c.GetString(authSubjectKey))
+		}
 		respondKubeError(c, "create node join: "+err.Error(), err)
 		return
 	}
 	j.Status = newJoinStatus(hostKey)
 	if j, err = client.UpdateStatus(ctx, j, metav1.UpdateOptions{}); err != nil {
+		if candidate != nil {
+			_ = g.clearMachineAdmission(ctx, candidate.GetName(), request.ClusterID, c.GetString(authSubjectKey))
+		}
+		_ = client.Delete(ctx, name, metav1.DeleteOptions{})
 		respondKubeError(c, "write the node join's status: "+err.Error(), err)
 		return
 	}
-	started = g.startNodeJoin(ctx, &nodeJoinRun{g: g, name: name, namespace: namespace, password: password, machine: machine}, joinStages[0])
+	started = g.startNodeJoin(ctx, &nodeJoinRun{g: g, name: name, namespace: namespace, password: password, sudoPassword: sudoPassword, machine: machine}, joinStages[0])
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusCreated, gin.H{"data": j})
 }
@@ -220,6 +354,17 @@ func (g *Gateway) handleRetryNodeJoin(c *gin.Context) {
 	if !decodeOneJSON(c, maxNodeAdmissionRequestBytes, &request, false) {
 		return
 	}
+	password := []byte(request.Password)
+	sudoPassword := []byte(request.SudoPassword)
+	transferred := false
+	defer func() {
+		if !transferred {
+			clear(password)
+			clear(sudoPassword)
+		}
+	}()
+	request.Password = ""
+	request.SudoPassword = ""
 	ctx := c.Request.Context()
 	client := g.kubeClient.RlinfV1alpha1().NodeJoins()
 	j, err := client.Get(ctx, c.Param("name"), metav1.GetOptions{})
@@ -231,29 +376,34 @@ func (g *Gateway) handleRetryNodeJoin(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "the join of " + j.Spec.NodeName + " is " + string(j.Status.Phase) + ": only a stopped one is retried"})
 		return
 	}
-	if joinNeedsMachine(j.Status.Stage) && request.Password == "" {
+	if joinNeedsMachine(j.Status.Stage) && len(password) == 0 {
+		clear(password)
+		clear(sudoPassword)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "stage " + j.Status.Stage + " logs in to the machine: its SSH password is required"})
 		return
 	}
 	namespace, err := g.stationNamespace(c, j.Spec.ClusterID)
 	if err != nil {
+		clear(password)
+		clear(sudoPassword)
 		return
 	}
 	if user := strings.TrimSpace(request.User); user != "" && user != j.Spec.Machine.User {
 		j.Spec.Machine.User = user
 		if j, err = client.Update(ctx, j, metav1.UpdateOptions{}); err != nil {
+			clear(password)
+			clear(sudoPassword)
 			respondKubeError(c, "change the machine's account: "+err.Error(), err)
 			return
 		}
 	}
 	run := &nodeJoinRun{g: g, name: j.Name, namespace: namespace}
-	if request.Password != "" {
-		run.password = []byte(request.Password)
-	}
+	run.password, run.sudoPassword = password, sudoPassword
 	if !g.startNodeJoin(ctx, run, j.Status.Stage) {
 		c.JSON(http.StatusConflict, gin.H{"error": "the join of " + j.Spec.NodeName + " is running"})
 		return
 	}
+	transferred = true
 	c.JSON(http.StatusAccepted, gin.H{"data": j})
 }
 
@@ -277,7 +427,11 @@ func (g *Gateway) handleClearNodeJoin(c *gin.Context) {
 		return
 	}
 	password := []byte(request.Password)
+	sudoPassword := []byte(request.SudoPassword)
+	request.Password = ""
+	request.SudoPassword = ""
 	defer clear(password)
+	defer clear(sudoPassword)
 	ctx := c.Request.Context()
 	client := g.kubeClient.RlinfV1alpha1().NodeJoins()
 	j, err := client.Get(ctx, c.Param("name"), metav1.GetOptions{})
@@ -309,7 +463,12 @@ func (g *Gateway) handleClearNodeJoin(c *gin.Context) {
 	case reached(stageInstall):
 		steps, err = g.removeJoinedName(ctx, namespace, j, c.GetString(authSubjectKey))
 	default:
-		steps, err = g.clearUnredeemedJoin(ctx, j, password)
+		steps, err = g.clearUnredeemedJoin(ctx, j, password, sudoPassword)
+	}
+	if err == nil {
+		if err = g.clearNodeJoinMachineAdmission(ctx, j); err == nil && j.Annotations[nodeJoinMachineAnnotation] != "" {
+			steps = append(steps, "cleared the scanned Machine admission")
+		}
 	}
 	if err == nil {
 		if err = client.Delete(ctx, j.Name, metav1.DeleteOptions{}); err == nil || apierrors.IsNotFound(err) {
@@ -326,14 +485,14 @@ func (g *Gateway) handleClearNodeJoin(c *gin.Context) {
 
 // clearUnredeemedJoin takes away what a join left before its code's line ran: the tunnel on the machine, when the
 // password is given, and its declaration of the machine as a hub.
-func (g *Gateway) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.NodeJoin, password []byte) ([]string, error) {
+func (g *Gateway) clearUnredeemedJoin(ctx context.Context, j *rlarkv1alpha1.NodeJoin, password, sudoPassword []byte) ([]string, error) {
 	var steps []string
 	machineTouched := slices.ContainsFunc(j.Status.Stages, func(s rlarkv1alpha1.ClusterProvisionStage) bool {
 		return s.Name == stageTunnel && (s.State == rlarkv1alpha1.ClusterProvisionStageDone || s.State == rlarkv1alpha1.ClusterProvisionStageFailed || s.State == rlarkv1alpha1.ClusterProvisionStageRunning)
 	})
 	switch {
 	case machineTouched && len(password) > 0:
-		machine, _, err := g.provisionDial(ctx, joinMachine(j), password, j.Status.HostKey)
+		machine, _, err := g.dialNodeJoinMachine(ctx, j, password, sudoPassword)
 		if err != nil {
 			return steps, fmt.Errorf("登录 %s@%s：%w", j.Spec.Machine.User, j.Spec.Machine.Address, err)
 		}
