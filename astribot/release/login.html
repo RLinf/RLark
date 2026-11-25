@@ -81,11 +81,19 @@
     document.getElementById("lg").textContent = t.login;
     document.getElementById("show").setAttribute("aria-label", t.show);
   }
-  var next = "/";
-  try {
-    var q = new URLSearchParams(window.location.search).get("next") || "/";
-    if (q.charAt(0) === "/" && q.charAt(1) !== "/") next = q;
-  } catch (e) {}
+  // Where to return to after signing in. A redirect carries the address as the browser wrote it (nginx: next=$request_uri;
+  // the console: encodeURIComponent), always as the last parameter of the query. Only a path of this origin.
+  function readNext() {
+    var search = window.location.search, at = search.indexOf("next="), value;
+    if (at < 0 || (at > 1 && search.charAt(at - 1) !== "&")) return "/";
+    value = search.slice(at + 5);
+    if (/^%2f/i.test(value)) {
+      try { value = decodeURIComponent(value); } catch (e) { return "/"; }
+    }
+    if (value.charAt(0) !== "/" || value.charAt(1) === "/" || value.charAt(1) === "\\") return "/";
+    return value;
+  }
+  var next = readNext();
   var show = document.getElementById("show"), pwd = document.getElementById("password");
   show.addEventListener("click", function () {
     pwd.type = pwd.type === "password" ? "text" : "password";
@@ -121,6 +129,8 @@
           sessionStorage.setItem("rlark-user-name", o.user && o.user.username || "");
         }
       } catch (e) {}
+      // The admin console admits the admin role only.
+      if (!admin && /^\/admin(?:[\/?]|$)/.test(next)) next = "/";
       window.location.replace(next);
     }).catch(function (e) { fail(e.message || t.failed); });
   });

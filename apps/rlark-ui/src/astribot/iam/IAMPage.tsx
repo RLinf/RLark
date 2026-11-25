@@ -5,6 +5,7 @@ import { clearAuthSession, storeAuthSession } from "../../api";
 import { iamText, type IAMMessage } from "./i18n";
 import { initialAuditEvents, initialSessions, initialUsers, type AuditEvent, type IAMRole, type IAMSession, type IAMUser } from "./mockData";
 import { IAMApiError, iamApi, type IAMSessionView } from "./api";
+import { iamPortalEnabled, signOutOfConsole } from "./portal";
 import "./iam.css";
 import astribotDark from "./assets/astribot-logo-dark.png";
 import astribotLight from "./assets/astribot-logo-light.png";
@@ -318,25 +319,18 @@ export function IAMPage({ zh }: { zh: boolean }) {
   };
 
   const signOut = async () => {
+    if (iamPortalEnabled()) {
+      await signOutOfConsole(window.location.pathname);
+      return;
+    }
     if (!isMockMode) {
-      setApiLoading(true);
-      setApiError("");
+      // Without the portal (a development server) there is no sign-in page to
+      // leave for: the session ends and this page asks again.
       try {
         await iamApi.logout();
-      } catch (error) {
-        if (!(error instanceof IAMApiError && error.status === 401)) setApiError(error instanceof Error ? error.message : text(zh, "requestFailed"));
-      } finally {
-        clearAuthSession();
-        setCurrentUserId(null);
-        setCurrentSessionId(null);
-        setTab("users");
-        setLoginName("");
-        setLoginPassword("");
-        setSelectedUserId(null);
-        setSelectedEventId(null);
-        setApiLoading(false);
+      } catch {
+        // The session may already be gone (expired or revoked elsewhere).
       }
-      return;
     }
     if (currentUser) appendEvent("logout", currentUser.username);
     setCurrentUserId(null);
@@ -354,6 +348,8 @@ export function IAMPage({ zh }: { zh: boolean }) {
   const signOutRef = useRef(signOut);
   signOutRef.current = signOut;
   useEffect(() => {
+    // Behind the portal the console itself keeps the native sign-out out (iam/portal.ts).
+    if (iamPortalEnabled()) return;
     const onNativeSignOut = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null;
       const button = target?.closest?.(".account-popover button");

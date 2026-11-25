@@ -5,6 +5,8 @@ ARG BASE_IMAGE=nginx:1.29.1
 # -- Build stage: the console is built from the commit, not from a host's node_modules --
 FROM ${NODE_IMAGE} AS build
 ARG NPM_REGISTRY=https://registry.npmjs.org/
+# The console this image serves sits behind Astribot IAM (apps/rlark-ui/src/astribot/iam/portal.ts).
+ENV VITE_IAM_PORTAL=1
 WORKDIR /src/apps/rlark-ui
 COPY apps/rlark-ui/ ./
 # A context may carry a host's node_modules or dist (the legacy builder ignores rlark-ui.Dockerfile.dockerignore).
