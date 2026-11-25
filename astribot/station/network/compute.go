@@ -165,7 +165,7 @@ type Member struct {
 // that gives NodeConfig a field raises this, the gateway's level and the gate
 // of stage controller in apps/rlark/astribot/release/stages.yaml together, and the
 // gateways are rolled out before the controller that writes the field.
-const DocumentLevel = 2
+const DocumentLevel = 3
 
 // NodeConfig is the document station-gateway reconciles. Field names match
 // astribot/station-gateway.

@@ -370,6 +370,12 @@ func TestDocumentLevelNamesTheDocument(t *testing.T) {
 		}
 	}
 	walk("", reflect.TypeOf(NodeConfig{}))
+	if DocumentLevel >= 3 {
+		// The release-3 discovery fields are serialized by hand (json:"-"),
+		// so the reflection walk cannot see them; they are still part of the
+		// named document at level 3.
+		fields = append(fields, "discovery.includeUnclassified", "discovery.sshPorts")
+	}
 	sort.Strings(fields)
 	if DocumentLevel >= len(levels) || strings.Join(fields, " ") != levels[DocumentLevel] {
 		t.Fatalf("DocumentLevel %d does not name the document: %s", DocumentLevel, strings.Join(fields, " "))
