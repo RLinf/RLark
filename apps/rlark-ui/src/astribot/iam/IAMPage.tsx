@@ -5,7 +5,7 @@ import { clearAuthSession, storeAuthSession } from "../../api";
 import { iamText, type IAMMessage } from "./i18n";
 import { initialAuditEvents, initialSessions, initialUsers, type AuditEvent, type IAMRole, type IAMSession, type IAMUser } from "./mockData";
 import { IAMApiError, iamApi, type IAMSessionView } from "./api";
-import { iamPortalEnabled, signOutOfConsole } from "./portal";
+import { iamPortalEnabled, returnToPortal, signOutOfConsole } from "./portal";
 import "./iam.css";
 import astribotDark from "./assets/astribot-logo-dark.png";
 import astribotLight from "./assets/astribot-logo-light.png";
@@ -70,6 +70,7 @@ export function IAMPage({ zh }: { zh: boolean }) {
   const [loginError, setLoginError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [apiLoading, setApiLoading] = useState(false);
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [apiError, setApiError] = useState("");
   const [userQuery, setUserQuery] = useState("");
   const [userRole, setUserRole] = useState<"" | IAMRole>("");
@@ -105,6 +106,10 @@ export function IAMPage({ zh }: { zh: boolean }) {
 
   const handleApiError = (error: unknown) => {
     if (error instanceof IAMApiError && error.status === 401) {
+      if (iamPortalEnabled()) {
+        void returnToPortal(window.location.pathname + window.location.search);
+        return;
+      }
       const hadSession = Boolean(sessionStorage.getItem("rlark-auth-token"));
       clearAuthSession();
       setCurrentUserId(null);
@@ -142,6 +147,7 @@ export function IAMPage({ zh }: { zh: boolean }) {
         if (!cancelled) handleApiError(error);
       } finally {
         if (!cancelled) setApiLoading(false);
+        if (!cancelled) setSessionChecked(true);
       }
     })();
     return () => { cancelled = true; };
@@ -324,13 +330,24 @@ export function IAMPage({ zh }: { zh: boolean }) {
       return;
     }
     if (!isMockMode) {
-      // Without the portal (a development server) there is no sign-in page to
-      // leave for: the session ends and this page asks again.
+      setApiLoading(true);
+      setApiError("");
       try {
         await iamApi.logout();
-      } catch {
-        // The session may already be gone (expired or revoked elsewhere).
+      } catch (error) {
+        if (!(error instanceof IAMApiError && error.status === 401)) setApiError(error instanceof Error ? error.message : text(zh, "requestFailed"));
+      } finally {
+        clearAuthSession();
+        setCurrentUserId(null);
+        setCurrentSessionId(null);
+        setTab("users");
+        setLoginName("");
+        setLoginPassword("");
+        setSelectedUserId(null);
+        setSelectedEventId(null);
+        setApiLoading(false);
       }
+      return;
     }
     if (currentUser) appendEvent("logout", currentUser.username);
     setCurrentUserId(null);
@@ -528,6 +545,10 @@ export function IAMPage({ zh }: { zh: boolean }) {
       try {
         await iamApi.changePassword({ currentPassword: profileCurrent, newPassword: profileNew });
         setProfileCurrent(""); setProfileNew(""); setProfileConfirm("");
+        if (iamPortalEnabled()) {
+          void signOutOfConsole("/admin/iam");
+          return;
+        }
         notify(text(zh, "passwordUpdated"));
         setLoginName(currentUser.username);
         clearAuthSession();
@@ -875,7 +896,7 @@ export function IAMPage({ zh }: { zh: boolean }) {
     </div>;
   };
 
-  if (!currentUser) return <div className="iam-page">{renderLogin()}{!isMockMode && apiLoading && <div className="iam-visually-hidden" role="status">{text(zh, "checkingSession")}</div>}{toast && <div className="iam-toast" role="status" aria-live="polite">{toast}</div>}</div>;
+  if (!currentUser) return <div className="iam-page">{!isMockMode && !sessionChecked ? <div className="iam-state" role="status">{text(zh, "checkingSession")}</div> : renderLogin()}{toast && <div className="iam-toast" role="status" aria-live="polite">{toast}</div>}</div>;
 
   const pageContent = tab === "users" ? renderUsers() : tab === "roles" ? renderRoles() : tab === "audit" ? renderAudit() : renderProfile();
   return <div className="iam-page">

@@ -5,6 +5,7 @@ const sessionPath = "/api/iam/session";
 const logoutPath = "/api/iam/logout";
 const signOutLabel = /退出|sign\s*out|log\s*out/i;
 const requestTimeoutMs = 5000;
+const broadcastName = "astribot-iam";
 
 interface PortalSession {
   token?: unknown;
@@ -12,28 +13,27 @@ interface PortalSession {
   user?: { username?: unknown };
 }
 
-/** An event heard before the console's own handlers, and kept from them on demand. */
 export interface InterceptedEvent {
   target: unknown;
+  persisted?: boolean;
   preventDefault(): void;
   stopPropagation(): void;
   stopImmediatePropagation(): void;
 }
 
-/** What the portal needs from the page; iamPortal() binds the console's own. */
 export interface PortalHost {
   location: { pathname: string; search: string; replace(url: string): void };
   fetch(input: string, init: RequestInit): Promise<Response>;
   intercept(type: string, listener: (event: InterceptedEvent) => void): void;
-  /** Stops showing the console: what it renders while it leaves must not be seen. */
-  hide(): void;
-  /** Calls back once the native sign-in page has been brought up by anything else. */
+  cover(message: string): void;
   onNativeSignIn(callback: () => void): void;
+  onPageShow(callback: (persisted: boolean) => void): void;
+  onLogoutBroadcast(callback: () => void): void;
+  broadcastLogout(): void;
 }
 
 export type IamPortal = ReturnType<typeof createIamPortal>;
 
-/** The portal's sign-in page, returning to `path` afterwards. */
 export function portalPath(path: string): string {
   return `/login?next=${encodeURIComponent(path)}`;
 }
@@ -58,60 +58,105 @@ function storeSession(session: PortalSession): void {
   sessionStorage.setItem(admin ? "rlark-admin-user-name" : "rlark-user-name", session.user?.username as string);
 }
 
-/**
- * Behind Astribot IAM the console has no sign-in of its own: the session is
- * IAM's cookie, the native sign-in page has no credentials that work, and
- * every way out of the console leads to the portal (/login).
- */
+function requestSignal(): { signal: AbortSignal; dispose(): void } {
+  if (typeof AbortSignal.timeout === "function") {
+    return { signal: AbortSignal.timeout(requestTimeoutMs), dispose: () => {} };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+  return { signal: controller.signal, dispose: () => clearTimeout(timer) };
+}
+
+function leaveMessage(destination: "portal" | "console" | "sign-out"): string {
+  const language = typeof navigator === "undefined" ? "en" : navigator.language;
+  const zh = language.toLowerCase().startsWith("zh");
+  if (destination === "sign-out") return zh ? "正在退出登录…" : "Signing out…";
+  if (destination === "console") return zh ? "正在前往控制台…" : "Opening the console…";
+  return zh ? "正在前往登录页…" : "Redirecting to sign in…";
+}
+
 export function createIamPortal(host: PortalHost) {
   const parked = new Promise<void>(() => {});
+  let leaving = false;
 
-  function leave(path: string): Promise<void> {
-    host.hide();
+  function beginDeparture(message: string): boolean {
+    if (leaving) return false;
+    leaving = true;
+    host.cover(message);
+    return true;
+  }
+
+  function leave(path: string, broadcast = false): Promise<void> {
+    if (!beginDeparture(leaveMessage("portal"))) return parked;
+    clearAuthSession();
+    if (broadcast) host.broadcastLogout();
     host.location.replace(portalPath(path));
     return parked;
   }
 
-  // The cookie outlives the tab's sessionStorage: a new tab or a bookmark
-  // starts with the session but without the token the console calls the API with.
-  async function restore(): Promise<void> {
-    let session: PortalSession | null = null;
+  async function syncSession(): Promise<void> {
+    const existingToken = sessionStorage.getItem(tokenKey);
+    const timeout = requestSignal();
+    let response: Response;
     try {
-      const response = await host.fetch(sessionPath, {
+      response = await host.fetch(sessionPath, {
         credentials: "same-origin",
         cache: "no-store",
         headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(requestTimeoutMs),
+        signal: timeout.signal,
       });
-      if (response.ok) session = (await response.json()) as PortalSession;
     } catch {
-      // No session, or IAM out of reach: the portal says which.
+      if (leaving) return;
+      if (!existingToken) await leave(consolePath(host));
+      return;
+    } finally {
+      timeout.dispose();
     }
-    const token = session?.token;
-    if (typeof token === "string" && token && typeof session?.user?.username === "string") {
-      storeSession({ token, role: session?.role, user: session?.user });
+
+    if (leaving) return;
+    if (response.status === 401) {
+      await leave(consolePath(host));
       return;
     }
-    await leave(consolePath(host));
+    if (!response.ok) {
+      if (!existingToken) await leave(consolePath(host));
+      return;
+    }
+
+    let session: PortalSession;
+    try {
+      session = (await response.json()) as PortalSession;
+    } catch {
+      if (!existingToken) await leave(consolePath(host));
+      return;
+    }
+    if (typeof session.token === "string" && session.token && typeof session.user?.username === "string") {
+      storeSession(session);
+      return;
+    }
+    if (!existingToken) await leave(consolePath(host));
   }
 
   async function signOut(path: string): Promise<void> {
-    host.hide();
+    if (!beginDeparture(leaveMessage("sign-out"))) return;
     const token = sessionStorage.getItem(tokenKey);
+    const timeout = requestSignal();
     try {
       await host.fetch(logoutPath, {
         method: "POST",
         credentials: "same-origin",
         cache: "no-store",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
-        signal: AbortSignal.timeout(requestTimeoutMs),
+        signal: timeout.signal,
       });
     } catch {
-      // The session may be gone already, or IAM out of reach: the person
-      // leaves for the portal either way.
+      // Navigation still clears the browser session when IAM cannot confirm logout.
+    } finally {
+      timeout.dispose();
+      clearAuthSession();
+      host.broadcastLogout();
+      host.location.replace(portalPath(path));
     }
-    clearAuthSession();
-    host.location.replace(portalPath(path));
   }
 
   function keepNativeSignInOut(): void {
@@ -124,39 +169,65 @@ export function createIamPortal(host: PortalHost) {
     });
     host.intercept(UNAUTHORIZED_EVENT, (event) => {
       event.stopImmediatePropagation();
-      clearAuthSession();
       void leave(consolePath(host));
     });
     host.onNativeSignIn(() => {
-      // A session of the other role asked for this console: it goes to the one it is for.
       if (sessionStorage.getItem(tokenKey)) {
-        host.hide();
+        if (!beginDeparture(leaveMessage("console"))) return;
         host.location.replace("/");
         return;
       }
       void leave(consolePath(host));
     });
+    host.onPageShow((persisted) => {
+      if (persisted && !leaving) void syncSession();
+    });
+    host.onLogoutBroadcast(() => void leave(consolePath(host)));
   }
 
   return {
     signOut,
-    /** Resolves once the console may render as the signed-in session; never resolves when it leaves for the portal. */
+    returnToPortal(path: string): Promise<void> {
+      return leave(path);
+    },
     enter(): Promise<void> {
       keepNativeSignInOut();
-      return sessionStorage.getItem(tokenKey) ? Promise.resolve() : restore();
+      return syncSession();
     },
   };
 }
 
 function browserHost(): PortalHost {
+  let channel: BroadcastChannel | undefined;
+  try {
+    if (typeof BroadcastChannel !== "undefined") channel = new BroadcastChannel(broadcastName);
+  } catch {
+    channel = undefined;
+  }
   return {
     location: window.location,
     fetch: (input, init) => fetch(input, init),
-    intercept: (type, listener) =>
-      window.addEventListener(type, listener as EventListener, true),
-    hide: () => {
-      const root = document.getElementById("root");
-      if (root) root.style.display = "none";
+    intercept: (type, listener) => window.addEventListener(type, listener as EventListener, true),
+    cover: (message) => {
+      let cover = document.getElementById("iam-portal-leaving");
+      if (!cover) {
+        cover = document.createElement("div");
+        cover.id = "iam-portal-leaving";
+        cover.setAttribute("role", "status");
+        Object.assign(cover.style, {
+          position: "fixed",
+          inset: "0",
+          zIndex: "2147483647",
+          display: "grid",
+          placeItems: "center",
+          background: "#f6f4fc",
+          color: "#403773",
+          font: "500 15px/1.5 system-ui, sans-serif",
+          pointerEvents: "auto",
+        });
+        document.body.append(cover);
+      }
+      cover.textContent = message;
     },
     onNativeSignIn: (callback) => {
       const root = document.getElementById("root");
@@ -172,13 +243,19 @@ function browserHost(): PortalHost {
         }
       }).observe(root, { childList: true, subtree: true });
     },
+    onPageShow: (callback) => window.addEventListener("pageshow", (event) => callback((event as PageTransitionEvent).persisted)),
+    onLogoutBroadcast: (callback) => {
+      if (channel) channel.onmessage = (event) => {
+        if (event.data === "logout") callback();
+      };
+    },
+    broadcastLogout: () => channel?.postMessage("logout"),
   };
 }
 
 const buildEnv: Record<string, string | undefined> = import.meta.env ?? {};
 let portal: IamPortal | undefined;
 
-/** True of the console built for the portal (astribot/release/rlark-ui.Dockerfile). */
 export function iamPortalEnabled(): boolean {
   return buildEnv.VITE_IAM_PORTAL === "1";
 }
@@ -188,15 +265,14 @@ function iamPortal(): IamPortal {
   return portal;
 }
 
-/**
- * Called before the console's first render. Resolves once the console may
- * render as the signed-in session; never resolves when it leaves for the portal.
- */
 export function enterIamPortal(): Promise<void> {
   return iamPortalEnabled() ? iamPortal().enter() : Promise.resolve();
 }
 
-/** Signs the person out of IAM and leaves for the portal, which returns to `path` after the next sign-in. */
 export function signOutOfConsole(path: string): Promise<void> {
   return iamPortalEnabled() ? iamPortal().signOut(path) : Promise.resolve();
+}
+
+export function returnToPortal(path: string): Promise<void> {
+  return iamPortalEnabled() ? iamPortal().returnToPortal(path) : Promise.resolve();
 }
