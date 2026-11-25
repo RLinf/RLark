@@ -16,8 +16,6 @@ import {
   robotSelfCheckState, type NodeAdmission, type RobotPowerAction, type SiteNode,
 } from "../lib/siteNodeDisplay";
 import { CopyValue, DetailField, NetworkBadge } from "./StationFields";
-import { hardwareForNode } from "../lib/mockNodeHardware";
-import { NodeHardware } from "./NodeHardware";
 
 export interface StationPower {
   pending: boolean;
@@ -29,7 +27,7 @@ export interface StationPower {
 // above it. All facts that the card already shows stay on the card; this panel adds the rest.
 export function StationDetailPanel({
   station, cluster, siteNode, admission, hasNode, labels, powerNote, siteDataState, refreshError, now, zh,
-  power, deleting, admissionPending, onClose, onDelete, onReissue, onRevoke, onRefresh, onZoom,
+  power, deleting, admissionPending, onDismiss, onDelete, onReissue, onRevoke, onRefresh, onZoom, cameraActive = true,
 }: {
   station: StationItem;
   cluster?: ClusterSummary;
@@ -45,12 +43,15 @@ export function StationDetailPanel({
   power: StationPower;
   deleting: boolean;
   admissionPending: "reissue" | "revoke" | "";
-  onClose: () => void;
+  // Present only inside the detail dialog: the panel then renders the dialog's close button in its action row.
+  onDismiss?: () => void;
   onDelete: () => void;
   onReissue: () => void;
   onRevoke: () => void;
   onRefresh: () => void;
   onZoom: (view: CameraView, trigger: HTMLElement) => void;
+  // False while the camera zoom dialog owns the picture: the wall pauses its loops and resumes on return.
+  cameraActive?: boolean;
 }) {
   const phase = stationPhase(station);
   const retired = phase === "Retired";
@@ -72,7 +73,6 @@ export function StationDetailPanel({
   const cameraList = cameraCells(publishedCameras(siteNode?.cameras), zh, siteDataState !== "unavailable");
   const cameraIssues = robot ? cameraList.filter((cell) => cell.present !== false && (cell.tone === "failed" || cell.tone === "pending" || Boolean(cell.note) || Boolean(cell.advice))) : [];
   const conflictUID = station.status?.observation?.nodeUID;
-  const hardware = hardwareForNode(cluster?.name, station.metadata.name);
 
   useEffect(() => {
     // Keep the keyboard focus inside the panel, but do not scroll: opening a detail must leave the card row
@@ -81,9 +81,9 @@ export function StationDetailPanel({
   }, []);
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key !== "Escape") return;
+    if (event.key !== "Escape" || !onDismiss) return;
     event.preventDefault();
-    onClose();
+    onDismiss();
   };
 
   const reissueDisabled = !cluster || admissionPending === "reissue" || deleting;
@@ -110,6 +110,7 @@ export function StationDetailPanel({
           <button type="button" className="secondary-button" disabled={reissueDisabled} aria-describedby={reissueReason ? `${detailsID}-reissue-reason` : undefined} onClick={onReissue}>{admissionPending === "reissue" ? (zh ? "重发中…" : "Reissuing…") : (zh ? "重发入网码" : "Reissue code")}</button>
           <button type="button" className="secondary-button" disabled={revokeDisabled} aria-describedby={revokeReason ? `${detailsID}-revoke-reason` : undefined} onClick={onRevoke}>{admissionPending === "revoke" ? (zh ? "作废中…" : "Revoking…") : (zh ? "作废入网码" : "Revoke code")}</button>
           <button type="button" className="secondary-button danger" disabled={deleteDisabled} aria-describedby={deleteReason ? deleteReasonID : undefined} onClick={onDelete}>{deleting ? (zh ? "删除中…" : "Deleting…") : (zh ? "删除记录" : "Delete record")}</button>
+          {onDismiss && <button type="button" className="secondary-button station-detail-dismiss" onClick={onDismiss} aria-label={zh ? "关闭详情" : "Close details"} title={zh ? "关闭详情" : "Close details"}>×</button>}
         </div>
         {reissueReason && <small id={`${detailsID}-reissue-reason`} className="station-detail-reason">{reissueReason}</small>}
         {revokeReason && <small id={`${detailsID}-revoke-reason`} className="station-detail-reason">{revokeReason}</small>}
@@ -178,8 +179,6 @@ export function StationDetailPanel({
       </section>
     </div>
 
-    {hardware && <NodeHardware snapshot={hardware} zh={zh} />}
-
     {robot && <section className="station-detail-robot" aria-label={zh ? "机器人" : "Robot"}>
       <div className="station-detail-robot-head">
         <h4><Power size={14} aria-hidden="true" />{zh ? "机器人电源" : "Robot power"}</h4>
@@ -196,7 +195,7 @@ export function StationDetailPanel({
       </div>
       {powerNote && <p className="station-detail-power-note"><strong>{zh ? "电源服务：" : "Power service: "}</strong>{powerNote}</p>}
       <details className="station-detail-rules"><summary>{zh ? "电源与维护规则" : "Power and maintenance rules"}</summary><p>{zh ? "期望状态保存在节点上；该上电没电或该运行的驱动停止时会自动恢复。急停或硬件故障时不会重拉。机器人正在使用时，下电会等它空闲。" : "The desired state stays on the Node and is reconciled when power or the driver is unexpectedly lost. It is not restored during an emergency stop or hardware fault. Power-off waits until the robot is idle."}</p></details>
-      <NodeCameras node={station.metadata.name} namespace={station.metadata.namespace} labels={labels} published={siteNode?.cameras} zh={zh} heading={zh ? "实时相机" : "Live cameras"} onOpen={onZoom} />
+      <NodeCameras node={station.metadata.name} namespace={station.metadata.namespace} labels={labels} published={siteNode?.cameras} zh={zh} heading={zh ? "实时相机" : "Live cameras"} onOpen={onZoom} active={cameraActive} />
     </section>}
   </section>;
 }

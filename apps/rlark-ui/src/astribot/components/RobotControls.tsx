@@ -8,6 +8,47 @@ import { controlledRobot, robotPoseRefusalLabel, robotPowerState, type Controlle
 import { useRobotPower, type RobotPower } from "./useRobotPower";
 import "./robotControls.css";
 
+const HOLD_PERIOD_MS = 200;
+const HOLD_TIMEOUT_MS = 1500;
+const STOP_TIMEOUT_MS = 6000;
+// One bounded wait for an in-flight hold before the stop is sent; past it the stop goes out anyway and the
+// outcome is reported as unknown rather than pretending the pose settled.
+const LAST_HOLD_WAIT_MS = 3000;
+
+export type PoseReleaseState = "released" | "release-failed" | "release-unknown";
+
+interface PoseSession {
+  keys: Set<string>;
+  state: "holding" | "releasing";
+  release: () => void;
+  done: Promise<PoseReleaseState>;
+}
+
+// Cross-component release sessions: a hold started on a tile, in the detail dialog or from the bulk bar shares
+// this registry, so closing a dialog or pressing a power button releases the pose exactly once, and a new hold
+// for the same robots waits until the previous stop has settled (or timed out) instead of racing it.
+const sessions = new Map<string, PoseSession>();
+
+const sessionKeys = (robots: ControlledRobot[]) => robots.map((robot) => `${robot.namespace}/${robot.node}`).sort();
+
+const shares = (a: Set<string>, b: Set<string>) => [...a].some((key) => b.has(key));
+
+// Releases any live session that involves these robots, bounded, and reports the outcome. Safe to call when
+// nothing is held. The power controls call this before their confirmation so the machine is not moving while
+// the browser blocks the event loop on window.confirm.
+export async function releasePoseSessions(robots: ControlledRobot[]): Promise<PoseReleaseState> {
+  const keys = new Set(sessionKeys(robots));
+  const live = [...sessions.values()].filter((session) => shares(session.keys, keys));
+  if (!live.length) return "released";
+  const outcomes = await Promise.all(live.map((session) => session.done));
+  return outcomes.includes("release-failed") ? "release-failed" : outcomes.includes("release-unknown") ? "release-unknown" : "released";
+}
+
+export function poseSessionBusy(robots: ControlledRobot[]): boolean {
+  const keys = new Set(sessionKeys(robots));
+  return [...sessions.values()].some((session) => shares(session.keys, keys));
+}
+
 const poseFailure = (robot: ControlledRobot, reason: unknown, zh: boolean) => {
   const refusal = reason instanceof ApiError && reason.status === 409 ? (reason.body as RobotPoseRefusal | undefined) : undefined;
   return `${robot.node}: ${refusal?.reason ? robotPoseRefusalLabel(refusal.reason, zh) : (reason as Error).message}`;
@@ -18,9 +59,10 @@ const poseFailure = (robot: ControlledRobot, reason: unknown, zh: boolean) => {
 // the button or the window sends stop. A refusal or failure of any robot stops them all.
 export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh: boolean }) {
   const [moving, setMoving] = useState(false);
+  const [releasing, setReleasing] = useState(false);
   const [message, setMessage] = useState("");
   const [hint, setHint] = useState("");
-  const held = useRef<{ robots: ControlledRobot[]; at: number; timer: number; busy: boolean; last: Promise<unknown> } | null>(null);
+  const held = useRef<{ session: PoseSession; at: number; timer: number; busy: boolean; last: Promise<unknown> } | null>(null);
   const failed = useRef(false);
   const ready = robots.length > 0 && robots.every((robot) => robotPowerState(robot.labels) === "ready");
   const blocked = robots.find((robot) => robotPowerState(robot.labels) !== "ready");
@@ -41,31 +83,46 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
   const blockedHint = unavailable ? (zh ? `回位不可用：${unavailable}` : `Home pose unavailable: ${unavailable}`) : "";
 
   const send = async (action: "hold" | "stop", targets: ControlledRobot[]) => (await Promise.all(targets.map((robot) =>
-    stationsApi.robotPose(robot.node, robot.namespace, action).then(() => "", (reason) => poseFailure(robot, reason, zh))))).filter(Boolean);
+    stationsApi.robotPose(robot.node, robot.namespace, action, "home", AbortSignal.timeout(action === "stop" ? STOP_TIMEOUT_MS : HOLD_TIMEOUT_MS)).then(() => "", (reason) => poseFailure(robot, reason, zh))))).filter(Boolean);
 
   const release = () => {
     const hold = held.current;
-    if (!hold) return;
+    if (!hold || hold.session.state !== "holding") return;
     held.current = null;
-    window.clearInterval(hold.timer);
+    hold.session.state = "releasing";
     setMoving(false);
+    setReleasing(true);
+    window.clearInterval(hold.timer);
     const heldFor = performance.now() - hold.at;
-    void hold.last.then(() => send("stop", hold.robots)).then((failures) => {
-      if (failures.length) {
-        setMessage(failures.join("; "));
-        return;
-      }
-      if (failed.current) return;
-      setHint(heldFor < 400
-        ? (zh ? "按住不放才会移动，松开即停。" : "Hold the button to move; release to stop.")
-        : (zh ? "已停止。" : "Stopped."));
-    });
+    const session = hold.session;
+    // The stop goes out even if the last hold is still in flight: a bounded wait, then stop regardless, with the
+    // outcome honest about what was proven. UI closing does not wait for this promise.
+    session.done = Promise.race([hold.last, new Promise((resolve) => window.setTimeout(resolve, LAST_HOLD_WAIT_MS))])
+      .then(() => send("stop", robots))
+      .then((failures): PoseReleaseState => {
+        if (failures.length) {
+          setMessage(failures.join("; "));
+          return "release-failed";
+        }
+        if (!failed.current) setHint(heldFor < 400
+          ? (zh ? "按住不放才会移动，松开即停。" : "Hold the button to move; let go to stop.")
+          : (zh ? "已停止。" : "Stopped."));
+        return "released";
+      })
+      .catch((): PoseReleaseState => {
+        setMessage(zh ? "停止请求没有收到结果；机器人会在最后一次 hold 约 0.5 秒后自行停止。" : "The stop request had no result; the robot stops by itself about 0.5 s after the last hold.");
+        return "release-unknown";
+      })
+      .finally(() => {
+        sessions.delete([...session.keys].join("|"));
+        setReleasing(false);
+      });
   };
   const tick = () => {
     const hold = held.current!;
     if (hold.busy) return;
     hold.busy = true;
-    hold.last = send("hold", hold.robots).then((failures) => {
+    hold.last = send("hold", robots).then((failures) => {
       hold.busy = false;
       if (failures.length && held.current === hold) {
         failed.current = true;
@@ -75,14 +132,17 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
     });
   };
   const press = () => {
-    if (held.current || !ready) return;
+    if (held.current || !ready || poseSessionBusy(robots)) return;
     setMessage("");
     setHint("");
     failed.current = false;
     setMoving(true);
-    held.current = { robots, at: performance.now(), timer: 0, busy: false, last: Promise.resolve() };
+    const session: PoseSession = { keys: new Set(sessionKeys(robots)), state: "holding", release: () => {}, done: Promise.resolve("released") };
+    session.release = release;
+    sessions.set([...session.keys].join("|"), session);
+    held.current = { session, at: performance.now(), timer: 0, busy: false, last: Promise.resolve() };
     tick();
-    held.current.timer = window.setInterval(tick, 200);
+    held.current.timer = window.setInterval(tick, HOLD_PERIOD_MS);
   };
 
   // Let go anywhere, the window losing focus, the page going away or a robot no longer ready ends the hold.
@@ -106,7 +166,7 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
   return <>
     <button
       type="button"
-      className={`secondary-button robot-pose-button${moving ? " is-moving" : ""}`}
+      className={`secondary-button robot-pose-button${moving ? " is-moving" : ""}${releasing ? " is-releasing" : ""}`}
       disabled={!moving && !ready}
       title={ready
         ? (zh ? "按住移动到初始姿势，松开即停" : "Hold to move to the home pose; let go to stop")
@@ -117,7 +177,7 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
       onPointerCancel={release}
       onContextMenu={(event) => event.preventDefault()}
     >
-      <House size={14} />{moving ? (zh ? "移动中…松开停止" : "Moving… let go to stop") : label}
+      <House size={14} />{moving ? (zh ? "移动中…松开即停" : "Moving… let go to stop") : label}
     </button>
     {!ready && <small className="robot-pose-hint">{blockedHint}</small>}
     {hint && <small className="robot-pose-hint" role="status">{hint}</small>}
@@ -125,8 +185,8 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
   </>;
 }
 
-// The robot buttons of a page: power on and start the driver, stop the driver and power off, and hold-to-move to the
-// home pose, for the chosen robots of those shown. single is a page of one robot: no count of chosen ones.
+// The robot buttons of a page: power on and start the driver, stop the driver and power off, and hold-to-move to
+// the home pose, for the chosen robots of those shown. single is a page of one robot: no count of chosen ones.
 export function RobotControls({ robots, chosen, power, zh, single = false, showMessage = true }: {
   robots: ControlledRobot[];
   chosen: ControlledRobot[];
@@ -135,14 +195,18 @@ export function RobotControls({ robots, chosen, power, zh, single = false, showM
   single?: boolean;
   showMessage?: boolean;
 }) {
-  const press = (desired: RobotPowerDesired, label: string) =>
+  const press = async (desired: RobotPowerDesired, label: string) => {
+    // The machine must not be moving while the browser blocks on the confirmation: release first, bounded, then
+    // let useRobotPower run its confirm and requests.
+    await releasePoseSessions(chosen);
     void power.set(chosen.map((robot) => ({ node: robot.node, namespace: robot.namespace, desired })), label);
+  };
   return (
     <div className="robot-controls" role="group" aria-label={zh ? "机器人控制" : "Robot controls"}>
       <Power size={14} />
       <span>{single ? (zh ? "机器人" : "Robot") : (zh ? `机器人：已选 ${chosen.length} / ${robots.length} 台` : `Robots: ${chosen.length} of ${robots.length} chosen`)}</span>
-      <button type="button" className="secondary-button" disabled={power.pending || chosen.length === 0} onClick={() => press("ready", zh ? "上电并启动驱动" : "Power on and start driver")}>{zh ? "上电并启动驱动" : "Power on and start driver"}</button>
-      <button type="button" className="secondary-button" disabled={power.pending || chosen.length === 0} onClick={() => press("off", zh ? "关闭驱动并下电" : "Stop driver and power off")}>{zh ? "关闭驱动并下电" : "Stop driver and power off"}</button>
+      <button type="button" className="secondary-button" disabled={power.pending || chosen.length === 0} onClick={() => void press("ready", zh ? "上电并启动驱动" : "Power on and start driver")}>{zh ? "上电并启动驱动" : "Power on and start driver"}</button>
+      <button type="button" className="secondary-button" disabled={power.pending || chosen.length === 0} onClick={() => void press("off", zh ? "关闭驱动并下电" : "Stop driver and power off")}>{zh ? "关闭驱动并下电" : "Stop driver and power off"}</button>
       <RobotPoseButton robots={chosen} zh={zh} />
       {showMessage && power.message && <small role="status">{power.message}</small>}
     </div>
