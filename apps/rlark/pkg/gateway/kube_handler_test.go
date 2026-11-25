@@ -22,6 +22,26 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
+func TestGatewayNodeMatchesSelectorUsesAnnotations(t *testing.T) {
+	node := &rlarkiov1alpha1.Node{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+			"rlark.io/node-category-cloud": "true",
+		}},
+		Status: rlarkiov1alpha1.NodeStatus{
+			ObservedNodeLabels: map[string]string{"rlark.io/gpu-model": "A100"},
+		},
+	}
+	if !gatewayNodeMatchesSelector(node, map[string]string{
+		"rlark.io/node-category-cloud": "true",
+		"rlark.io/gpu-model":           "A100",
+	}) {
+		t.Fatal("expected selector to match the observed label and managed annotation")
+	}
+	if gatewayNodeMatchesSelector(node, map[string]string{"rlark.io/node-category-cloud": "false"}) {
+		t.Fatal("expected selector with a different annotation value not to match")
+	}
+}
+
 func TestValidateTaskCreateNamespaceRejectsIneligibleClusters(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
@@ -35,8 +55,10 @@ func TestValidateTaskCreateNamespaceRejectsIneligibleClusters(t *testing.T) {
 			tt.cluster.Name = "cluster"
 			tt.cluster.Spec.AgentNamespace = "agent"
 			g := &Gateway{kubeClient: clientset.NewSimpleClientset(&tt.cluster)}
-			if err := g.validateTaskCreateNamespace(context.Background(), "agent"); err == nil {
+			if err := g.validateTaskCreateNamespace(context.Background(), "agent", languageEnglish); err == nil {
 				t.Fatal("expected Task create rejection")
+			} else if err.Error() != `cluster "cluster" does not accept new tasks` {
+				t.Fatalf("message = %q, want the English wording only", err.Error())
 			}
 		})
 	}
@@ -48,7 +70,7 @@ func TestValidateTaskCreateNamespaceAllowsEligibleCluster(t *testing.T) {
 		Spec:       rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent"},
 	}
 	g := &Gateway{kubeClient: clientset.NewSimpleClientset(cluster)}
-	if err := g.validateTaskCreateNamespace(context.Background(), "agent"); err != nil {
+	if err := g.validateTaskCreateNamespace(context.Background(), "agent", languageChinese); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -84,6 +106,131 @@ func TestTaskCreateRejectsIneligibleClusterButExistingTaskWritesAreAllowed(t *te
 			switch tt.method {
 			case http.MethodPost:
 				g.handleKubeCreate("tasks")(ctx)
+			case http.MethodPut:
+				g.handleKubeUpdate("tasks")(ctx)
+			case http.MethodPatch:
+				g.handleKubePatch("tasks")(ctx)
+			}
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", recorder.Code, tt.wantStatus, recorder.Body.String())
+			}
+			if tt.wantStatus == http.StatusConflict {
+				var response ErrorResponse
+				if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				if response.Code != CodeResourceConflict {
+					t.Fatalf("code = %q, want %q", response.Code, CodeResourceConflict)
+				}
+			}
+		})
+	}
+}
+
+func TestTaskUnsuspendRejectedOnIneligibleCluster(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		method      string
+		body        string
+		clusterSpec rlarkiov1alpha1.ClusterSpec
+		taskSpec    rlarkiov1alpha1.TaskSpec
+		wantStatus  int
+	}{
+		{
+			name:        "update unsuspend on cordoned cluster rejected",
+			method:      http.MethodPut,
+			body:        `{"metadata":{"name":"task","namespace":"agent"},"spec":{"suspended":false}}`,
+			clusterSpec: rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent", Cordoned: true},
+			taskSpec:    rlarkiov1alpha1.TaskSpec{Suspended: true},
+			wantStatus:  http.StatusConflict,
+		},
+		{
+			name:        "update unsuspend on draining cluster rejected",
+			method:      http.MethodPut,
+			body:        `{"metadata":{"name":"task","namespace":"agent"},"spec":{"suspended":false}}`,
+			clusterSpec: rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent", Draining: true},
+			taskSpec:    rlarkiov1alpha1.TaskSpec{Suspended: true},
+			wantStatus:  http.StatusConflict,
+		},
+		{
+			name:        "update unsuspend on delisted cluster rejected",
+			method:      http.MethodPut,
+			body:        `{"metadata":{"name":"task","namespace":"agent"},"spec":{"suspended":false}}`,
+			clusterSpec: rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent", Delisted: true},
+			taskSpec:    rlarkiov1alpha1.TaskSpec{Suspended: true},
+			wantStatus:  http.StatusConflict,
+		},
+		{
+			name:        "update unsuspend on eligible cluster allowed",
+			method:      http.MethodPut,
+			body:        `{"metadata":{"name":"task","namespace":"agent"},"spec":{"suspended":false}}`,
+			clusterSpec: rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent"},
+			taskSpec:    rlarkiov1alpha1.TaskSpec{Suspended: true},
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:        "update suspend on cordoned cluster allowed",
+			method:      http.MethodPut,
+			body:        `{"metadata":{"name":"task","namespace":"agent"},"spec":{"suspended":true}}`,
+			clusterSpec: rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent", Cordoned: true},
+			taskSpec:    rlarkiov1alpha1.TaskSpec{Suspended: false},
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:        "update no-op suspended false on cordoned cluster allowed",
+			method:      http.MethodPut,
+			body:        `{"metadata":{"name":"task","namespace":"agent"},"spec":{"suspended":false}}`,
+			clusterSpec: rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent", Cordoned: true},
+			taskSpec:    rlarkiov1alpha1.TaskSpec{Suspended: false},
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:        "patch unsuspend on cordoned cluster rejected",
+			method:      http.MethodPatch,
+			body:        `{"spec":{"suspended":false}}`,
+			clusterSpec: rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent", Cordoned: true},
+			taskSpec:    rlarkiov1alpha1.TaskSpec{Suspended: true},
+			wantStatus:  http.StatusConflict,
+		},
+		{
+			name:        "patch unsuspend on eligible cluster allowed",
+			method:      http.MethodPatch,
+			body:        `{"spec":{"suspended":false}}`,
+			clusterSpec: rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent"},
+			taskSpec:    rlarkiov1alpha1.TaskSpec{Suspended: true},
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:        "patch no-op suspended false on cordoned cluster allowed",
+			method:      http.MethodPatch,
+			body:        `{"spec":{"suspended":false}}`,
+			clusterSpec: rlarkiov1alpha1.ClusterSpec{AgentNamespace: "agent", Cordoned: true},
+			taskSpec:    rlarkiov1alpha1.TaskSpec{Suspended: false},
+			wantStatus:  http.StatusOK,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			client := clientset.NewSimpleClientset(
+				&rlarkiov1alpha1.Cluster{
+					ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+					Spec:       tt.clusterSpec,
+				},
+				&rlarkiov1alpha1.Task{
+					ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "agent"},
+					Spec:       tt.taskSpec,
+				},
+			)
+			g := &Gateway{kubeClient: client, accessors: registerAccessors(client)}
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Params = gin.Params{{Key: "name", Value: "task"}}
+			ctx.Set(authRoleKey, roleAdmin)
+			path := "/tasks/task?namespace=agent"
+			ctx.Request = httptest.NewRequest(tt.method, path, strings.NewReader(tt.body))
+
+			switch tt.method {
 			case http.MethodPut:
 				g.handleKubeUpdate("tasks")(ctx)
 			case http.MethodPatch:

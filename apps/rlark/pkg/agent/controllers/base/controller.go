@@ -1,126 +1,15 @@
 package base
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
-
-// managementTaskNameAnnotation marks K8s workloads (and their pods) that back a
-// management Task. It mirrors task.ManagementTaskNameAnnotation; duplicated here
-// to avoid an import cycle (the task package imports base).
-const managementTaskNameAnnotation = "rlark.io/management-task-name"
-
-// podOwningKind returns the Kubernetes Kind of pod-owning workloads
-// (Deployment/StatefulSet/DaemonSet) for the given push-reconciler object type,
-// or "" if the object is not a pod-owning workload.
-func podOwningKind(obj client.Object) string {
-	switch obj.(type) {
-	case *appsv1.Deployment:
-		return "Deployment"
-	case *appsv1.StatefulSet:
-		return "StatefulSet"
-	case *appsv1.DaemonSet:
-		return "DaemonSet"
-	}
-	return ""
-}
-
-// enqueueOwningWorkload maps a Pod change to the reconcile request of the
-// workload that owns it (Deployment/StatefulSet/DaemonSet). StatefulSet and
-// DaemonSet pods reference their owning workload directly via OwnerReferences;
-// Deployment pods are owned by a ReplicaSet which is in turn owned by the
-// Deployment, so the ReplicaSet is resolved to find the Deployment.
-//
-// Pod container status transitions (e.g. a container entering CrashLoopBackOff)
-// are not reflected in the workload's own status fields (restart counts and
-// waiting reasons live on the Pod, not on the StatefulSet/Deployment status).
-// Without watching Pods, a workload whose status has stabilized — e.g. a
-// StatefulSet whose readyReplicas never reached desired because its pod crashed
-// on the first start — would never be re-reconciled, so the failure stays
-// hidden and the Task status is never updated.
-func enqueueOwningWorkload(localClient client.Client, wantKind string) handler.EventHandler {
-	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
-		pod, ok := obj.(*corev1.Pod)
-		if !ok {
-			return nil
-		}
-		return podOwnerRequests(ctx, localClient, pod, wantKind)
-	})
-}
-
-// podOwnerRequests resolves the workload (of kind wantKind) that owns pod and
-// returns the reconcile request for it. StatefulSet/DaemonSet pods reference
-// their owning workload directly; Deployment pods are owned by a ReplicaSet
-// which is resolved to find the owning Deployment.
-func podOwnerRequests(ctx context.Context, localClient client.Client, pod *corev1.Pod, wantKind string) []reconcile.Request {
-	owner := metav1.GetControllerOf(pod)
-	if owner == nil {
-		return nil
-	}
-	// Direct ownership (StatefulSet/DaemonSet pods).
-	if owner.APIVersion == appsv1.SchemeGroupVersion.String() && owner.Kind == wantKind {
-		workload := workloadForKind(wantKind)
-		if workload == nil || localClient.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: pod.Namespace}, workload) != nil || workload.GetUID() != owner.UID {
-			return nil
-		}
-		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: owner.Name, Namespace: pod.Namespace}}}
-	}
-	// Indirect ownership: Pod -> ReplicaSet -> Deployment.
-	if owner.APIVersion == appsv1.SchemeGroupVersion.String() && owner.Kind == "ReplicaSet" && wantKind == "Deployment" {
-		var rs appsv1.ReplicaSet
-		if err := localClient.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: pod.Namespace}, &rs); err != nil {
-			return nil
-		}
-		if rs.UID != owner.UID {
-			return nil
-		}
-		if depOwner := metav1.GetControllerOf(&rs); depOwner != nil && depOwner.APIVersion == appsv1.SchemeGroupVersion.String() && depOwner.Kind == wantKind {
-			var deploy appsv1.Deployment
-			if err := localClient.Get(ctx, types.NamespacedName{Name: depOwner.Name, Namespace: rs.Namespace}, &deploy); err != nil || deploy.UID != depOwner.UID {
-				return nil
-			}
-			return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: depOwner.Name, Namespace: rs.Namespace}}}
-		}
-	}
-	return nil
-}
-
-func workloadForKind(kind string) client.Object {
-	switch kind {
-	case "Deployment":
-		return &appsv1.Deployment{}
-	case "StatefulSet":
-		return &appsv1.StatefulSet{}
-	case "DaemonSet":
-		return &appsv1.DaemonSet{}
-	default:
-		return nil
-	}
-}
-
-// hasManagementTaskAnnotation is a predicate that only lets through K8s objects
-// carrying the rlark management-task annotation. It restricts the Pod watch to
-// rlark task pods so non-rlark pods in the cluster don't trigger (potentially
-// costly) reconciliation or ReplicaSet lookups.
-func hasManagementTaskAnnotation() predicate.Predicate {
-	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		return obj.GetAnnotations()[managementTaskNameAnnotation] != ""
-	})
-}
 
 // Reconciler reconciles resources.
 type Reconciler interface {
@@ -151,7 +40,7 @@ type Controller struct {
 
 	Image                       string
 	PullMaxConcurrentReconciles int
-	PushMaxConcurrentReconciles map[string]int
+	PushMaxConcurrentReconciles int
 
 	C Reconciler
 }
@@ -187,32 +76,13 @@ func (c *Controller) SetupPushController(mgr any) error {
 			blder := ctrl.NewControllerManagedBy(kubeMgr).
 				For(kubeResource.Type).
 				Named(kubeResource.Name + "-push")
-			if workers := c.PushMaxConcurrentReconciles[kubeResource.Name]; workers > 0 {
+			if workers := c.PushMaxConcurrentReconciles; workers > 0 {
 				blder = blder.WithOptions(controller.Options{MaxConcurrentReconciles: workers})
 			}
 			if provider, ok := c.C.(pushWatchProvider); ok {
 				if eventHandler := provider.PushWatch(kubeResource.Type); eventHandler != nil {
 					blder = blder.Watches(kubeResource.Type, eventHandler)
 				}
-			}
-
-			// For pod-owning workloads (Deployment/StatefulSet/DaemonSet),
-			// also watch Pods so that container status changes — most
-			// importantly a container entering CrashLoopBackOff — re-trigger
-			// reconciliation. The workload's own status does not reflect
-			// per-container waiting/restart state, so without this a pod that
-			// crashes after the workload status stabilized is never detected
-			// and the Task keeps reporting a stale phase.
-			if kind := podOwningKind(kubeResource.Type); kind != "" {
-				localClient := c.LocalKubeCachedClient
-				if localClient == nil {
-					localClient = c.LocalKubeClient
-				}
-				blder = blder.Watches(
-					&corev1.Pod{},
-					enqueueOwningWorkload(localClient, kind),
-					builder.WithPredicates(hasManagementTaskAnnotation()),
-				)
 			}
 
 			if err := blder.Complete(reconciler); err != nil {

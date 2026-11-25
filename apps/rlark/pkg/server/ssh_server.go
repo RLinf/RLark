@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/ssh"
@@ -13,7 +15,8 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 	gossh "golang.org/x/crypto/ssh"
-	"k8s.io/apimachinery/pkg/api/errors"
+	"golang.org/x/time/rate"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
@@ -175,11 +178,92 @@ func (s *Server) channelOption(srv *ssh.Server) error {
 	return nil
 }
 
-func (s *Server) rejectSSHChannel(newChan gossh.NewChannel, message string) {
-	logger := log.GetLogger()
-	if err := newChan.Reject(gossh.Prohibited, message); err != nil {
-		logger.Error(nil, "Cannot reject channel", "err", err)
+func (s *Server) rejectSSHChannel(ctx ssh.Context, newChan gossh.NewChannel, reason, message string) {
+	logger := log.FromContext(ctx)
+	gate := s.sshTargetGate(ctx)
+	code := sshRejectionCode(reason)
+	if gate.rejections.Allow() {
+		logger.Info("SSH channel rejected", "sessionID", ctx.SessionID(), "reason", reason,
+			"code", uint32(code), "pending", len(gate.slots), "waiting", len(gate.waiters), "limit", cap(gate.slots))
 	}
+	if err := newChan.Reject(code, message); err != nil {
+		if gate.rejections.Allow() {
+			logger.Error(err, "Cannot reject SSH channel", "sessionID", ctx.SessionID(), "reason", reason)
+		}
+	}
+}
+
+func sshRejectionCode(reason string) gossh.RejectionReason {
+	switch reason {
+	case "admission_timeout", "admission_queue_full":
+		return gossh.ResourceShortage
+	case "admission_canceled", "upstream_unavailable", "open_canceled", "route_timeout":
+		return gossh.ConnectionFailed
+	default:
+		return gossh.Prohibited
+	}
+}
+
+var errSSHAdmissionQueueFull = errors.New("SSH admission wait queue full")
+
+type sshPendingTargetKey struct{}
+
+type sshTargetGate struct {
+	slots      chan struct{}
+	waiters    chan struct{}
+	rejections *rate.Limiter
+}
+
+func (s *Server) sshTargetGate(ctx ssh.Context) *sshTargetGate {
+	ctx.Lock()
+	defer ctx.Unlock()
+	gate, _ := ctx.Value(sshPendingTargetKey{}).(*sshTargetGate)
+	if gate == nil {
+		gate = &sshTargetGate{
+			slots:      make(chan struct{}, s.config.SSHMaxPendingTargets),
+			waiters:    make(chan struct{}, s.config.SSHMaxPendingTargets),
+			rejections: rate.NewLimiter(rate.Every(time.Second), 5),
+		}
+		ctx.SetValue(sshPendingTargetKey{}, gate)
+	}
+	return gate
+}
+
+// The SSH connection owns its pending-open gate. Established channels do not
+// consume slots. Both waiting time and the number of waiters are bounded;
+// queued callers cannot start a route lookup or dial until admitted.
+func (s *Server) acquireSSHTarget(connCtx ssh.Context, ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	gate := s.sshTargetGate(connCtx)
+	release := sync.OnceFunc(func() { <-gate.slots })
+	select {
+	case gate.slots <- struct{}{}:
+	default:
+		select {
+		case gate.waiters <- struct{}{}:
+		default:
+			return nil, errSSHAdmissionQueueFull
+		}
+		defer func() { <-gate.waiters }()
+		waitCtx, cancel := context.WithTimeout(ctx, s.config.SSHAdmissionWaitTimeout)
+		defer cancel()
+		select {
+		case gate.slots <- struct{}{}:
+			if err := waitCtx.Err(); err != nil {
+				release()
+				return nil, err
+			}
+		case <-waitCtx.Done():
+			return nil, waitCtx.Err()
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
 }
 
 func (s *Server) handleSSHChannel(srv *ssh.Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx ssh.Context) {
@@ -189,13 +273,13 @@ func (s *Server) handleSSHChannel(srv *ssh.Server, conn *gossh.ServerConn, newCh
 	permissions := ctx.Permissions()
 	if permissions == nil || permissions.Permissions == nil {
 		logger.Error(nil, "No permissions found for session", "sessionID", ctx.SessionID())
-		s.rejectSSHChannel(newChan, "No permissions found")
+		s.rejectSSHChannel(ctx, newChan, "missing_permissions", "No permissions found")
 		return
 	}
 	certMeta, ok := cert.GetSSHCertMeta(&gossh.Certificate{Permissions: *permissions.Permissions})
 	if !ok {
 		logger.Error(nil, "No metadata found for session", "sessionID", ctx.SessionID())
-		s.rejectSSHChannel(newChan, "No metadata found in certificate")
+		s.rejectSSHChannel(ctx, newChan, "missing_metadata", "No metadata found in certificate")
 		return
 	}
 
@@ -203,33 +287,66 @@ func (s *Server) handleSSHChannel(srv *ssh.Server, conn *gossh.ServerConn, newCh
 	err := gossh.Unmarshal(newChan.ExtraData(), &payload)
 	if err != nil {
 		logger.Error(nil, "Cannot accept extra data", "sessionID", ctx.SessionID(), "err", err)
-		s.rejectSSHChannel(newChan, fmt.Sprintf("Invalid channel payload: %v", err))
+		s.rejectSSHChannel(ctx, newChan, "invalid_payload", fmt.Sprintf("Invalid channel payload: %v", err))
 		return
 	}
 
 	address := net.JoinHostPort(payload.Host, fmt.Sprint(payload.Port))
-	dialer, target, err := s.GetDial(ctx, "ssh", address, certMeta)
+	// Waiting, authorization, route lookup and upstream dial share this budget.
+	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	release, err := s.acquireSSHTarget(ctx, dialCtx)
+	if err != nil {
+		reason := "admission_timeout"
+		if errors.Is(err, errSSHAdmissionQueueFull) {
+			reason = "admission_queue_full"
+		} else if errors.Is(err, context.Canceled) {
+			reason = "admission_canceled"
+		}
+		s.rejectSSHChannel(ctx, newChan, reason, "Target connection admission unavailable")
+		return
+	}
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
+	dialer, target, err := s.GetDial(dialCtx, "ssh", address, certMeta)
 	if err != nil {
 		logger.Error(nil, "Cannot get dialer", "sessionID", ctx.SessionID(), "err", err)
-		s.rejectSSHChannel(newChan, fmt.Sprintf("Cannot get dialer: %v", err))
+		reason := "route_unavailable"
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+			apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsServiceUnavailable(err) {
+			reason = "route_timeout"
+		}
+		s.rejectSSHChannel(ctx, newChan, reason, fmt.Sprintf("Cannot get dialer: %v", err))
 		return
 	}
 
-	ch, _, err := newChan.Accept()
+	// Complete the upstream Dial before accepting. Legacy RemoteDialer Dial
+	// confirms only a logical stream, not the eventual Agent-side target dial.
+	c, err := dialer(dialCtx, "tcp", target)
 	if err != nil {
-		logger.Error(nil, "Cannot accept channel", "sessionID", ctx.SessionID(), "err", err)
-		s.rejectSSHChannel(newChan, fmt.Sprintf("Failed to accept channel: %v", err))
-		return
-	}
-	defer func() { _ = ch.Close() }()
-
-	c, err := dialer(ctx, "tcp", target)
-	if err != nil {
-		logger.Error(nil, "Cannot dial", "sessionID", ctx.SessionID(), "err", err)
-		s.rejectSSHChannel(newChan, fmt.Sprintf("Failed to connect to target: %v", err))
+		logger.Error(err, "Cannot dial SSH upstream", "sessionID", ctx.SessionID())
+		s.rejectSSHChannel(ctx, newChan, "upstream_unavailable", "Target connection unavailable")
 		return
 	}
 	defer func() { _ = c.Close() }()
+	if dialCtx.Err() != nil {
+		s.rejectSSHChannel(ctx, newChan, "open_canceled", "Target connection unavailable")
+		return
+	}
+	cancel()
+	ch, requests, err := newChan.Accept()
+	if err != nil {
+		logger.Error(err, "Cannot accept channel", "sessionID", ctx.SessionID())
+		return
+	}
+	release()
+	release = nil
+	requestsDone := make(chan struct{})
+	go func() { defer close(requestsDone); gossh.DiscardRequests(requests) }()
+	defer func() { _ = ch.Close(); <-requestsDone }()
 	utils.RelayStreams(ch, c)
 }
 
@@ -262,7 +379,7 @@ func (s *Server) authenticateUserKeyFromSecret(username string, key gossh.Public
 	defer cancel()
 	secret, err := s.kubeClient.CoreV1().Secrets(s.config.KubeClientConfig.DefaultNamespace()).Get(ctx, common.SSHUserKeySecretName, metav1.GetOptions{})
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			return "", nil
 		}
 		return "", err

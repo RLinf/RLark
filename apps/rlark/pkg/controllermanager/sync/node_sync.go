@@ -7,6 +7,7 @@ import (
 	controllerconfig "sigs.k8s.io/controller-runtime/pkg/controller"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
 	"github.com/rlinf/rlark/apps/rlark/pkg/db"
 )
 
@@ -36,7 +37,7 @@ type NodeReconciler struct {
 // +kubebuilder:rbac:groups=rlinf.io,resources=nodes/finalizers,verbs=update
 
 // NewNodeReconciler creates a new NodeReconciler.
-func NewNodeReconciler(maxConcurrentReconciles int, client client.Client, backend persistence.Backend) *NodeReconciler {
+func NewNodeReconciler(maxConcurrentReconciles int, client client.Client, backend persistence.Backend, shell controller.Shell) *NodeReconciler {
 	return &NodeReconciler{
 		maxConcurrentReconciles: maxConcurrentReconciles,
 		genericReconciler: &genericReconciler[*rlarkv1alpha1.Node]{
@@ -44,6 +45,8 @@ func NewNodeReconciler(maxConcurrentReconciles int, client client.Client, backen
 			backend: backend,
 			handler: newNodeSyncHandler(),
 			newObj:  func() *rlarkv1alpha1.Node { return &rlarkv1alpha1.Node{} },
+			kind:    "node-sync",
+			shell:   shell,
 		},
 	}
 }

@@ -1,0 +1,103 @@
+{{- if .Values.etcd.enabled }}
+{{- $replicas := .Values.etcd.replicas | default 1 }}
+{{- $storage := include "rlark-control-plane.storage" (dict "root" . "component" .Values.etcd) | fromYaml }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: etcd
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: etcd
+spec:
+  replicas: {{ $replicas }}
+  serviceName: etcd
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: etcd
+  template:
+    metadata:
+      labels:
+        app: etcd
+    spec:
+      {{- include "rlark-control-plane.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: etcd
+          image: {{ .Values.images.etcd | quote }}
+          imagePullPolicy: {{ include "rlark-control-plane.imagePullPolicy" . }}
+          ports:
+            - containerPort: 2379
+            - containerPort: 2380
+            - containerPort: 8080
+          command:
+            - etcd
+          args:
+            - --name=$(POD_NAME)
+            - --listen-peer-urls=http://0.0.0.0:2380
+            - --listen-client-urls=http://0.0.0.0:2379
+            - --initial-cluster-token=rlark-etcd-cluster
+            - --initial-cluster-state=new
+            - --listen-metrics-urls=http://0.0.0.0:8080
+            - --auto-compaction-mode=periodic
+            - --auto-compaction-retention=1h
+            - --data-dir=/var/run/etcd/default.etcd
+            - --initial-advertise-peer-urls=http://$(POD_NAME).etcd.{{ .Release.Namespace }}.svc:2380
+            - --advertise-client-urls=http://$(POD_NAME).etcd.{{ .Release.Namespace }}.svc:2379
+            {{- $members := list }}
+            {{- range $i := until (int $replicas) }}
+            {{- $members = append $members (printf "etcd-%d=http://etcd-%d.etcd.%s.svc:2380" $i $i $.Release.Namespace) }}
+            {{- end }}
+            - --initial-cluster={{ join "," $members }}
+          env:
+            {{- include "rlark-control-plane.commonEnvs" . | nindent 12 }}
+          {{- if eq $storage.type "pvc" }}
+          volumeMounts:
+            - name: etcd-data
+              mountPath: /var/run/etcd/default.etcd
+          {{- else if eq $storage.type "hostPath" }}
+          volumeMounts:
+            - name: etcd-data
+              mountPath: /var/run/etcd/default.etcd
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 30
+      {{- if eq $storage.type "hostPath" }}
+      volumes:
+        - name: etcd-data
+          hostPath:
+            path: {{ $storage.hostPath }}
+            type: DirectoryOrCreate
+      {{- end }}
+      {{- with $storage.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if eq $storage.type "pvc" }}
+  volumeClaimTemplates:
+    - metadata:
+        name: etcd-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if $storage.storageClass }}
+        storageClassName: {{ $storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $storage.size | default "8Gi" | quote }}
+  {{- end }}
+{{- end }}

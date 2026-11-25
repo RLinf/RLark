@@ -1,6 +1,7 @@
 package types
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
@@ -148,6 +149,7 @@ type DBConfig struct {
 }
 
 // Component describes a deployable component.
+// Runtime dependencies (e.g., Kubernetes clientset) are passed via context.
 type Component struct {
 	Name            string
 	Port            int32
@@ -173,8 +175,9 @@ type Component struct {
 	VolumeFn        func(cfg *DeployConfig) ([]corev1.Volume, []corev1.VolumeMount)
 	VolumeClaimFn   func(cfg *DeployConfig) []corev1.PersistentVolumeClaim
 	ProbeFn         func(cfg *DeployConfig) (*corev1.Probe, *corev1.Probe)
-	HealthCheckFn   func(cfg *DeployConfig) error
-	PostDeployFn    func(cfg *DeployConfig) error
+	// Runtime functions that receive context for dependency injection
+	HealthCheckFn func(ctx context.Context, cfg *DeployConfig) error
+	PostDeployFn  func(ctx context.Context, cfg *DeployConfig) error
 }
 
 // GetName returns the name.
@@ -187,7 +190,8 @@ func (c *Component) GetDependencies() []string {
 	return c.Dependencies
 }
 
-// LoadDeployConfig loads the deployConfig.
+// LoadDeployConfig loads and parses the deployConfig without validating it.
+// The caller must call Validate or ValidateForUpgrade explicitly.
 func LoadDeployConfig(path string) (*DeployConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -197,14 +201,21 @@ func LoadDeployConfig(path string) (*DeployConfig, error) {
 	if err := yaml.UnmarshalStrict(data, &cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal deploy config: %w", err)
 	}
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
 	return &cfg, nil
 }
 
 // Validate validates the configuration.
 func (c *DeployConfig) Validate() error {
+	return c.validate(false)
+}
+
+// ValidateForUpgrade validates only the fields that matter for an upgrade.
+// It skips cert requirements because certs are already present in the cluster.
+func (c *DeployConfig) ValidateForUpgrade() error {
+	return c.validate(true)
+}
+
+func (c *DeployConfig) validate(skipCert bool) error {
 	if c.APIVersion == "" {
 		return fmt.Errorf("apiVersion is required")
 	}
@@ -258,17 +269,19 @@ func (c *DeployConfig) Validate() error {
 	}
 
 	if c.Plane == PlaneData {
-		if c.Cert == nil {
-			return fmt.Errorf("cert is required for data plane")
-		}
-		if c.Cert.CACert == "" {
-			return fmt.Errorf("cert.ca-cert is required for data plane")
-		}
-		if c.Cert.AgentCert == "" {
-			return fmt.Errorf("cert.agent-cert is required for data plane")
-		}
-		if c.Cert.AgentKey == "" {
-			return fmt.Errorf("cert.agent-key is required for data plane")
+		if !skipCert {
+			if c.Cert == nil {
+				return fmt.Errorf("cert is required for data plane")
+			}
+			if c.Cert.CACert == "" {
+				return fmt.Errorf("cert.ca-cert is required for data plane")
+			}
+			if c.Cert.AgentCert == "" {
+				return fmt.Errorf("cert.agent-cert is required for data plane")
+			}
+			if c.Cert.AgentKey == "" {
+				return fmt.Errorf("cert.agent-key is required for data plane")
+			}
 		}
 
 		if c.ControlPlaneAddress == "" {

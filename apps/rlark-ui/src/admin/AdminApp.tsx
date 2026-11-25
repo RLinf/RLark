@@ -19,6 +19,7 @@ import {
 } from "../pages/Storage";
 import { CreateClusterPage } from "./CreateCluster";
 import { AddonsPage } from "./Addons";
+import { UpgradeJobsPage } from "./UpgradeJobs";
 import { AdminPage } from "./AdminPage";
 import { AdminDashboard } from "./AdminDashboard";
 import { Header, Logo, PlatformFooter } from "../components/shared";
@@ -420,6 +421,14 @@ export function AdminApp() {
         {adminPage === "api" && <ApiPage copy={c} />}
         {adminPage === "create-cluster" && <CreateClusterPage lang={lang} />}
         {adminPage === "addons" && <AddonsPage lang={lang} />}
+        {adminPage === "upgrades" && (
+          <UpgradeJobsPage
+            lang={lang}
+            copy={c}
+            selectedJob={adminSub || undefined}
+            onSelectJob={(name?: string) => navigate("upgrades", name)}
+          />
+        )}
         {adminPage === "config" && <SystemConfigPage copy={c} />}
         {adminPage === "storageClass" && adminSub === "create" && (
           <StorageClassCreatePage

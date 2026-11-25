@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  keepPullProgressForImage,
   partitionWorkerEvents,
   refineWorkerEventReason,
   workerEventTime,
@@ -169,6 +170,61 @@ test("keeps pull progress that is newer than the last warning", () => {
   assert.deepEqual(resolved, []);
 });
 
+// 真实场景：平台注入的 sidecar/init 镜像（rlark-network-sidecar、
+// rlark-tools-init）先于业务镜像上报 Pulled，若不剔除就会在历史事件里常驻
+// 一条被划掉的"镜像已拉取"。
+const mainImage =
+  "registry.example.com/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero-openpi";
+const sidecarPulled = {
+  type: "Normal",
+  reason: "Pulled",
+  message:
+    'Container image "registry.example.com/rlinf/rlark:v0.1.0-ff701939" already present on machine',
+  lastTime: "2026-11-17T03:12:43Z",
+};
+const toolsInitPulled = {
+  type: "Normal",
+  reason: "Pulled",
+  message:
+    'Container image "registry.example.com/rlinf/rlark:v0.1.0-ff701939" already present on machine',
+  lastTime: "2026-11-17T03:12:44Z",
+};
+const mainPulling = {
+  type: "Normal",
+  reason: "Pulling",
+  message: `Pulling image "${mainImage}"`,
+  lastTime: "2026-11-17T03:12:45Z",
+};
+
+test("drops pull progress reported for platform-injected images", () => {
+  assert.deepEqual(
+    keepPullProgressForImage([sidecarPulled, toolsInitPulled, mainPulling], mainImage),
+    [mainPulling],
+  );
+  // 镜像缺失时不过滤，避免丢失排查信息。
+  assert.deepEqual(
+    keepPullProgressForImage([sidecarPulled], undefined),
+    [sidecarPulled],
+  );
+  // Warning 事件不参与过滤，即使消息里提到别的镜像。
+  const warning = {
+    type: "Warning",
+    reason: "ErrImagePull",
+    message: 'Failed to pull image "registry.example.com/rlinf/rlark:v0.1.0"',
+  };
+  assert.deepEqual(keepPullProgressForImage([warning], mainImage), [warning]);
+});
+
+test("no earlier pull progress remains once sidecar events are dropped", () => {
+  const events = keepPullProgressForImage(
+    [sidecarPulled, toolsInitPulled, mainPulling],
+    mainImage,
+  );
+  const { active, resolved } = partitionWorkerEvents(events, true);
+  assert.deepEqual(active, [mainPulling]);
+  assert.deepEqual(resolved, []);
+});
+
 test("worker event chips are deduped by label keeping the newest timestamp", () => {
   assert.match(jobsSource, /const newest = new Map<string, NodeEventEntry>\(\)/);
   assert.match(
@@ -184,6 +240,11 @@ test("worker event chips are deduped by label keeping the newest timestamp", () 
 
 test("worker event labels go through refineWorkerEventReason", () => {
   assert.match(jobsSource, /refineWorkerEventReason\(event\.reason, event\.message\)/);
+});
+
+test("worker tooltip filters out pull progress for foreign images", () => {
+  assert.match(jobsSource, /keepPullProgressForImage\(/);
+  assert.match(jobsSource, /resource\?\.image,/);
 });
 
 test("status tooltip clears the sticky topbar", async () => {

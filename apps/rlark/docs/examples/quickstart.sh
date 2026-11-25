@@ -17,6 +17,14 @@ ok()   { echo -e "\033[1;32m[$(date +%H:%M:%S)] ✓\033[0m $*"; }
 warn() { echo -e "\033[1;33m[$(date +%H:%M:%S)] !\033[0m $*"; }
 err()  { echo -e "\033[1;31m[$(date +%H:%M:%S)] ✗\033[0m $*"; exit 1; }
 
+# Docker 29 dropped the legacy top-level NetworkSettings.IPAddress field, so
+# "-f '{{.NetworkSettings.IPAddress}}'" aborts with a template parsing error.
+# Read the address from the per-network map, which works on every version.
+container_ip() {
+  docker inspect "$1" \
+    -f '{{range .NetworkSettings.Networks}}{{if .IPAddress}}{{.IPAddress}}{{end}}{{end}}' 2>/dev/null
+}
+
 # Image used throughout (built locally and pushed to registry)
 IMAGE="localhost:5555/rlark:latest"
 
@@ -40,6 +48,7 @@ command -v docker  >/dev/null 2>&1 || err "docker is required"
 command -v kind    >/dev/null 2>&1 || err "kind is required"
 command -v kubectl >/dev/null 2>&1 || err "kubectl is required"
 command -v jq      >/dev/null 2>&1 || err "jq is required"
+command -v curl    >/dev/null 2>&1 || err "curl is required"
 command -v python3 >/dev/null 2>&1 || err "python3 is required"
 ok "All prerequisites satisfied"
 
@@ -56,7 +65,8 @@ ok "Directories created: /tmp/rlark"
 log "Step 2: Starting local Docker registry..."
 docker rm -f local-registry 2>/dev/null || true
 docker run -d --name local-registry --restart=always -p 5555:5000 registry:2
-REGISTRY_IP=$(docker inspect local-registry -f '{{.NetworkSettings.IPAddress}}')
+REGISTRY_IP=$(container_ip local-registry)
+[ -n "$REGISTRY_IP" ] || err "Cannot determine the local registry IP address"
 ok "Local registry: localhost:5555 (IP: $REGISTRY_IP)"
 
 # =============================================================================
@@ -67,27 +77,8 @@ log "Step 3: Building and pushing Docker images..."
 cd "$PROJECT_ROOT/apps/rlark"
 mkdir -p /tmp/rlark-bin
 
-# Build all 5 binaries in parallel
-GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/server ./cmd/server/ &
-GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/agent ./cmd/agent/ &
-GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/controller-manager ./cmd/controller-manager/ &
-GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/gateway ./cmd/gateway/ &
-GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/network-sidecar ./cmd/network-sidecar/ &
-wait
-
-cat > /tmp/rlark-bin/Dockerfile <<'DOCKERFILE'
-FROM scratch
-COPY server /rlark-server
-COPY agent /rlark-agent
-COPY controller-manager /rlark-controller-manager
-COPY gateway /rlark-gateway
-COPY network-sidecar /usr/local/bin/network-sidecar
-DOCKERFILE
-
-docker build -t "$IMAGE" /tmp/rlark-bin
-docker push "$IMAGE"
-
-# Pull busybox (try Docker Hub, then mirror, use local if available)
+# Pull busybox (try Docker Hub, then mirror, use local if available). It backs
+# both the sample workloads and the rlark image base, so pull it before build.
 if ! docker pull busybox:latest 2>/dev/null; then
   if ! docker pull docker.m.daocloud.io/library/busybox:latest 2>/dev/null; then
     warn "Cannot pull busybox, using local copy"
@@ -96,10 +87,59 @@ if ! docker pull busybox:latest 2>/dev/null; then
     docker rmi docker.m.daocloud.io/library/busybox:latest 2>/dev/null
   fi
 fi
+docker image inspect busybox:latest >/dev/null 2>&1 || \
+  err "busybox:latest is required as the rlark image base"
 docker tag busybox:latest localhost:5555/busybox:latest 2>/dev/null || true
 docker push localhost:5555/busybox:latest 2>/dev/null || warn "Cannot push busybox"
 
-ok "Images pushed: $IMAGE, localhost:5555/busybox:latest"
+# Pull the Ray image used by the sample workloads. The Kubernetes runtime only
+# supports the "rlinf.io/ray" workload and replaces the main container command
+# with "rlark-tools ray-launcher", so a workload image must ship the Ray CLI,
+# bash and python. These tags are single-architecture, so pick by host arch.
+RAY_VERSION="${RAY_VERSION:-2.9.0}"
+case "$(uname -m)" in
+  arm64|aarch64) RAY_TAG="${RAY_VERSION}-py310-aarch64" ;;
+  *)             RAY_TAG="${RAY_VERSION}-py310" ;;
+esac
+if ! docker image inspect "rayproject/ray:$RAY_TAG" >/dev/null 2>&1; then
+  log "Pulling rayproject/ray:$RAY_TAG (large image, this takes a while)..."
+  if ! docker pull "rayproject/ray:$RAY_TAG" 2>/dev/null; then
+    docker pull "docker.m.daocloud.io/rayproject/ray:$RAY_TAG" || \
+      err "Cannot pull rayproject/ray:$RAY_TAG"
+    docker tag "docker.m.daocloud.io/rayproject/ray:$RAY_TAG" "rayproject/ray:$RAY_TAG"
+    docker rmi "docker.m.daocloud.io/rayproject/ray:$RAY_TAG" 2>/dev/null
+  fi
+fi
+docker tag "rayproject/ray:$RAY_TAG" localhost:5555/ray:quickstart
+docker push localhost:5555/ray:quickstart || \
+  err "Cannot push the Ray workload image to the local registry"
+
+# Build all binaries in parallel
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/server ./cmd/server/ &
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/agent ./cmd/agent/ &
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/controller-manager ./cmd/controller-manager/ &
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/gateway ./cmd/gateway/ &
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/network-sidecar ./cmd/network-sidecar/ &
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/rlark-tools ./cmd/rlark-tools/ &
+wait
+
+# busybox, not scratch: the Kubernetes Runtime injects an rlark-tools-init
+# init container that runs "cp /usr/local/bin/rlark-tools" from this image, so
+# the image must ship rlark-tools and a working cp.
+cat > /tmp/rlark-bin/Dockerfile <<'DOCKERFILE'
+FROM busybox:latest
+COPY server /rlark-server
+COPY agent /rlark-agent
+COPY controller-manager /rlark-controller-manager
+COPY gateway /rlark-gateway
+COPY network-sidecar /usr/local/bin/network-sidecar
+COPY rlark-tools /usr/local/bin/rlark-tools
+DOCKERFILE
+
+docker build -t "$IMAGE" /tmp/rlark-bin
+docker push "$IMAGE"
+
+ok "Images pushed: $IMAGE, localhost:5555/busybox:latest, localhost:5555/ray:quickstart"
 
 # =============================================================================
 # Step 4: Ensure kind node image
@@ -208,11 +248,18 @@ log "Regenerating CRDs for kcp (maxDescLen=0)..."
   output:crd:artifacts:config=/tmp/rlark/crds
 kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard \
   apply -f /tmp/rlark/crds/ --validate=false
+# The controller manager builds field indexes for these kinds at startup and
+# exits if a CRD is not yet served, so block until the API server accepts them.
+kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard \
+  wait --for=condition=Established --timeout=120s \
+  -f /tmp/rlark/crds/
 
 # Local quickstart credentials. Production installs use rlarkadm-generated
 # random credentials and must not reuse these ephemeral values.
 ADMIN_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(8))')
 USER_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(8))')
+# The Gateway refuses to start unless jwt-signing-key holds at least 32 bytes.
+JWT_SIGNING_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
 kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard \
   create namespace default --dry-run=client -o yaml 2>/dev/null | \
   kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard apply --validate=false -f - 2>/dev/null || true
@@ -222,6 +269,7 @@ kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard \
   create secret generic rlark-ui-auth -n default \
   --from-literal="admin-password=$ADMIN_PASSWORD" \
   --from-literal="user-password=$USER_PASSWORD" \
+  --from-literal="jwt-signing-key=$JWT_SIGNING_KEY" \
   --validate=false
 ok "kubeconfig, DB config, CRDs, and UI credentials ready"
 
@@ -261,15 +309,25 @@ IMAGE="$IMAGE" \
 docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --no-deps --force-recreate rlark-gateway rlark-controller-manager
 
 log "Waiting for Gateway..."
-GATEWAY_READY=false
+# Every /api/v1 route except the login endpoint requires a JWT, so an anonymous
+# probe always returns 401. Log in instead: a successful login proves the
+# Gateway is serving and yields the token used by the rest of this script.
+RLARK_TOKEN=""
 for i in $(seq 1 30); do
-  if curl -s -o /dev/null -w "%{http_code}" "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" 2>/dev/null | grep -q "200"; then
-    GATEWAY_READY=true
-    break
-  fi
+  RLARK_TOKEN=$(jq -n --arg password "$ADMIN_PASSWORD" '{username:"admin",password:$password}' | \
+    curl -fsS --connect-timeout 5 --max-time 15 \
+      -H 'Content-Type: application/json' --data-binary @- \
+      "http://localhost:9000/api/v1/auth/login" 2>/dev/null | \
+    jq -er 'select(.role == "admin") | .token | select(type == "string" and length > 0)' 2>/dev/null) || RLARK_TOKEN=""
+  [ -n "$RLARK_TOKEN" ] && break
   sleep 2
 done
-$GATEWAY_READY || err "Gateway failed to become ready"
+[ -n "$RLARK_TOKEN" ] || err "Gateway failed to become ready (login to http://localhost:9000 did not succeed; check 'docker logs rlark-gateway')"
+
+gateway_curl() {
+  curl -fsS --connect-timeout 5 --max-time 30 \
+    -H "Authorization: Bearer $RLARK_TOKEN" "$@"
+}
 
 ok "Control plane is running"
 
@@ -323,9 +381,13 @@ log "Step 9: Deploying Agents..."
 # Request agent certificates sequentially (to avoid gateway race conditions)
 for i in $(seq 1 $CLUSTER_COUNT); do
   CID="agent-my-cluster-$i"
-  curl -s -X POST "http://localhost:9000/api/v1/certificates/agent" \
-    -H "Content-Type: application/json" \
-    -d "{\"cluster_id\":\"${CID}\"}" > "/tmp/rlark/agent-cert-$i.json"
+  jq -n --arg cluster_id "$CID" '{cluster_id:$cluster_id}' | \
+    gateway_curl -X POST "http://localhost:9000/api/v1/certificates/agent" \
+      -H "Content-Type: application/json" \
+      --data-binary @- > "/tmp/rlark/agent-cert-$i.json" || \
+    err "Agent certificate request failed for $CID"
+  jq -e 'all(.ca_cert, .agent_cert, .agent_key; type == "string" and length > 0)' \
+    "/tmp/rlark/agent-cert-$i.json" >/dev/null || err "Incomplete agent certificate response for $CID"
   jq -r .ca_cert "/tmp/rlark/agent-cert-$i.json" > "/tmp/rlark/ca-$i.pem"
   jq -r .agent_cert "/tmp/rlark/agent-cert-$i.json" > "/tmp/rlark/cert-$i.pem"
   jq -r .agent_key "/tmp/rlark/agent-cert-$i.json" > "/tmp/rlark/key-$i.pem"
@@ -351,12 +413,20 @@ deploy_agent() {
   kubectl --kubeconfig "$KC" apply -f "$SCRIPT_DIR/agent-rbac.yaml"
   sed "s|\${IMAGE}|$IMAGE|g" "$SCRIPT_DIR/agent-deploy.yaml" | kubectl --kubeconfig "$KC" apply -f -
 
+  NODE_NAME=$(kubectl --kubeconfig "$KC" get nodes -o jsonpath='{.items[0].metadata.name}')
+  # The Agent only reports Nodes opted in with rlark.io/enabled=true, and the
+  # node Agent DaemonSet selects the same label, so apply it before waiting.
+  kubectl --kubeconfig "$KC" label node "$NODE_NAME" \
+    "rlark.io/enabled=true" "rlark.io/cluster-id=rlark-${CID}" --overwrite || \
+    err "Failed to label node $NODE_NAME in cluster $i"
+
   kubectl --kubeconfig "$KC" rollout status \
     deployment/rlark-agent -n rlark-system --timeout=120s >/dev/null || \
     err "Agent $i deployment did not become ready"
-
-  NODE_NAME=$(kubectl --kubeconfig "$KC" get nodes -o jsonpath='{.items[0].metadata.name}')
-  kubectl --kubeconfig "$KC" label node "$NODE_NAME" "rlark.io/cluster-id=rlark-${CID}" --overwrite 2>/dev/null || true
+  # The node Agent owns the node-heartbeat Lease; Nodes stay Offline without it.
+  kubectl --kubeconfig "$KC" rollout status \
+    daemonset/rlark-agent-node -n rlark-system --timeout=180s >/dev/null || \
+    err "Node agent $i daemonset did not become ready"
 
   echo -e "\033[1;32m[$(date +%H:%M:%S)] ✓\033[0m Agent $i deployed"
 }
@@ -376,7 +446,7 @@ for attempt in $(seq 1 30); do
   REGISTERED=0
   for i in $(seq 1 $CLUSTER_COUNT); do
     CID="rlark-agent-my-cluster-$i"
-    if curl -fsS "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
+    if gateway_curl "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
       jq -e --arg cid "$CID" '.items[] | select(.metadata.labels["rlark.io/cluster-id"] == $cid)' >/dev/null; then
       REGISTERED=$((REGISTERED + 1))
     fi
@@ -385,7 +455,7 @@ for attempt in $(seq 1 30); do
   sleep 2
 done
 [ "${REGISTERED:-0}" -eq "$CLUSTER_COUNT" ] || err "Only ${REGISTERED:-0}/$CLUSTER_COUNT expected nodes registered"
-curl -fsS "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
+gateway_curl "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
   jq -r '.items[] | "  \(.metadata.name)  cluster-id=\(.metadata.labels["rlark.io/cluster-id"])"'
 ok "All $CLUSTER_COUNT nodes verified"
 
@@ -415,16 +485,16 @@ EOF
   # Create Domain
   kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root apply -f "$SCRIPT_DIR/domain.yaml"
 
-  # Create Job (controller-manager will create Tasks from it)
+  # Create Jobs (controller-manager will create Tasks from them)
   kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root apply -f "$SCRIPT_DIR/cross-cluster-ping.yaml"
 
   # Wait for controller-manager to create one Task in each agent namespace.
   log "Waiting for controller-manager to create Tasks..."
   for attempt in $(seq 1 30); do
     SERVER_TASK=$(kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root \
-      get task cross-cluster-ping-server -n rlark-agent-my-cluster-1 --ignore-not-found -o name 2>/dev/null)
+      get task cross-cluster-server-app -n rlark-agent-my-cluster-1 --ignore-not-found -o name 2>/dev/null)
     CLIENT_TASK=$(kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root \
-      get task cross-cluster-ping-client -n rlark-agent-my-cluster-2 --ignore-not-found -o name 2>/dev/null)
+      get task cross-cluster-client-app -n rlark-agent-my-cluster-2 --ignore-not-found -o name 2>/dev/null)
     [ -n "$SERVER_TASK" ] && [ -n "$CLIENT_TASK" ] && break
     sleep 2
   done
@@ -432,11 +502,30 @@ EOF
     err "Controller-manager did not create Tasks in the agent namespaces"
 
   log "Waiting for Task pods..."
+  # The Agent creates the Deployment shortly after the Task appears, and
+  # "rollout status" fails immediately on a missing object, so wait for it.
+  wait_for_workload() {
+    local kubeconfig=$1 name=$2
+    for _ in $(seq 1 60); do
+      if [ -n "$(kubectl --kubeconfig "$kubeconfig" get deployment "$name" \
+        -n rlark-system --ignore-not-found -o name 2>/dev/null)" ]; then
+        return 0
+      fi
+      sleep 2
+    done
+    return 1
+  }
+  wait_for_workload /tmp/kind-kubeconfig-1 cross-cluster-server-app || \
+    err "Agent did not create the server Deployment"
+  wait_for_workload /tmp/kind-kubeconfig-2 cross-cluster-client-app || \
+    err "Agent did not create the client Deployment"
+  # The Ray image is large and the Ray head start plus readiness check adds
+  # startup time on top of the image pull, so allow a generous timeout.
   kubectl --kubeconfig /tmp/kind-kubeconfig-1 rollout status \
-    deployment/cross-cluster-ping-server -n rlark-system --timeout=180s >/dev/null || \
+    deployment/cross-cluster-server-app -n rlark-system --timeout=600s >/dev/null || \
     err "Server workload did not become ready"
   kubectl --kubeconfig /tmp/kind-kubeconfig-2 rollout status \
-    deployment/cross-cluster-ping-client -n rlark-system --timeout=180s >/dev/null || \
+    deployment/cross-cluster-client-app -n rlark-system --timeout=600s >/dev/null || \
     err "Client workload did not become ready"
 
   ok "Cross-cluster test workloads are ready"
@@ -447,14 +536,19 @@ EOF
   log "Step 12: Verifying cross-cluster network connectivity..."
 
   SERVER_POD=$(kubectl --kubeconfig /tmp/kind-kubeconfig-1 get pods -n rlark-system \
-    -l app=cross-cluster-ping-server -o jsonpath='{.items[0].metadata.name}')
+    -l app=cross-cluster-server-app -o jsonpath='{.items[0].metadata.name}')
   log "Server pod: $SERVER_POD"
 
-  sleep 10
-
-  RESULT=$(kubectl --kubeconfig /tmp/kind-kubeconfig-2 exec -n rlark-system \
-    deploy/cross-cluster-ping-client -- \
-    sh -c "echo 'GET / HTTP/1.0\r\n\r\n' | timeout 5 nc ${SERVER_POD}.rlark-domain 8000" 2>&1) || true
+  # The Ray head runs the HTTP server only after its readiness check, and the
+  # sidecar syncs peer names into /etc/hosts periodically, so retry.
+  RESULT=""
+  for _ in $(seq 1 30); do
+    RESULT=$(kubectl --kubeconfig /tmp/kind-kubeconfig-2 exec -n rlark-system \
+      deploy/cross-cluster-client-app -c main -- \
+      python -c "import urllib.request; print(urllib.request.urlopen('http://${SERVER_POD}.rlark-domain:8000/', timeout=5).read().decode())" 2>&1) || true
+    echo "$RESULT" | grep -q "hello from server" && break
+    sleep 5
+  done
 
   echo "--- Cross-cluster test result ---"
   echo "$RESULT"

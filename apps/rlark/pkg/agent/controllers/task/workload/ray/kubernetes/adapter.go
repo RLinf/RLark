@@ -22,6 +22,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/compatibility/kubernetes"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/compatibility/kubernetes/kubernetesobjects"
 	kubernetesssh "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/environment/kubernetes/ssh"
+	kubernetesruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/kubernetes"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/coordination"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/fault"
 	executionplan "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/plan"
@@ -67,7 +68,15 @@ func (a *Adapter) Info(context.Context) (workload.TypeInfo, error) {
 			agentruntime.CapabilityOwnedFieldProjection,
 			agentruntime.CapabilityIncarnationAdoption,
 			agentruntime.CapabilityReconcileProfiles,
+			agentruntime.CapabilityWorkloadObservation,
 		},
+		Observations: []workload.ObservationContract{{
+			RuntimeKind: compatibility.RuntimeKindKubernetes,
+			Roots: []workload.ObservationRoot{
+				{Group: appsv1.SchemeGroupVersion.Group, Version: appsv1.SchemeGroupVersion.Version, Kind: CarrierDeployment, CarrierType: taskapi.CarrierTypeKubernetesDeployment, InstanceProfile: kubernetesruntime.ObservationReplicaSetControllerV1},
+				{Group: appsv1.SchemeGroupVersion.Group, Version: appsv1.SchemeGroupVersion.Version, Kind: CarrierStatefulSet, CarrierType: taskapi.CarrierTypeKubernetesStatefulSet, InstanceProfile: kubernetesruntime.ObservationDirectControllerV1},
+			},
+		}},
 	}, nil
 }
 
@@ -368,7 +377,7 @@ func (a *Adapter) Observe(_ context.Context, request workload.ObserveRequest) (w
 	if !found {
 		return workload.Observation{Phase: workload.Phase(rlarkv1alpha1.TaskPhasePending)}, nil
 	}
-	phase, message, err := ObserveObject(kind, primary.Manifest.Object, request.Instances)
+	phase, message, err := ObserveObject(kind, primary, request.Instances)
 	if err != nil {
 		return workload.Observation{}, err
 	}
@@ -504,28 +513,37 @@ func compiledHash(objects []agentruntime.DesiredObject, processes []executionpro
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// ObserveObject projects one primary Kubernetes workload and its instances into Task state.
-func ObserveObject(kind string, manifest []byte, instances agentruntime.InstanceSnapshot) (rlarkv1alpha1.TaskPhase, string, error) {
+// ObserveObject projects one primary Kubernetes workload and its instances into
+// Task state. The whole Runtime object is required because a workload root can
+// report a failure through Runtime conditions that its own status omits.
+func ObserveObject(kind string, object agentruntime.Object, instances agentruntime.InstanceSnapshot) (rlarkv1alpha1.TaskPhase, string, error) {
 	var phase rlarkv1alpha1.TaskPhase
 	var message string
 	switch kind {
 	case CarrierDeployment:
-		var object appsv1.Deployment
-		if err := json.Unmarshal(manifest, &object); err != nil {
+		var manifest appsv1.Deployment
+		if err := json.Unmarshal(object.Manifest.Object, &manifest); err != nil {
 			return "", "", err
 		}
-		phase, message = DeploymentStatusPhase(&object)
+		phase, message = DeploymentStatusPhase(&manifest)
 	case CarrierStatefulSet:
-		var object appsv1.StatefulSet
-		if err := json.Unmarshal(manifest, &object); err != nil {
+		var manifest appsv1.StatefulSet
+		if err := json.Unmarshal(object.Manifest.Object, &manifest); err != nil {
 			return "", "", err
 		}
-		phase = StatefulSetStatusPhase(&object)
+		phase, message = StatefulSetStatusPhase(&manifest)
 	default:
 		return "", "", fmt.Errorf("unsupported workload kind %q", kind)
 	}
 	if failure, found := InstanceFailureMessage(instances); found && phase != rlarkv1alpha1.TaskPhaseSucceeded {
 		return rlarkv1alpha1.TaskPhaseFailed, failure, nil
+	}
+	// A rejected or quota-blocked Pod template produces no instance at all, so
+	// the workload root's own failure is the only evidence available.
+	if phase == rlarkv1alpha1.TaskPhasePending {
+		if failure, found := ObjectFailureMessage(object.Conditions); found {
+			return rlarkv1alpha1.TaskPhaseFailed, failure, nil
+		}
 	}
 	return phase, message, nil
 }

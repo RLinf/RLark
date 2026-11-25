@@ -1,0 +1,66 @@
+{{- if .Values.postgresql.enabled }}
+{{- $storage := include "rlark-control-plane.storage" (dict "root" . "component" .Values.postgresql) | fromYaml }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgresql
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: postgresql
+spec:
+  replicas: {{ .Values.postgresql.replicas | default .Values.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      {{- include "rlark-control-plane.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: postgresql
+          image: {{ .Values.images.postgresql | quote }}
+          imagePullPolicy: {{ include "rlark-control-plane.imagePullPolicy" . }}
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {{ required "db.user is required when postgresql.enabled=true" .Values.db.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ required "db.password is required when postgresql.enabled=true" .Values.db.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ required "db.database is required when postgresql.enabled=true" .Values.db.database | quote }}
+          volumeMounts:
+            - name: pg-data
+              mountPath: /var/lib/postgresql/data
+            - name: pg-init
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        {{- if eq $storage.type "hostPath" }}
+        - name: pg-data
+          hostPath:
+            path: {{ $storage.hostPath }}
+            type: DirectoryOrCreate
+        {{- else if eq $storage.type "pvc" }}
+        - name: pg-data
+          persistentVolumeClaim:
+            claimName: pg-data
+        {{- else }}
+        - name: pg-data
+          emptyDir: {}
+        {{- end }}
+        - name: pg-init
+          configMap:
+            name: rlark-postgres-init
+      {{- with $storage.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if eq $storage.type "pvc" }}
+      securityContext:
+        runAsUser: 0
+        fsGroup: 0
+      {{- end }}
+{{- end }}

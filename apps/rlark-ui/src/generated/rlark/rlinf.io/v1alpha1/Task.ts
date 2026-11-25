@@ -24,6 +24,17 @@ export interface ITask {
   "metadata"?: IObjectMeta;
   "spec"?: {
     "downstreamName"?: string;
+    /**
+     * DrainRequests are one-shot Node-agent-owned requests to stop this Task's
+     * root workload during Node Drain. The Node Agent reconciles them from the
+     * Node's current Drain operations and removes an entry when its operation is
+     * no longer present, including after undrain and recover.
+     */
+    "drainRequests"?: Array<{
+      "nodeName": string;
+      "nodeUID": string;
+      "operationID": string;
+    }>;
     "environments"?: Array<{
       "parameters"?: any;
       "type": string;
@@ -7114,6 +7125,24 @@ export interface ITask {
        * type of condition in CamelCase or in foo.example.com/CamelCase.
        */
       "type": string;
+    }>;
+    /**
+     * DrainRequests is the bounded current observation written by the Task Host.
+     */
+    "drainRequests"?: Array<{
+      "nodeUID": string;
+      "observedGeneration"?: number;
+      "operationID": string;
+      "reason"?: string;
+      /**
+       * TaskDrainState is the current observation of a Task Drain request.
+       *
+       * WaitingForReschedule means the Task root workload has stopped because of a
+       * Node Drain. Automatic rescheduling by a dedicated component is not
+       * implemented; the Task resumes only after the Node Drain operation is removed
+       * (undrain or recover) and the Node Agent releases the request.
+       */
+      "state": "WaitingForReschedule" | "Blocked";
     }>;
     /**
      * Events 在 Task 处于 Pending 期间由控制面 Task reconciler 从各节点

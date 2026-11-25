@@ -89,8 +89,8 @@ func TestUpsertEventDeduplicatesAndKeepsLatest(t *testing.T) {
 	if got := len(w.events); got != 1 {
 		t.Fatalf("expected 1 entry, got %d", got)
 	}
-	entry := w.events[eventKey{kind: "Node", name: "node-1", reason: "DiskPressure"}]
-	if entry == nil {
+	entry, ok := w.events[eventKey{kind: "Node", name: "node-1", reason: "DiskPressure"}]
+	if !ok || entry == nil {
 		t.Fatal("entry is nil")
 	}
 	if entry.ev.Count != 3 {

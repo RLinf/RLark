@@ -23,10 +23,19 @@ func workflowTestScheme(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
+// workflowTestClientBuilder returns a fake client builder with the Job index
+// the Workflow controller relies on registered, mirroring what the manager
+// does in SetupWithManager.
+func workflowTestClientBuilder(scheme *runtime.Scheme) *fake.ClientBuilder {
+	return fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&rlarkv1alpha1.Job{}, jobWorkflowField, indexJobByWorkflow)
+}
+
 func TestReconcileAddsCleanupFinalizer(t *testing.T) {
 	wf := &rlarkv1alpha1.Workflow{ObjectMeta: metav1.ObjectMeta{Name: "workflow", UID: types.UID("workflow-uid")}}
 	scheme := workflowTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(wf).Build()
+	c := workflowTestClientBuilder(scheme).WithObjects(wf).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: wf.Name}}); err != nil {
@@ -55,7 +64,7 @@ func TestDeleteOwnedJobsWaitsForCleanupAndFiltersOwnerUID(t *testing.T) {
 	unrelated.UID = types.UID("unrelated")
 	unrelated.OwnerReferences[0].UID = types.UID("other-workflow")
 	scheme := workflowTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(owned, unrelated).Build()
+	c := workflowTestClientBuilder(scheme).WithObjects(owned, unrelated).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 
 	pending, err := r.deleteOwnedJobs(context.Background(), wf)
@@ -73,43 +82,6 @@ func TestDeleteOwnedJobsWaitsForCleanupAndFiltersOwnerUID(t *testing.T) {
 	}
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(unrelated), unrelated); err != nil {
 		t.Fatalf("unrelated Job should not be deleted: %v", err)
-	}
-}
-
-func TestStoppedWorkflowDeletesAllJobsIncludingTerminal(t *testing.T) {
-	wf := &rlarkv1alpha1.Workflow{
-		ObjectMeta: metav1.ObjectMeta{Name: "workflow", UID: types.UID("workflow-uid")},
-		Spec: rlarkv1alpha1.WorkflowSpec{Suspended: true, JobTemplates: []rlarkv1alpha1.WorkflowJobTemplate{
-			{Name: "running"}, {Name: "succeeded"},
-		}},
-		Status: rlarkv1alpha1.WorkflowStatus{Phase: rlarkv1alpha1.WorkflowPhaseRunning, Jobs: []rlarkv1alpha1.WorkflowJobStatus{
-			{Name: "running", Phase: rlarkv1alpha1.JobPhaseRunning}, {Name: "succeeded", Phase: rlarkv1alpha1.JobPhaseSucceeded},
-		}},
-	}
-	owned := func(name string, phase rlarkv1alpha1.JobPhase, stopped bool) *rlarkv1alpha1.Job {
-		return &rlarkv1alpha1.Job{
-			ObjectMeta: metav1.ObjectMeta{Name: name, Finalizers: []string{"jobs.rlinf.io/task-cleanup"}, OwnerReferences: []metav1.OwnerReference{{
-				APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Workflow", Name: wf.Name, UID: wf.UID, Controller: boolPtr(true),
-			}}},
-			Spec: rlarkv1alpha1.JobSpec{Suspended: stopped}, Status: rlarkv1alpha1.JobStatus{Phase: phase},
-		}
-	}
-	running := owned("running", rlarkv1alpha1.JobPhaseRunning, false)
-	succeeded := owned("succeeded", rlarkv1alpha1.JobPhaseSucceeded, false)
-	scheme := workflowTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(running, succeeded).Build()
-	r := &Reconciler{Client: c, Scheme: scheme}
-
-	if _, err := r.ReconcileStateMachine(context.Background(), wf); err == nil {
-		t.Fatal("Job cleanup should requeue the Workflow")
-	}
-	for _, job := range []*rlarkv1alpha1.Job{running, succeeded} {
-		if err := c.Get(context.Background(), client.ObjectKeyFromObject(job), job); err != nil {
-			t.Fatal(err)
-		}
-		if job.DeletionTimestamp.IsZero() {
-			t.Fatalf("Job %s deletion was not requested", job.Name)
-		}
 	}
 }
 

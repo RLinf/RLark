@@ -374,9 +374,11 @@ paths:
       tags: [Job]
       summary: Start a Job
       description: >-
-        Unified start endpoint. If the Job is active (KCP has the CR), patches
-        spec.suspended=false directly. If archived (KCP CR was removed after stop),
-        restores the Job from the persistence backend and creates a new CR.
+        Unified start endpoint. If the Job is active (KCP has the CR), releases
+        the cluster-drain and node-drain stop markers on its Tasks (the explicit
+        resume action for drained Tasks) and patches spec.suspended=false
+        directly. If archived (KCP CR was removed after stop), restores the Job
+        from the persistence backend and creates a new CR.
       operationId: startJob
       parameters:
         - $ref: '#/components/parameters/name'
@@ -610,7 +612,20 @@ paths:
     delete:
       tags: [Node]
       summary: Delete a Node
-      description: Delete a Node resource.
+      description: |
+        Delete a Node resource (unmanage). The Gateway rejects the delete with
+        409 while any Task's `status.observedNodes` still contains this node;
+        drain the node and wait until all tasks leave it before unmanaging.
+        It also rejects the delete with 409 when the node is still connected and
+        not cordoned (`spec.unschedulable=false`); a node whose Agent is not
+        connected is exempt because the controller reports it `Offline` with
+        `Schedulable=False`, so no new tasks can be placed on it.
+        Before deleting the object, the Gateway removes every
+        `spec.drainRequests` entry targeting this node from affected Tasks, so
+        deleting a Node while its data-plane Agent is offline cannot leave
+        Tasks permanently stopped. A control-plane finalizer
+        (`rlark.io/node-drain-request-cleanup`) performs the same release for
+        deletions that bypass the Gateway, such as `kubectl delete`.
       operationId: deleteNode
       parameters:
         - $ref: '#/components/parameters/namespace'
@@ -631,6 +646,117 @@ paths:
                 $ref: '#/components/schemas/Status'
         '404':
           description: Not Found
+        '409':
+          description: Conflict - the node still hosts observed tasks and must be drained first
+
+  # ─── Node Lifecycle ──────────────────────────────────────────────
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/drain:
+    post:
+      tags: [Node, Admin]
+      summary: Drain a Node
+      description: |
+        Administrator-only. Requests a drain of the given Node and cordons it
+        (`spec.unschedulable = true`) so that no new workload is placed during
+        drain. If an unfinished Drain operation already exists, the endpoint
+        reuses its ID without appending another operation; otherwise it appends
+        a new uniquely identified Drain operation. The response `operationId`
+        identifies the reused or newly created operation. The Gateway accepts
+        at most 32 `spec.operations` entries; creating another operation beyond
+        that limit fails with 409, while reusing an unfinished Drain remains
+        successful. The Node Controller and data-plane Agent coordinate to
+        evict running Tasks; use the Node `Draining` condition and
+        `status.drainOperations` to observe progress. Tasks that are stopped
+        report `WaitingForReschedule`; automatic rescheduling is not
+        implemented. A Task stopped by a completed Drain stays suspended after
+        the Drain operation is removed and resumes only when its Job is started
+        explicitly (or that Task is unsuspended).
+      operationId: drainNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+      responses:
+        '200':
+          description: Drain operation created or an unfinished operation reused; updated Node and operationId returned.
+        '400':
+          description: Missing or invalid request parameters.
+        '404':
+          description: Node not found.
+        '409':
+          description: Creating a new operation would exceed the 32-entry spec.operations limit.
+
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/undrain:
+    post:
+      tags: [Node, Admin]
+      summary: Cancel Node drain
+      description: |
+        Administrator-only. Removes all Drain operations from `spec.operations`
+        and releases the corresponding `spec.drainRequests`. The
+        `rlark.io/node-drain-stopped` markers and the suspension left by a
+        completed drain are deliberately kept, so the Tasks it stopped stay
+        stopped until their Job is started explicitly (a Task the user suspended
+        keeps its own suspension). Does **not** restore `spec.unschedulable`; the
+        caller must execute an uncordon explicitly to resume scheduling on the
+        node.
+      operationId: undrainNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+      responses:
+        '200':
+          description: Drain operations removed; updated Node returned (may be unchanged when no drain was present).
+        '400':
+          description: Missing or invalid request parameters.
+        '404':
+          description: Node not found.
+
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/uncordon:
+    post:
+      tags: [Node, Admin]
+      summary: Resume scheduling on a Node
+      description: |
+        Administrator-only. Sets `spec.unschedulable = false`, allowing new
+        workloads to be placed on the Node again, and removes all Drain
+        operations from `spec.operations`. Releases their `spec.drainRequests`,
+        but keeps the `rlark.io/node-drain-stopped` markers and the suspension:
+        the Tasks the drain stopped stay stopped until their Job is started
+        explicitly. EnterMaintenance operations are left untouched; use
+        `recover` after a fault-repair workflow to clear both the cordon flag and
+        any one-shot maintenance operations in a single call.
+      operationId: uncordonNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+      responses:
+        '200':
+          description: Node uncordoned; updated Node returned (may be unchanged when already schedulable).
+        '400':
+          description: Missing or invalid request parameters.
+        '404':
+          description: Node not found.
+
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/recover:
+    post:
+      tags: [Node, Admin]
+      summary: Fault-recovery on a Node (undrain + uncordon)
+      description: |
+        Administrator-only. One-shot recovery after fault repair or routine
+        maintenance: removes all Drain and EnterMaintenance operations from
+        `spec.operations` and sets `spec.unschedulable = false`. Releases the
+        corresponding `spec.drainRequests`, but keeps the
+        `rlark.io/node-drain-stopped` markers and the suspension left by
+        completed drains: the affected Tasks stay stopped until their Job is
+        started explicitly (a Task the user suspended keeps its own suspension).
+      operationId: recoverNode
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+      responses:
+        '200':
+          description: Node recovered; updated Node returned (may be unchanged when no recovery was needed).
+        '400':
+          description: Missing or invalid request parameters.
+        '404':
+          description: Node not found.
 
   # ─── Task Collection ─────────────────────────────────────────────
   /api/v1/rlinf.io/v1alpha1/tasks:
@@ -795,6 +921,222 @@ paths:
         '404':
           description: Not Found
 
+  # ─── Admin data-plane node management ───────────────────────────
+  /api/v1/data-plane-nodes:
+    get:
+      tags: [Admin, DataPlane]
+      summary: List data-plane nodes across all visible clusters
+      description: List Kubernetes nodes from every visible data-plane cluster via the cluster agent proxy, including both managed (label rlark.io/enabled=true) and unmanaged nodes. Admin only.
+      operationId: listDataPlaneNodes
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clusters:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClusterDataPlaneNodes'
+        '403':
+          description: Forbidden
+
+  /api/v1/data-plane-nodes/{agent_id}:
+    get:
+      tags: [Admin, DataPlane]
+      summary: List data-plane nodes for one cluster
+      description: List Kubernetes nodes from a single data-plane cluster identified by agent_id (cluster namespace suffix). Admin only.
+      operationId: listDataPlaneNodesForCluster
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Agent namespace suffix (e.g. 'cluster-a' from namespace 'rlark-cluster-a')
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DataPlaneNodeSummary'
+        '403':
+          description: Forbidden
+        '502':
+          description: Upstream unavailable
+
+  /api/v1/data-plane-nodes/{agent_id}/nodes/{node_name}/manage:
+    post:
+      tags: [Admin, DataPlane]
+      summary: Manage a data-plane node
+      description: Add label rlark.io/enabled=true to the named Kubernetes Node on the data-plane cluster. The cluster agent will then create an RLark Node CR and report its status. Admin only.
+      operationId: manageDataPlaneNode
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: node_name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agentId:
+                    type: string
+                  nodeName:
+                    type: string
+                  enabled:
+                    type: boolean
+        '403':
+          description: Forbidden
+        '502':
+          description: Upstream unavailable
+
+  /api/v1/data-plane-nodes/{agent_id}/nodes/{node_name}/unmanage:
+    post:
+      tags: [Admin, DataPlane]
+      summary: Unmanage a data-plane node
+      description: |
+        Remove label rlark.io/enabled from the named Kubernetes Node. The cluster agent stops reporting this node's status to the management plane. Admin only.
+        The Gateway rejects the request with 409 while any Task's `status.observedNodes` in the agent namespace still contains this node; drain the node and wait until all tasks leave it before unmanaging.
+        The Gateway also rejects the request with 409 when the node is still connected and not cordoned (`spec.unschedulable=false`); a node whose Agent is not connected is exempt because the controller reports it `Offline` with `Schedulable=False`, so no new tasks can be placed on it.
+      operationId: unmanageDataPlaneNode
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: node_name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agentId:
+                    type: string
+                  nodeName:
+                    type: string
+                  enabled:
+                    type: boolean
+        '403':
+          description: Forbidden
+        '409':
+          description: Conflict - the node still hosts observed tasks and must be drained first
+        '502':
+          description: Upstream unavailable
+
+  /api/v1/upgrade-jobs:
+    get:
+      tags: [Admin, Upgrade]
+      summary: List upgrade jobs
+      description: List all cluster upgrade jobs. Admin only.
+      operationId: listUpgradeJobs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UpgradeJob'
+                  total:
+                    type: integer
+        '403':
+          description: Forbidden
+    post:
+      tags: [Admin, Upgrade]
+      summary: Create an upgrade job
+      description: Create a new cluster upgrade job. The name is auto-generated with a "up-" prefix. Admin only.
+      operationId: createUpgradeJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpgradeJob'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpgradeJob'
+        '400':
+          description: Bad Request - spec.image is required
+        '403':
+          description: Forbidden
+
+  /api/v1/upgrade-jobs/{name}:
+    get:
+      tags: [Admin, Upgrade]
+      summary: Get an upgrade job
+      description: Get a cluster upgrade job by name. Admin only.
+      operationId: getUpgradeJob
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpgradeJob'
+        '404':
+          description: Not Found
+        '403':
+          description: Forbidden
+    delete:
+      tags: [Admin, Upgrade]
+      summary: Delete an upgrade job
+      description: Delete a cluster upgrade job by name. Admin only.
+      operationId: deleteUpgradeJob
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+        '404':
+          description: Not Found
+        '403':
+          description: Forbidden
+
 components:
   parameters:
     name:
@@ -922,6 +1264,98 @@ components:
       type: object
       additionalProperties: true
       description: A backend-specific structured log entry.
+
+    UpgradeJob:
+      type: object
+      description: Cluster upgrade job.
+      properties:
+        metadata:
+          type: object
+          properties:
+            name:
+              type: string
+              description: Auto-generated unique name (up-xxxxx).
+            annotations:
+              type: object
+              additionalProperties:
+                type: string
+              description: rlark.io/description stores the user-provided description.
+            creationTimestamp:
+              type: string
+              format: date-time
+        spec:
+          type: object
+          required: [image]
+          properties:
+            image:
+              type: string
+              description: rlark-upgrade image to use for the upgrade.
+            configPatch:
+              type: string
+              description: Deployment configuration YAML patch.
+            clusterNames:
+              type: array
+              items:
+                type: string
+              description: Target cluster names.
+            clusterSelector:
+              type: object
+              description: Label selector for target clusters.
+            strategy:
+              type: object
+              properties:
+                concurrency:
+                  type: integer
+                  description: Number of clusters to upgrade concurrently.
+                failureTolerate:
+                  type: number
+                  description: Fraction of clusters allowed to fail before aborting.
+                timeoutSeconds:
+                  type: integer
+                  description: Timeout per cluster upgrade.
+                autoRollback:
+                  type: boolean
+                  description: Whether to automatically rollback on failure.
+        status:
+          type: object
+          properties:
+            phase:
+              type: string
+              enum: [Pending, Upgrading, Succeeded, Failed, RollingBack]
+            totalClusters:
+              type: integer
+            upgradingClusters:
+              type: integer
+            upgradedClusters:
+              type: integer
+            failedClusters:
+              type: integer
+            rollbackClusters:
+              type: integer
+            startTime:
+              type: string
+              format: date-time
+            completionTime:
+              type: string
+              format: date-time
+            conditions:
+              type: array
+              items:
+                type: object
+                properties:
+                  cluster:
+                    type: string
+                  status:
+                    type: string
+                  reason:
+                    type: string
+                  targetImage:
+                    type: string
+                  rollbackImage:
+                    type: string
+                  upgradeTime:
+                    type: string
+                    format: date-time
 
     BackendLogResponse:
       type: object
@@ -1684,3 +2118,47 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/Task'
+
+    # --- Admin data-plane node management response schemas ---
+
+    DataPlaneNodeSummary:
+      type: object
+      properties:
+        name:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        addresses:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              address:
+                type: string
+        ready:
+          type: boolean
+          description: True when the underlying K8s Node has the Ready condition set to True.
+        managed:
+          type: boolean
+          description: True when labels['rlark.io/enabled'] == 'true'.
+
+    ClusterDataPlaneNodes:
+      type: object
+      properties:
+        cluster:
+          type: string
+          description: RLark Cluster name.
+        namespace:
+          type: string
+          description: Agent Kubernetes namespace (e.g. 'rlark-cluster-a').
+        error:
+          type: string
+          description: Populated when the request to the cluster agent failed; nodes is empty in that case.
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPlaneNodeSummary'

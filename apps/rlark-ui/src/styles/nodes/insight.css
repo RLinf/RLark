@@ -95,9 +95,67 @@
 }
 
 .schedule-chip.blocked {
-  border-color: rgba(239, 90, 122, 0.2);
-  background: rgba(239, 90, 122, 0.1);
-  color: var(--red);
+  border-color: rgba(245, 158, 53, 0.25);
+  background: #fff3df;
+  color: #bd7424;
+}
+
+.node-scheduling-summary {
+  margin: 18px 24px 0;
+}
+
+.node-scheduling-summary .node-insight-facts {
+  margin-right: 0;
+  margin-left: 0;
+}
+
+.node-scheduling-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.node-scheduling-table {
+  width: 100%;
+  min-width: 460px;
+  border-collapse: collapse;
+  color: var(--ink);
+  font-size: 12px;
+  text-align: left;
+}
+
+.node-scheduling-table th,
+.node-scheduling-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.node-scheduling-table thead th {
+  background: var(--canvas);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.node-scheduling-table tbody th {
+  width: 1%;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.node-scheduling-table th:nth-child(2),
+.node-scheduling-table td:nth-child(2) {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.node-scheduling-table tbody td:last-child {
+  color: var(--muted);
+}
+
+.node-scheduling-table tbody tr:last-child th,
+.node-scheduling-table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .node-health-message {
@@ -157,6 +215,11 @@
   grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.85fr);
   gap: 16px;
   padding: 18px 24px 24px;
+}
+
+.node-health-capacity-section,
+.node-conditions-section {
+  grid-column: 1 / -1;
 }
 
 .node-insight-main,
@@ -356,6 +419,11 @@
   min-width: 0;
   display: grid;
   gap: 2px;
+}
+
+.node-capacity-amounts > span.is-monitoring {
+  grid-column: 1 / -1;
+  color: var(--muted);
 }
 
 .node-capacity-amounts em,

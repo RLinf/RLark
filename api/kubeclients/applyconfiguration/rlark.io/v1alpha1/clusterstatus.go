@@ -28,11 +28,40 @@ import (
 //
 // ClusterStatus reports the controller's current observation of a data-plane cluster.
 type ClusterStatusApplyConfiguration struct {
-	Phase             *rlarkiov1alpha1.ClusterPhase        `json:"phase,omitempty"`
-	LastHeartbeatTime *v1.Time                             `json:"lastHeartbeatTime,omitempty"`
-	TotalNodes        *int32                               `json:"totalNodes,omitempty"`
-	OnlineNodes       *int32                               `json:"onlineNodes,omitempty"`
-	Conditions        []metav1.ConditionApplyConfiguration `json:"conditions,omitempty"`
+	Phase *rlarkiov1alpha1.ClusterPhase `json:"phase,omitempty"`
+	// ObservedGeneration is the metadata.generation observed by the Cluster
+	// controller the last time it finished a reconciliation. ClusterSpec's
+	// cordoned / draining are Spec-driven switches, so consumers must compare
+	// this field with metadata.generation to tell whether phase and conditions
+	// already reflect the latest Spec. It is a controller contract, not an API
+	// server guarantee.
+	ObservedGeneration *int64   `json:"observedGeneration,omitempty"`
+	LastHeartbeatTime  *v1.Time `json:"lastHeartbeatTime,omitempty"`
+	// LastStatusChangeTime is the time Phase last changed. It carries the same
+	// semantics as the identically named field on NodeStatus and distinguishes
+	// "has stayed in this phase for a long time" from "just flipped".
+	LastStatusChangeTime *v1.Time `json:"lastStatusChangeTime,omitempty"`
+	TotalNodes           *int32   `json:"totalNodes,omitempty"`
+	OnlineNodes          *int32   `json:"onlineNodes,omitempty"`
+	// ReadyNodes is the number of connected Nodes with Ready=True that are not
+	// cordoned by spec.unschedulable. A ready Node under resource pressure is
+	// still counted here even though it is excluded from new placement.
+	ReadyNodes *int32 `json:"readyNodes,omitempty"`
+	// DegradedNodes is the number of connected Nodes that are not ready or report Degraded=True.
+	DegradedNodes *int32 `json:"degradedNodes,omitempty"`
+	// DisconnectedNodes is the number of Nodes whose AgentConnected condition is not True.
+	DisconnectedNodes *int32 `json:"disconnectedNodes,omitempty"`
+	// UnschedulableNodes is the number of Nodes with spec.unschedulable=true.
+	UnschedulableNodes *int32 `json:"unschedulableNodes,omitempty"`
+	// DominantFailureReason is the most frequent reason among unavailable candidate Nodes.
+	DominantFailureReason *string `json:"dominantFailureReason,omitempty"`
+	// Conditions records the structured conclusions of the Cluster controller,
+	// which is their only writer. Ready and Degraded are independent dimensions:
+	// a cluster that lost part of its capacity reports Ready=True together with
+	// Degraded=True. They are observation-driven and therefore carry no
+	// per-condition ObservedGeneration; use the status-level ObservedGeneration
+	// above to tell whether they already reflect the latest Spec.
+	Conditions []metav1.ConditionApplyConfiguration `json:"conditions,omitempty"`
 }
 
 // ClusterStatusApplyConfiguration constructs a declarative configuration of the ClusterStatus type for use with
@@ -49,11 +78,27 @@ func (b *ClusterStatusApplyConfiguration) WithPhase(value rlarkiov1alpha1.Cluste
 	return b
 }
 
+// WithObservedGeneration sets the ObservedGeneration field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ObservedGeneration field is set to the value of the last call.
+func (b *ClusterStatusApplyConfiguration) WithObservedGeneration(value int64) *ClusterStatusApplyConfiguration {
+	b.ObservedGeneration = &value
+	return b
+}
+
 // WithLastHeartbeatTime sets the LastHeartbeatTime field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the LastHeartbeatTime field is set to the value of the last call.
 func (b *ClusterStatusApplyConfiguration) WithLastHeartbeatTime(value v1.Time) *ClusterStatusApplyConfiguration {
 	b.LastHeartbeatTime = &value
+	return b
+}
+
+// WithLastStatusChangeTime sets the LastStatusChangeTime field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the LastStatusChangeTime field is set to the value of the last call.
+func (b *ClusterStatusApplyConfiguration) WithLastStatusChangeTime(value v1.Time) *ClusterStatusApplyConfiguration {
+	b.LastStatusChangeTime = &value
 	return b
 }
 
@@ -70,6 +115,46 @@ func (b *ClusterStatusApplyConfiguration) WithTotalNodes(value int32) *ClusterSt
 // If called multiple times, the OnlineNodes field is set to the value of the last call.
 func (b *ClusterStatusApplyConfiguration) WithOnlineNodes(value int32) *ClusterStatusApplyConfiguration {
 	b.OnlineNodes = &value
+	return b
+}
+
+// WithReadyNodes sets the ReadyNodes field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ReadyNodes field is set to the value of the last call.
+func (b *ClusterStatusApplyConfiguration) WithReadyNodes(value int32) *ClusterStatusApplyConfiguration {
+	b.ReadyNodes = &value
+	return b
+}
+
+// WithDegradedNodes sets the DegradedNodes field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DegradedNodes field is set to the value of the last call.
+func (b *ClusterStatusApplyConfiguration) WithDegradedNodes(value int32) *ClusterStatusApplyConfiguration {
+	b.DegradedNodes = &value
+	return b
+}
+
+// WithDisconnectedNodes sets the DisconnectedNodes field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DisconnectedNodes field is set to the value of the last call.
+func (b *ClusterStatusApplyConfiguration) WithDisconnectedNodes(value int32) *ClusterStatusApplyConfiguration {
+	b.DisconnectedNodes = &value
+	return b
+}
+
+// WithUnschedulableNodes sets the UnschedulableNodes field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UnschedulableNodes field is set to the value of the last call.
+func (b *ClusterStatusApplyConfiguration) WithUnschedulableNodes(value int32) *ClusterStatusApplyConfiguration {
+	b.UnschedulableNodes = &value
+	return b
+}
+
+// WithDominantFailureReason sets the DominantFailureReason field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DominantFailureReason field is set to the value of the last call.
+func (b *ClusterStatusApplyConfiguration) WithDominantFailureReason(value string) *ClusterStatusApplyConfiguration {
+	b.DominantFailureReason = &value
 	return b
 }
 

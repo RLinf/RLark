@@ -2,13 +2,21 @@ apiVersion: rlinf.io/v1alpha1
 kind: Node
 metadata:
   name: edge-node-1
+  namespace: rlark-system
 spec:
-  agentType: Kubernetes
+  identity:
+    id: node-edge-1
+    domain: edge-domain
+    tenant: example-tenant
+  runtime:
+    type: Kubernetes
+    name: default
   unschedulable: false
 status:
   phase: Online
+  kubernetesNodeUID: 11111111-1111-1111-1111-111111111111
+  kubernetesReady: true
   diskPressure: false
-  reason: kubelet is ready
   nodeInfo:
     architecture: amd64
     kernelVersion: 6.8.0
@@ -33,72 +41,40 @@ status:
     cpu: "2"
     memory: 4Gi
     ephemeral-storage: 20Gi
-    nvidia.com/gpu: "0"
+  capabilitySnapshot:
+    runtime:
+      type: Kubernetes
+      version: v0.1.0
+      workloadKinds:
+        - rlinf.io/ray
+    operations:
+      logs: true
+      exec: true
+    network:
+      crossCluster: true
+    devices:
+      - category: nvidia.com/gpu
+        count: 1
+        available: 1
+  activeWorkloads:
+    total: 2
+    running: 2
 ---
+# Request a one-shot drain with a new, stable ID for every request. The Node
+# Controller reports Draining until all Task drain observations complete, then
+# reports Cordoned while the completed operation remains in spec.operations.
+# Execution and completion must be observed through the operation workflow
+# before removing or replacing the operation.
 apiVersion: rlinf.io/v1alpha1
 kind: Node
 metadata:
-  name: edge-node-2
+  name: edge-node-draining
+  namespace: rlark-system
 spec:
-  agentType: Docker
-  unschedulable: false
-status:
-  phase: Online
-  diskPressure: false
-  reason: docker-agent-connected
-  nodeInfo:
-    architecture: amd64
-    kernelVersion: 6.8.0
-    agentVersion: v0.1.0
-    operatingSystem: linux
-  addresses:
-    - type: InternalIP
-      address: 10.0.0.11
-    - type: Hostname
-      address: edge-node-2
-  capacity:
-    cpu: "16"
-    memory: 64Gi
-    ephemeral-storage: 500Gi
-  allocatable:
-    cpu: "15"
-    memory: 60Gi
-    ephemeral-storage: 450Gi
-  used:
-    cpu: "6"
-    memory: 20Gi
-    ephemeral-storage: 60Gi
----
-apiVersion: rlinf.io/v1alpha1
-kind: Node
-metadata:
-  name: edge-node-3
-spec:
-  agentType: Raw
+  runtime:
+    type: Kubernetes
+    name: default
   unschedulable: true
-status:
-  phase: Offline
-  diskPressure: false
-  reason: maintenance-window
-  nodeInfo:
-    architecture: amd64
-    kernelVersion: 5.15.0
-    agentVersion: v0.1.0
-    operatingSystem: linux
-  addresses:
-    - type: InternalIP
-      address: 10.0.0.12
-    - type: Hostname
-      address: edge-node-3
-  capacity:
-    cpu: "32"
-    memory: 128Gi
-    ephemeral-storage: 1Ti
-  allocatable:
-    cpu: "30"
-    memory: 120Gi
-    ephemeral-storage: 900Gi
-  used:
-    cpu: "0"
-    memory: 0Gi
-    ephemeral-storage: 0Gi
+  operations:
+    - id: drain-20261027-01
+      type: Drain

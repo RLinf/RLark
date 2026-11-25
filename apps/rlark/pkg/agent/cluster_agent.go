@@ -18,6 +18,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/addon"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/base"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/clusterupgradejob"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/delivery"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/node"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/pod"
@@ -27,15 +28,16 @@ import (
 
 // clusterAgent manages cluster-level operations (controller manager).
 type clusterAgent struct {
-	a *Agent
+	a     *Agent
+	start func(context.Context) error
 }
 
-// Run runs the component.
-func (c *clusterAgent) Run(ctx context.Context) error {
+// Build installs the complete cluster role without starting managers or watches.
+func (c *clusterAgent) Build(ctx context.Context) error {
 	logger := log.FromContext(ctx).WithName("clusterAgent")
 	ctrl.SetLogger(logger)
 
-	agentType := c.a.config.AgentType
+	agentType := string(c.a.config.RuntimeKind())
 	clusterID := c.a.config.ClientConfig.ServerNamespace
 	logger.Info(fmt.Sprintf("agentType=%s, clusterID=%s", agentType, clusterID))
 	if clusterID == "" {
@@ -116,38 +118,24 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 	}
 
 	// Setup Task controllers
-	taskController := bc
-	taskController.PullMaxConcurrentReconciles = c.a.config.ControllerConcurrency.TaskPull
-	taskController.PushMaxConcurrentReconciles = map[string]int{
-		"task-deployment":  c.a.config.ControllerConcurrency.TaskDeployment,
-		"task-statefulset": c.a.config.ControllerConcurrency.TaskStatefulSet,
-	}
-	tc := task.NewTaskController(taskController)
-	execution, err := task.NewKubernetesExecutionCoordinator(taskController.LocalKubeClient, taskController.Image)
+	taskAssembly, err := task.BuildKubernetesTaskAssembly(ctx, task.KubernetesTaskAssemblyInput{
+		ManagementClient: mclient, ManagementNamespace: clusterID,
+		LocalClient: bc.LocalKubeClient, LocalCachedClient: bc.LocalKubeCachedClient,
+		LocalHTTP: bc.LocalKubeHTTP, LocalAPIHost: bc.LocalKubeAPIHost, LocalConfig: bc.LocalKubeConfig,
+		Mapper: localManager.GetRESTMapper(), Execution: c.a.config.Execution,
+		PullWorkers: c.a.config.ControllerConcurrency.TaskPull, PushWorkers: c.a.config.ControllerConcurrency.TaskRuntimePush,
+		ResyncPeriod: c.a.config.TaskRuntimeResyncPeriod,
+	})
 	if err != nil {
-		return fmt.Errorf("initialize task execution coordinator: %w", err)
+		return fmt.Errorf("build Task execution assembly: %w", err)
 	}
-	tc.WithExecutionCoordinator(execution)
-	taskHost, err := task.NewKubernetesHost(tc, execution)
-	if err != nil {
-		return fmt.Errorf("initialize Task Host: %w", err)
-	}
-	tc.WithHost(taskHost)
-	if err := tc.SetupPullController(mm); err != nil {
-		return fmt.Errorf("setup task pull controller: %w", err)
-	}
-	if err := mm.Add(task.NewTaskResync(mclient, clusterID, c.a.config.TaskRuntimeResyncPeriod, tc)); err != nil {
-		return fmt.Errorf("setup Task Runtime resync: %w", err)
-	}
-	if err := tc.SetupPushController(lm); err != nil {
-		return fmt.Errorf("setup task push controller: %w", err)
+	if err := taskAssembly.Setup(mm, localManager); err != nil {
+		return fmt.Errorf("install Task execution assembly: %w", err)
 	}
 
 	// Setup Node controllers
 	nodeController := bc
-	nodeController.PushMaxConcurrentReconciles = map[string]int{
-		"node-k8snode": c.a.config.ControllerConcurrency.NodePush,
-	}
+	nodeController.PushMaxConcurrentReconciles = c.a.config.ControllerConcurrency.NodePush
 	nc := node.NewNodeController(nodeController)
 	if err := lm.Add(node.NewOfflineSweeper(nc, 0)); err != nil {
 		return fmt.Errorf("setup node offline sweeper: %w", err)
@@ -164,9 +152,7 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 
 	// Setup Pod controllers (push-only: reports local K8s Pods to management Pod CRs)
 	podController := bc
-	podController.PushMaxConcurrentReconciles = map[string]int{
-		"pod-k8spod": c.a.config.ControllerConcurrency.PodPush,
-	}
+	podController.PushMaxConcurrentReconciles = c.a.config.ControllerConcurrency.PodPush
 	pc := pod.NewPodController(podController)
 	if err := lm.Add(pod.NewOrphanSweeper(pc, c.a.config.PodOrphanSweepInterval, c.a.config.PodOrphanSweepPageSize, c.a.config.PodStaleTTL)); err != nil {
 		return fmt.Errorf("setup pod orphan sweeper: %w", err)
@@ -189,6 +175,14 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		return fmt.Errorf("setup addon push controller: %w", err)
 	}
 
+	// Setup ClusterUpgradeJob controller (pull-only: watches management ClusterUpgradeJob CRs and triggers upgrade on local cluster)
+	clusterUpgradeJobController := bc
+	clusterUpgradeJobController.PullMaxConcurrentReconciles = 1
+	cujc := clusterupgradejob.NewClusterUpgradeJobController(clusterUpgradeJobController)
+	if err := cujc.SetupPullController(mm); err != nil {
+		return fmt.Errorf("setup cluster upgrade job pull controller: %w", err)
+	}
+
 	deliveryReconciler, err := delivery.New(c.a.localKubeConfig, mclient, bc.LocalKubeClient, clusterID)
 	if err != nil {
 		return fmt.Errorf("create delivery controller: %w", err)
@@ -197,8 +191,19 @@ func (c *clusterAgent) Run(ctx context.Context) error {
 		return fmt.Errorf("setup delivery controller: %w", err)
 	}
 
-	var eg errgroup.Group
-	eg.Go(func() error { return mm.Start(ctx) })
-	eg.Go(func() error { return lm.Start(ctx) })
-	return eg.Wait()
+	c.start = func(ctx context.Context) error {
+		eg, runCtx := errgroup.WithContext(ctx)
+		eg.Go(func() error { return mm.Start(runCtx) })
+		eg.Go(func() error { return lm.Start(runCtx) })
+		return eg.Wait()
+	}
+	return nil
+}
+
+// Run starts an already built cluster role.
+func (c *clusterAgent) Run(ctx context.Context) error {
+	if c.start == nil {
+		return fmt.Errorf("cluster role must be built before starting")
+	}
+	return c.start(ctx)
 }

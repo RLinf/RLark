@@ -12,9 +12,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	sharedreconcile "github.com/rlinf/rlark/apps/rlark/pkg/reconcile"
 )
 
 func TestObserve(t *testing.T) {
@@ -24,11 +26,12 @@ func TestObserve(t *testing.T) {
 	staleHeartbeat := metav1.NewMicroTime(now.Add(-time.Minute))
 
 	tests := []struct {
-		name      string
-		cluster   rlarkv1alpha1.Cluster
-		nodes     []rlarkv1alpha1.Node
-		lease     *coordinationv1.Lease
-		wantPhase rlarkv1alpha1.ClusterPhase
+		name          string
+		cluster       rlarkv1alpha1.Cluster
+		nodes         []rlarkv1alpha1.Node
+		lease         *coordinationv1.Lease
+		drainComplete bool
+		wantPhase     rlarkv1alpha1.ClusterPhase
 	}{
 		{
 			name:      "online when heartbeat is current and all nodes are online",
@@ -37,26 +40,7 @@ func TestObserve(t *testing.T) {
 			lease:     testLease(freshHeartbeat, &leaseDuration),
 			wantPhase: rlarkv1alpha1.ClusterOnline,
 		},
-		{
-			name:      "offline when heartbeat is stale",
-			cluster:   testCluster(),
-			nodes:     []rlarkv1alpha1.Node{testNode("node-1", rlarkv1alpha1.NodeOnline)},
-			lease:     testLease(staleHeartbeat, &leaseDuration),
-			wantPhase: rlarkv1alpha1.ClusterOffline,
-		},
-		{
-			name:      "offline when heartbeat has no renewal time",
-			cluster:   testCluster(),
-			nodes:     []rlarkv1alpha1.Node{testNode("node-1", rlarkv1alpha1.NodeOnline)},
-			lease:     testLeaseWithoutRenewal(&leaseDuration),
-			wantPhase: rlarkv1alpha1.ClusterOffline,
-		},
-		{
-			name:      "offline when heartbeat is absent",
-			cluster:   testCluster(),
-			nodes:     []rlarkv1alpha1.Node{testNode("node-1", rlarkv1alpha1.NodeOnline)},
-			wantPhase: rlarkv1alpha1.ClusterOffline,
-		},
+
 		{
 			name:      "downgraded when a registered node is offline",
 			cluster:   testCluster(),
@@ -82,18 +66,17 @@ func TestObserve(t *testing.T) {
 			lease:     testLease(staleHeartbeat, &leaseDuration),
 			wantPhase: rlarkv1alpha1.ClusterDraining,
 		},
+		{
+			name:          "completed drain reports the cordoned scheduling state",
+			cluster:       clusterWithSpec(rlarkv1alpha1.ClusterSpec{AgentNamespace: "rlark-agent-cluster-a", Cordoned: true, Draining: true}),
+			lease:         testLease(staleHeartbeat, &leaseDuration),
+			drainComplete: true,
+			wantPhase:     rlarkv1alpha1.ClusterCordoned,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scheme := runtime.NewScheme()
-			if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
-				t.Fatalf("add RLark scheme: %v", err)
-			}
-			if err := coordinationv1.AddToScheme(scheme); err != nil {
-				t.Fatalf("add coordination scheme: %v", err)
-			}
-
 			objects := []runtime.Object{&tt.cluster}
 			for index := range tt.nodes {
 				objects = append(objects, &tt.nodes[index])
@@ -102,11 +85,11 @@ func TestObserve(t *testing.T) {
 				objects = append(objects, tt.lease)
 			}
 			reconciler := Reconciler{
-				Client: fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build(),
+				Client: newFakeClient(t, objects...),
 				Now:    func() time.Time { return now },
 			}
 
-			phase, _, _, _, _, err := reconciler.observe(context.Background(), &tt.cluster, now)
+			phase, _, _, err := reconciler.observe(context.Background(), &tt.cluster, now, tt.drainComplete)
 			if err != nil {
 				t.Fatalf("observe cluster: %v", err)
 			}
@@ -115,6 +98,81 @@ func TestObserve(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSummarizeNodesUsesConditionsAndUnschedulableIntent(t *testing.T) {
+	ready := testNode("ready", rlarkv1alpha1.NodeOnline)
+	degraded := testNode("degraded", rlarkv1alpha1.NodeDegraded)
+	degraded.Status.Conditions[1] = metav1.Condition{Type: rlarkv1alpha1.ConditionTypeReady, Status: metav1.ConditionFalse, Reason: rlarkv1alpha1.ConditionReasonRuntimeUnavailable}
+	disconnected := testNode("disconnected", rlarkv1alpha1.NodeOnline)
+	disconnected.Status.Conditions[0] = metav1.Condition{Type: rlarkv1alpha1.ConditionTypeAgentConnected, Status: metav1.ConditionFalse, Reason: rlarkv1alpha1.ConditionReasonLeaseExpired}
+	unschedulable := testNode("cordoned", rlarkv1alpha1.NodeOnline)
+	unschedulable.Spec.Unschedulable = true
+
+	summary := summarizeNodes([]rlarkv1alpha1.Node{ready, degraded, disconnected, unschedulable})
+	if summary.readyNodes != 1 || summary.degradedNodes != 1 || summary.disconnectedNodes != 1 || summary.unschedulableNodes != 1 {
+		t.Fatalf("unexpected node summary: %#v", summary)
+	}
+	if summary.dominantFailureReason != rlarkv1alpha1.ConditionReasonLeaseExpired {
+		t.Fatalf("dominant reason = %q, want %q", summary.dominantFailureReason, rlarkv1alpha1.ConditionReasonLeaseExpired)
+	}
+}
+
+func TestSummarizeNodesCountsReadyDegradedNode(t *testing.T) {
+	node := testNode("pressure", rlarkv1alpha1.NodeDegraded)
+	node.Status.Conditions = append(node.Status.Conditions, metav1.Condition{
+		Type:   rlarkv1alpha1.ConditionTypeDegraded,
+		Status: metav1.ConditionTrue,
+		Reason: rlarkv1alpha1.ConditionReasonResourcePressureDetected,
+	})
+
+	summary := summarizeNodes([]rlarkv1alpha1.Node{node})
+	if summary.readyNodes != 1 || summary.degradedNodes != 1 || summary.disconnectedNodes != 0 {
+		t.Fatalf("unexpected node summary: %#v", summary)
+	}
+}
+
+// TestObserveToleratesALeaseWithoutADuration pins a behaviour change: an unset
+// LeaseDurationSeconds is an optional field on a built-in type, not invalid
+// operator input. Failing the pass over it froze the Cluster status instead of
+// reporting it.
+func TestObserveToleratesALeaseWithoutADuration(t *testing.T) {
+	now := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
+	cluster := testCluster()
+	node := testNode("node-1", rlarkv1alpha1.NodeOnline)
+	renewTime := metav1.NewMicroTime(now.Add(-5 * time.Second))
+
+	reconciler := Reconciler{
+		Client: newFakeClient(t, &cluster, &node, testLease(renewTime, nil)),
+		Now:    func() time.Time { return now },
+	}
+
+	phase, heartbeat, _, err := reconciler.observe(context.Background(), &cluster, now, false)
+	if err != nil {
+		t.Fatalf("observe cluster: %v", err)
+	}
+	if phase != rlarkv1alpha1.ClusterOnline {
+		t.Fatalf("expected phase %q, got %q", rlarkv1alpha1.ClusterOnline, phase)
+	}
+	if heartbeat.Timeout != sharedreconcile.DefaultHeartbeatTimeout {
+		t.Fatalf("expected the shared default timeout, got %s", heartbeat.Timeout)
+	}
+}
+
+func newFakeClient(t *testing.T, objects ...runtime.Object) client.Client {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add RLark scheme: %v", err)
+	}
+	if err := coordinationv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add coordination scheme: %v", err)
+	}
+	return fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&rlarkv1alpha1.Cluster{}).
+		WithRuntimeObjects(objects...).
+		Build()
 }
 
 func testCluster() rlarkv1alpha1.Cluster {
@@ -129,12 +187,28 @@ func clusterWithSpec(spec rlarkv1alpha1.ClusterSpec) rlarkv1alpha1.Cluster {
 }
 
 func testNode(name string, phase rlarkv1alpha1.NodePhase) rlarkv1alpha1.Node {
+	connected := metav1.ConditionTrue
+	ready := metav1.ConditionTrue
+	connectedReason := rlarkv1alpha1.ConditionReasonLeaseValid
+	readyReason := rlarkv1alpha1.ConditionReasonKubernetesNodeReady
+	if phase == rlarkv1alpha1.NodeOffline {
+		connected = metav1.ConditionFalse
+		ready = metav1.ConditionFalse
+		connectedReason = rlarkv1alpha1.ConditionReasonLeaseExpired
+		readyReason = rlarkv1alpha1.ConditionReasonKubernetesNodeNotReady
+	}
 	return rlarkv1alpha1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "rlark-agent-cluster-a",
 		},
-		Status: rlarkv1alpha1.NodeStatus{Phase: phase},
+		Status: rlarkv1alpha1.NodeStatus{
+			Phase: phase,
+			Conditions: []metav1.Condition{
+				{Type: rlarkv1alpha1.ConditionTypeAgentConnected, Status: connected, Reason: connectedReason},
+				{Type: rlarkv1alpha1.ConditionTypeReady, Status: ready, Reason: readyReason},
+			},
+		},
 	}
 }
 
@@ -145,13 +219,6 @@ func testLease(renewTime metav1.MicroTime, leaseDuration *int32) *coordinationv1
 			RenewTime:            &renewTime,
 			LeaseDurationSeconds: leaseDuration,
 		},
-	}
-}
-
-func testLeaseWithoutRenewal(leaseDuration *int32) *coordinationv1.Lease {
-	return &coordinationv1.Lease{
-		ObjectMeta: metav1.ObjectMeta{Name: heartbeatLeaseName, Namespace: "rlark-agent-cluster-a"},
-		Spec:       coordinationv1.LeaseSpec{LeaseDurationSeconds: leaseDuration},
 	}
 }
 
@@ -314,12 +381,41 @@ func TestReconcileFinishesDrainAndRestoresObservedPhase(t *testing.T) {
 	if !updated.Spec.Draining || !updated.Spec.Cordoned || updated.Spec.DrainPreviousCordoned {
 		t.Fatalf("expected drain request to remain in Spec, got %#v", updated.Spec)
 	}
-	if updated.Status.Phase != rlarkv1alpha1.ClusterDraining {
-		t.Fatalf("expected phase %q while drain remains requested, got %q", rlarkv1alpha1.ClusterDraining, updated.Status.Phase)
+	// A finished drain must stop reporting "Draining" and fall back to the durable
+	// scheduling intent, so the console shows the cluster as stopped-scheduling and
+	// offers Drain again rather than Cancel Drain.
+	if updated.Status.Phase != rlarkv1alpha1.ClusterCordoned {
+		t.Fatalf("expected phase %q after the drain completes, got %q", rlarkv1alpha1.ClusterCordoned, updated.Status.Phase)
 	}
 	condition := apimeta.FindStatusCondition(updated.Status.Conditions, rlarkv1alpha1.ConditionTypeReady)
-	if condition == nil || condition.Reason != "ClusterDraining" {
+	if condition == nil || condition.Reason != "ClusterCordoned" {
 		t.Fatalf("unexpected Ready condition: %#v", condition)
+	}
+	// A cluster with no Tasks is drained on the first pass, so completion must be
+	// published without a prior DrainInProgress condition.
+	progressing := apimeta.FindStatusCondition(updated.Status.Conditions, rlarkv1alpha1.ConditionTypeProgressing)
+	if progressing == nil || progressing.Status != metav1.ConditionFalse || progressing.Reason != "DrainComplete" || progressing.ObservedGeneration != updated.Generation {
+		t.Fatalf("unexpected Progressing condition: %#v", progressing)
+	}
+}
+
+func TestClearDrainConditionTracksObservedGeneration(t *testing.T) {
+	now := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
+	var conditions []metav1.Condition
+
+	clearDrainCondition(&conditions, now, 7)
+	condition := apimeta.FindStatusCondition(conditions, rlarkv1alpha1.ConditionTypeProgressing)
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "DrainComplete" || condition.ObservedGeneration != 7 {
+		t.Fatalf("unexpected Progressing condition: %#v", condition)
+	}
+
+	// A completed drain re-observed for a newer generation must follow that
+	// generation; a stale value would never satisfy the current-generation gate
+	// that guards undrain, uncordon, and delist.
+	clearDrainCondition(&conditions, now.Add(time.Minute), 8)
+	condition = apimeta.FindStatusCondition(conditions, rlarkv1alpha1.ConditionTypeProgressing)
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "DrainComplete" || condition.ObservedGeneration != 8 {
+		t.Fatalf("unexpected Progressing condition after generation change: %#v", condition)
 	}
 }
 
@@ -431,6 +527,50 @@ func TestReconcileResumesTimedOutDrainAfterRestart(t *testing.T) {
 	}
 }
 
+func TestReconcileRetiresDrainConditionWhenDrainingCancelled(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
+	cluster := clusterWithSpec(rlarkv1alpha1.ClusterSpec{
+		AgentNamespace: "rlark-agent-cluster-a",
+		Cordoned:       true,
+	})
+	cluster.Status.Conditions = []metav1.Condition{{
+		Type:               rlarkv1alpha1.ConditionTypeProgressing,
+		Status:             metav1.ConditionTrue,
+		Reason:             "DrainTimedOut",
+		Message:            "Drain exceeded the deadline.",
+		ObservedGeneration: cluster.Generation,
+		LastTransitionTime: metav1.NewTime(now.Add(-drainTimeout)),
+	}}
+
+	scheme := runtime.NewScheme()
+	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := coordinationv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&rlarkv1alpha1.Cluster{}).WithRuntimeObjects(&cluster).Build()
+	reconciler := Reconciler{Client: client, Now: func() time.Time { return now }}
+
+	for range 2 {
+		if _, err := reconciler.Reconcile(context.Background(), reconcileRequest(cluster.Name)); err != nil {
+			t.Fatalf("reconcile cancelled drain: %v", err)
+		}
+	}
+
+	var updated rlarkv1alpha1.Cluster
+	if err := client.Get(context.Background(), types.NamespacedName{Name: cluster.Name}, &updated); err != nil {
+		t.Fatalf("get Cluster: %v", err)
+	}
+	if !updated.Spec.Cordoned {
+		t.Fatalf("expected Cordoned Spec to be preserved, got %#v", updated.Spec)
+	}
+	if condition := apimeta.FindStatusCondition(updated.Status.Conditions, rlarkv1alpha1.ConditionTypeProgressing); condition != nil {
+		t.Fatalf("expected drain Progressing condition to be retired, got %#v", condition)
+	}
+}
+
 func TestNextDrainRequeueAfter(t *testing.T) {
 	now := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
 	startedAt := metav1.NewTime(now)
@@ -451,18 +591,12 @@ func TestReconcileUpdatesStatus(t *testing.T) {
 	now := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
 	freshHeartbeat := metav1.NewMicroTime(now.Add(-5 * time.Second))
 	cluster := testCluster()
+	cluster.Generation = 3
 	node := testNode("node-1", rlarkv1alpha1.NodeOnline)
 
-	scheme := runtime.NewScheme()
-	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add RLark scheme: %v", err)
-	}
-	if err := coordinationv1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add coordination scheme: %v", err)
-	}
 	leaseDuration := int32(30)
-	client := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&rlarkv1alpha1.Cluster{}).WithRuntimeObjects(&cluster, &node, testLease(freshHeartbeat, &leaseDuration)).Build()
-	reconciler := Reconciler{Client: client, Now: func() time.Time { return now }}
+	fakeClient := newFakeClient(t, &cluster, &node, testLease(freshHeartbeat, &leaseDuration))
+	reconciler := Reconciler{Client: fakeClient, Now: func() time.Time { return now }}
 
 	for range 2 {
 		if _, err := reconciler.Reconcile(context.Background(), reconcileRequest(cluster.Name)); err != nil {
@@ -471,15 +605,31 @@ func TestReconcileUpdatesStatus(t *testing.T) {
 	}
 
 	var updated rlarkv1alpha1.Cluster
-	if err := client.Get(context.Background(), types.NamespacedName{Name: cluster.Name}, &updated); err != nil {
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: cluster.Name}, &updated); err != nil {
 		t.Fatalf("get updated cluster: %v", err)
 	}
 	if updated.Status.Phase != rlarkv1alpha1.ClusterOnline || updated.Status.TotalNodes != 1 || updated.Status.OnlineNodes != 1 {
 		t.Fatalf("unexpected status: %#v", updated.Status)
 	}
+	if updated.Status.ObservedGeneration != cluster.Generation {
+		t.Fatalf("expected observedGeneration %d, got %d", cluster.Generation, updated.Status.ObservedGeneration)
+	}
+	if updated.Status.LastStatusChangeTime == nil || !updated.Status.LastStatusChangeTime.Time.Equal(now) {
+		t.Fatalf("expected lastStatusChangeTime %s, got %#v", now, updated.Status.LastStatusChangeTime)
+	}
 	condition := apimeta.FindStatusCondition(updated.Status.Conditions, rlarkv1alpha1.ConditionTypeReady)
 	if condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "ClusterOnline" {
 		t.Fatalf("unexpected Ready condition: %#v", condition)
+	}
+	if condition.ObservedGeneration != 0 {
+		t.Fatalf("Ready is observation-driven and must not claim a generation: %#v", condition)
+	}
+	connected := apimeta.FindStatusCondition(updated.Status.Conditions, rlarkv1alpha1.ConditionTypeAgentConnected)
+	if connected == nil || connected.Status != metav1.ConditionTrue || connected.Reason != rlarkv1alpha1.ConditionReasonLeaseValid {
+		t.Fatalf("unexpected AgentConnected condition: %#v", connected)
+	}
+	if connected.ObservedGeneration != 0 {
+		t.Fatalf("AgentConnected is observation-driven and must not claim a generation: %#v", connected)
 	}
 
 	result, err := reconciler.Reconcile(context.Background(), reconcileRequest(cluster.Name))
@@ -491,11 +641,47 @@ func TestReconcileUpdatesStatus(t *testing.T) {
 		t.Fatalf("expected requeue after 25s, got %s", result.RequeueAfter)
 	}
 	var unchanged rlarkv1alpha1.Cluster
-	if err := client.Get(context.Background(), types.NamespacedName{Name: cluster.Name}, &unchanged); err != nil {
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: cluster.Name}, &unchanged); err != nil {
 		t.Fatalf("get unchanged cluster: %v", err)
 	}
 	if updated.ResourceVersion != unchanged.ResourceVersion {
 		t.Fatalf("expected unchanged status resource version, got %q then %q", updated.ResourceVersion, unchanged.ResourceVersion)
+	}
+}
+
+func TestReconcileReportsExpiredClusterHeartbeat(t *testing.T) {
+	now := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
+	staleHeartbeat := metav1.NewMicroTime(now.Add(-2 * time.Minute))
+	cluster := testCluster()
+	node := testNode("node-1", rlarkv1alpha1.NodeOnline)
+
+	scheme := runtime.NewScheme()
+	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add RLark scheme: %v", err)
+	}
+	if err := coordinationv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add coordination scheme: %v", err)
+	}
+	leaseDuration := int32(30)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&rlarkv1alpha1.Cluster{}).WithRuntimeObjects(&cluster, &node, testLease(staleHeartbeat, &leaseDuration)).Build()
+	reconciler := Reconciler{Client: c, Now: func() time.Time { return now }}
+
+	for range 2 {
+		if _, err := reconciler.Reconcile(context.Background(), reconcileRequest(cluster.Name)); err != nil {
+			t.Fatalf("reconcile cluster: %v", err)
+		}
+	}
+
+	var updated rlarkv1alpha1.Cluster
+	if err := c.Get(context.Background(), types.NamespacedName{Name: cluster.Name}, &updated); err != nil {
+		t.Fatalf("get updated cluster: %v", err)
+	}
+	if updated.Status.Phase != rlarkv1alpha1.ClusterOnline {
+		t.Fatalf("phase = %q, want Online while Nodes stay ready", updated.Status.Phase)
+	}
+	connected := apimeta.FindStatusCondition(updated.Status.Conditions, rlarkv1alpha1.ConditionTypeAgentConnected)
+	if connected == nil || connected.Status != metav1.ConditionFalse || connected.Reason != rlarkv1alpha1.ConditionReasonLeaseExpired {
+		t.Fatalf("unexpected AgentConnected condition: %#v", connected)
 	}
 }
 
@@ -591,17 +777,6 @@ func TestReconcileDeletionRemovesResourcesWithStaleClusterLabels(t *testing.T) {
 	}
 	if err := client.Get(context.Background(), types.NamespacedName{Name: cluster.Name}, &rlarkv1alpha1.Cluster{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("Cluster should be deleted after namespace cleanup, got: %v", err)
-	}
-}
-
-func TestNextRequeueAfter(t *testing.T) {
-	now := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
-	heartbeat := metav1.NewTime(now.Add(-5 * time.Second))
-	if got := nextRequeueAfter(now, &heartbeat, 30*time.Second); got != 25*time.Second {
-		t.Fatalf("expected requeue after 25s, got %s", got)
-	}
-	if got := nextRequeueAfter(now, nil, 0); got != time.Minute {
-		t.Fatalf("expected fallback requeue after 1m, got %s", got)
 	}
 }
 

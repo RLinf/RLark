@@ -188,11 +188,14 @@ export function StatusBadge({
   copy: Copy;
 }) {
   const Icon =
-    phase === "Running" || phase === "Stopping" || phase === "Deleting"
+    phase === "Running" ||
+    phase === "Stopping" ||
+    phase === "Deleting" ||
+    phase === "Draining"
       ? LoaderCircle
       : phase === "Succeeded" || phase === "Online"
         ? Check
-        : phase === "Pending"
+        : phase === "Pending" || phase === "Registering" || phase === "Cordoned"
           ? Clock3
           : phase === "Failed" || phase === "Offline"
             ? X

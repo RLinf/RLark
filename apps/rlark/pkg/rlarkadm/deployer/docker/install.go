@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -40,9 +41,11 @@ func (d *Installer) Install(cfg *types.DeployConfig, certBundle *cert.Bundle) er
 		}
 	}
 
+	ctx := context.Background()
+
 	for _, c := range component.ComponentsForPlane(cfg) {
 		// 如果组件已存在且健康，跳过部署
-		if c.HealthCheckFn != nil && c.HealthCheckFn(cfg) == nil {
+		if c.HealthCheckFn != nil && c.HealthCheckFn(ctx, cfg) == nil {
 			logger.Info("component already healthy, skipping", "name", c.Name)
 			continue
 		}
@@ -60,14 +63,14 @@ func (d *Installer) Install(cfg *types.DeployConfig, certBundle *cert.Bundle) er
 			return err
 		}
 		logger.Info("container started", "name", c.Name, "port", c.Port)
-		if err := health.WaitForHealthy(cfg, c); err != nil {
+		if err := health.WaitForHealthy(ctx, cfg, c); err != nil {
 			return err
 		}
 	}
 
 	logger.Info("plane deployed via Docker", "plane", cfg.Plane)
 
-	d.summary = d.buildSummary(cfg)
+	d.summary = d.buildSummary(ctx, cfg)
 	return nil
 }
 
@@ -76,7 +79,7 @@ func (d *Installer) Summary() *types.InstallSummary {
 	return d.summary
 }
 
-func (d *Installer) buildSummary(cfg *types.DeployConfig) *types.InstallSummary {
+func (d *Installer) buildSummary(ctx context.Context, cfg *types.DeployConfig) *types.InstallSummary {
 	summary := &types.InstallSummary{
 		Plane: string(cfg.Plane),
 		Mode:  cfg.EnvMode(),
@@ -84,7 +87,7 @@ func (d *Installer) buildSummary(cfg *types.DeployConfig) *types.InstallSummary 
 	for _, c := range component.ComponentsForPlane(cfg) {
 		healthy := false
 		if c.HealthCheckFn != nil {
-			healthy = c.HealthCheckFn(cfg) == nil
+			healthy = c.HealthCheckFn(ctx, cfg) == nil
 		}
 		summary.Components = append(summary.Components, types.ComponentStatus{
 			Name:    c.Name,

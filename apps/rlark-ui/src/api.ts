@@ -1,6 +1,7 @@
 export const AUTH_TOKEN_KEY = "rlark-auth-token";
 export const AUTH_ROLE_KEY = "rlark-auth-role";
 export const UNAUTHORIZED_EVENT = "rlark:unauthorized";
+export const LANGUAGE_KEY = "rlark-language";
 
 export type AuthRole = "admin" | "user";
 
@@ -42,6 +43,18 @@ export function hasAuthSession(role?: AuthRole) {
   return Boolean(token && (!role || storedRole === role));
 }
 
+// The Gateway renders human-readable messages in the caller's language, so
+// every request advertises the console's active UI language. The stored value is
+// the same one the language switcher writes.
+function currentLanguage(): "zh" | "en" {
+  try {
+    const raw = localStorage.getItem(LANGUAGE_KEY);
+    return raw && (JSON.parse(raw) as string) === "en" ? "en" : "zh";
+  } catch {
+    return "zh";
+  }
+}
+
 async function authenticatedFetch(
   input: RequestInfo | URL,
   init: RequestInit = {},
@@ -50,6 +63,9 @@ async function authenticatedFetch(
   const token = sessionStorage.getItem(AUTH_TOKEN_KEY);
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
+  }
+  if (!headers.has("Accept-Language")) {
+    headers.set("Accept-Language", currentLanguage());
   }
 
   const response = await fetch(input, { ...init, headers });
@@ -79,12 +95,11 @@ async function responseError(response: Response) {
   } catch {
     // Keep non-JSON error bodies as text.
   }
+  // The status stays on ApiError.status for callers that branch on it, but the
+  // message shows only the server-provided detail: surfacing "HTTP 409" next to
+  // an already localized sentence reads as implementation noise.
   const detail = errorMessage(body) || text;
-  return new ApiError(
-    response.status,
-    detail ? `HTTP ${response.status}: ${detail}` : `HTTP ${response.status}`,
-    body,
-  );
+  return new ApiError(response.status, detail || response.statusText, body);
 }
 
 export async function request(

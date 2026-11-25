@@ -208,7 +208,7 @@ func setEmpty(value Set) bool {
 func mergeSet(set *Set, value Trigger, maxRoots int) {
 	set.Kinds[value.Kind] = struct{}{}
 	wasFullReconcile := set.FullReconcileRequired
-	if value.Kind == DesiredState || value.Kind == Periodic || value.Kind == "" {
+	if value.Kind == DesiredState || value.Kind == Periodic || value.Kind == "" || (value.Kind == RuntimeState && value.Root == nil) {
 		set.FullReconcileRequired = true
 	}
 	if set.ObjectUID == "" {

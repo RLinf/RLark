@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,9 +14,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 
+	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 )
 
@@ -31,6 +34,11 @@ type ClusterInfo struct {
 	TotalNodes             int                        `json:"totalNodes"`
 	OnlineNodes            int                        `json:"onlineNodes"`
 	OfflineNodes           int                        `json:"offlineNodes"`
+	ReadyNodes             int                        `json:"readyNodes"`
+	DegradedNodes          int                        `json:"degradedNodes"`
+	DisconnectedNodes      int                        `json:"disconnectedNodes"`
+	UnschedulableNodes     int                        `json:"unschedulableNodes"`
+	DominantFailureReason  string                     `json:"dominantFailureReason,omitempty"`
 	CloudNodes             int                        `json:"cloudNodes"`
 	EmbodiedNodes          int                        `json:"embodiedNodes"`
 	Robots                 int                        `json:"robots"`
@@ -50,9 +58,11 @@ type ClusterDetail struct {
 	Nodes []rlarkv1alpha1.Node `json:"nodes"`
 }
 
-// nodeCategories 返回节点所属的分类集合，支持两种 label 形式：
+// nodeCategories 返回节点所属的分类集合。分类由管理面维护在 Node CR 的
+// Annotation 上，支持两种形式：
 // 1. 枚举值：rlark.io/node-category = "cloud,edge"（逗号分隔）
-// 2. 布尔位：rlark.io/node-category-cloud = "true"（前端批量编辑使用）
+// 2. 布尔位：rlark.io/node-category-cloud = "true"（前端管理界面使用）
+// 旧版本写入的 Label 形式继续作为兼容回退读取；Annotation 存在时优先生效。
 // 两者任一命中即返回对应分类，去重后返回。
 func nodeCategories(node rlarkv1alpha1.Node) []rlarkv1alpha1.NodeCategory {
 	seen := make(map[rlarkv1alpha1.NodeCategory]struct{})
@@ -63,7 +73,13 @@ func nodeCategories(node rlarkv1alpha1.Node) []rlarkv1alpha1.NodeCategory {
 			result = append(result, c)
 		}
 	}
-	if v := node.Labels[rlarkv1alpha1.LabelNodeCategory]; v != "" {
+	value := func(key string) string {
+		if v, ok := node.Annotations[key]; ok {
+			return v
+		}
+		return node.Labels[key]
+	}
+	if v := value(rlarkv1alpha1.LabelNodeCategory); v != "" {
 		for _, part := range strings.Split(v, ",") {
 			switch rlarkv1alpha1.NodeCategory(strings.TrimSpace(part)) {
 			case rlarkv1alpha1.NodeCategoryCloud:
@@ -80,11 +96,20 @@ func nodeCategories(node rlarkv1alpha1.Node) []rlarkv1alpha1.NodeCategory {
 		rlarkv1alpha1.NodeCategoryEdge,
 		rlarkv1alpha1.NodeCategoryRobot,
 	} {
-		if node.Labels[rlarkv1alpha1.LabelNodeCategory+"-"+string(c)] == "true" {
+		if value(rlarkv1alpha1.LabelNodeCategory+"-"+string(c)) == "true" {
 			add(c)
 		}
 	}
 	return result
+}
+
+// nodeMetadataValue prefers the administrator annotation on the management Node
+// CR and falls back to the legacy label form.
+func nodeMetadataValue(node rlarkv1alpha1.Node, key string) string {
+	if v := node.Annotations[key]; v != "" {
+		return v
+	}
+	return node.Labels[key]
 }
 
 func clusterAgentNamespaceConflict(cluster rlarkv1alpha1.Cluster) bool {
@@ -92,40 +117,44 @@ func clusterAgentNamespaceConflict(cluster rlarkv1alpha1.Cluster) bool {
 	return condition != nil && condition.Reason == "AgentNamespaceConflict"
 }
 
-func buildClusterInfo(cluster rlarkv1alpha1.Cluster, nodes []rlarkv1alpha1.Node) ClusterInfo {
+func buildClusterInfo(cluster rlarkv1alpha1.Cluster, nodes []rlarkv1alpha1.Node, runningJobs int) ClusterInfo {
 	info := ClusterInfo{
 		ID:                     cluster.Name,
 		AgentNamespace:         cluster.Spec.AgentNamespace,
 		Name:                   cluster.Name,
 		Phase:                  cluster.Status.Phase,
+		TotalNodes:             int(cluster.Status.TotalNodes),
+		OnlineNodes:            int(cluster.Status.OnlineNodes),
+		ReadyNodes:             int(cluster.Status.ReadyNodes),
+		DegradedNodes:          int(cluster.Status.DegradedNodes),
+		DisconnectedNodes:      int(cluster.Status.DisconnectedNodes),
+		UnschedulableNodes:     int(cluster.Status.UnschedulableNodes),
+		DominantFailureReason:  cluster.Status.DominantFailureReason,
 		AgentNamespaceConflict: clusterAgentNamespaceConflict(cluster),
+		RunningJobs:            runningJobs,
 		GPUModels:              []string{},
 		RobotModels:            []string{},
 	}
 	gpuModels := make(map[string]struct{})
 	robotModels := make(map[string]struct{})
-	runningJobs := make(map[string]struct{})
 
 	for _, node := range nodes {
-		info.TotalNodes++
-		if node.Status.Phase == rlarkv1alpha1.NodeOnline {
-			info.OnlineNodes++
-		} else {
-			info.OfflineNodes++
-		}
-
 		for _, category := range nodeCategories(node) {
 			switch category {
 			case rlarkv1alpha1.NodeCategoryCloud:
 				info.CloudNodes++
-				if model := node.Labels["rlark.io/model"]; model != "" {
+				if model := nodeMetadataValue(node, "rlark.io/gpu-model"); model != "" {
+					gpuModels[model] = struct{}{}
+				} else if model := nodeMetadataValue(node, "rlark.io/model"); model != "" {
 					gpuModels[model] = struct{}{}
 				}
 			case rlarkv1alpha1.NodeCategoryEdge:
 				info.EmbodiedNodes++
 			case rlarkv1alpha1.NodeCategoryRobot:
 				info.Robots++
-				if model := node.Labels["rlark.io/model"]; model != "" {
+				if model := nodeMetadataValue(node, "rlark.io/device-model"); model != "" {
+					robotModels[model] = struct{}{}
+				} else if model := nodeMetadataValue(node, "rlark.io/model"); model != "" {
 					robotModels[model] = struct{}{}
 				}
 			}
@@ -140,15 +169,15 @@ func buildClusterInfo(cluster rlarkv1alpha1.Cluster, nodes []rlarkv1alpha1.Node)
 				info.Location = node.Labels["rlark.io/city"]
 			}
 		}
-		if taskName := node.Labels["rlark.io/embodied-task-name"]; taskName != "" {
-			runningJobs[taskName] = struct{}{}
-		} else if taskName := node.Labels["rlark.io/task-name"]; taskName != "" {
-			runningJobs[taskName] = struct{}{}
-		}
 	}
-	info.RunningJobs = len(runningJobs)
+	info.OfflineNodes = info.DisconnectedNodes
+	categorizedNodes := info.CloudNodes + info.EmbodiedNodes + info.Robots
+	categoryTotal := info.TotalNodes
+	if categoryTotal == 0 {
+		categoryTotal = categorizedNodes
+	}
 
-	hybrid := info.TotalNodes != info.CloudNodes+info.EmbodiedNodes+info.Robots // 有无标签的节点则显示为混合集群
+	hybrid := categorizedNodes != 0 && categoryTotal != categorizedNodes // 有无标签的节点则显示为混合集群
 	if info.CloudNodes > 0 && info.EmbodiedNodes == 0 && info.Robots == 0 && !hybrid {
 		info.Type = "Cloud"
 	} else if info.CloudNodes == 0 && (info.EmbodiedNodes > 0 || info.Robots > 0) && !hybrid {
@@ -181,6 +210,37 @@ func (g *Gateway) clusterNodes(c *gin.Context) ([]rlarkv1alpha1.Node, error) {
 	return nodes.Items, nil
 }
 
+// clusterRunningJobs counts the RLark Tasks still active in each Agent namespace.
+// Tasks are placed into the namespace of their target Cluster (the Node's own
+// namespace, i.e. cluster.spec.agentNamespace), so that namespace is the
+// cluster-scoped source of truth for running work. The data-plane Agent never
+// writes a task label onto the Node CR, so counting Node labels always yielded
+// zero for Kubernetes clusters; counting the Task phase instead matches the
+// drain/delist gating, which is defined over non-terminal, non-stopped Tasks.
+func (g *Gateway) clusterRunningJobs(c *gin.Context) (map[string]int, error) {
+	if g.kubeClient == nil {
+		return map[string]int{}, nil
+	}
+	tasks, err := g.kubeClient.RlinfV1alpha1().Tasks(metav1.NamespaceAll).List(
+		c.Request.Context(), metav1.ListOptions{},
+	)
+	if err != nil {
+		return nil, err
+	}
+	running := make(map[string]int)
+	for i := range tasks.Items {
+		task := &tasks.Items[i]
+		if !task.DeletionTimestamp.IsZero() {
+			continue
+		}
+		switch task.Status.Phase {
+		case rlarkv1alpha1.TaskPhasePending, rlarkv1alpha1.TaskPhaseRunning:
+			running[task.Namespace]++
+		}
+	}
+	return running, nil
+}
+
 // listClusters handles the Cluster CR list request.
 func (g *Gateway) listClusters(c *gin.Context) {
 	if g.kubeClient == nil {
@@ -198,6 +258,11 @@ func (g *Gateway) listClusters(c *gin.Context) {
 		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 		return
 	}
+	runningJobs, err := g.clusterRunningJobs(c)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
 
 	grouped := make(map[string][]rlarkv1alpha1.Node)
 	for _, node := range nodes {
@@ -209,7 +274,7 @@ func (g *Gateway) listClusters(c *gin.Context) {
 		if cluster.Spec.Delisted && c.GetString(authRoleKey) != "admin" {
 			continue
 		}
-		clusters = append(clusters, buildClusterInfo(cluster, grouped[cluster.Spec.AgentNamespace]))
+		clusters = append(clusters, buildClusterInfo(cluster, grouped[cluster.Spec.AgentNamespace], runningJobs[cluster.Spec.AgentNamespace]))
 	}
 	sort.Slice(clusters, func(i, j int) bool { return clusters[i].Name < clusters[j].Name })
 	c.JSON(http.StatusOK, gin.H{"data": clusters, "success": true})
@@ -238,6 +303,14 @@ var (
 )
 
 func (g *Gateway) updateCluster(c *gin.Context, update func(*rlarkv1alpha1.Cluster) error) {
+	g.updateClusterWithCleanup(c, update, nil)
+}
+
+// updateClusterWithCleanup applies update and then, when cleanup is non-nil,
+// runs it after the Cluster patch succeeds but before responding. Callers use
+// cleanup for side effects that must accompany the spec change, such as
+// releasing Tasks a cancelled drain stopped.
+func (g *Gateway) updateClusterWithCleanup(c *gin.Context, update func(*rlarkv1alpha1.Cluster) error, cleanup func(context.Context, *rlarkv1alpha1.Cluster) error) {
 	if g.kubeClient == nil {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "cluster not found"})
 		return
@@ -283,6 +356,12 @@ func (g *Gateway) updateCluster(c *gin.Context, update func(*rlarkv1alpha1.Clust
 		}
 		return
 	}
+	if cleanup != nil {
+		if err := cleanup(c.Request.Context(), updated); err != nil {
+			respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+			return
+		}
+	}
 	nodes, err := g.clusterNodes(c)
 	if err != nil {
 		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
@@ -294,7 +373,12 @@ func (g *Gateway) updateCluster(c *gin.Context, update func(*rlarkv1alpha1.Clust
 			clusterNodes = append(clusterNodes, node)
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": buildClusterInfo(*updated, clusterNodes), "success": true})
+	runningJobs, err := g.clusterRunningJobs(c)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": buildClusterInfo(*updated, clusterNodes, runningJobs[updated.Spec.AgentNamespace]), "success": true})
 }
 
 func (g *Gateway) cordonCluster(c *gin.Context) {
@@ -324,6 +408,9 @@ func uncordonClusterSpec(cluster *rlarkv1alpha1.Cluster) error {
 		// Uncordoning a fully drained cluster cancels the drain intent as a whole.
 		// Leaving Spec.Draining set would keep the cluster unschedulable and let the
 		// cluster controller keep stopping Tasks, making the uncordon a silent no-op.
+		// The drain stop markers are deliberately left on the Tasks: uncordon only
+		// restores scheduling, so evicted Tasks stay Stopped until the operator
+		// starts their Job or unsuspends the Task.
 		cluster.Spec.Draining = false
 		cluster.Spec.DrainPreviousCordoned = false
 	}
@@ -336,7 +423,9 @@ func (g *Gateway) drainCluster(c *gin.Context) {
 }
 
 func (g *Gateway) undrainCluster(c *gin.Context) {
-	g.updateCluster(c, undrainClusterSpec)
+	g.updateClusterWithCleanup(c, undrainClusterSpec, func(ctx context.Context, cluster *rlarkv1alpha1.Cluster) error {
+		return clearClusterDrainStops(ctx, g.kubeClient, cluster.Spec.AgentNamespace)
+	})
 }
 
 func undrainClusterSpec(cluster *rlarkv1alpha1.Cluster) error {
@@ -346,6 +435,111 @@ func undrainClusterSpec(cluster *rlarkv1alpha1.Cluster) error {
 	cluster.Spec.Draining = false
 	cluster.Spec.Cordoned = cluster.Spec.DrainPreviousCordoned
 	cluster.Spec.DrainPreviousCordoned = false
+	return nil
+}
+
+const taskJobLabel = "rlinf.io/job"
+
+// clusterDrainStopped reports whether a cluster drain stopped this Task. The two
+// markers are written independently: job-owned Tasks rely on the Job controller
+// honouring ClusterStoppedAnnotation, while standalone Tasks are also suspended
+// by the drain, which records that ownership in ClusterDrainSuspendedAnnotation.
+func clusterDrainStopped(task *rlarkv1alpha1.Task) bool {
+	return task.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] == "true" ||
+		task.Annotations[rlarkv1alpha1.ClusterDrainSuspendedAnnotation] == "true"
+}
+
+// clearClusterDrainStop removes the cluster drain markers from task. Only a
+// suspension the drain wrote itself is resumed; a Task the user had already
+// suspended keeps its own desired state.
+func clearClusterDrainStop(ctx context.Context, client versioned.Interface, task *rlarkv1alpha1.Task) error {
+	if !task.DeletionTimestamp.IsZero() || !clusterDrainStopped(task) {
+		return nil
+	}
+	drainSuspended := task.Annotations[rlarkv1alpha1.ClusterDrainSuspendedAnnotation] == "true"
+	annotations := map[string]any{rlarkv1alpha1.ClusterStoppedAnnotation: nil}
+	if drainSuspended {
+		annotations[rlarkv1alpha1.ClusterDrainSuspendedAnnotation] = nil
+	}
+	patch := map[string]any{"metadata": map[string]any{"annotations": annotations}}
+	if drainSuspended {
+		patch["spec"] = map[string]any{"suspended": false}
+	}
+	body, err := json.Marshal(patch)
+	if err != nil {
+		return fmt.Errorf("build cluster drain marker patch for Task %s/%s: %w", task.Namespace, task.Name, err)
+	}
+	if _, err := client.RlinfV1alpha1().Tasks(task.Namespace).Patch(ctx, task.Name, types.MergePatchType, body, metav1.PatchOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("clear cluster drain marker from Task %s/%s: %w", task.Namespace, task.Name, err)
+	}
+	return nil
+}
+
+// clearClusterDrainStops releases every Task in the agent namespace that a
+// cancelled drain stopped.
+func clearClusterDrainStops(ctx context.Context, client versioned.Interface, namespace string) error {
+	if namespace == "" {
+		return fmt.Errorf("cluster agent namespace is empty")
+	}
+	tasks, err := client.RlinfV1alpha1().Tasks(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("list Tasks in agent namespace: %w", err)
+	}
+	for i := range tasks.Items {
+		if err := clearClusterDrainStop(ctx, client, &tasks.Items[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func clusterDrainStoppedTasksForJob(ctx context.Context, client versioned.Interface, job *rlarkv1alpha1.Job) ([]rlarkv1alpha1.Task, error) {
+	tasks, err := client.RlinfV1alpha1().Tasks(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		LabelSelector: labels.SelectorFromSet(labels.Set{taskJobLabel: job.Name}).String(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list Tasks for Job %q: %w", job.Name, err)
+	}
+	stopped := make([]rlarkv1alpha1.Task, 0)
+	for i := range tasks.Items {
+		task := &tasks.Items[i]
+		if !metav1.IsControlledBy(task, job) || !clusterDrainStopped(task) {
+			continue
+		}
+		stopped = append(stopped, *task)
+	}
+	return stopped, nil
+}
+
+// jobHasClusterDrainStops reports whether any Task owned by job still carries a
+// cluster drain marker.
+func (g *Gateway) jobHasClusterDrainStops(ctx context.Context, job *rlarkv1alpha1.Job) (bool, error) {
+	if g.kubeClient == nil {
+		return false, nil
+	}
+	tasks, err := clusterDrainStoppedTasksForJob(ctx, g.kubeClient, job)
+	if err != nil {
+		return false, err
+	}
+	return len(tasks) > 0, nil
+}
+
+// clearClusterDrainStopsForJob releases the Tasks owned by job that a cluster
+// drain stopped. Starting the Job is the explicit resume action for a drain, so
+// the markers must be gone before the Job controller can dispatch Tasks again.
+func (g *Gateway) clearClusterDrainStopsForJob(ctx context.Context, job *rlarkv1alpha1.Job) error {
+	if g.kubeClient == nil {
+		return nil
+	}
+	tasks, err := clusterDrainStoppedTasksForJob(ctx, g.kubeClient, job)
+	if err != nil {
+		return err
+	}
+	for i := range tasks {
+		if err := clearClusterDrainStop(ctx, g.kubeClient, &tasks[i]); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -444,9 +638,14 @@ func (g *Gateway) getCluster(c *gin.Context) {
 			clusterNodes = append(clusterNodes, node)
 		}
 	}
+	runningJobs, err := g.clusterRunningJobs(c)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
 
 	detail := ClusterDetail{
-		ClusterInfo: buildClusterInfo(*cluster, clusterNodes),
+		ClusterInfo: buildClusterInfo(*cluster, clusterNodes, runningJobs[cluster.Spec.AgentNamespace]),
 		Nodes:       clusterNodes,
 	}
 	c.JSON(http.StatusOK, gin.H{"data": detail, "success": true})

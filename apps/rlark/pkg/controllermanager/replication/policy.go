@@ -14,7 +14,17 @@ import (
 type restrictedPolicy struct{}
 
 func (restrictedPolicy) Validate(_ context.Context, _ *corev1.Secret, _ *meta.RESTMapping, _ distribution.NamespaceIdentity, object *unstructured.Unstructured, apply distribution.ApplyPolicy) error {
-	if apply.AdoptExisting || apply.ConflictPolicy == "Force" {
+	// A Policy is its own trust boundary. It must not assume the caller
+	// already normalised the definition, otherwise an apply policy this
+	// implementation does not understand passes review unnoticed and is then
+	// enforced by whatever the downstream engine happens to do with it.
+	if object == nil {
+		return fmt.Errorf("desired object is required")
+	}
+	if err := apply.Validate(); err != nil {
+		return err
+	}
+	if apply.AdoptExisting || apply.ConflictPolicy == distribution.ConflictPolicyForce {
 		return fmt.Errorf("adoption and force apply are disabled")
 	}
 	if object.GetKind() == "Secret" {

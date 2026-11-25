@@ -21,33 +21,33 @@
 
   .node-resource-table-head,
   .node-resource-row {
-    min-width: 1120px;
+    min-width: 1116px;
     grid-template-columns:
+      16px
       minmax(130px, 1.25fr)
-      minmax(76px, 0.65fr)
-      minmax(80px, 0.68fr)
+      auto
+      auto
+      auto
       minmax(100px, 0.85fr)
-      minmax(104px, 0.85fr)
       minmax(98px, 0.8fr)
       minmax(170px, 1.25fr)
-      minmax(120px, 0.95fr)
-      16px;
+      auto;
     column-gap: 7px;
   }
 
   .node-resource-table-head.has-admin-actions,
   .node-resource-row.has-admin-actions {
-    min-width: 1250px;
+    min-width: 1270px;
     grid-template-columns:
+      auto
       minmax(130px, 1.25fr)
-      minmax(76px, 0.65fr)
-      minmax(80px, 0.68fr)
+      auto
+      auto
+      auto
       minmax(100px, 0.85fr)
-      minmax(104px, 0.85fr)
       minmax(98px, 0.8fr)
       minmax(170px, 1.25fr)
-      minmax(120px, 0.95fr)
-      minmax(170px, 1fr);
+      auto;
   }
 
   .storage-class-table-panel table,

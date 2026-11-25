@@ -21,43 +21,91 @@ import (
 	rlarkiov1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	types "k8s.io/apimachinery/pkg/types"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
 // NodeStatusApplyConfiguration represents a declarative configuration of the NodeStatus type for use
 // with apply.
+//
+// NodeStatus separates Agent-observed facts from Node Controller-derived lifecycle
+// conclusions. Job and scheduler components consume this status read-only.
+//
+// NodeStatus has two writers, and each one writes a disjoint set of fields:
+//
+// - The control-plane Node Controller owns Phase, Conditions, DrainOperations,
+// LastHeartbeatTime and LastStatusChangeTime. They are its conclusions about
+// the Agent heartbeat Lease and the facts reported by the data plane.
+// - The data-plane node-agent owns NodeInfo, Addresses, DiskPressure, Storage,
+// Capacity, Allocatable, Used, CapabilitySnapshot, ActiveWorkloads,
+// ObservedNodeLabels, PullProgress and Events. They are Node-local observations.
+//
+// Both writers Patch the status with client.MergeFrom (no optimistic lock), so
+// concurrent writes merge deterministically and do not depend on write order.
+// That only holds while the ownership above is respected: a new field must be
+// assigned to exactly one writer and must never be written by both.
 type NodeStatusApplyConfiguration struct {
-	// Phase 是节点连通性聚合阶段，由数据面 node-agent 上报。
+	// Phase is a concise lifecycle summary calculated only by the Node Controller.
 	Phase *rlarkiov1alpha1.NodePhase `json:"phase,omitempty"`
-	// Reason 是 Phase 的机器可读原因（CamelCase），与 Conditions 中
-	// ConditionTypeReady 的 Reason 同源，供列表视图直接展示。
-	// 该字段与 Conditions 均由数据面 node-agent 独占写入。
-	Reason *string `json:"reason,omitempty"`
-	// Conditions 记录节点的结构化状态结论，当前仅包含 ConditionTypeReady。
-	// 它由观测（而非 Spec）驱动，因此不填写 ObservedGeneration。
+	// Conditions are calculated only by the Node Controller from desired state and Agent facts.
+	// They are observation-driven and therefore carry no per-condition
+	// ObservedGeneration; use the status-level ObservedGeneration to tell whether
+	// they already reflect the latest Spec.
 	Conditions []v1.ConditionApplyConfiguration `json:"conditions,omitempty"`
-	// LastHeartbeatTime 是控制面 Node Reconciler 从 Agent Lease 读取到的最近一次
-	// 心跳续约时间；数据面不写入本字段。
+	// LastHeartbeatTime is the Agent heartbeat renewal the Node Controller read
+	// from the coordination Lease. It is republished through the control-plane
+	// clock so that it stays comparable across Nodes, and it only ever moves
+	// forward. Agents must not write it.
 	LastHeartbeatTime *metav1.Time `json:"lastHeartbeatTime,omitempty"`
-	// LastStatusChangeTime 是 Phase 最近一次发生变化的时间，与 LastHeartbeatTime
-	// 同由控制面 Node Reconciler 写入，用于区分「长时间保持同一状态」与「刚刚翻转」。
+	// LastStatusChangeTime is the latest time an Agent-observed or controller-derived state changed.
 	LastStatusChangeTime *metav1.Time `json:"lastStatusChangeTime,omitempty"`
-	// NodeInfo 是节点基础信息，由数据面 Agent 上报；控制面不写入本字段。
+	// KubernetesNodeUID is the Agent-observed UID of the local Kubernetes Node object.
+	// It identifies one Node incarnation and is used to correlate Node Drain requests.
+	KubernetesNodeUID *types.UID `json:"kubernetesNodeUID,omitempty"`
+	// KubernetesReady is the raw Kubernetes Node Ready observation reported by the Agent.
+	KubernetesReady *bool `json:"kubernetesReady,omitempty"`
+	// KubernetesCordoned is the raw observation of the local Kubernetes Node's
+	// spec.unschedulable reported by the Agent. RLark does not manage that field:
+	// a cordoned Kubernetes Node conceals placement from every Pod, not only RLark
+	// workloads, so the Agent reports the observation and the Node Controller
+	// derives the KubernetesCordoned condition from it without changing RLark's own
+	// placement decision. Absence means the Agent has not reported the value.
+	KubernetesCordoned *bool `json:"kubernetesCordoned,omitempty"`
+	// NodeInfo is Agent-reported operating system, architecture, Agent, and runtime version information.
 	NodeInfo *NodeInfoApplyConfiguration `json:"nodeInfo,omitempty"`
-	// Addresses 是节点地址列表（InternalIP / Hostname 等）。
-	Addresses    []corev1.NodeAddress                 `json:"addresses,omitempty"`
-	DiskPressure *bool                                `json:"diskPressure,omitempty"`
-	Storage      *NodeStorageStatusApplyConfiguration `json:"storage,omitempty"`
-	Allocatable  *corev1.ResourceList                 `json:"allocatable,omitempty"`
-	// 需要预留系统组件 agent
+	// Addresses are Agent-observed node addresses.
+	Addresses []corev1.NodeAddress `json:"addresses,omitempty"`
+	// DiskPressure is the raw kubelet observation used by the Node Controller to derive ResourcePressure.
+	DiskPressure *bool `json:"diskPressure,omitempty"`
+	// Storage is a bounded monitoring snapshot and must not be used for placement or capacity decisions.
+	Storage *NodeStorageStatusApplyConfiguration `json:"storage,omitempty"`
+	// Allocatable is the Kubernetes Node's scheduler-declared capacity after system reservations.
+	// Schedulers use this value, together with Used, for placement decisions.
+	Allocatable *corev1.ResourceList `json:"allocatable,omitempty"`
+	// Capacity is the Kubernetes Node's physical resource inventory. It is an informational upper bound,
+	// not the schedulable capacity.
 	Capacity *corev1.ResourceList `json:"capacity,omitempty"`
-	Used     *corev1.ResourceList `json:"used,omitempty"`
-	// PullProgress 是节点上正在进行的镜像拉取进度，由 node-agent 上报。
+	// Used is the sum of non-terminal Pod resource requests already allocated for scheduling.
+	// It is not actual runtime utilization.
+	Used *corev1.ResourceList `json:"used,omitempty"`
+	// CapabilitySnapshot is the Agent-observed structured capability declaration.
+	// Transient capability availability is reported by readiness Conditions.
+	CapabilitySnapshot *NodeCapabilitySnapshotApplyConfiguration `json:"capabilitySnapshot,omitempty"`
+	// ActiveWorkloads is the Agent-observed bounded summary of current workloads.
+	ActiveWorkloads *NodeWorkloadSummaryApplyConfiguration `json:"activeWorkloads,omitempty"`
+	// ObservedNodeLabels is the Agent-observed label dictionary read from the
+	// local Kubernetes Node object. It is the user-facing source of truth for
+	// what labels are actually present on the data-plane Node. RLark currently
+	// writes only RLark-owned system labels (rlark.io/*) to metadata.labels on
+	// the management Node CR; other labels found there are not the data-plane
+	// label set. Frontends and operator consoles should display
+	// ObservedNodeLabels, not metadata.labels.
+	ObservedNodeLabels map[string]string `json:"observedNodeLabels,omitempty"`
+	// DrainOperations is the Node Controller's bounded summary of requested drain operations.
+	DrainOperations []NodeDrainOperationStatusApplyConfiguration `json:"drainOperations,omitempty"`
+	// PullProgress is node-agent-reported progress for in-flight image pulls.
 	PullProgress []PullProgressApplyConfiguration `json:"pullProgress,omitempty"`
-	// Events 由数据面 node-agent 上报节点相关 Kubernetes Event（如 DiskPressure
-	// 等 Warning 事件及镜像拉取/调度相关事件）。控制面 Task reconciler 在 Task
-	// 处于 Pending 期间聚合各节点事件到 Task.status.events，供前端展示。
-	// 条目数量由 node-agent 侧裁剪（最多保留 50 条）。
+	// Events is a bounded node-agent-reported diagnostic event summary.
 	Events []NodeEventApplyConfiguration `json:"events,omitempty"`
 }
 
@@ -72,14 +120,6 @@ func NodeStatus() *NodeStatusApplyConfiguration {
 // If called multiple times, the Phase field is set to the value of the last call.
 func (b *NodeStatusApplyConfiguration) WithPhase(value rlarkiov1alpha1.NodePhase) *NodeStatusApplyConfiguration {
 	b.Phase = &value
-	return b
-}
-
-// WithReason sets the Reason field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Reason field is set to the value of the last call.
-func (b *NodeStatusApplyConfiguration) WithReason(value string) *NodeStatusApplyConfiguration {
-	b.Reason = &value
 	return b
 }
 
@@ -109,6 +149,30 @@ func (b *NodeStatusApplyConfiguration) WithLastHeartbeatTime(value metav1.Time) 
 // If called multiple times, the LastStatusChangeTime field is set to the value of the last call.
 func (b *NodeStatusApplyConfiguration) WithLastStatusChangeTime(value metav1.Time) *NodeStatusApplyConfiguration {
 	b.LastStatusChangeTime = &value
+	return b
+}
+
+// WithKubernetesNodeUID sets the KubernetesNodeUID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the KubernetesNodeUID field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithKubernetesNodeUID(value types.UID) *NodeStatusApplyConfiguration {
+	b.KubernetesNodeUID = &value
+	return b
+}
+
+// WithKubernetesReady sets the KubernetesReady field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the KubernetesReady field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithKubernetesReady(value bool) *NodeStatusApplyConfiguration {
+	b.KubernetesReady = &value
+	return b
+}
+
+// WithKubernetesCordoned sets the KubernetesCordoned field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the KubernetesCordoned field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithKubernetesCordoned(value bool) *NodeStatusApplyConfiguration {
+	b.KubernetesCordoned = &value
 	return b
 }
 
@@ -167,6 +231,49 @@ func (b *NodeStatusApplyConfiguration) WithCapacity(value corev1.ResourceList) *
 // If called multiple times, the Used field is set to the value of the last call.
 func (b *NodeStatusApplyConfiguration) WithUsed(value corev1.ResourceList) *NodeStatusApplyConfiguration {
 	b.Used = &value
+	return b
+}
+
+// WithCapabilitySnapshot sets the CapabilitySnapshot field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the CapabilitySnapshot field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithCapabilitySnapshot(value *NodeCapabilitySnapshotApplyConfiguration) *NodeStatusApplyConfiguration {
+	b.CapabilitySnapshot = value
+	return b
+}
+
+// WithActiveWorkloads sets the ActiveWorkloads field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ActiveWorkloads field is set to the value of the last call.
+func (b *NodeStatusApplyConfiguration) WithActiveWorkloads(value *NodeWorkloadSummaryApplyConfiguration) *NodeStatusApplyConfiguration {
+	b.ActiveWorkloads = value
+	return b
+}
+
+// WithObservedNodeLabels puts the entries into the ObservedNodeLabels field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the ObservedNodeLabels field,
+// overwriting an existing map entries in ObservedNodeLabels field with the same key.
+func (b *NodeStatusApplyConfiguration) WithObservedNodeLabels(entries map[string]string) *NodeStatusApplyConfiguration {
+	if b.ObservedNodeLabels == nil && len(entries) > 0 {
+		b.ObservedNodeLabels = make(map[string]string, len(entries))
+	}
+	for k, v := range entries {
+		b.ObservedNodeLabels[k] = v
+	}
+	return b
+}
+
+// WithDrainOperations adds the given value to the DrainOperations field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the DrainOperations field.
+func (b *NodeStatusApplyConfiguration) WithDrainOperations(values ...*NodeDrainOperationStatusApplyConfiguration) *NodeStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithDrainOperations")
+		}
+		b.DrainOperations = append(b.DrainOperations, *values[i])
+	}
 	return b
 }
 

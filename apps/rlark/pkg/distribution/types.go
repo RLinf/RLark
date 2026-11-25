@@ -2,6 +2,7 @@ package distribution
 
 import (
 	"context"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -15,6 +16,19 @@ const (
 	DeliverySecretType    corev1.SecretType = "rlinf.io/resource-delivery"
 
 	InventoryAnnotation = "distribution.rlinf.io/inventory"
+)
+
+// Canonical ApplyPolicy values. Every component that inspects an ApplyPolicy
+// must compare against these constants instead of repeating the literals, so
+// that the set of accepted values has exactly one definition.
+const (
+	ApplyModeServerSideApply = "ServerSideApply"
+
+	ConflictPolicyFail  = "Fail"
+	ConflictPolicyForce = "Force"
+
+	DeletionPolicyDelete = "Delete"
+	DeletionPolicyOrphan = "Orphan"
 )
 
 type Mode struct {
@@ -50,6 +64,24 @@ type ApplyPolicy struct {
 	ConflictPolicy string `json:"conflictPolicy" yaml:"conflictPolicy"`
 	DeletionPolicy string `json:"deletionPolicy" yaml:"deletionPolicy"`
 	AdoptExisting  bool   `json:"adoptExisting,omitempty" yaml:"adoptExisting,omitempty"`
+}
+
+// Validate rejects an ApplyPolicy that is not in canonical form. It expects
+// defaults to have been filled in already, so an empty field is reported as
+// unsupported rather than silently treated as its default: a Policy that
+// receives a half-populated value cannot tell an intentional setting from a
+// decoding accident, and guessing would let an unknown policy through.
+func (p ApplyPolicy) Validate() error {
+	if p.Mode != ApplyModeServerSideApply {
+		return fmt.Errorf("unsupported apply mode %q", p.Mode)
+	}
+	if p.ConflictPolicy != ConflictPolicyFail && p.ConflictPolicy != ConflictPolicyForce {
+		return fmt.Errorf("unsupported conflict policy %q", p.ConflictPolicy)
+	}
+	if p.DeletionPolicy != DeletionPolicyDelete && p.DeletionPolicy != DeletionPolicyOrphan {
+		return fmt.Errorf("unsupported deletion policy %q", p.DeletionPolicy)
+	}
+	return nil
 }
 
 type Config struct {

@@ -59,11 +59,11 @@ func RunScenario[E any](ctx context.Context, runner ScenarioRunner, run *Run, sc
 		return fmt.Errorf("provision scenario %q: %w", scenario.Name, provisionErr)
 	}
 
-	cleanupCtx, cancelCleanup := runner.CleanupContext()
-	defer cancelCleanup()
 	var environment E
 	prepared := false
 	defer func() {
+		cleanupCtx, cancelCleanup := runner.CleanupContext()
+		defer cancelCleanup()
 		if prepared && scenario.Collect != nil {
 			err = errors.Join(err, wrapPhase("collect product", scenario.Collect(cleanupCtx, run, environment)))
 		}

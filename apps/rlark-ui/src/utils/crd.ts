@@ -1,5 +1,6 @@
 import type { Job, JobTag, JobType, MountType, Phase } from "../data";
 import type { CRDJob, CRDJobTask, CRDVolume, CRDWorkflow } from "../crdModels";
+import { JOB_TYPE_LABEL } from "./job.js";
 
 // 生成稳定的 tag id：用 key:value 组合哈希，保证同一 CRD 多次转换得到相同 id。
 function tagId(key: string, value: string): string {
@@ -167,6 +168,7 @@ export function crdToJob(crd: CRDJob): Job {
           value: e.value ?? "",
         })) ?? [];
     const taskMountList = taskMounts(t);
+    const sharedMemorySize = sharedMemorySizeFromEnv(t);
     return {
       role: taskRoleName(t),
       // Job CRD 的 task 不携带集群标识，集群由 CreateJob 页面按 nodeSelector
@@ -182,6 +184,7 @@ export function crdToJob(crd: CRDJob): Job {
       prepareScript: rayScript(t, "prepare"),
       env: taskEnv,
       mounts: taskMountList,
+      ...(sharedMemorySize ? { advanced: { sharedMemorySize } } : {}),
     };
   });
   const env =
@@ -196,7 +199,7 @@ export function crdToJob(crd: CRDJob): Job {
     id: crd.metadata?.name ?? "",
     name: crd.metadata?.name ?? "",
     displayName,
-    type: mapRoleToJobType(tasks),
+    type: readJobType(crd, tasks),
     phase,
     owner: "",
     cluster: tasks
@@ -248,6 +251,15 @@ export function crdToJob(crd: CRDJob): Job {
       message: status.message ?? "",
     })),
   };
+}
+
+const JOB_TYPES: JobType[] = ["RL", "DataCollection", "Evaluation", "Custom"];
+
+// 任务类型优先取写入侧持久化的 label；存量任务没有该 label，回落到从 role 反推。
+export function readJobType(crd: CRDJob, tasks: CRDJobTask[]): JobType {
+  const label = crd.metadata?.labels?.[JOB_TYPE_LABEL];
+  if (label && (JOB_TYPES as string[]).includes(label)) return label as JobType;
+  return mapRoleToJobType(tasks);
 }
 
 export function mapRoleToJobType(tasks: CRDJobTask[]): JobType {
@@ -310,4 +322,14 @@ function tensorBoardLogDir(task: CRDJobTask | undefined): string {
     return "";
   const logDir = (environment.parameters as { logDir?: unknown }).logDir;
   return typeof logDir === "string" ? logDir : "";
+}
+
+function sharedMemorySizeFromEnv(task: CRDJobTask): string {
+  const environment = task?.environments?.find(
+    (item) => item.type === "rlinf.io/shared-memory" && item.version === "v1",
+  );
+  if (!environment?.parameters || typeof environment.parameters !== "object")
+    return "";
+  const size = (environment.parameters as { size?: unknown }).size;
+  return typeof size === "string" ? size : "";
 }

@@ -25,6 +25,14 @@ ok()   { echo -e "\033[1;32m[$(date +%H:%M:%S)] ✓\033[0m $*"; }
 warn() { echo -e "\033[1;33m[$(date +%H:%M:%S)] !\033[0m $*"; }
 err()  { echo -e "\033[1;31m[$(date +%H:%M:%S)] ✗\033[0m $*"; exit 1; }
 
+# Docker 29 dropped the legacy top-level NetworkSettings.IPAddress field, so
+# "-f '{{.NetworkSettings.IPAddress}}'" aborts with a template parsing error.
+# Read the address from the per-network map, which works on every version.
+container_ip() {
+  docker inspect "$1" \
+    -f '{{range .NetworkSettings.Networks}}{{if .IPAddress}}{{.IPAddress}}{{end}}{{end}}' 2>/dev/null
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cluster-id) CLUSTER_IDS+=("$2"); shift 2 ;;
@@ -47,19 +55,42 @@ command -v docker  >/dev/null 2>&1 || err "docker is required"
 command -v kind    >/dev/null 2>&1 || err "kind is required"
 command -v kubectl >/dev/null 2>&1 || err "kubectl is required"
 command -v jq      >/dev/null 2>&1 || err "jq is required"
+command -v curl    >/dev/null 2>&1 || err "curl is required"
 
-# Verify control plane is running
-if [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes 2>/dev/null)" != "200" ]; then
-  err "Control plane not reachable at http://localhost:9000. Run quickstart-cp.sh first."
+# Every /api/v1 route except the login endpoint requires a JWT, so authenticate
+# before creating or deleting kind clusters. An existing admin token may be
+# supplied through RLARK_TOKEN; otherwise use the local quickstart credentials.
+if [ -z "${RLARK_TOKEN:-}" ]; then
+  ADMIN_PASSWORD=$(kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard \
+    -n default get secret rlark-ui-auth -o json | \
+    jq -er '.data["admin-password"] | select(type == "string" and length > 0) | @base64d') || \
+    err "Cannot read quickstart admin credentials; supply an admin JWT through RLARK_TOKEN."
+  RLARK_TOKEN=$(jq -n --arg password "$ADMIN_PASSWORD" '{username:"admin",password:$password}' | \
+    curl -fsS --connect-timeout 5 --max-time 15 \
+      -H 'Content-Type: application/json' --data-binary @- \
+      http://localhost:9000/api/v1/auth/login | \
+    jq -er 'select(.role == "admin") | .token | select(type == "string" and length > 0)') || \
+    err "Gateway login failed at http://localhost:9000. Run quickstart-cp.sh first, then check rlark-gateway logs."
+  unset ADMIN_PASSWORD
 fi
+
+gateway_curl() {
+  curl -fsS --connect-timeout 5 --max-time 30 \
+    -H "Authorization: Bearer $RLARK_TOKEN" "$@"
+}
+
+# Verify the authenticated API, rather than treating an anonymous 401 as downtime.
+gateway_curl http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes >/dev/null || \
+  err "Authenticated node query failed; check Gateway logs and token validity."
 ok "Control plane is reachable"
 
 # Get registry IP
-REGISTRY_IP=$(docker inspect local-registry -f '{{.NetworkSettings.IPAddress}}' 2>/dev/null || echo "")
+REGISTRY_IP=$(container_ip local-registry)
 if [ -z "$REGISTRY_IP" ]; then
   warn "Local registry not found, attempting to start..."
   docker run -d --name local-registry --restart=always -p 5555:5000 registry:2
-  REGISTRY_IP=$(docker inspect local-registry -f '{{.NetworkSettings.IPAddress}}')
+  REGISTRY_IP=$(container_ip local-registry)
+  [ -n "$REGISTRY_IP" ] || err "Cannot determine the local registry IP address"
 fi
 ok "Local registry: localhost:5555 (IP: $REGISTRY_IP)"
 
@@ -129,9 +160,12 @@ log "Step 3: Requesting agent certificates..."
 for i in $(seq 1 $CLUSTER_COUNT); do
   CID="${CLUSTER_IDS[$((i-1))]}"
   log "Requesting cert for cluster-id: $CID"
-  curl -s -X POST "http://localhost:9000/api/v1/certificates/agent" \
+  gateway_curl -X POST "http://localhost:9000/api/v1/certificates/agent" \
     -H "Content-Type: application/json" \
-    -d "{\"cluster_id\":\"${CID}\"}" > "/tmp/rlark/agent-cert-$i.json"
+    -d "$(jq -n --arg cid "$CID" '{cluster_id:$cid}')" > "/tmp/rlark/agent-cert-$i.json" || \
+    err "Agent certificate request failed for $CID"
+  jq -e 'all(.ca_cert, .agent_cert, .agent_key; type == "string" and length > 0)' \
+    "/tmp/rlark/agent-cert-$i.json" >/dev/null || err "Incomplete agent certificate response for $CID"
   jq -r .ca_cert "/tmp/rlark/agent-cert-$i.json" > "/tmp/rlark/ca-$i.pem"
   jq -r .agent_cert "/tmp/rlark/agent-cert-$i.json" > "/tmp/rlark/cert-$i.pem"
   jq -r .agent_key "/tmp/rlark/agent-cert-$i.json" > "/tmp/rlark/key-$i.pem"
@@ -162,14 +196,22 @@ deploy_agent() {
   kubectl --kubeconfig "$KC" apply -f "$SCRIPT_DIR/agent-rbac.yaml"
   sed "s|\${IMAGE}|$IMAGE|g" "$SCRIPT_DIR/agent-deploy.yaml" | kubectl --kubeconfig "$KC" apply -f -
 
-  log "  Waiting for Agent deployment to become ready..."
+  NODE_NAME=$(kubectl --kubeconfig "$KC" get nodes -o jsonpath='{.items[0].metadata.name}')
+  # The Agent only reports Nodes opted in with rlark.io/enabled=true, and the
+  # node Agent DaemonSet selects the same label, so apply it before waiting.
+  kubectl --kubeconfig "$KC" label node "$NODE_NAME" \
+    "rlark.io/enabled=true" "rlark.io/cluster-id=${CID}" --overwrite || \
+    err "Failed to label node $NODE_NAME in cluster $CID"
+
+  log "  Waiting for Agent workloads to become ready..."
   kubectl --kubeconfig "$KC" rollout status \
     deployment/rlark-agent -n rlark-system --timeout=120s >/dev/null || \
     err "Agent $i deployment did not become ready"
-  ok "  Agent $i pod ready"
-
-  NODE_NAME=$(kubectl --kubeconfig "$KC" get nodes -o jsonpath='{.items[0].metadata.name}')
-  kubectl --kubeconfig "$KC" label node "$NODE_NAME" "rlark.io/cluster-id=${CID}" --overwrite 2>/dev/null || true
+  # The node Agent owns the node-heartbeat Lease; Nodes stay Offline without it.
+  kubectl --kubeconfig "$KC" rollout status \
+    daemonset/rlark-agent-node -n rlark-system --timeout=180s >/dev/null || \
+    err "Node agent $i daemonset did not become ready"
+  ok "  Agent $i pods ready"
   # Remove control-plane label so the platform UI recognizes the node as a worker.
   # Safe on kind: the taint is already removed by kind, and no system component
   # uses this label as a node selector. Only affects the ROLES column in kubectl.
@@ -197,7 +239,7 @@ log "Step 5: Verifying node registration (waiting for agents to report)..."
 for attempt in $(seq 1 30); do
   REGISTERED=0
   for CID in "${CLUSTER_IDS[@]}"; do
-    if curl -fsS "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
+    if gateway_curl "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
       jq -e --arg cid "rlark-${CID}" '.items[] | select(.metadata.labels["rlark.io/cluster-id"] == $cid)' >/dev/null; then
       REGISTERED=$((REGISTERED + 1))
     fi
@@ -206,7 +248,7 @@ for attempt in $(seq 1 30); do
   sleep 2
 done
 [ "${REGISTERED:-0}" -eq "$CLUSTER_COUNT" ] || err "Only ${REGISTERED:-0}/$CLUSTER_COUNT expected nodes registered"
-curl -fsS "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
+gateway_curl "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
   jq -r '.items[] | "  \(.metadata.name)  cluster-id=\(.metadata.labels["rlark.io/cluster-id"])"'
 ok "All $CLUSTER_COUNT nodes verified"
 

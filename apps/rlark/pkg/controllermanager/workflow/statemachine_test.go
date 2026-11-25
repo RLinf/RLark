@@ -24,11 +24,20 @@ func TestWorkflowStopAndResumeTransitions(t *testing.T) {
 	if wf.Status.Phase != rlarkv1alpha1.WorkflowPhaseStopped {
 		t.Fatalf("phase = %s, want Stopped", wf.Status.Phase)
 	}
+	// Stopped is terminal and the archive TTL is measured from this
+	// timestamp, so omitting it would expose the Workflow to premature
+	// archival.
+	if wf.Status.EndTime == nil {
+		t.Fatal("Stopped did not record an end time")
+	}
 	if err := f.Event(context.Background(), EventResume, wf); err != nil {
 		t.Fatal(err)
 	}
 	if wf.Status.Phase != rlarkv1alpha1.WorkflowPhasePending {
 		t.Fatalf("phase = %s, want Pending", wf.Status.Phase)
+	}
+	if wf.Status.EndTime != nil {
+		t.Fatal("Resume did not clear the end time")
 	}
 }
 

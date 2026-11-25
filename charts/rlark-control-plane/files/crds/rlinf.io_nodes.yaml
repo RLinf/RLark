@@ -1,0 +1,566 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: nodes.rlinf.io
+spec:
+  group: rlinf.io
+  names:
+    kind: Node
+    listKind: NodeList
+    plural: nodes
+    shortNames:
+    - rlnode
+    singular: node
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.runtime.type
+      name: Runtime
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.unschedulable
+      name: Unschedulable
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              NodeSpec contains only management-owned durable desired state. Agents must not
+              write this section; administrative APIs own Unschedulable and Operations.
+            properties:
+              agentType:
+                description: |-
+                  AgentType is a reserved compatibility field for the Node access form.
+
+                  Deprecated: use Runtime.Type for new integrations. This field must remain in
+                  the API and generated CRD while non-Kubernetes runtime implementations are
+                  incomplete, so existing resources and clients retain their declared intent.
+                enum:
+                - Kubernetes
+                - Docker
+                - Raw
+                type: string
+              identity:
+                description: Identity is set by the management API or control plane
+                  when the Node is registered.
+                properties:
+                  domain:
+                    description: Domain is the owning Domain identifier.
+                    type: string
+                  id:
+                    description: ID is the stable RLark business identity of the Node.
+                    type: string
+                  owner:
+                    description: Owner is the management principal or controller that
+                      owns the Node.
+                    type: string
+                  tenant:
+                    description: Tenant is the owning tenant identifier, independent
+                      of Kubernetes namespace placement.
+                    type: string
+                type: object
+              operations:
+                description: Operations contains uniquely identified one-shot maintenance
+                  or drain requests.
+                items:
+                  description: |-
+                    NodeOperationRequest identifies one administrative operation. Administrators
+                    create a new ID for each new action; controllers must treat an already-observed
+                    ID idempotently rather than inferring a new action from a boolean toggle.
+                  properties:
+                    id:
+                      description: |-
+                        ID is a stable operation identifier supplied by the requester. It is
+                        required and must be non-empty: an operation without an identity cannot be
+                        tracked, reported, or retried idempotently, so it is rejected at the API
+                        boundary rather than dropped by each consumer.
+                      minLength: 1
+                      type: string
+                    type:
+                      description: Type selects the requested one-shot operation.
+                      enum:
+                      - Drain
+                      - EnterMaintenance
+                      type: string
+                  required:
+                  - id
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-list-type: map
+              runtime:
+                description: Runtime is the management-selected runtime reference
+                  for this Node.
+                properties:
+                  name:
+                    description: Name identifies the runtime instance or provider
+                      configuration.
+                    type: string
+                  type:
+                    description: Type identifies the configured runtime implementation.
+                    enum:
+                    - Kubernetes
+                    - Docker
+                    - Raw
+                    type: string
+                type: object
+              unschedulable:
+                description: Unschedulable durably blocks placement of new workloads
+                  without stopping existing ones.
+                type: boolean
+            type: object
+          status:
+            description: |-
+              NodeStatus separates Agent-observed facts from Node Controller-derived lifecycle
+              conclusions. Job and scheduler components consume this status read-only.
+
+              NodeStatus has two writers, and each one writes a disjoint set of fields:
+
+                - The control-plane Node Controller owns Phase, Conditions, DrainOperations,
+                  LastHeartbeatTime and LastStatusChangeTime. They are its conclusions about
+                  the Agent heartbeat Lease and the facts reported by the data plane.
+                - The data-plane node-agent owns NodeInfo, Addresses, DiskPressure, Storage,
+                  Capacity, Allocatable, Used, CapabilitySnapshot, ActiveWorkloads,
+                  ObservedNodeLabels, PullProgress and Events. They are Node-local observations.
+
+              Both writers Patch the status with client.MergeFrom (no optimistic lock), so
+              concurrent writes merge deterministically and do not depend on write order.
+              That only holds while the ownership above is respected: a new field must be
+              assigned to exactly one writer and must never be written by both.
+            properties:
+              activeWorkloads:
+                description: ActiveWorkloads is the Agent-observed bounded summary
+                  of current workloads.
+                properties:
+                  pending:
+                    format: int32
+                    type: integer
+                  rlarkManaged:
+                    description: |-
+                      RLarkManaged is the count of Pods on this Node that are managed by RLark
+                      (identified by the RLark task-management annotations). Agent populates it
+                      so that controllers can distinguish "Agent hasn't scanned the node yet"
+                      from "the node genuinely has zero RLark-managed workloads", which matters
+                      for deciding whether a Node Drain operation can complete.
+                    format: int32
+                    type: integer
+                  running:
+                    format: int32
+                    type: integer
+                  stopping:
+                    format: int32
+                    type: integer
+                  total:
+                    format: int32
+                    type: integer
+                type: object
+              addresses:
+                description: Addresses are Agent-observed node addresses.
+                items:
+                  description: NodeAddress contains information for the node's address.
+                  properties:
+                    address:
+                      description: The node address.
+                      type: string
+                    type:
+                      description: Node address type, one of Hostname, ExternalIP
+                        or InternalIP.
+                      type: string
+                  required:
+                  - address
+                  - type
+                  type: object
+                type: array
+              allocatable:
+                additionalProperties:
+                  anyOf:
+                  - type: integer
+                  - type: string
+                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                  x-kubernetes-int-or-string: true
+                description: |-
+                  Allocatable is the Kubernetes Node's scheduler-declared capacity after system reservations.
+                  Schedulers use this value, together with Used, for placement decisions.
+                type: object
+              capabilitySnapshot:
+                description: |-
+                  CapabilitySnapshot is the Agent-observed structured capability declaration.
+                  Transient capability availability is reported by readiness Conditions.
+                properties:
+                  devices:
+                    items:
+                      description: NodeDeviceCapability describes Kubernetes extended-resource
+                        inventory and scheduling availability.
+                      properties:
+                        available:
+                          description: Available is allocatable capacity less than
+                            non-terminal Pod resource requests.
+                          format: int32
+                          type: integer
+                        category:
+                          description: Category is the Kubernetes extended resource
+                            name, for example "nvidia.com/gpu".
+                          type: string
+                        count:
+                          description: Count is the capacity reported by the Kubernetes
+                            Node.
+                          format: int32
+                          type: integer
+                      required:
+                      - category
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - category
+                    x-kubernetes-list-type: map
+                  network:
+                    description: NodeNetworkCapability describes Node-local networking
+                      features supported by the runtime.
+                    properties:
+                      crossCluster:
+                        type: boolean
+                      hostNetwork:
+                        type: boolean
+                      serviceExposure:
+                        type: boolean
+                    type: object
+                  operations:
+                    description: NodeOperationsCapability is reserved for operations
+                      whose support is observed locally.
+                    properties:
+                      exec:
+                        type: boolean
+                      logs:
+                        type: boolean
+                      terminal:
+                        type: boolean
+                    type: object
+                  runtime:
+                    description: NodeRuntimeCapability describes the runtime and workload
+                      kinds the Agent can run.
+                    properties:
+                      type:
+                        description: Type identifies the runtime implementation.
+                        enum:
+                        - Kubernetes
+                        - Docker
+                        - Raw
+                        type: string
+                      version:
+                        description: Version is the runtime implementation version.
+                        type: string
+                      workloadKinds:
+                        description: WorkloadKinds lists the workload kinds supported
+                          by this runtime.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  storage:
+                    description: NodeStorageCapability is reserved for storage support
+                      observed locally on the Node.
+                    properties:
+                      storageClasses:
+                        items:
+                          type: string
+                        type: array
+                      volumeTypes:
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                type: object
+              capacity:
+                additionalProperties:
+                  anyOf:
+                  - type: integer
+                  - type: string
+                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                  x-kubernetes-int-or-string: true
+                description: |-
+                  Capacity is the Kubernetes Node's physical resource inventory. It is an informational upper bound,
+                  not the schedulable capacity.
+                type: object
+              conditions:
+                description: |-
+                  Conditions are calculated only by the Node Controller from desired state and Agent facts.
+                  They are observation-driven and therefore carry no per-condition
+                  ObservedGeneration; use the status-level ObservedGeneration to tell whether
+                  they already reflect the latest Spec.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              diskPressure:
+                description: DiskPressure is the raw kubelet observation used by the
+                  Node Controller to derive ResourcePressure.
+                type: boolean
+              drainOperations:
+                description: DrainOperations is the Node Controller's bounded summary
+                  of requested drain operations.
+                items:
+                  description: NodeDrainOperationStatus is the bounded Node Controller
+                    summary of one drain operation.
+                  properties:
+                    blocked:
+                      format: int32
+                      type: integer
+                    completed:
+                      type: boolean
+                    operationID:
+                      type: string
+                    waiting:
+                      format: int32
+                      type: integer
+                  required:
+                  - operationID
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - operationID
+                x-kubernetes-list-type: map
+              events:
+                description: Events is a bounded node-agent-reported diagnostic event
+                  summary.
+                items:
+                  description: |-
+                    NodeEvent represents a Kubernetes Event observed on a node that is relevant
+                    for surfacing to operators (e.g. DiskPressure warnings, FailedScheduling,
+                    image pull failures). The node-agent collects Warning events plus a small
+                    set of Normal scheduling/pulling events and writes them to Node.status.events.
+                  properties:
+                    count:
+                      format: int32
+                      type: integer
+                    lastTime:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    objectKind:
+                      type: string
+                    objectName:
+                      type: string
+                    reason:
+                      type: string
+                    source:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - reason
+                  - type
+                  type: object
+                type: array
+              kubernetesCordoned:
+                description: |-
+                  KubernetesCordoned is the raw observation of the local Kubernetes Node's
+                  spec.unschedulable reported by the Agent. RLark does not manage that field:
+                  a cordoned Kubernetes Node conceals placement from every Pod, not only RLark
+                  workloads, so the Agent reports the observation and the Node Controller
+                  derives the KubernetesCordoned condition from it without changing RLark's own
+                  placement decision. Absence means the Agent has not reported the value.
+                type: boolean
+              kubernetesNodeUID:
+                description: |-
+                  KubernetesNodeUID is the Agent-observed UID of the local Kubernetes Node object.
+                  It identifies one Node incarnation and is used to correlate Node Drain requests.
+                type: string
+              kubernetesReady:
+                description: KubernetesReady is the raw Kubernetes Node Ready observation
+                  reported by the Agent.
+                type: boolean
+              lastHeartbeatTime:
+                description: |-
+                  LastHeartbeatTime is the Agent heartbeat renewal the Node Controller read
+                  from the coordination Lease. It is republished through the control-plane
+                  clock so that it stays comparable across Nodes, and it only ever moves
+                  forward. Agents must not write it.
+                format: date-time
+                type: string
+              lastStatusChangeTime:
+                description: LastStatusChangeTime is the latest time an Agent-observed
+                  or controller-derived state changed.
+                format: date-time
+                type: string
+              nodeInfo:
+                description: NodeInfo is Agent-reported operating system, architecture,
+                  Agent, and runtime version information.
+                properties:
+                  agentVersion:
+                    type: string
+                  architecture:
+                    type: string
+                  kernelVersion:
+                    type: string
+                  operatingSystem:
+                    type: string
+                  runtimeVersion:
+                    type: string
+                type: object
+              observedNodeLabels:
+                additionalProperties:
+                  type: string
+                description: |-
+                  ObservedNodeLabels is the Agent-observed label dictionary read from the
+                  local Kubernetes Node object. It is the user-facing source of truth for
+                  what labels are actually present on the data-plane Node. RLark currently
+                  writes only RLark-owned system labels (rlark.io/*) to metadata.labels on
+                  the management Node CR; other labels found there are not the data-plane
+                  label set. Frontends and operator consoles should display
+                  ObservedNodeLabels, not metadata.labels.
+                type: object
+              phase:
+                description: Phase is a concise lifecycle summary calculated only
+                  by the Node Controller.
+                enum:
+                - Registering
+                - Online
+                - Degraded
+                - Offline
+                - Cordoned
+                - Draining
+                type: string
+              pullProgress:
+                description: PullProgress is node-agent-reported progress for in-flight
+                  image pulls.
+                items:
+                  description: PullProgress captures the progress of an in-flight
+                    image pull on a node.
+                  properties:
+                    downloaded:
+                      format: int64
+                      type: integer
+                    image:
+                      type: string
+                    message:
+                      type: string
+                    speed:
+                      type: number
+                    status:
+                      type: string
+                    total:
+                      format: int64
+                      type: integer
+                  required:
+                  - downloaded
+                  - image
+                  - speed
+                  - status
+                  - total
+                  type: object
+                type: array
+              storage:
+                description: Storage is a bounded monitoring snapshot and must not
+                  be used for placement or capacity decisions.
+                properties:
+                  availableBytes:
+                    format: int64
+                    type: integer
+                  capacityBytes:
+                    format: int64
+                    type: integer
+                  usedBytes:
+                    format: int64
+                    type: integer
+                type: object
+              used:
+                additionalProperties:
+                  anyOf:
+                  - type: integer
+                  - type: string
+                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                  x-kubernetes-int-or-string: true
+                description: |-
+                  Used is the sum of non-terminal Pod resource requests already allocated for scheduling.
+                  It is not actual runtime utilization.
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -267,7 +267,7 @@ func TestKubernetesStatusWriterFencesStaleIntent(t *testing.T) {
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
 	writer := KubernetesStatusWriter{Client: kube}
 	intent := IntentForTask(task, rlarkv1alpha1.TaskPhaseRunning, "stale", nil, StatusPriorityWorkload)
-	intent.TaskUID = "old"
+	intent.ObjectUID = "old"
 	if err := writer.WriteStatus(context.Background(), task, intent); err != nil {
 		t.Fatal(err)
 	}
@@ -339,6 +339,7 @@ func TestKubernetesStatusWriterConditionOnlyPreservesFields(t *testing.T) {
 	task.Status.Phase = rlarkv1alpha1.TaskPhaseRunning
 	task.Status.Message = "ready"
 	task.Status.ObservedNodes = []string{"node"}
+	task.Status.ObservedGeneration = task.Generation - 1
 	scheme := runtime.NewScheme()
 	_ = rlarkv1alpha1.AddToScheme(scheme)
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
@@ -353,6 +354,57 @@ func TestKubernetesStatusWriterConditionOnlyPreservesFields(t *testing.T) {
 	}
 	if current.Status.Phase != rlarkv1alpha1.TaskPhaseRunning || current.Status.Message != "ready" || len(current.Status.ObservedNodes) != 1 {
 		t.Fatalf("condition-only intent changed fields: %#v", current.Status)
+	}
+	if current.Status.ObservedGeneration != task.Generation-1 || current.Status.Conditions[0].ObservedGeneration != task.Generation {
+		t.Fatal("condition-only write refreshed stale workload generation")
+	}
+	if task.ResourceVersion != current.ResourceVersion || task.ResourceVersion == "" {
+		t.Fatal("Status writer retained a stale resourceVersion for ordered writes")
+	}
+}
+
+func TestKubernetesStatusWriterNonWorkloadIntentsPreserveGeneration(t *testing.T) {
+	for _, phase := range []rlarkv1alpha1.TaskPhase{rlarkv1alpha1.TaskPhaseRunning, rlarkv1alpha1.TaskPhaseStopped} {
+		for _, kind := range []string{"condition set", "condition remove", "message"} {
+			t.Run(string(phase)+"/"+kind, func(t *testing.T) {
+				task := hostTask()
+				task.Status.Phase = phase
+				task.Status.ObservedGeneration = task.Generation - 1
+				task.Status.Conditions = []metav1.Condition{{Type: ConditionExecutionAdmitted, Status: metav1.ConditionFalse, Reason: "ExecutionAdmissionFailed", LastTransitionTime: metav1.Now()}}
+				if phase == rlarkv1alpha1.TaskPhaseStopped {
+					// A condition opinion must not trigger lifecycle housekeeping.
+					task.Status.ObservedNodes = []string{"retained-node"}
+					task.Status.PullProgress = []rlarkv1alpha1.PullProgress{{}}
+					task.Status.Events = []rlarkv1alpha1.NodeEvent{{}}
+				}
+				scheme := runtime.NewScheme()
+				if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
+					t.Fatal(err)
+				}
+				kube := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+				intent := ConditionIntent(task, metav1.Condition{Type: ConditionExecutionAdmitted, Status: metav1.ConditionTrue, Reason: "ExecutionAdmissionSucceeded", ObservedGeneration: task.Generation}, kind == "condition remove", StatusPriorityInvalid)
+				if kind == "message" {
+					intent = StatusIntent{ObjectUID: string(task.UID), Generation: task.Generation, MessageSet: true, Message: "diagnostic only"}
+				}
+				writer := KubernetesStatusWriter{Client: kube}
+				if err := writer.WriteStatus(context.Background(), task, intent); err != nil {
+					t.Fatal(err)
+				}
+				if task.Status.ObservedGeneration != task.Generation-1 || task.Status.Phase != phase {
+					t.Fatal("non-workload intent refreshed old Phase")
+				}
+				if phase == rlarkv1alpha1.TaskPhaseStopped && (len(task.Status.PullProgress) != 1 || len(task.Status.Events) != 1) {
+					t.Fatal("non-workload intent performed Stopped housekeeping")
+				}
+				// A fresh conclusion refreshes generation even without a Phase change.
+				if err := writer.WriteStatus(context.Background(), task, StatusIntent{ObjectUID: string(task.UID), Generation: task.Generation, Phase: string(phase)}); err != nil {
+					t.Fatal(err)
+				}
+				if task.Status.ObservedGeneration != task.Generation {
+					t.Fatal("unchanged fresh workload conclusion did not advance generation")
+				}
+			})
+		}
 	}
 }
 
@@ -674,6 +726,33 @@ func TestHostSuspensionCleansRuntimeAndRetainsClaim(t *testing.T) {
 	}
 	if executor.reconciles != 1 {
 		t.Fatalf("reconciles=%d", executor.reconciles)
+	}
+}
+
+func TestHostSuspensionReportsSatisfiedDrainRequests(t *testing.T) {
+	task := claimedHostTask()
+	task.Spec.Suspended = true
+	task.Spec.DrainRequests = []rlarkv1alpha1.TaskDrainRequest{{
+		OperationID: "drain-1",
+		NodeUID:     "node-uid",
+		NodeName:    "node-a",
+	}}
+	host, _, kube := newTestHost(t, task)
+
+	result, err := host.Reconcile(context.Background(), client.ObjectKeyFromObject(task))
+	if err != nil || result.Outcome != OutcomeWaitingForChange || result.Reason != "TaskSuspended" {
+		t.Fatalf("result=%#v error=%v", result, err)
+	}
+	var current rlarkv1alpha1.Task
+	if err := kube.Get(context.Background(), client.ObjectKeyFromObject(task), &current); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.Status.DrainRequests) != 1 {
+		t.Fatalf("drain requests=%#v", current.Status.DrainRequests)
+	}
+	status := current.Status.DrainRequests[0]
+	if status.OperationID != "drain-1" || status.NodeUID != "node-uid" || status.ObservedGeneration != current.Generation || status.State != rlarkv1alpha1.TaskDrainStateWaitingForReschedule {
+		t.Fatalf("drain status=%#v", status)
 	}
 }
 

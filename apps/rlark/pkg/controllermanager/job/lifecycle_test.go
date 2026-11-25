@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -75,9 +76,7 @@ func TestReconcileTaskPreservesAnnotationsAndNaturalTerminalSpec(t *testing.T) {
 	task.Status.Phase = rlarkv1alpha1.TaskPhaseSucceeded
 	controller := true
 	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
-	scheme := jobTestScheme(t)
-	c := jobTestClientBuilder(scheme).WithObjects(task).Build()
-	r := &Reconciler{Client: c, Scheme: scheme}
+	r, _ := reconcilerWithDefaultPlacement(t, task)
 	got, err := r.reconcileTask(context.Background(), job, template, logr.Discard())
 	if err != nil {
 		t.Fatal(err)
@@ -85,6 +84,76 @@ func TestReconcileTaskPreservesAnnotationsAndNaturalTerminalSpec(t *testing.T) {
 	if rayParameters(t, got.Spec.Workload.Parameters).Run.Inline != "old" || got.Annotations["user"] != "keep" {
 		t.Fatalf("terminal Task was rewritten: %#v", got)
 	}
+}
+
+func TestReconcileTaskPreservesAgentDrainRequests(t *testing.T) {
+	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}}
+	template := rayTaskTemplate(t, "worker", false, nil, "new")
+	task := buildTask(job, template, "job-worker", "default")
+	parameters := rayParameters(t, task.Spec.Workload.Parameters)
+	parameters.Run.Inline = "old"
+	raw, err := json.Marshal(parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Spec.Workload.Parameters.Raw = raw
+	drainRequests := []rlarkv1alpha1.TaskDrainRequest{{OperationID: "drain-1", NodeUID: "node-uid", NodeName: "node-a"}}
+	task.Spec.DrainRequests = drainRequests
+	controller := true
+	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
+	r, _ := reconcilerWithDefaultPlacement(t, task)
+	got, err := r.reconcileTask(context.Background(), job, template, logr.Discard())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Spec.DrainRequests) != 1 || got.Spec.DrainRequests[0] != drainRequests[0] {
+		t.Fatalf("drain requests = %#v, want %#v", got.Spec.DrainRequests, drainRequests)
+	}
+	if rayParameters(t, got.Spec.Workload.Parameters).Run.Inline != "new" {
+		t.Fatalf("controller-owned spec was not updated: %#v", got.Spec.Workload.Parameters)
+	}
+}
+
+func schedulableNode(name, namespace string, labels map[string]string) *rlarkv1alpha1.Node {
+	node := &rlarkv1alpha1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Status:     schedulableNodeStatus(),
+	}
+	node.Status.ObservedNodeLabels = labels
+	return node
+}
+
+func schedulableNodeStatus() rlarkv1alpha1.NodeStatus {
+	return rlarkv1alpha1.NodeStatus{
+		Conditions: []metav1.Condition{
+			{Type: rlarkv1alpha1.ConditionTypeAgentConnected, Status: metav1.ConditionTrue},
+			{Type: rlarkv1alpha1.ConditionTypeReady, Status: metav1.ConditionTrue},
+			{Type: rlarkv1alpha1.ConditionTypeSchedulable, Status: metav1.ConditionTrue, Reason: rlarkv1alpha1.ConditionReasonSchedulable},
+		},
+		CapabilitySnapshot: rlarkv1alpha1.NodeCapabilitySnapshot{
+			Runtime: rlarkv1alpha1.NodeRuntimeCapability{
+				Type:          rlarkv1alpha1.AgentTypeKubernetes,
+				WorkloadKinds: []string{taskapi.WorkloadTypeRay},
+			},
+		},
+	}
+}
+
+func reconcilerWithDefaultPlacement(t *testing.T, task *rlarkv1alpha1.Task) (*Reconciler, client.Client) {
+	t.Helper()
+	scheme := jobTestScheme(t)
+	node := schedulableNode("node", "default", nil)
+	cluster := &rlarkv1alpha1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "default"},
+		Status:     rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterOnline},
+	}
+	objects := []client.Object{node, cluster}
+	if task != nil {
+		objects = append(objects, task)
+	}
+	c := jobTestClientBuilder(scheme).WithObjects(objects...).Build()
+	return &Reconciler{Client: c, Scheme: scheme}, c
 }
 
 func rayTaskTemplate(t *testing.T, name string, head bool, replicas *int32, run string) rlarkv1alpha1.JobTaskTemplate {
@@ -98,6 +167,7 @@ func rayTaskTemplate(t *testing.T, name string, head bool, replicas *int32, run 
 		t.Fatal(err)
 	}
 	return rlarkv1alpha1.JobTaskTemplate{Name: name, Head: head, TaskSpec: rlarkv1alpha1.TaskSpec{
+		Runtime: rlarkv1alpha1.TaskRuntimeSpec{Kind: rlarkv1alpha1.RuntimeKind(rlarkv1alpha1.AgentTypeKubernetes)},
 		Workload: rlarkv1alpha1.TaskWorkloadSpec{
 			Kind:       taskapi.WorkloadTypeRay,
 			Version:    taskapi.WorkloadVersionRayV1,
@@ -109,6 +179,12 @@ func rayTaskTemplate(t *testing.T, name string, head bool, replicas *int32, run 
 			},
 		},
 	}}
+}
+
+func placementRayTaskTemplate(t *testing.T, name string, placement rlarkv1alpha1.TaskPlacementSpec) rlarkv1alpha1.JobTaskTemplate {
+	template := rayTaskTemplate(t, name, false, nil, "")
+	template.Placement = placement
+	return template
 }
 
 func rayParameters(t *testing.T, parameters apiextensionsv1.JSON) taskapi.RayExecutionParametersV1 {
@@ -130,9 +206,7 @@ func TestReconcileTaskResumesControllerStoppedTerminalTask(t *testing.T) {
 	task.Status.Phase = rlarkv1alpha1.TaskPhaseSucceeded
 	controller := true
 	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
-	scheme := jobTestScheme(t)
-	c := jobTestClientBuilder(scheme).WithObjects(task).Build()
-	r := &Reconciler{Client: c, Scheme: scheme}
+	r, _ := reconcilerWithDefaultPlacement(t, task)
 	got, err := r.reconcileTask(context.Background(), job, template, logr.Discard())
 	if err != nil {
 		t.Fatal(err)
@@ -144,18 +218,16 @@ func TestReconcileTaskResumesControllerStoppedTerminalTask(t *testing.T) {
 
 func TestReconcileTaskWaitsForTerminatingTask(t *testing.T) {
 	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}}
-	template := rlarkv1alpha1.JobTaskTemplate{Name: "worker"}
+	template := rayTaskTemplate(t, "worker", false, nil, "")
 	task := buildTask(job, template, "job-worker", "default")
 	task.UID = types.UID("task-uid")
 	task.Finalizers = []string{"rlark.io/agent-cleanup"}
 	controller := true
 	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
-	scheme := jobTestScheme(t)
-	c := jobTestClientBuilder(scheme).WithObjects(task).Build()
+	r, c := reconcilerWithDefaultPlacement(t, task)
 	if err := c.Delete(context.Background(), task); err != nil {
 		t.Fatal(err)
 	}
-	r := &Reconciler{Client: c, Scheme: scheme}
 
 	if _, err := r.reconcileTask(context.Background(), job, template, logr.Discard()); !errors.Is(err, controllerbase.ErrRequeueAfterChildCleanup) {
 		t.Fatalf("reconcile terminating Task error = %v, want cleanup requeue", err)
@@ -173,15 +245,13 @@ func TestReconcileTaskRestartDeletesThenRecreatesTask(t *testing.T) {
 	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{
 		Name: "job", UID: types.UID("job-uid"), Annotations: map[string]string{RestartedAtAnnotation: "new-operation"},
 	}}
-	template := rlarkv1alpha1.JobTaskTemplate{Name: "worker"}
+	template := rayTaskTemplate(t, "worker", false, nil, "")
 	oldTask := buildTask(job, template, "job-worker", "default")
 	oldTask.UID = types.UID("old-task-uid")
 	oldTask.Annotations[RestartedAtAnnotation] = "old-operation"
 	controller := true
 	oldTask.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
-	scheme := jobTestScheme(t)
-	c := jobTestClientBuilder(scheme).WithObjects(oldTask).Build()
-	r := &Reconciler{Client: c, Scheme: scheme}
+	r, c := reconcilerWithDefaultPlacement(t, oldTask)
 
 	if _, err := r.reconcileTask(context.Background(), job, template, logr.Discard()); !errors.Is(err, controllerbase.ErrRequeueAfterChildCleanup) {
 		t.Fatalf("restart reconcile error = %v, want cleanup requeue", err)
@@ -215,16 +285,14 @@ func TestReconcileTaskRestartWaitsForAgentCleanupFinalizer(t *testing.T) {
 	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{
 		Name: "job", UID: types.UID("job-uid"), Annotations: map[string]string{RestartedAtAnnotation: "new-operation"},
 	}}
-	template := rlarkv1alpha1.JobTaskTemplate{Name: "worker"}
+	template := rayTaskTemplate(t, "worker", false, nil, "")
 	oldTask := buildTask(job, template, "job-worker", "default")
 	oldTask.UID = types.UID("old-task-uid")
 	oldTask.Annotations[RestartedAtAnnotation] = "old-operation"
 	oldTask.Finalizers = []string{common.TaskAgentCleanupFinalizer}
 	controller := true
 	oldTask.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
-	scheme := jobTestScheme(t)
-	c := jobTestClientBuilder(scheme).WithObjects(oldTask).Build()
-	r := &Reconciler{Client: c, Scheme: scheme}
+	r, c := reconcilerWithDefaultPlacement(t, oldTask)
 
 	for range 2 {
 		if _, err := r.reconcileTask(context.Background(), job, template, logr.Discard()); !errors.Is(err, controllerbase.ErrRequeueAfterChildCleanup) {
@@ -265,9 +333,7 @@ func TestReconcileTaskResumesTerminalSuspendedTask(t *testing.T) {
 	task.Status.Phase = rlarkv1alpha1.TaskPhaseSucceeded
 	controller := true
 	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
-	scheme := jobTestScheme(t)
-	c := jobTestClientBuilder(scheme).WithObjects(task).Build()
-	r := &Reconciler{Client: c, Scheme: scheme}
+	r, _ := reconcilerWithDefaultPlacement(t, task)
 	got, err := r.reconcileTask(context.Background(), job, template, logr.Discard())
 	if err != nil {
 		t.Fatal(err)
@@ -279,11 +345,9 @@ func TestReconcileTaskResumesTerminalSuspendedTask(t *testing.T) {
 
 func TestReconcileTaskAdoptsLegacyAndRejectsConflict(t *testing.T) {
 	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}}
-	template := rlarkv1alpha1.JobTaskTemplate{Name: "worker"}
+	template := rayTaskTemplate(t, "worker", false, nil, "")
 	legacy := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "job-worker", Namespace: "default", Labels: map[string]string{jobLabel: job.Name}, Annotations: map[string]string{"user": "keep"}}}
-	scheme := jobTestScheme(t)
-	c := jobTestClientBuilder(scheme).WithObjects(legacy).Build()
-	r := &Reconciler{Client: c, Scheme: scheme}
+	r, c := reconcilerWithDefaultPlacement(t, legacy)
 	task, err := r.reconcileTask(context.Background(), job, template, logr.Discard())
 	if err != nil {
 		t.Fatal(err)
@@ -301,9 +365,10 @@ func TestReconcileTaskAdoptsLegacyAndRejectsConflict(t *testing.T) {
 }
 
 func TestAdoptedOwnerReferenceOnlyTaskBackfillsJobLabel(t *testing.T) {
+	template := rayTaskTemplate(t, "worker", false, nil, "")
 	job := &rlarkv1alpha1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")},
-		Spec:       rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{{Name: "worker"}}},
+		Spec:       rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}},
 	}
 	controller := true
 	legacy := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{
@@ -314,9 +379,7 @@ func TestAdoptedOwnerReferenceOnlyTaskBackfillsJobLabel(t *testing.T) {
 			Name: job.Name, UID: job.UID, Controller: &controller,
 		}},
 	}}
-	scheme := jobTestScheme(t)
-	c := jobTestClientBuilder(scheme).WithObjects(legacy).Build()
-	r := &Reconciler{Client: c, Scheme: scheme}
+	r, _ := reconcilerWithDefaultPlacement(t, legacy)
 
 	task, err := r.reconcileTask(context.Background(), job, job.Spec.Tasks[0], logr.Discard())
 	if err != nil {
@@ -354,14 +417,13 @@ func TestSyncTaskStatusesRejectsOwnershipMismatch(t *testing.T) {
 }
 
 func TestPruneTasksStopsNamespaceDriftBeforeDelete(t *testing.T) {
-	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{{Name: "worker"}}}}
+	template := rayTaskTemplate(t, "worker", false, nil, "")
+	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}}}
 	task := buildTask(job, job.Spec.Tasks[0], "job-worker", "old")
 	task.Spec.Suspended = false
 	controller := true
 	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
-	scheme := jobTestScheme(t)
-	c := jobTestClientBuilder(scheme).WithObjects(task).Build()
-	r := &Reconciler{Client: c, Scheme: scheme}
+	r, c := reconcilerWithDefaultPlacement(t, task)
 	waiting, err := r.pruneTasks(context.Background(), job)
 	if err != nil || !waiting {
 		t.Fatalf("pruneTasks() = %v, %v", waiting, err)
@@ -406,6 +468,56 @@ func TestPruneTasksStopsOwnerOnlyRemovedTask(t *testing.T) {
 	}
 }
 
+func TestPrunedTaskResumesWhenItsTemplateIsAddedBack(t *testing.T) {
+	template := rayTaskTemplate(t, "worker", false, nil, "")
+	job := &rlarkv1alpha1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")},
+		Spec:       rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}},
+	}
+	taskName := utils.ChildName(job.Name, template.Name)
+	task, err := desiredTask(job, template, taskName, "default", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := true
+	task.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: rlarkv1alpha1.GroupVersion.String(),
+		Kind:       "Job",
+		Name:       job.Name,
+		UID:        job.UID,
+		Controller: &controller,
+	}}
+	r, c := reconcilerWithDefaultPlacement(t, task)
+
+	withoutTemplate := job.DeepCopy()
+	withoutTemplate.Spec.Tasks = nil
+	waiting, err := r.pruneTasks(context.Background(), withoutTemplate)
+	if err != nil || !waiting {
+		t.Fatalf("pruneTasks() = %v, %v", waiting, err)
+	}
+	var stopped rlarkv1alpha1.Task
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(task), &stopped); err != nil {
+		t.Fatal(err)
+	}
+	if !stopped.Spec.Suspended {
+		t.Fatalf("pruned Task was not stopped: %#v", stopped)
+	}
+	if digest := stopped.Annotations[DesiredDigestAnnotation]; digest != "" {
+		t.Fatalf("suspending a pruned Task kept a digest it never compiled: %q", digest)
+	}
+
+	if _, err := r.reconcileTaskInNamespace(context.Background(), job, template, "default", logr.Discard()); err != nil {
+		t.Fatal(err)
+	}
+	var resumed rlarkv1alpha1.Task
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(task), &resumed); err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Spec.Suspended {
+		t.Fatalf("Task stayed suspended after its template came back: %#v", resumed)
+	}
+}
+
 func TestJobReconcileUsesOldStatusToPruneSafely(t *testing.T) {
 	job := &rlarkv1alpha1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: "job", UID: "job-uid"},
@@ -416,15 +528,36 @@ func TestJobReconcileUsesOldStatusToPruneSafely(t *testing.T) {
 		Name: "legacy-name", Namespace: "default", Labels: map[string]string{jobLabel: job.Name},
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}},
 	}, Status: rlarkv1alpha1.TaskStatus{Phase: rlarkv1alpha1.TaskPhaseStopped}}
-	unrelated := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "job-unrelated", Namespace: "default", Labels: map[string]string{jobLabel: job.Name}}, Status: rlarkv1alpha1.TaskStatus{Phase: rlarkv1alpha1.TaskPhaseStopped}}
 	scheme := jobTestScheme(t)
-	c := jobTestClientBuilder(scheme).WithObjects(ownerOnly, unrelated).Build()
+	c := jobTestClientBuilder(scheme).WithObjects(ownerOnly).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 	if _, err := r.ReconcileStateMachine(context.Background(), job); !errors.Is(err, controllerbase.ErrRequeueAfterChildCleanup) {
 		t.Fatal(err)
 	}
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(ownerOnly), &rlarkv1alpha1.Task{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("owner-only removed Task was not pruned: %v", err)
+	}
+}
+
+// A Task that only carries the Job label cannot be attributed to a removed
+// template unless its name is one the Job itself recorded. Such a Task must
+// neither be deleted on a name-prefix guess nor silently ignored: the reconcile
+// is blocked so the ambiguity is reported instead of acted on.
+func TestJobReconcileRefusesUnattributableLabelOnlyTask(t *testing.T) {
+	job := &rlarkv1alpha1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job", UID: "job-uid"},
+		Status:     rlarkv1alpha1.JobStatus{Phase: rlarkv1alpha1.JobPhaseSucceeded, Tasks: []rlarkv1alpha1.JobTaskStatus{{Name: "removed"}}},
+	}
+	unrelated := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "job-unrelated", Namespace: "default", Labels: map[string]string{jobLabel: job.Name}}, Status: rlarkv1alpha1.TaskStatus{Phase: rlarkv1alpha1.TaskPhaseStopped}}
+	scheme := jobTestScheme(t)
+	c := jobTestClientBuilder(scheme).WithObjects(unrelated).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+	_, err := r.ReconcileStateMachine(context.Background(), job)
+	if err == nil || errors.Is(err, controllerbase.ErrRequeueAfterChildCleanup) {
+		t.Fatalf("unattributable Task did not block the reconcile: %v", err)
+	}
+	if !strings.Contains(err.Error(), string(utils.ReasonUnprovenOwnership)) {
+		t.Fatalf("reconcile was not blocked on unproven ownership: %v", err)
 	}
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(unrelated), &rlarkv1alpha1.Task{}); err != nil {
 		t.Fatalf("unrelated label-only prefixed Task was touched: %v", err)
@@ -487,7 +620,8 @@ func TestNamespaceResolutionFailurePreservesExistingTask(t *testing.T) {
 		{name: "no match"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{{Name: "worker", TaskSpec: rlarkv1alpha1.TaskSpec{Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}}}}}}}
+			template := placementRayTaskTemplate(t, "worker", rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}})
+			job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}}}
 			task := buildTask(job, job.Spec.Tasks[0], "job-worker", "old")
 			task.Spec.Suspended = false
 			controller := true
@@ -511,14 +645,15 @@ func TestNamespaceResolutionFailurePreservesExistingTask(t *testing.T) {
 }
 
 func TestResolvedNamespaceIsDeterministicAndMigratesTask(t *testing.T) {
-	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{{Name: "worker", TaskSpec: rlarkv1alpha1.TaskSpec{Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}}}}}}}
+	template := placementRayTaskTemplate(t, "worker", rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}})
+	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}}}
 	task := buildTask(job, job.Spec.Tasks[0], "job-worker", "old")
 	task.Spec.Suspended = false
 	controller := true
 	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
 	nodes := []client.Object{
-		&rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "z", Namespace: "workers-b", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}},
-		&rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "workers-a", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}},
+		schedulableNode("z", "workers-b", map[string]string{"zone": "new"}),
+		schedulableNode("a", "workers-a", map[string]string{"zone": "new"}),
 	}
 	clusters := []client.Object{
 		&rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "b"}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers-b"}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterOnline}},
@@ -543,6 +678,126 @@ func TestResolvedNamespaceIsDeterministicAndMigratesTask(t *testing.T) {
 	}
 }
 
+func TestResolveTaskNamespaceUsesSchedulingConditions(t *testing.T) {
+	template := placementRayTaskTemplate(t, "worker", rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}})
+	readyConditions := []metav1.Condition{
+		{Type: rlarkv1alpha1.ConditionTypeAgentConnected, Status: metav1.ConditionTrue},
+		{Type: rlarkv1alpha1.ConditionTypeReady, Status: metav1.ConditionTrue},
+		{Type: rlarkv1alpha1.ConditionTypeSchedulable, Status: metav1.ConditionTrue},
+	}
+	for _, tt := range []struct {
+		name      string
+		node      rlarkv1alpha1.Node
+		wantError bool
+	}{
+		{
+			name: "cordoned node remains healthy but is excluded",
+			node: rlarkv1alpha1.Node{
+				Spec: rlarkv1alpha1.NodeSpec{Unschedulable: true},
+				Status: rlarkv1alpha1.NodeStatus{Conditions: []metav1.Condition{
+					{Type: rlarkv1alpha1.ConditionTypeAgentConnected, Status: metav1.ConditionTrue},
+					{Type: rlarkv1alpha1.ConditionTypeReady, Status: metav1.ConditionTrue},
+					{Type: rlarkv1alpha1.ConditionTypeSchedulable, Status: metav1.ConditionFalse, Reason: rlarkv1alpha1.ConditionReasonUnschedulable},
+				}},
+			},
+			wantError: true,
+		},
+		{
+			name: "offline phase cannot override a schedulable condition",
+			node: rlarkv1alpha1.Node{
+				Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOffline, Conditions: readyConditions},
+			},
+		},
+		{
+			name: "disconnected node is excluded by the controller conclusion",
+			node: rlarkv1alpha1.Node{
+				Status: rlarkv1alpha1.NodeStatus{Conditions: []metav1.Condition{
+					{Type: rlarkv1alpha1.ConditionTypeAgentConnected, Status: metav1.ConditionFalse},
+					{Type: rlarkv1alpha1.ConditionTypeReady, Status: metav1.ConditionTrue},
+					{Type: rlarkv1alpha1.ConditionTypeSchedulable, Status: metav1.ConditionFalse, Reason: rlarkv1alpha1.ConditionReasonLeaseExpired},
+				}},
+			},
+			wantError: true,
+		},
+		{
+			name: "resource pressure excludes a ready node from new placement",
+			node: rlarkv1alpha1.Node{
+				Status: rlarkv1alpha1.NodeStatus{Conditions: []metav1.Condition{
+					{Type: rlarkv1alpha1.ConditionTypeAgentConnected, Status: metav1.ConditionTrue},
+					{Type: rlarkv1alpha1.ConditionTypeReady, Status: metav1.ConditionTrue},
+					{Type: rlarkv1alpha1.ConditionTypeResourcePressure, Status: metav1.ConditionTrue},
+					{Type: rlarkv1alpha1.ConditionTypeSchedulable, Status: metav1.ConditionFalse, Reason: rlarkv1alpha1.ConditionReasonResourcePressureDetected},
+				}},
+			},
+			wantError: true,
+		},
+		{
+			name: "degraded node without pressure remains eligible",
+			node: rlarkv1alpha1.Node{
+				Status: rlarkv1alpha1.NodeStatus{Conditions: []metav1.Condition{
+					{Type: rlarkv1alpha1.ConditionTypeAgentConnected, Status: metav1.ConditionTrue},
+					{Type: rlarkv1alpha1.ConditionTypeReady, Status: metav1.ConditionTrue},
+					{Type: rlarkv1alpha1.ConditionTypeDegraded, Status: metav1.ConditionTrue},
+					{Type: rlarkv1alpha1.ConditionTypeSchedulable, Status: metav1.ConditionTrue},
+				}},
+			},
+		},
+		{
+			name: "schedulable condition is authoritative",
+			node: rlarkv1alpha1.Node{
+				Status: rlarkv1alpha1.NodeStatus{Conditions: []metav1.Condition{
+					{Type: rlarkv1alpha1.ConditionTypeAgentConnected, Status: metav1.ConditionFalse},
+					{Type: rlarkv1alpha1.ConditionTypeReady, Status: metav1.ConditionFalse},
+					{Type: rlarkv1alpha1.ConditionTypeSchedulable, Status: metav1.ConditionTrue},
+				}},
+			},
+		},
+		{
+			name: "node without a schedulable condition is fail-closed",
+			node: rlarkv1alpha1.Node{
+				Status: rlarkv1alpha1.NodeStatus{Conditions: []metav1.Condition{
+					{Type: rlarkv1alpha1.ConditionTypeAgentConnected, Status: metav1.ConditionTrue},
+					{Type: rlarkv1alpha1.ConditionTypeReady, Status: metav1.ConditionTrue},
+				}},
+			},
+			wantError: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.node.Name = "node"
+			tt.node.Namespace = "workers"
+			tt.node.Status.ObservedNodeLabels = map[string]string{"zone": "new"}
+			tt.node.Status.CapabilitySnapshot = schedulableNodeStatus().CapabilitySnapshot
+			cluster := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers"}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterOnline}}
+			c := jobTestClientBuilder(jobTestScheme(t)).WithObjects(&tt.node, cluster).Build()
+			r := &Reconciler{Client: c}
+			_, err := r.resolveTaskNamespace(context.Background(), &template)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("resolveTaskNamespace() error = %v, wantError %t", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestResolveTaskNamespaceFallsBackForLegacyAgentNode(t *testing.T) {
+	template := placementRayTaskTemplate(t, "worker", rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}})
+	node := schedulableNode("node", "workers", map[string]string{"zone": "new"})
+	//nolint:staticcheck // Exercises the legacy fallback that reads the deprecated Node field.
+	node.Spec.AgentType = rlarkv1alpha1.AgentTypeKubernetes
+	node.Status.CapabilitySnapshot = rlarkv1alpha1.NodeCapabilitySnapshot{}
+	cluster := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers"}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterOnline}}
+	c := jobTestClientBuilder(jobTestScheme(t)).WithObjects(node, cluster).Build()
+	r := &Reconciler{Client: c}
+
+	namespace, err := r.resolveTaskNamespace(context.Background(), &template)
+	if err != nil {
+		t.Fatalf("resolveTaskNamespace() error = %v, want successful legacy fallback", err)
+	}
+	if namespace != "workers" {
+		t.Fatalf("namespace = %q, want workers", namespace)
+	}
+}
+
 func TestResolveTaskNamespaceRejectsIneligibleClusters(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
@@ -553,12 +808,12 @@ func TestResolveTaskNamespaceRejectsIneligibleClusters(t *testing.T) {
 		{name: "delisted", cluster: rlarkv1alpha1.Cluster{Spec: rlarkv1alpha1.ClusterSpec{Delisted: true}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			template := rlarkv1alpha1.JobTaskTemplate{Name: "worker", TaskSpec: rlarkv1alpha1.TaskSpec{Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}}}}
+			template := placementRayTaskTemplate(t, "worker", rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}})
 			job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}}}
 			tt.cluster.Name = "cluster"
 			tt.cluster.Spec.AgentNamespace = "workers"
 			tt.cluster.Status.Phase = rlarkv1alpha1.ClusterOnline
-			node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", Namespace: "workers", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}}
+			node := schedulableNode("node", "workers", map[string]string{"zone": "new"})
 			scheme := jobTestScheme(t)
 			c := jobTestClientBuilder(scheme).WithObjects(node, &tt.cluster).Build()
 			r := &Reconciler{Client: c, Scheme: scheme}
@@ -577,11 +832,197 @@ func TestResolveTaskNamespaceRejectsIneligibleClusters(t *testing.T) {
 	}
 }
 
+// TestDispatchTasksHonoursClusterDrainWhenPlacementIsUnavailable guards the drain
+// against a deadlock: draining a Cluster cordons it, so no Node is eligible for new
+// placement and namespace resolution fails. The Job controller must still lower the
+// cluster drain stop request for the Tasks this Job already owns, otherwise the
+// drain waits forever on a Task that nothing can stop.
+func TestDispatchTasksHonoursClusterDrainWhenPlacementIsUnavailable(t *testing.T) {
+	template := placementRayTaskTemplate(t, "worker", rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}})
+	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}}}
+	task := buildTask(job, job.Spec.Tasks[0], "job-worker", "workers")
+	task.Spec.Suspended = false
+	controller := true
+	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
+	task.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] = "true"
+	node := schedulableNode("node", "workers", map[string]string{"zone": "new"})
+	cluster := &rlarkv1alpha1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers", Cordoned: true, Draining: true},
+		Status:     rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterCordoned},
+	}
+	scheme := jobTestScheme(t)
+	c := jobTestClientBuilder(scheme).WithObjects(node, cluster, task).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+
+	changed, err := r.dispatchTasks(context.Background(), job, logr.Discard())
+	if err != nil {
+		t.Fatalf("dispatchTasks() error = %v, want the cluster drain stop request honoured", err)
+	}
+	if changed {
+		t.Fatal("dispatchTasks() reported a Job status change for a stop-only pass")
+	}
+
+	var got rlarkv1alpha1.Task
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(task), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Spec.Suspended {
+		t.Fatalf("cluster drain stop request was not applied: %#v", got.Spec)
+	}
+}
+
+// TestClusterDrainReleaseResumesTaskDespiteStaleDesiredDigest guards the resume
+// path that follows a cluster drain. The drain suspends the Task outside the
+// compiled desired state, so the digest recorded before the drain still
+// describes a running Task. If that digest survives the suspend, releasing the
+// drain marker (uncordon + Job start) compiles the same non-suspended state,
+// the comparison reports "up to date", and the Task stays suspended forever.
+func TestClusterDrainReleaseResumesTaskDespiteStaleDesiredDigest(t *testing.T) {
+	template := placementRayTaskTemplate(t, "worker", rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}})
+	template.Workload.Template = validJobTaskTemplate("worker").Workload.Template
+	job := &rlarkv1alpha1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")},
+		Spec:       rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}},
+		Status: rlarkv1alpha1.JobStatus{
+			Phase: rlarkv1alpha1.JobPhaseRunning,
+			Tasks: []rlarkv1alpha1.JobTaskStatus{{Name: "worker", Phase: rlarkv1alpha1.TaskPhaseRunning}},
+		},
+	}
+	task, err := desiredTask(job, template, "job-worker", "workers", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := true
+	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
+	task.Status.Phase = rlarkv1alpha1.TaskPhaseRunning
+	if task.Annotations[DesiredDigestAnnotation] == "" {
+		t.Fatal("test setup: Task has no desired digest")
+	}
+
+	node := schedulableNode("node", "workers", map[string]string{"zone": "new"})
+	cluster := &rlarkv1alpha1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers", Cordoned: true, Draining: true},
+		Status:     rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterCordoned},
+	}
+	scheme := jobTestScheme(t)
+	c := jobTestClientBuilder(scheme).WithObjects(node, cluster, task).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+	ctx := context.Background()
+	key := client.ObjectKeyFromObject(task)
+
+	// Cluster drain: placement fails because the Cluster is cordoned, so the
+	// stop request is applied outside the compiled desired state.
+	clusterStop := task.Annotations
+	clusterStop[rlarkv1alpha1.ClusterStoppedAnnotation] = "true"
+	if err := c.Update(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.dispatchTasks(ctx, job, logr.Discard()); err != nil {
+		t.Fatalf("dispatchTasks() error = %v, want the drain stop honoured", err)
+	}
+	var drained rlarkv1alpha1.Task
+	if err := c.Get(ctx, key, &drained); err != nil {
+		t.Fatal(err)
+	}
+	if !drained.Spec.Suspended {
+		t.Fatal("cluster drain did not suspend the Task")
+	}
+	if digest := drained.Annotations[DesiredDigestAnnotation]; digest == "" {
+		t.Fatal("test setup: drain suspend unexpectedly restamped the digest")
+	}
+
+	// Uncordon + Job start: the marker is released and the Cluster is online
+	// again, so the Job controller has to resume the Task.
+	delete(drained.Annotations, rlarkv1alpha1.ClusterStoppedAnnotation)
+	if err := c.Update(ctx, &drained); err != nil {
+		t.Fatal(err)
+	}
+	cluster.Spec.Cordoned = false
+	cluster.Spec.Draining = false
+	cluster.Status.Phase = rlarkv1alpha1.ClusterOnline
+	if err := c.Update(ctx, cluster); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReconcileStateMachine(ctx, job); err != nil {
+		t.Fatalf("ReconcileStateMachine() error = %v", err)
+	}
+	var resumed rlarkv1alpha1.Task
+	if err := c.Get(ctx, key, &resumed); err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Spec.Suspended {
+		t.Fatal("Task stayed suspended after the cluster drain was released")
+	}
+}
+
+func TestNodeDrainStopsJobWhenPlacementIsUnavailable(t *testing.T) {
+	template := placementRayTaskTemplate(t, "worker", rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}})
+	template.Workload.Template = validJobTaskTemplate("worker").Workload.Template
+	job := &rlarkv1alpha1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")},
+		Spec:       rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}},
+		Status: rlarkv1alpha1.JobStatus{
+			Phase: rlarkv1alpha1.JobPhaseRunning,
+			Tasks: []rlarkv1alpha1.JobTaskStatus{{Name: "worker", Phase: rlarkv1alpha1.TaskPhaseRunning}},
+		},
+	}
+	task := buildTask(job, template, "job-worker", "workers")
+	controller := true
+	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
+	task.Annotations[rlarkv1alpha1.NodeDrainStoppedAnnotation] = "node"
+	task.Annotations[rlarkv1alpha1.NodeDrainSuspendedAnnotation] = "node"
+	task.Spec.Suspended = true
+	task.Status.Phase = rlarkv1alpha1.TaskPhaseStopped
+	node := schedulableNode("node", "workers", map[string]string{"zone": "new"})
+	node.Spec.Unschedulable = true
+	for i := range node.Status.Conditions {
+		if node.Status.Conditions[i].Type == rlarkv1alpha1.ConditionTypeSchedulable {
+			node.Status.Conditions[i].Status = metav1.ConditionFalse
+			node.Status.Conditions[i].Reason = rlarkv1alpha1.ConditionReasonUnschedulable
+		}
+	}
+	cluster := &rlarkv1alpha1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster"},
+		Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers"},
+		Status:     rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterOnline},
+	}
+	scheme := jobTestScheme(t)
+	c := jobTestClientBuilder(scheme).WithObjects(node, cluster, task).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+
+	changed, err := r.ReconcileStateMachine(context.Background(), job)
+	if err != nil {
+		t.Fatalf("ReconcileStateMachine() error = %v, want the completed node drain honoured", err)
+	}
+	if !changed {
+		t.Fatal("ReconcileStateMachine() did not report the stopped Job status change")
+	}
+	if job.Spec.Suspended {
+		t.Fatal("node drain changed the user's Job suspension intent")
+	}
+	if job.Status.Phase != rlarkv1alpha1.JobPhaseStopped || len(job.Status.Tasks) != 1 || job.Status.Tasks[0].Phase != rlarkv1alpha1.TaskPhaseStopped {
+		t.Fatalf("Job status did not reflect the stopped Task: %#v", job.Status)
+	}
+	condition := findCondition(job.Status.Conditions, jobConditionEvicted)
+	if condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != jobReasonEvicted {
+		t.Fatalf("Evicted condition = %#v, want True/%s", condition, jobReasonEvicted)
+	}
+	var got rlarkv1alpha1.Task
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(task), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Spec.Suspended {
+		t.Fatal("Job reconciliation resumed the node-drained Task")
+	}
+}
+
 func TestResolveTaskNamespaceAllowsDowngradedCluster(t *testing.T) {
-	template := rlarkv1alpha1.JobTaskTemplate{Name: "worker", TaskSpec: rlarkv1alpha1.TaskSpec{Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}}}}
+	template := placementRayTaskTemplate(t, "worker", rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}})
 	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}}, Status: rlarkv1alpha1.JobStatus{Tasks: []rlarkv1alpha1.JobTaskStatus{{Name: "worker"}}}}
 	cluster := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers"}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterDowngraded}}
-	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", Namespace: "workers", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}}
+	node := schedulableNode("node", "workers", map[string]string{"zone": "new"})
 	scheme := jobTestScheme(t)
 	c := jobTestClientBuilder(scheme).WithObjects(node, cluster).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
@@ -596,10 +1037,10 @@ func TestResolveTaskNamespaceAllowsDowngradedCluster(t *testing.T) {
 }
 
 func TestResolveTaskNamespaceRecoversWhenClusterBecomesOnline(t *testing.T) {
-	template := rlarkv1alpha1.JobTaskTemplate{Name: "worker", TaskSpec: rlarkv1alpha1.TaskSpec{Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}}}}
+	template := placementRayTaskTemplate(t, "worker", rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}})
 	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}}, Status: rlarkv1alpha1.JobStatus{Tasks: []rlarkv1alpha1.JobTaskStatus{{Name: "worker"}}}}
 	cluster := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers", Cordoned: true}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterCordoned}}
-	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", Namespace: "workers", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}}
+	node := schedulableNode("node", "workers", map[string]string{"zone": "new"})
 	scheme := jobTestScheme(t)
 	c := jobTestClientBuilder(scheme).WithObjects(node, cluster).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
@@ -623,15 +1064,13 @@ func TestResolveTaskNamespaceRecoversWhenClusterBecomesOnline(t *testing.T) {
 
 func TestDispatchResolvesNamespaceBeforeMutating(t *testing.T) {
 	replicas := int32(2)
-	template := rlarkv1alpha1.JobTaskTemplate{Name: "worker", TaskSpec: rlarkv1alpha1.TaskSpec{
-		Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}},
-		Workload:  rayTaskTemplate(t, "worker", false, &replicas, "").Workload,
-	}}
+	template := placementRayTaskTemplate(t, "worker", rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "new"}})
+	template.Workload.Carrier.Parameters = rayTaskTemplate(t, "worker", false, &replicas, "").Workload.Carrier.Parameters
 	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job", UID: types.UID("job-uid")}, Spec: rlarkv1alpha1.JobSpec{Tasks: []rlarkv1alpha1.JobTaskTemplate{template}}}
 	task := buildTask(job, template, "job-worker", "workers")
 	controller := true
 	task.OwnerReferences = []metav1.OwnerReference{{APIVersion: rlarkv1alpha1.GroupVersion.String(), Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}
-	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", Namespace: "workers", Labels: map[string]string{"zone": "new"}}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}}
+	node := schedulableNode("node", "workers", map[string]string{"zone": "new"})
 	cluster := &rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: "workers"}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterOnline}}
 	scheme := jobTestScheme(t)
 	baseClient := jobTestClientBuilder(scheme).WithObjects(task, node, cluster).Build()

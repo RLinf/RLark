@@ -33,19 +33,55 @@ func DeploymentStatusPhase(deployment *appsv1.Deployment) (rlarkv1alpha1.TaskPha
 	return rlarkv1alpha1.TaskPhasePending, ""
 }
 
-// StatefulSetStatusPhase projects a StatefulSet's current revision and replica counts.
-func StatefulSetStatusPhase(statefulSet *appsv1.StatefulSet) rlarkv1alpha1.TaskPhase {
+// StatefulSetStatusPhase projects a StatefulSet's current generation, conditions
+// and replica counts. The upstream StatefulSet controller does not populate
+// status conditions today, so the condition scan only reports a failure when a
+// Runtime or a future controller version does.
+func StatefulSetStatusPhase(statefulSet *appsv1.StatefulSet) (rlarkv1alpha1.TaskPhase, string) {
 	desired := desiredReplicas(statefulSet.Spec.Replicas)
 	if desired == 0 {
-		return rlarkv1alpha1.TaskPhaseStopped
+		return rlarkv1alpha1.TaskPhaseStopped, ""
 	}
-	if statefulSet.Status.ObservedGeneration >= statefulSet.Generation && statefulSet.Status.UpdatedReplicas == desired && statefulSet.Status.ReadyReplicas == desired && statefulSet.Status.CurrentReplicas == desired && statefulSet.Status.CurrentRevision != "" && statefulSet.Status.CurrentRevision == statefulSet.Status.UpdateRevision {
-		return rlarkv1alpha1.TaskPhaseRunning
+	if statefulSet.Status.ObservedGeneration < statefulSet.Generation {
+		return rlarkv1alpha1.TaskPhasePending, ""
 	}
-	return rlarkv1alpha1.TaskPhasePending
+	for _, condition := range statefulSet.Status.Conditions {
+		if condition.Type == "ReplicaFailure" && condition.Status == corev1.ConditionTrue {
+			return rlarkv1alpha1.TaskPhaseFailed, condition.Message
+		}
+	}
+	if statefulSet.Status.UpdatedReplicas == desired && statefulSet.Status.ReadyReplicas == desired && statefulSet.Status.CurrentReplicas == desired && statefulSet.Status.CurrentRevision != "" && statefulSet.Status.CurrentRevision == statefulSet.Status.UpdateRevision {
+		return rlarkv1alpha1.TaskPhaseRunning, ""
+	}
+	return rlarkv1alpha1.TaskPhasePending, ""
 }
 
 var abnormalReasons = map[string]struct{}{"ImagePullBackOff": {}, "ErrImagePull": {}, "InvalidImageName": {}, "CreateContainerConfigError": {}, "CreateContainerError": {}, "CrashLoopBackOff": {}, "OOMKilled": {}, "ContainerCannotRun": {}, "DeadlineExceeded": {}}
+
+// abnormalObjectReasons lists the workload-root failures that keep a workload
+// from ever producing an instance. The StatefulSet and DaemonSet controllers
+// report them only as their own Events, so without this projection the Task
+// stays Pending with no diagnosis.
+var abnormalObjectReasons = map[string]struct{}{"FailedCreate": {}, "FailedUpdate": {}, "FailedDelete": {}}
+
+// ObjectFailureMessage returns the first recognized workload-root failure
+// reported by Runtime object conditions.
+func ObjectFailureMessage(conditions []agentruntime.ObjectCondition) (string, bool) {
+	for _, condition := range conditions {
+		if condition.Scope != "object" {
+			continue
+		}
+		if _, found := abnormalObjectReasons[condition.Reason]; !found {
+			continue
+		}
+		detail := condition.Message
+		if detail == "" {
+			detail = condition.Reason
+		}
+		return fmt.Sprintf("workload %s: %s", condition.Subject, detail), true
+	}
+	return "", false
+}
 
 // InstanceFailureMessage returns the first recognized terminal container failure.
 func InstanceFailureMessage(snapshot agentruntime.InstanceSnapshot) (string, bool) {

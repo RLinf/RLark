@@ -9,6 +9,9 @@ import type { CRDVolume, CRDWorkflow } from "./crdModels";
  */
 export type MountType = "host" | "storage" | "opaque";
 
+export type NodePhase =
+  "Registering" | "Online" | "Degraded" | "Offline" | "Cordoned" | "Draining";
+
 export type Phase =
   | "Running"
   | "Pending"
@@ -18,9 +21,8 @@ export type Phase =
   | "Stopping"
   | "Deleting"
   | "Unknown"
-  | "Online"
-  | "Offline"
-  | "Downgraded";
+  | "Downgraded"
+  | NodePhase;
 
 export type ClusterType = "Cloud" | "Embodied";
 export type NodeKind = "CloudCompute" | "EmbodiedCompute" | "Robot";
@@ -43,6 +45,7 @@ export interface Cluster {
   robotUsage: number;
   runningJobs: number;
   description: string;
+  agentNamespace?: string;
 }
 
 export interface NodeItem {
@@ -167,6 +170,9 @@ export interface Job {
       pvcSizeGb: number;
       rawVolume?: CRDVolume;
     }>;
+    advanced?: {
+      sharedMemorySize?: string;
+    };
   }>;
   taskStatuses: Array<{
     name: string;
@@ -368,6 +374,19 @@ export const nodes: NodeItem[] = [
     tasks: 18,
   },
   {
+    id: "gpu-cloud-05",
+    name: "gpu-cloud-05",
+    cluster: "云训练集群 East-A",
+    kind: "CloudCompute",
+    phase: "Draining",
+    address: "10.20.0.15",
+    model: "A100 80G · 8 GPU",
+    cpu: 51,
+    memory: 58,
+    gpu: "3 / 8",
+    tasks: 3,
+  },
+  {
     id: "eval-l40s-07",
     name: "eval-l40s-07",
     cluster: "云评测集群 North-B",
@@ -379,6 +398,19 @@ export const nodes: NodeItem[] = [
     memory: 52,
     gpu: "2 / 4",
     tasks: 6,
+  },
+  {
+    id: "eval-l40s-09",
+    name: "eval-l40s-09",
+    cluster: "云评测集群 North-B",
+    kind: "CloudCompute",
+    phase: "Degraded",
+    address: "10.32.4.19",
+    model: "L40S · 4 GPU",
+    cpu: 97,
+    memory: 93,
+    gpu: "3 / 4",
+    tasks: 2,
   },
   {
     id: "edge-orin-02",

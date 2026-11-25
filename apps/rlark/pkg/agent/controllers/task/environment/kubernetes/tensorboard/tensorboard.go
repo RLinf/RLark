@@ -20,6 +20,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/fault"
 	executionplan "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/plan"
 	agentruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
+	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
 const (
@@ -204,7 +205,7 @@ func apply(spec *corev1.PodSpec, profile profileValue) error {
 	desired := corev1.Container{Name: sidecarName, Image: profile.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"tensorboard"}, Args: []string{"--logdir=" + directory, "--bind_all"}, Ports: []corev1.ContainerPort{{Name: "tensorboard", ContainerPort: port, Protocol: corev1.ProtocolTCP}}, VolumeMounts: []corev1.VolumeMount{{Name: selectedVolume, MountPath: mountPath, SubPath: subPath}}, RestartPolicy: ptr.To(corev1.ContainerRestartPolicyAlways)}
 	for _, existing := range append(append([]corev1.Container(nil), spec.Containers...), spec.InitContainers...) {
 		if existing.Name == sidecarName {
-			if !jsonEqual(existing, desired) {
+			if !utils.JSONEqual(existing, desired) {
 				return fault.New(fault.Conflict, "TensorBoard sidecar name is already used by a non-equivalent container")
 			}
 			return nil
@@ -229,7 +230,7 @@ func pathCovers(mountPath, directory string) bool {
 func ensureVolume(spec *corev1.PodSpec, desired corev1.Volume) error {
 	for _, existing := range spec.Volumes {
 		if existing.Name == desired.Name {
-			if !jsonEqual(existing, desired) {
+			if !utils.JSONEqual(existing, desired) {
 				return fault.New(fault.Conflict, "TensorBoard volume name is already used by a non-equivalent volume")
 			}
 			return nil
@@ -242,7 +243,7 @@ func ensureVolume(spec *corev1.PodSpec, desired corev1.Volume) error {
 func ensureMount(container *corev1.Container, desired corev1.VolumeMount) error {
 	for _, existing := range container.VolumeMounts {
 		if existing.Name == desired.Name || existing.MountPath == desired.MountPath {
-			if !jsonEqual(existing, desired) {
+			if !utils.JSONEqual(existing, desired) {
 				return fault.New(fault.Conflict, "TensorBoard mount conflicts with an existing main-container mount")
 			}
 			return nil
@@ -250,12 +251,6 @@ func ensureMount(container *corev1.Container, desired corev1.VolumeMount) error 
 	}
 	container.VolumeMounts = append(container.VolumeMounts, desired)
 	return nil
-}
-
-func jsonEqual(left, right any) bool {
-	a, _ := json.Marshal(left)
-	b, _ := json.Marshal(right)
-	return string(a) == string(b)
 }
 
 func profileRevision(value []byte) string {

@@ -10,11 +10,9 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/tools/leaderelection"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
-	"github.com/rlinf/rlark/apps/rlark/pkg/configs"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
 
@@ -63,8 +61,8 @@ func (s *Server) registerAgent(ctx context.Context, agentID string) error {
 	// 3. 创建 RBAC 规则
 	// 每个 agent 有自己的 RoleBinding（名称含 agentID），避免多 agent 接入时互相覆盖 subject
 	rules := []rbacv1.PolicyRule{
-		{APIGroups: []string{"rlinf.io"}, Resources: []string{"nodes", "tasks", "pods", "addons"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
-		{APIGroups: []string{"rlinf.io"}, Resources: []string{"nodes/status", "tasks/status", "pods/status", "addons/status"}, Verbs: []string{"get", "update", "patch"}},
+		{APIGroups: []string{"rlinf.io"}, Resources: []string{"nodes", "tasks", "pods", "addons", "clusterupgradejobs"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		{APIGroups: []string{"rlinf.io"}, Resources: []string{"nodes/status", "tasks/status", "pods/status", "addons/status", "clusterupgradejobs/status"}, Verbs: []string{"get", "update", "patch"}},
 		{APIGroups: []string{"rlinf.io"}, Resources: []string{"domainpeers"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 		{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
@@ -245,7 +243,7 @@ func (s *Server) migrateClusterNodes(ctx context.Context, cluster *rlarkv1alpha1
 	return nil
 }
 
-func (s *Server) startAgentBroadcaster(ctx context.Context, agentID, role, connID string) error {
+func (s *Server) startAgentHeartbeat(ctx context.Context, agentID, role, connID string) error {
 	// 主 Agent 的 Lease 表示集群连接状态；节点 Agent 的 Lease 表示单个节点连接状态。
 	id := "heartbeat"
 	if role != "" {
@@ -256,28 +254,16 @@ func (s *Server) startAgentBroadcaster(ctx context.Context, agentID, role, connI
 		id = "node-heartbeat-" + nodeName
 	}
 
-	namespace := apis.RLarkAgentNamespacePrefix + agentID
-	leConfig := configs.DefaultLeaderElectionConfig()
-	leConfig.Key = namespace + "/" + id
-	leConfig.Identity = connID
-	leConfig.LeaseDuration = 45 * time.Second
-	leConfig.RenewDeadline = 30 * time.Second
-	leConfig.RetryPeriod = 15 * time.Second
-	electionConfig, err := leConfig.Build(s.kubeClient, namespace, leaderelection.LeaderCallbacks{
-		OnStartedLeading: func(ctx context.Context) {
-			<-ctx.Done()
-		},
-		OnStoppedLeading: func() {},
-		OnNewLeader:      func(identity string) {},
-	})
-	if err != nil {
-		return fmt.Errorf("build leader election config: %w", err)
+	renewer := &heartbeatLeaseRenewer{
+		client:        s.kubeClient,
+		namespace:     apis.RLarkAgentNamespacePrefix + agentID,
+		name:          id,
+		identity:      connID,
+		leaseDuration: s.config.NodeHeartbeatLeaseDuration,
+		retryPeriod:   s.config.NodeHeartbeatRetryPeriod,
+		renewDeadline: s.config.NodeHeartbeatRenewDeadline,
+		now:           time.Now,
 	}
-	le, err := leaderelection.NewLeaderElector(electionConfig)
-	if err != nil {
-		return fmt.Errorf("create leader elector: %w", err)
-	}
-
-	go le.Run(ctx)
+	go renewer.Run(ctx)
 	return nil
 }

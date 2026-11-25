@@ -1,0 +1,132 @@
+/* Data-plane node management (unmanaged K8s nodes in cluster detail) */
+
+.admin-data-plane-nodes-panel {
+  margin-bottom: 20px;
+}
+
+/* 4-column grid for the unmanaged-nodes variant of node-resource-table.
+   Keep the selector strict so it does not affect the main node resource table. */
+.admin-data-plane-unmanaged-table.node-resource-table {
+  overflow-x: auto;
+}
+
+.admin-data-plane-unmanaged-table .node-resource-table-head,
+.admin-data-plane-unmanaged-row.node-resource-row {
+  min-width: 760px;
+  grid-template-columns:
+    minmax(220px, 1.6fr)
+    minmax(140px, 1fr)
+    minmax(110px, 0.8fr)
+    minmax(80px, 0.6fr);
+  align-items: center;
+  column-gap: 14px;
+}
+
+.admin-data-plane-unmanaged-row {
+  gap: 0;
+}
+
+.admin-data-plane-node-name {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-data-plane-node-name strong {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.admin-data-plane-node-ip {
+  color: var(--muted);
+  font-size: 12px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.admin-data-plane-node-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--gray);
+}
+
+.admin-data-plane-node-dot.managed {
+  background: var(--green, #22c55e);
+}
+
+.admin-data-plane-node-dot.unmanaged {
+  background: var(--warning, #eab308);
+}
+
+.admin-data-plane-node-ready {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.admin-data-plane-node-ready.ready {
+  background: rgba(54, 201, 143, 0.11);
+  color: #14875e;
+}
+
+.admin-data-plane-node-ready.notready {
+  background: rgba(142, 151, 166, 0.12);
+  color: var(--muted);
+}
+
+.admin-data-plane-node-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.admin-data-plane-node-action-menu {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.admin-data-plane-node-action-menu > .icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--muted);
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.admin-data-plane-node-action-menu > .icon-button:hover:not(:disabled) {
+  background: var(--skyblue-bg);
+  color: var(--ink);
+}
+
+.admin-data-plane-node-action-menu > .icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.admin-data-plane-node-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(127, 127, 127, 0.3);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: admin-data-plane-spin 0.8s linear infinite;
+}
+
+@keyframes admin-data-plane-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

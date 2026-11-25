@@ -201,11 +201,11 @@ func (s *Server) handleProxyConnect(ctx *gin.Context) {
 			ctx.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("agent registration failed: %v", err)})
 			return
 		}
-		// 在接入期间，启动 Broadcast 机制，向集群广播该 Agent 的存在信息
+		// 在接入期间维护该 Agent 的心跳 Lease，向控制面广播它的连接状态
 		role := ctx.Request.Header.Get(apis.RemoteDialerRoleHeader)
-		if err := s.startAgentBroadcaster(ctx.Request.Context(), agentID, role, uuid.NewString()); err != nil {
-			logger.Error(err, "Start agent broadcaster failed", "agentID", agentID)
-			ctx.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("start agent broadcaster failed: %v", err)})
+		if err := s.startAgentHeartbeat(ctx.Request.Context(), agentID, role, uuid.NewString()); err != nil {
+			logger.Error(err, "Start agent heartbeat failed", "agentID", agentID)
+			ctx.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("start agent heartbeat failed: %v", err)})
 			return
 		}
 	}

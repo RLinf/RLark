@@ -44,6 +44,8 @@ observability ◄── host / coordinator / provider diagnostics
 
 Lower-level contracts do not import controllers or command assembly. External clients and diagnostics are injected. Constructors must not start hidden goroutines.
 
+Production Kubernetes Task assembly lives in `controllers/task/assembly_kubernetes.go`, outside this neutral core. It reuses `host.Bundle`, builds complete Task wiring before manager installation, and leaves Start/cancel/join to the managers. Build may perform bounded metadata/permission queries but never workload effects or Task claim/Status writes. One-time Setup errors abort Agent startup; manager Add is not a reversible transaction. Task assembly does not own node-agent or Node/Pod reporting and does not require future Providers to execute on the Host's machine. No multi-Runtime registry, new claimant format, or Docker/Raw support is implied.
+
 ## Full reconciliation
 
 A normal Task reconciliation follows current state rather than event history:
@@ -114,6 +116,14 @@ Adapters declare object candidates together with explicit ownership, lifecycle, 
 Do not put tokens, private keys, Secret values, sensitive environment values, or raw credentials in logs, events, metrics, traces, errors, or Task Status.
 
 ## Adding an implementation
+
+The Host Bundle's optional effect-free admission hook lets production Task wiring validate compilation/binding before normal lifecycle writes. Coordinator admission shares evaluation validation but does not observe workload snapshots; reconciliation re-evaluates current state before effects. Mandatory inventory advertisements/interfaces and requested owned-field/adoption/profile capabilities fail closed. Cleanup remains identity-only. `host/conformance_test.go` uses the actual Host/Coordinator, real Binder and a typed backend store independent of the Kubernetes management fake; it is not a supported backend or real-cluster acceptance.
+
+Host owns `ExecutionAdmitted`: permanent rejection writes a generation-fenced, condition-only `False` intent and returns `Blocked` / `RetryOnChange` without an error; success writes `True`, not readiness. Status publication errors prevent claim/execution and preserve retry/error classification. Phase, observed nodes and other Conditions are untouched. `Bundle.AdmissionRequired` explicitly distinguishes cleanup/reset from execution, removing an inapplicable Condition rather than treating skipped compilation as success. Completed suspension removes it too; deletion adds no Status prerequisite. Transient admission errors retain their error chains. Existing periodic resync remains a recovery trigger.
+
+Condition-only and message-only intents preserve top-level `status.observedGeneration` and do not perform Stopped-phase housekeeping. Only Phase/observed-payload intents report a workload/lifecycle conclusion and advance that generation, including unchanged observations. Each Spec-driven Condition has independent generation freshness: a current admission rejection cannot make an older Running observation current.
+
+Status merge patches use optimistic resourceVersion locking. A conflict leaves the local snapshot unchanged and returns to Host for a fresh read and recomputation; the writer never retries an old intent with a new version. Successful CAS publication refreshes the local version used by claim. The read after a new claim must match its response UID/version and ownership and be non-deleting, otherwise Host returns Conflict before lifecycle/Provider effects. No cross-API/Provider transaction is implied.
 
 When adding a Workload or Runtime implementation outside this tree:
 

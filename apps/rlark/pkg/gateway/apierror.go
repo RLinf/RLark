@@ -29,6 +29,14 @@ const (
 	CodeNotConfigured         = "NOT_CONFIGURED"
 )
 
+// Response languages the gateway renders human-readable messages in. A single
+// response always carries exactly one of them so the caller never has to read
+// Chinese and English side by side.
+const (
+	languageChinese = "zh"
+	languageEnglish = "en"
+)
+
 // requestIDHeader carries the correlation identifier between clients, gateway
 // logs and error responses.
 const requestIDHeader = "X-Request-Id"
@@ -74,6 +82,26 @@ func requestIDOf(c *gin.Context) string {
 	}
 	id, _ := value.(string)
 	return id
+}
+
+// requestLanguage reports the language the caller wants human-readable
+// messages in. The console advertises its active UI language through
+// Accept-Language; anything else falls back to the platform default (Chinese)
+// so an unlabelled caller still gets a single, predictable language.
+func requestLanguage(c *gin.Context) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.GetHeader("Accept-Language"))), languageEnglish) {
+		return languageEnglish
+	}
+	return languageChinese
+}
+
+// localizedMessage renders the wording for the requested language so a response
+// never mixes Chinese and English.
+func localizedMessage(lang, zh, en string) string {
+	if lang == languageEnglish {
+		return en
+	}
+	return zh
 }
 
 // respondError writes the unified error body and aborts the handler chain.

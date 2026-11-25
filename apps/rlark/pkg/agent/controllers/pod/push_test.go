@@ -496,6 +496,54 @@ func TestOrphanSweepConservativelyBackfillsLegacyIdentity(t *testing.T) {
 	}
 }
 
+func TestOrphanSweepDeletesLegacyPodWithMissingLocalPod(t *testing.T) {
+	scheme := testScheme(t)
+	legacy := managementPod("pod-uid", "", "work", "pod", "")
+	legacy.Spec.TaskName, legacy.Spec.TaskNamespace = "task", "agent-a"
+	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&rlarkv1alpha1.Pod{}).WithObjects(legacy).Build()
+	sweeper := NewOrphanSweeper(NewPodController(base.Controller{ManagementClient: management, LocalKubeClient: fake.NewClientBuilder().WithScheme(scheme).Build(), ManagementNamespace: "agent-a"}), time.Minute, 10)
+	now := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	sweeper.now = func() time.Time { return now }
+
+	if err := sweeper.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var marked rlarkv1alpha1.Pod
+	if err := management.Get(context.Background(), client.ObjectKeyFromObject(legacy), &marked); err != nil {
+		t.Fatal(err)
+	}
+	if marked.Annotations[staleSinceAnnotation] != now.Format(time.RFC3339Nano) || marked.Status.Phase != rlarkv1alpha1.PodPhaseUnknown {
+		t.Fatalf("legacy Pod was not marked stale: annotations=%v status=%+v", marked.Annotations, marked.Status)
+	}
+	assertExists(t, management, legacy)
+
+	now = now.Add(16 * time.Minute)
+	if err := sweeper.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertNotFound(t, management, legacy)
+}
+
+func TestOrphanSweepLeavesAmbiguousLegacyPod(t *testing.T) {
+	scheme := testScheme(t)
+	local := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "work", UID: "replacement-uid"}}
+	legacy := managementPod("pod-uid", "", "work", "pod", "")
+	legacy.Spec.TaskName, legacy.Spec.TaskNamespace = "task", "agent-a"
+	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&rlarkv1alpha1.Pod{}).WithObjects(legacy).Build()
+	sweeper := NewOrphanSweeper(NewPodController(base.Controller{ManagementClient: management, LocalKubeClient: fake.NewClientBuilder().WithScheme(scheme).WithObjects(local).Build(), ManagementNamespace: "agent-a"}), time.Minute, 10)
+
+	if err := sweeper.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var got rlarkv1alpha1.Pod
+	if err := management.Get(context.Background(), client.ObjectKeyFromObject(legacy), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Annotations[staleSinceAnnotation] != "" {
+		t.Fatalf("ambiguous legacy Pod was marked stale: %v", got.Annotations)
+	}
+}
+
 func managementPod(name, scope, namespace, localName, uid string) *rlarkv1alpha1.Pod {
 	labels := map[string]string{
 		rlarkv1alpha1.PodLabelLocalPodName: localName, rlarkv1alpha1.PodLabelLocalPodNamespace: namespace,

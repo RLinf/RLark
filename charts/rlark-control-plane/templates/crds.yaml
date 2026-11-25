@@ -1,0 +1,6 @@
+{{- if eq .Values.managementApi "kubernetes" }}
+{{- range $path, $content := .Files.Glob "files/crds/*.yaml" }}
+---
+{{ $content | toString }}
+{{- end }}
+{{- end }}

@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -34,10 +33,13 @@ type Controller struct {
 	triggers  *triggerBridge
 	// logMu protects logState because controller-runtime may reconcile Tasks in
 	// parallel through the same Controller instance.
-	logMu      sync.Mutex
-	logState   map[string]taskReconcileLogState
-	evidenceMu sync.RWMutex
-	evidence   map[trigger.Key]verifiedExecution
+	logMu            sync.Mutex
+	logState         map[string]taskReconcileLogState
+	evidenceMu       sync.RWMutex
+	evidence         map[trigger.Key]verifiedExecution
+	observations     []kubernetesObservation
+	observationsByID map[string]kubernetesObservation
+	observationScope *KubernetesObservationScope
 }
 
 type verifiedExecution struct {
@@ -142,6 +144,8 @@ func (c *Controller) validateExecutionDependencies() error {
 		return fmt.Errorf("task management client is not configured")
 	case c.LocalKubeClient == nil:
 		return fmt.Errorf("task local Kubernetes client is not configured")
+	case len(c.observations) == 0:
+		return fmt.Errorf("task Kubernetes observations are not configured")
 	default:
 		return nil
 	}
@@ -185,18 +189,10 @@ func (c *Controller) AsPullReconciler() base.KubernetesReconciler {
 	return &pullReconciler{c: c}
 }
 
-// AsKubePushReconcilers is an exported method.
+// AsKubePushReconcilers satisfies base.Reconciler. Task observation sources
+// must be assembled by BuildKubernetesTaskAssembly, not the unscoped base path.
 func (c *Controller) AsKubePushReconcilers() map[base.KubernetesResource]base.KubernetesReconciler {
-	return map[base.KubernetesResource]base.KubernetesReconciler{
-		{
-			Name: "task-deployment",
-			Type: &appsv1.Deployment{},
-		}: &pushDeploymentReconciler{c: c},
-		{
-			Name: "task-statefulset",
-			Type: &appsv1.StatefulSet{},
-		}: &pushStatefulSetReconciler{c: c},
-	}
+	return nil
 }
 
 // AsDockerPushReconcilers is an exported method.

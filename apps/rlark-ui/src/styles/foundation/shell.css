@@ -17,6 +17,7 @@
   --ink: #171b25;
   --muted: #7c8492;
   --soft: #a9b0bd;
+  --gray: #9aa3b2;
   --line: #e7ebf0;
   --line-strong: #dce2ea;
   --panel: #ffffff;
@@ -535,6 +536,11 @@ button {
   position: relative;
   padding: 0;
   box-shadow: 0 4px 14px rgba(28, 39, 58, 0.035);
+}
+
+.icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .icon-button em {
@@ -1220,6 +1226,14 @@ button {
   background: var(--green);
 }
 
+.status-cordoned,
+.status-degraded,
+.status-registering,
+.status-draining {
+  background: #fff3df;
+  color: #bd7424;
+}
+
 .status-succeeded {
   background: #e9f1ff;
   color: #2563c9;
@@ -1294,6 +1308,15 @@ button {
   color: #7051c7;
 }
 
+/* Pinned tooltips stay open after the pointer leaves, so the icon keeps the
+   active styling until the user unpins it. */
+.status-info.status-info-pinned {
+  border-color: #7051c7;
+  background: #ebe6fa;
+  color: #5a3fb0;
+  box-shadow: 0 0 0 2px rgba(112, 81, 199, 0.18);
+}
+
 .status-info.status-info-danger {
   color: var(--danger);
 }
@@ -1322,6 +1345,10 @@ button {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s;
+  /* Pinned tooltips are meant to be read and copied while open, so keep text
+     selectable instead of treating the popup as a non-interactive hint. */
+  cursor: auto;
+  user-select: text;
   /* 该 tooltip 通过 portal 挂到 app shell 并用 fixed 定位，必须叠在 sticky 的
      .topbar 之上，否则靠近页面顶部的徽章提示会被顶栏遮挡；同时保持在
      弹窗遮罩之下。 */
@@ -1477,6 +1504,13 @@ button {
   border-color: #7562b8;
   background: #292442;
   color: #c4b5fd;
+}
+
+.theme-dark .status-info.status-info-pinned {
+  border-color: #8b74d8;
+  background: #322a52;
+  color: #d8ccff;
+  box-shadow: 0 0 0 2px rgba(139, 116, 216, 0.24);
 }
 
 .theme-dark .status-info-tooltip {

@@ -53,6 +53,10 @@ export const copy = {
       Online: "在线",
       Offline: "离线",
       Downgraded: "服务降级",
+      Registering: "注册中",
+      Degraded: "降级",
+      Cordoned: "在线 · 已暂停调度",
+      Draining: "排空中",
       Unknown: "未知",
     },
     kind: {
@@ -245,6 +249,10 @@ export const copy = {
       Online: "Online",
       Offline: "Offline",
       Downgraded: "Downgraded",
+      Registering: "Registering",
+      Degraded: "Degraded",
+      Cordoned: "Online · Scheduling paused",
+      Draining: "Draining",
       Unknown: "Unknown",
     },
     kind: {

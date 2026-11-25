@@ -85,8 +85,8 @@ func TestKubernetesExecutionCoordinatorEvaluatesAllBuiltinWorkloads(t *testing.T
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	local := fake.NewClientBuilder().WithScheme(scheme).Build()
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	local := executionFakeBuilder(scheme).Build()
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestKubernetesExecutionCoordinatorRegistersProviderCapabilities(t *testing.
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	execution, err := NewKubernetesExecutionCoordinator(fake.NewClientBuilder().WithScheme(scheme).Build(), "rlark:test")
+	execution, err := newTestKubernetesExecutionCoordinator(executionFakeBuilder(scheme).Build(), "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestKubernetesExecutionCoordinatorAssemblesEnvironmentBinder(t *testing.T) 
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	execution, err := NewKubernetesExecutionCoordinator(fake.NewClientBuilder().WithScheme(scheme).Build(), "rlark:test")
+	execution, err := newTestKubernetesExecutionCoordinator(executionFakeBuilder(scheme).Build(), "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestKubernetesExecutionCoordinatorBindsSSHEnvironment(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	execution, err := NewKubernetesExecutionCoordinator(fake.NewClientBuilder().WithScheme(scheme).Build(), "rlark:test")
+	execution, err := newTestKubernetesExecutionCoordinator(executionFakeBuilder(scheme).Build(), "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestKubernetesExecutionCoordinatorRejectsUnknownEnvironment(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	execution, err := NewKubernetesExecutionCoordinator(fake.NewClientBuilder().WithScheme(scheme).Build(), "rlark:test")
+	execution, err := newTestKubernetesExecutionCoordinator(executionFakeBuilder(scheme).Build(), "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestKubernetesExecutionCoordinatorUsesConfiguredTensorBoardImage(t *testing
 	scheme := runtime.NewScheme()
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
-	execution, err := NewKubernetesExecutionCoordinator(fake.NewClientBuilder().WithScheme(scheme).Build(), "rlark:test")
+	execution, err := newKubernetesExecutionCoordinator(context.Background(), executionFakeBuilder(scheme).Build(), KubernetesExecutionConfigFromEnvironment("rlark:test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,9 +287,9 @@ func TestKubernetesExecutionCoordinatorUsesConfiguredTensorBoardImage(t *testing
 
 func TestNewKubernetesHostDoesNotInstallOrMutateDependencies(t *testing.T) {
 	scheme := executionScheme(t)
-	management := fake.NewClientBuilder().WithScheme(scheme).Build()
-	local := fake.NewClientBuilder().WithScheme(scheme).Build()
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).Build()
+	local := executionFakeBuilder(scheme).Build()
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,9 +358,9 @@ func TestKubernetesHostDoesNotClaimUnregisteredWorkloadCombination(t *testing.T)
 	task.Finalizers = nil
 	task.Annotations = nil
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "example:v1"}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &executionCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &executionCountingClient{Client: executionFakeBuilder(scheme).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,12 @@ func TestKubernetesHostDoesNotClaimUnregisteredWorkloadCombination(t *testing.T)
 	if execution.Implementations != implementations {
 		t.Fatal("failed to install test implementation registry")
 	}
-	controller := newHostedTestController(t, base.Controller{AgentType: string(rlarkv1alpha1.AgentTypeKubernetes), ManagementNamespace: "cluster", ManagementClient: management, LocalKubeClient: local}, execution)
+	controller := NewTaskController(base.Controller{AgentType: string(rlarkv1alpha1.AgentTypeKubernetes), ManagementNamespace: "cluster", ManagementClient: management, LocalKubeClient: local}).WithExecutionCoordinator(execution)
+	taskHost, err := NewKubernetesHost(controller, execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller.WithHost(taskHost)
 	request := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(task)}
 	if _, err := (&pullReconciler{c: controller}).Reconcile(context.Background(), request); err != nil {
 		t.Fatal(err)
@@ -397,9 +402,9 @@ func TestProductionCoordinatorIsSoleWorkloadWriter(t *testing.T) {
 	task := claimedExecutionTask(rlarkv1alpha1.TaskPhasePending)
 	task.Generation = 3
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "example:v1"}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &executionCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &executionCountingClient{Client: executionFakeBuilder(scheme).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,9 +433,9 @@ func TestPullReconcileAppliesTemplateMutationsOnce(t *testing.T) {
 	task.Spec.Workload.Carrier.Type = taskapi.CarrierTypeKubernetesStatefulSet
 	task.Annotations[host.TaskClaimedCarrierTypeAnnotation] = taskapi.CarrierTypeKubernetesStatefulSet
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "example:v1"}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := fake.NewClientBuilder().WithScheme(scheme).Build()
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := executionFakeBuilder(scheme).Build()
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,9 +481,9 @@ func TestFirstPullReconcileInjectsMatchingImagePullSecrets(t *testing.T) {
 	task.Annotations = nil
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "registry.example.com/project/image:v1"}}
 	credential := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "registry", Namespace: tenant.DefaultNamespace, Labels: map[string]string{common.ImageRegistryCredentialLabel: "true"}, Annotations: map[string]string{common.ImageRegistryAnnotationRegistry: "registry.example.com"}}, Type: corev1.SecretTypeDockerConfigJson, Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte("opaque")}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := fake.NewClientBuilder().WithScheme(scheme).WithObjects(credential).Build()
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := executionFakeBuilder(scheme).WithObjects(credential).Build()
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,9 +522,9 @@ func TestRunningTaskGenerationUpdatesDeployment(t *testing.T) {
 		}},
 		Spec: appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{ManagementTaskUIDLabel: string(task.UID)}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{ManagementTaskUIDLabel: string(task.UID)}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "example:v1"}}}}},
 	}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &executionCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &executionCountingClient{Client: executionFakeBuilder(scheme).WithObjects(existing).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,9 +547,9 @@ func TestClaimedTaskRuntimeSelectorChangeDoesNotCleanupKubernetes(t *testing.T) 
 	task.Spec.Runtime.Kind = rlarkv1alpha1.RuntimeKind("Docker")
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "example:v2"}}
 	existing := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "workload-uid", Annotations: map[string]string{ManagementTaskNameAnnotation: task.Name, ManagementTaskNamespaceAnnotation: task.Namespace, ManagementTaskUIDAnnotation: string(task.UID)}}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "example:v1"}}}}}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &executionCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &executionCountingClient{Client: executionFakeBuilder(scheme).WithObjects(existing).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,9 +582,9 @@ func TestClaimedTaskRuntimeSelectorRecoveryAppliesFrozenSpec(t *testing.T) {
 	task.Spec.Runtime.Kind = rlarkv1alpha1.RuntimeKind("Docker")
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "example:v2"}}
 	existing := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "workload-uid", Annotations: map[string]string{ManagementTaskNameAnnotation: task.Name, ManagementTaskNamespaceAnnotation: task.Namespace, ManagementTaskUIDAnnotation: string(task.UID)}}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{ManagementTaskUIDLabel: string(task.UID)}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{ManagementTaskUIDLabel: string(task.UID)}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "example:v1"}}}}}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &executionCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &executionCountingClient{Client: executionFakeBuilder(scheme).WithObjects(existing).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -623,9 +628,9 @@ func TestClaimedWorkloadSelectorChangePreservesExistingRoot(t *testing.T) {
 	old := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "old", Annotations: map[string]string{ManagementTaskNameAnnotation: task.Name, ManagementTaskNamespaceAnnotation: task.Namespace, ManagementTaskUIDAnnotation: string(task.UID)}}}
 	service := raykubernetes.BuildRayHeadService(tenant.DefaultNamespace, task)
 	service.UID = "service-uid"
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &delayedDeleteClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(old, service).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &delayedDeleteClient{Client: executionFakeBuilder(scheme).WithObjects(old, service).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -652,9 +657,9 @@ func TestClaimedWorkloadSelectorChangeDoesNotSwitchClaimOrCreateRoot(t *testing.
 	task.Annotations[host.TaskClaimedWorkloadVersionAnnotation] = "v0"
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "example:v1"}}
 	old := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "old", Annotations: map[string]string{ManagementTaskNameAnnotation: task.Name, ManagementTaskNamespaceAnnotation: task.Namespace, ManagementTaskUIDAnnotation: string(task.UID)}}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &executionCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(old).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &executionCountingClient{Client: executionFakeBuilder(scheme).WithObjects(old).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -689,9 +694,9 @@ func TestClaimedWorkloadSelectorChangeHasNoRuntimeSideEffects(t *testing.T) {
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "example:v1"}}
 	old := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "old", Annotations: map[string]string{ManagementTaskNameAnnotation: task.Name, ManagementTaskNamespaceAnnotation: task.Namespace, ManagementTaskUIDAnnotation: string(task.UID)}}}
 	events := &operationEvents{}
-	management := &statusEventClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build(), events: events}
-	local := &deleteEventClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(old).Build(), events: events}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := &statusEventClient{Client: executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build(), events: events}
+	local := &deleteEventClient{Client: executionFakeBuilder(scheme).WithObjects(old).Build(), events: events}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -714,9 +719,9 @@ func TestClaimedWorkloadSelectorChangeDoesNotAttemptDelete(t *testing.T) {
 	task.Annotations[host.TaskClaimedWorkloadVersionAnnotation] = "v0"
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "example:v1"}}
 	old := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "old", Annotations: map[string]string{ManagementTaskNameAnnotation: task.Name, ManagementTaskNamespaceAnnotation: task.Namespace, ManagementTaskUIDAnnotation: string(task.UID)}}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &failingDeleteClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(old).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &failingDeleteClient{Client: executionFakeBuilder(scheme).WithObjects(old).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -735,11 +740,10 @@ func TestClaimedWorkloadSelectorChangeDoesNotAttemptDelete(t *testing.T) {
 }
 
 func TestReconcileFailsWithoutTaskHost(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = rlarkv1alpha1.AddToScheme(scheme)
+	scheme := executionScheme(t)
 	task := claimedExecutionTask(rlarkv1alpha1.TaskPhasePending)
-	management := fake.NewClientBuilder().WithScheme(scheme).WithObjects(task).Build()
-	controller := NewTaskController(base.Controller{AgentType: string(rlarkv1alpha1.AgentTypeKubernetes), ManagementNamespace: "cluster", ManagementClient: management, LocalKubeClient: fake.NewClientBuilder().WithScheme(scheme).Build()})
+	management := executionFakeBuilder(scheme).WithObjects(task).Build()
+	controller := NewTaskController(base.Controller{AgentType: string(rlarkv1alpha1.AgentTypeKubernetes), ManagementNamespace: "cluster", ManagementClient: management, LocalKubeClient: executionFakeBuilder(scheme).Build()})
 	_, err := (&pullReconciler{c: controller}).Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(task)})
 	if err == nil || !strings.Contains(err.Error(), "task Host is not configured") {
 		t.Fatalf("error=%v", err)
@@ -748,9 +752,9 @@ func TestReconcileFailsWithoutTaskHost(t *testing.T) {
 
 func TestValidateExecutionDependenciesRejectsPartialAssembly(t *testing.T) {
 	scheme := executionScheme(t)
-	management := fake.NewClientBuilder().WithScheme(scheme).Build()
-	local := fake.NewClientBuilder().WithScheme(scheme).Build()
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).Build()
+	local := executionFakeBuilder(scheme).Build()
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -779,9 +783,9 @@ func TestValidateExecutionDependenciesRejectsPartialAssembly(t *testing.T) {
 func TestFastDispatchWithMissingCoordinatorReturnsConfigurationError(t *testing.T) {
 	scheme := executionScheme(t)
 	task := claimedExecutionTask(rlarkv1alpha1.TaskPhasePending)
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := fake.NewClientBuilder().WithScheme(scheme).Build()
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := executionFakeBuilder(scheme).Build()
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -855,9 +859,9 @@ func TestCoordinatorAdoptsOriginMainRunningWorkloadsWithoutTemplateDrift(t *test
 			// ownership, no workload-level management annotations or UID selector.
 			oldTemplate := task.Spec.Workload.Template.DeepCopy()
 			workloadObject := test.old(*oldTemplate)
-			management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-			local := &executionCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(workloadObject).Build()}
-			execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+			management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+			local := &executionCountingClient{Client: executionFakeBuilder(scheme).WithObjects(workloadObject).Build()}
+			execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -892,9 +896,9 @@ func TestDeletingOriginMainWorkloadKeepsFinalizerUntilObjectDisappears(t *testin
 	task.DeletionTimestamp = &now
 	task.Spec.Workload.Template = &corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "task"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "origin-main:v1"}}}}
 	legacy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "legacy-uid"}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": task.Name}}, Template: *task.Spec.Workload.Template}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &delayedDeleteClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(legacy).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &delayedDeleteClient{Client: executionFakeBuilder(scheme).WithObjects(legacy).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -925,9 +929,9 @@ func TestDeletingOriginMainWorkloadKeepsFinalizerOnDeleteFailure(t *testing.T) {
 	task.DeletionTimestamp = &now
 	task.Spec.Workload.Template = &corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "task"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "origin-main:v1"}}}}
 	legacy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "legacy-uid"}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": task.Name}}, Template: *task.Spec.Workload.Template}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &failingDeleteClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(legacy).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &failingDeleteClient{Client: executionFakeBuilder(scheme).WithObjects(legacy).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -952,9 +956,9 @@ func TestDeletingWorkloadRecoversWhenDeleteResponseIsLost(t *testing.T) {
 	task.DeletionTimestamp = &now
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "example:v1"}}
 	workload := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "workload-uid", Annotations: map[string]string{ManagementTaskNameAnnotation: task.Name, ManagementTaskNamespaceAnnotation: task.Namespace, ManagementTaskUIDAnnotation: string(task.UID)}}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &lostDeleteResponseClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(workload).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &lostDeleteResponseClient{Client: executionFakeBuilder(scheme).WithObjects(workload).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -999,9 +1003,9 @@ func TestStopWaitsForOriginMainWorkloadDeletion(t *testing.T) {
 			test.prepare(task)
 			task.Spec.Workload.Template = &corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "task"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "origin-main:v1"}}}}
 			legacy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "legacy-uid"}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": task.Name}}, Template: *task.Spec.Workload.Template}}
-			management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-			local := &delayedDeleteClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(legacy).Build()}
-			execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+			management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+			local := &delayedDeleteClient{Client: executionFakeBuilder(scheme).WithObjects(legacy).Build()}
+			execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1035,15 +1039,143 @@ func TestKubernetesLifecycleResetsStaleStoppedStatus(t *testing.T) {
 	}
 }
 
+func TestKubernetesLifecycleStopsForDrainAndResumesAfterRequestRemoved(t *testing.T) {
+	ctx := context.Background()
+	task := claimedExecutionTask(rlarkv1alpha1.TaskPhaseStopped)
+	task.Spec.DrainRequests = []rlarkv1alpha1.TaskDrainRequest{{
+		OperationID: "drain-1",
+		NodeUID:     "node-uid",
+		NodeName:    "node-a",
+	}}
+	node := &rlarkv1alpha1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-a", Namespace: task.Namespace},
+		Spec: rlarkv1alpha1.NodeSpec{Operations: []rlarkv1alpha1.NodeOperationRequest{{
+			ID:   "drain-1",
+			Type: rlarkv1alpha1.NodeOperationDrain,
+		}}},
+	}
+	management := fake.NewClientBuilder().WithScheme(executionScheme(t)).WithObjects(task, node).Build()
+	lifecycle := kubernetesLifecycle{controller: &Controller{Controller: base.Controller{ManagementClient: management}}}
+
+	var current rlarkv1alpha1.Task
+	if err := management.Get(ctx, client.ObjectKeyFromObject(task), &current); err != nil {
+		t.Fatal(err)
+	}
+	decision, err := lifecycle.BeforeReconcile(ctx, host.LifecycleInput{External: &current})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != host.LifecycleCleanup || decision.Reason != "NodeDrain" || decision.AfterCleanup != host.LifecycleWait {
+		t.Fatalf("decision=%#v", decision)
+	}
+	if decision.AfterCleanupStatus == nil || decision.AfterCleanupStatus.Phase != string(rlarkv1alpha1.TaskPhaseStopped) {
+		t.Fatalf("after-cleanup status=%#v", decision.AfterCleanupStatus)
+	}
+
+	// Undrain or recover removes the Node Drain operation. The Host then
+	// releases the request itself instead of waiting for the Node Agent, which
+	// may be offline or may never observe the removed operation.
+	var currentNode rlarkv1alpha1.Node
+	if err := management.Get(ctx, client.ObjectKeyFromObject(node), &currentNode); err != nil {
+		t.Fatal(err)
+	}
+	currentNode.Spec.Operations = nil
+	if err := management.Update(ctx, &currentNode); err != nil {
+		t.Fatal(err)
+	}
+	if err := management.Get(ctx, client.ObjectKeyFromObject(task), &current); err != nil {
+		t.Fatal(err)
+	}
+
+	decision, err = lifecycle.BeforeReconcile(ctx, host.LifecycleInput{External: &current})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != host.LifecycleWait || decision.Reason != "StoppedStatusReset" || decision.Status == nil || decision.Status.Phase != string(rlarkv1alpha1.TaskPhasePending) {
+		t.Fatalf("decision=%#v, want the Task to resume after the drain operation is removed", decision)
+	}
+	var stored rlarkv1alpha1.Task
+	if err := management.Get(ctx, client.ObjectKeyFromObject(task), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Spec.DrainRequests) != 0 {
+		t.Fatalf("drain requests retained after the operation was removed: %#v", stored.Spec.DrainRequests)
+	}
+}
+
+func TestKubernetesLifecycleReleasesDrainRequestsWithoutBackingOperation(t *testing.T) {
+	terminating := &rlarkv1alpha1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "node-a",
+			Namespace:         "default",
+			Finalizers:        []string{"test"},
+			DeletionTimestamp: &metav1.Time{Time: time.Now()},
+		},
+		Spec: rlarkv1alpha1.NodeSpec{Operations: []rlarkv1alpha1.NodeOperationRequest{{
+			ID:   "drain-1",
+			Type: rlarkv1alpha1.NodeOperationDrain,
+		}}},
+	}
+	for _, test := range []struct {
+		name string
+		node *rlarkv1alpha1.Node
+	}{
+		{name: "node missing"},
+		{name: "drain operation removed", node: &rlarkv1alpha1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "node-a", Namespace: "default"},
+			Spec: rlarkv1alpha1.NodeSpec{Operations: []rlarkv1alpha1.NodeOperationRequest{{
+				ID:   "maintenance-1",
+				Type: rlarkv1alpha1.NodeOperationEnterMaintenance,
+			}}},
+		}},
+		{name: "node terminating", node: terminating},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			task := claimedExecutionTask(rlarkv1alpha1.TaskPhaseStopped)
+			task.Spec.DrainRequests = []rlarkv1alpha1.TaskDrainRequest{{
+				OperationID: "drain-1",
+				NodeUID:     "node-uid",
+				NodeName:    "node-a",
+			}}
+			builder := fake.NewClientBuilder().WithScheme(executionScheme(t)).WithObjects(task)
+			if test.node != nil {
+				builder = builder.WithObjects(test.node)
+			}
+			management := builder.Build()
+			lifecycle := kubernetesLifecycle{controller: &Controller{Controller: base.Controller{ManagementClient: management}}}
+
+			var current rlarkv1alpha1.Task
+			if err := management.Get(ctx, client.ObjectKeyFromObject(task), &current); err != nil {
+				t.Fatal(err)
+			}
+			decision, err := lifecycle.BeforeReconcile(ctx, host.LifecycleInput{External: &current})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision.Action != host.LifecycleWait || decision.Reason != "StoppedStatusReset" || decision.Status == nil || decision.Status.Phase != string(rlarkv1alpha1.TaskPhasePending) {
+				t.Fatalf("decision=%#v, want the Task to resume when the Node no longer backs the request", decision)
+			}
+			var stored rlarkv1alpha1.Task
+			if err := management.Get(ctx, client.ObjectKeyFromObject(task), &stored); err != nil {
+				t.Fatal(err)
+			}
+			if len(stored.Spec.DrainRequests) != 0 {
+				t.Fatalf("stale drain requests retained: %#v", stored.Spec.DrainRequests)
+			}
+		})
+	}
+}
+
 func TestAgentIgnoresJobRestartAnnotation(t *testing.T) {
 	scheme := executionScheme(t)
 	task := claimedExecutionTask(rlarkv1alpha1.TaskPhaseRunning)
 	task.Annotations["rlark.io/restarted-at"] = "job-operation"
 	task.Spec.Workload.Template = &corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "task"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "origin-main:v1"}}}}
 	legacy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "legacy-uid"}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": task.Name}}, Template: *task.Spec.Workload.Template}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &executionCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(legacy).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &executionCountingClient{Client: executionFakeBuilder(scheme).WithObjects(legacy).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1074,9 +1206,9 @@ func TestStopCleanupLeavesExternalPVCAndSharedRayConfig(t *testing.T) {
 		},
 	}
 	shared := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "ray-worker-init", Namespace: tenant.DefaultNamespace, UID: "shared-uid"}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &executionCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(legacy, pvc, shared).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &executionCountingClient{Client: executionFakeBuilder(scheme).WithObjects(legacy, pvc, shared).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1106,9 +1238,9 @@ func TestUnrealizableClaimedTaskPreservesLegacyWorkloadUntilDeletion(t *testing.
 	// authorization, so the workload and claim must remain intact.
 	task.Spec.Workload = rlarkv1alpha1.TaskWorkloadSpec{}
 	legacy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "legacy-uid"}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": task.Name}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": task.Name}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "origin-main:v1"}}}}}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &executionCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(legacy).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &executionCountingClient{Client: executionFakeBuilder(scheme).WithObjects(legacy).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1157,9 +1289,9 @@ func TestKubernetesHostLeavesOtherAgentLegacyFinalizerUntouched(t *testing.T) {
 	delete(task.Annotations, ManagementTaskClaimantAnnotation)
 	task.Spec.Runtime.Kind = rlarkv1alpha1.RuntimeKind("Docker")
 	legacy := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "legacy-uid"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "origin-main:v1"}}}}}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &executionCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(legacy).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &executionCountingClient{Client: executionFakeBuilder(scheme).WithObjects(legacy).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1188,14 +1320,14 @@ func TestPushEmitsRuntimeTriggerWithoutRuntimeOrStatusEffects(t *testing.T) {
 	task := claimedExecutionTask(rlarkv1alpha1.TaskPhasePending)
 	one := int32(1)
 	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "workload-uid", Generation: 3, Annotations: map[string]string{ManagementTaskNameAnnotation: task.Name, ManagementTaskNamespaceAnnotation: task.Namespace, ManagementTaskUIDAnnotation: string(task.UID)}}, Spec: appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{ManagementTaskUIDLabel: string(task.UID)}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{ManagementTaskUIDLabel: string(task.UID)}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "origin-main:v1"}}}}}, Status: appsv1.DeploymentStatus{ObservedGeneration: 3, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &operationCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(deployment).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &operationCountingClient{Client: executionFakeBuilder(scheme).WithObjects(deployment).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	controller := newHostedTestController(t, base.Controller{AgentType: string(rlarkv1alpha1.AgentTypeKubernetes), ManagementNamespace: "cluster", ManagementClient: management, LocalKubeClient: local}, execution)
-	if _, err := (&pushDeploymentReconciler{c: controller}).Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(deployment)}); err != nil {
+	if _, err := deploymentPushReconciler(t, controller, task.Namespace).Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(deployment)}); err != nil {
 		t.Fatal(err)
 	}
 	if local.lists != 0 {
@@ -1218,9 +1350,9 @@ func TestRuntimeTriggerUsesVerifiedFastObservationAfterFullReconcile(t *testing.
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "origin-main:v1"}}
 	one := int32(1)
 	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: task.Name, Namespace: tenant.DefaultNamespace, UID: "workload-uid", ResourceVersion: "1", Generation: 3, Annotations: map[string]string{ManagementTaskNameAnnotation: task.Name, ManagementTaskNamespaceAnnotation: task.Namespace, ManagementTaskUIDAnnotation: string(task.UID), ManagementTaskGenerationAnnotation: fmt.Sprintf("%d", task.Generation)}}, Spec: appsv1.DeploymentSpec{Replicas: &one, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{ManagementTaskUIDLabel: string(task.UID)}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{ManagementTaskUIDLabel: string(task.UID)}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "origin-main:v1"}}}}}, Status: appsv1.DeploymentStatus{ObservedGeneration: 3, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &operationCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(deployment).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &operationCountingClient{Client: executionFakeBuilder(scheme).WithObjects(deployment).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1238,7 +1370,7 @@ func TestRuntimeTriggerUsesVerifiedFastObservationAfterFullReconcile(t *testing.
 		t.Fatalf("full reconcile did not establish root revision: %v annotations=%v", err, root.Annotations)
 	}
 	local.lists, local.creates, local.updates, local.deletes = 0, 0, 0, 0
-	if _, err := (&pushDeploymentReconciler{c: controller}).Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(deployment)}); err != nil {
+	if _, err := deploymentPushReconciler(t, controller, task.Namespace).Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(deployment)}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -1261,9 +1393,9 @@ func TestPullReconcileRequeuesTriggerWakeupPressureWithoutError(t *testing.T) {
 	scheme := executionScheme(t)
 	task := claimedExecutionTask(rlarkv1alpha1.TaskPhasePending)
 	task.Spec.Workload.Template.Spec.Containers = []corev1.Container{{Name: "main", Image: "origin-main:v1"}}
-	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(task).WithObjects(task).Build()
-	local := &operationCountingClient{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	management := executionFakeBuilder(scheme).WithStatusSubresource(task).WithObjects(task).Build()
+	local := &operationCountingClient{Client: executionFakeBuilder(scheme).Build()}
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1310,6 +1442,15 @@ type emitTriggerScope struct {
 func (s *emitTriggerScope) Event(observability.Event) { s.once.Do(s.emit) }
 func (*emitTriggerScope) End(observability.Result)    {}
 
+// executionFakeBuilder mirrors the Agent manager's field indexes so observation
+// can resolve a Kubernetes object's own Events the same way it does in
+// production.
+func executionFakeBuilder(scheme *runtime.Scheme) *fake.ClientBuilder {
+	return fake.NewClientBuilder().WithScheme(scheme).WithIndex(&corev1.Event{}, "involvedObject.uid", func(object client.Object) []string {
+		return []string{string(object.(*corev1.Event).InvolvedObject.UID)}
+	})
+}
+
 func executionScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -1328,11 +1469,33 @@ func executionScheme(t *testing.T) *runtime.Scheme {
 func newHostedTestController(t *testing.T, baseController base.Controller, execution *coordinator.Coordinator) *Controller {
 	t.Helper()
 	controller := NewTaskController(baseController).WithExecutionCoordinator(execution)
+	observations, err := KubernetesExecutionObservations(execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.WithKubernetesObservations(baseController.LocalKubeClient.Scheme(), observationTestRESTMapper(), observations); err != nil {
+		t.Fatal(err)
+	}
 	taskHost, err := NewKubernetesHost(controller, execution)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return controller.WithHost(taskHost)
+}
+
+func deploymentPushReconciler(t *testing.T, controller *Controller, managementNamespace string) *pushRuntimeReconciler {
+	t.Helper()
+	for _, observation := range controller.observations {
+		if observation.GVK.Kind == raykubernetes.CarrierDeployment {
+			push, err := newPushRuntimeReconciler(controller, observation, KubernetesObservationScope{RuntimeID: kubernetesruntime.DefaultID, Namespace: tenant.DefaultNamespace, ManagementNamespace: managementNamespace}, controller.LocalKubeClient)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return push
+		}
+	}
+	t.Fatal("Deployment push reconciler is not registered")
+	return nil
 }
 
 func readWorkloadTemplate(t *testing.T, kube client.Client, kind string) corev1.PodTemplateSpec {

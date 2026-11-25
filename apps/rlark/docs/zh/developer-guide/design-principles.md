@@ -45,6 +45,30 @@ Reconcile 通常应遵循以下结构：
 
 永久错误应写入稳定 Condition，并等待相关输入变化。冲突应重新读取并重新计算，不能重复提交基于旧对象的更新。
 
+### 2.1 一次调谐的结论必须作为数据表达
+
+一次调谐必须把「发生了什么」作为取值返回，而不是编码在返回值的形状里。`(error, requeue)` 会把彼此不同的情形混为一谈：「已无事可做」「在等某个输入变化」「正在重试瞬时失败」「正在清理」「被永久性条件阻塞」「这次观测已不再适用」最终全部压缩成一个 bool 加一个可能为 nil 的 error。无论是决定重入队时机的外壳、统计调谐次数的指标，还是评审人，事后都无法再还原这些区别。
+
+`apps/rlark/pkg/reconcile` 提供所有 Reconciler 共享的原语：
+
+| 原语 | 职责 |
+| --- | --- |
+| `Outcome` | 本次调谐的结论，取自一个封闭集合 |
+| `RetryClass` 与 `RetryDirective` | 为何需要再次访问，以及一个可选的延迟 hint（外壳可对其做上限与抖动） |
+| `Result[Observed]` | 结论、重试指令、有界的 `Reason`，以及可选的 status intent |
+| `StatusIntent[Observed]` 与 `MergeStatusIntents` | 声明式的 status 意见，以及多个意见之间唯一确定的合并实现 |
+| `StatusWriter[T, Observed]` | 幂等、带身份栅栏地发布已合并的 intent |
+| `ConditionMutation` 与 `ApplyConditionMutations` | 一批「写入或撤回」的 Condition 变更，一次性应用并返回是否真的发生了变化 |
+| `HeartbeatState`、`HeartbeatLease` 与 `HeartbeatObservation` | 把心跳 Lease 纯函数地判定为新鲜、过期或从未上报，并给出下次复查时机 |
+| `KeyedLocks` | 在单进程内按对象串行化调谐 |
+| `ValidateReason` | Reason 必须满足的有界形态 |
+
+该包有意保持资源无关，并放在顶层而非 `controllermanager/` 或 `agent/` 之下，因为两个平面都要导入它。不得为了共享这些原语而倒置两个平面之间的包依赖方向。
+
+`Observed` 之所以是类型参数，是因为观测载荷是 status intent 中唯一与资源相关的部分：数据面为 Task 上报观测到的节点，而控制面资源上报各自的形状。参数化之后，所有资源共用**同一个**合并实现。资源相关的包可以在泛型类型之上定义薄别名——`host.StatusIntent` 就是 `reconcile.StatusIntent[host.TaskObservation]`——但不得定义第二套 `Outcome`、`StatusIntent` 或合并函数。两份合并实现必然漂移，而这种漂移在两个控制器从相同输入写出不同 status 之前都是不可见的。
+
+`RetryDirective.After` 是 hint 而不是时刻表。上限与抖动由外壳负责，以避免一批对象因同一个依赖失败而同步重试。
+
 ## 3. 分离期望、观测、操作和历史
 
 每种表达只承担一种职责：
