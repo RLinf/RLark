@@ -1,24 +1,28 @@
-.robot-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.robot-model-tile { display: grid; grid-template-columns: 38px minmax(0, 1fr) 18px; align-items: center; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); color: var(--ink); text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
-.robot-model-tile:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--blue) 38%, var(--line)); background: var(--panel-2); }
-.robot-model-tile:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-.robot-model-tile-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: color-mix(in srgb, var(--blue) 10%, var(--panel)); color: var(--blue); }
+/* The robot model catalog: a restrained list page. A bounded reading column, the page actions in one
+   row, and model tiles that keep a sane width whether the catalog holds one model or twenty. */
+.robot-models-page { max-width: 1020px; }
+.robot-models-page .page-header { margin-bottom: 4px; }
+.robot-models-page .page-actions { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+.robot-model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; margin-top: 18px; }
+.robot-model-tile { display: flex; align-items: stretch; gap: 8px; min-width: 0; }
+
+.robot-model-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); text-align: left; transition: border-color .16s ease, background .16s ease; }
+.robot-model-open:hover { border-color: color-mix(in srgb, var(--blue) 38%, var(--line)); background: var(--panel-2); }
+
+.robot-model-tile-icon { flex: none; display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: color-mix(in srgb, var(--blue) 10%, var(--panel)); color: var(--blue); }
+.theme-dark .robot-model-tile-icon { background: color-mix(in srgb, var(--blue) 16%, var(--panel)); }
 .robot-model-tile-copy { display: grid; gap: 5px; min-width: 0; }
 .robot-model-tile-copy strong { overflow: hidden; color: var(--ink); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .robot-model-tile-copy small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .robot-model-tile-copy small code { color: var(--ink-2); }
 .robot-model-tile-copy > span { color: var(--muted); font-size: 11px; }
-.robot-model-tile > svg { color: var(--muted); }
 
-.theme-dark .robot-model-tile-icon { background: color-mix(in srgb, var(--blue) 16%, var(--panel)); }
+.robot-model-delete { flex: none; width: 40px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--danger); transition: border-color .16s ease, background .16s ease; }
+.robot-model-delete:hover:not(:disabled) { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }
+.robot-model-delete:disabled { color: var(--soft); cursor: not-allowed; }
 
 @media (max-width: 700px) {
   .robot-model-grid { grid-template-columns: minmax(0, 1fr); }
-  .robot-model-tile { padding: 13px; }
+  .robot-model-open { padding: 12px 13px; }
 }
-
-.robot-model-tile { display: flex; align-items: stretch; gap: 8px; }
-.robot-model-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); text-align: left; }
-.robot-model-open:hover { background: var(--panel-2); }
-.robot-model-delete { flex: none; width: 38px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--danger); }
-.robot-model-delete:disabled { color: var(--soft); cursor: not-allowed; }
