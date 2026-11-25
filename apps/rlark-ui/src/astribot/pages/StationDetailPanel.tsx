@@ -16,7 +16,7 @@ import {
   robotSelfCheckState, type NodeAdmission, type RobotPowerAction, type SiteNode,
 } from "../lib/siteNodeDisplay";
 import { CopyValue, DetailField, NetworkBadge } from "./StationFields";
-import { hardwareForNode } from "../mockNodeHardware";
+import { hardwareForNode } from "../lib/mockNodeHardware";
 import { NodeHardware } from "./NodeHardware";
 
 export interface StationPower {

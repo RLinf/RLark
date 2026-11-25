@@ -45,8 +45,8 @@ export const mockNodeHardware: Record<string, NodeHardwareSnapshot> = {
     network: { rxBytesPerSecond: 18.4 * 1024 ** 2, txBytesPerSecond: 6.8 * 1024 ** 2 },
     allocatedGPUs: 1,
     gpus: [
-      { index: 0, model: "NVIDIA GeForce RTX 3090", memoryUsedBytes: reading(gib(19.2)), memoryTotalBytes: gib(24), utilizationPercent: reading(68), temperatureC: reading(null), powerWatts: reading(null) },
-      { index: 1, model: "NVIDIA GeForce RTX 3090", memoryUsedBytes: reading(gib(4.1)), memoryTotalBytes: gib(24), utilizationPercent: reading(12), temperatureC: reading(null), powerWatts: reading(null) },
+      { index: 0, model: "NVIDIA GeForce RTX 3090", memoryUsedBytes: reading(gib(19.2)), memoryTotalBytes: gib(24), utilizationPercent: reading(68), temperatureC: reading<number>(null), powerWatts: reading<number>(null) },
+      { index: 1, model: "NVIDIA GeForce RTX 3090", memoryUsedBytes: reading(gib(4.1)), memoryTotalBytes: gib(24), utilizationPercent: reading(12), temperatureC: reading<number>(null), powerWatts: reading<number>(null) },
     ],
   },
   "深圳公司本地开发集群/wendychen": {
@@ -73,7 +73,7 @@ export const mockNodeHardware: Record<string, NodeHardwareSnapshot> = {
     disks: [{ filesystem: "/", usedBytes: gib(180), capacityBytes: gib(476) }],
     network: { rxBytesPerSecond: null, txBytesPerSecond: null },
     allocatedGPUs: 0,
-    gpus: [{ index: 0, model: "NVIDIA GeForce RTX 3090", memoryUsedBytes: reading(null, "unavailable"), memoryTotalBytes: gib(24), utilizationPercent: reading(null, "unavailable"), temperatureC: reading(null, "unsupported"), powerWatts: reading(null, "unsupported") }],
+    gpus: [{ index: 0, model: "NVIDIA GeForce RTX 3090", memoryUsedBytes: reading<number>(null, "unavailable"), memoryTotalBytes: gib(24), utilizationPercent: reading<number>(null, "unavailable"), temperatureC: reading<number>(null, "unsupported"), powerWatts: reading<number>(null, "unsupported") }],
   },
   "深圳公司S1U调试集群/s1u-03-x86": {
     state: "error", observedAt: "", source: "node-exporter + DCGM",
