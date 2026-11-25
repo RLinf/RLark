@@ -30,7 +30,7 @@ addons:
       prewarm: '{{images.s1u-robot}},{{images.fleet-robot}},{{images.quest-bridge}}'
     version: v0.3.0
 images:
-  astribot-iam: registry.rlark.internal:5443/rlark/agent@sha256:a5dabc6457dd22a1e2a306bac8076e670ab8440df9d830e507bb24765d5d6fa3
+  astribot-iam: localhost:5555/astribot-iam@sha256:7109afb285ebefb552f5c7e161dac102e8044a5cef7d24f218faa36b4761473f
   cluster-agent: registry.rlark.internal:5443/rlark/agent@sha256:a5dabc6457dd22a1e2a306bac8076e670ab8440df9d830e507bb24765d5d6fa3
   cluster-check: registry.rlark.internal:5443/mirror/ubuntu@sha256:45e9ddc6895604674618a409ca9f73d301da8fdb75fe330e8e9a27b3b219e4ad
   csi-livenessprobe: registry.rlark.internal:5443/csi-rclone/livenessprobe@sha256:7fe80915b3cb9fb1d09dbd300a0682cafa8ab93947cd3ddc3e15a8250621bf24
@@ -48,7 +48,7 @@ images:
   rlark-controller-manager: registry.rlark.internal:5443/rlark/agent@sha256:a5dabc6457dd22a1e2a306bac8076e670ab8440df9d830e507bb24765d5d6fa3
   rlark-gateway: registry.rlark.internal:5443/rlark/agent@sha256:a5dabc6457dd22a1e2a306bac8076e670ab8440df9d830e507bb24765d5d6fa3
   rlark-server: registry.rlark.internal:5443/rlark/agent@sha256:a5dabc6457dd22a1e2a306bac8076e670ab8440df9d830e507bb24765d5d6fa3
-  rlark-ui: localhost:5555/rlark-ui@sha256:5df92e4024255ca98adda8ee7684a17f5a7438cabd1609906844705685eb1357
+  rlark-ui: localhost:5555/rlark-ui@sha256:399da8119f5581e76213234e1e92ac64a0008067e567cf437894490a4ef4e346
   s1u-robot: registry.rlark.internal:5443/rlark/s1u-robot@sha256:96b5f90296ae89b18a08a710ed8441c3f4cc4f7b317e59d14b2a7e7a63b1b32d
   site-registry: registry.rlark.internal:5443/rlark/registry@sha256:e681a91fae320795d41e98897eff8f61c01359cfc1dde1ddd716d7d0be22b18e
   site-registry-relay: registry.rlark.internal:5443/rlark/agent@sha256:073476a2f62ac55df00d76d8bb8fd4dc10df6ef1229b905f2a65dbacd079b71f
