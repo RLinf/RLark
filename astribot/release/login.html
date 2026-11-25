@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Astribot Post-Training RL 管理平台</title>
+<style>
+  :root { --ink: #1d1d1f; --muted: #6b6580; --accent: #5b4bc4; --line: #d9d5ee; --danger: #b4423a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; font: 14px/1.5 Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; color: var(--ink); background: #f4f2fb; }
+  .hero { flex: 1.1; min-width: 0; position: relative; overflow: hidden; background: center / cover no-repeat url("/login-hero.jpg"), linear-gradient(160deg, #cfc7f2 0%, #e6e2fa 55%, #d5cff0 100%); }
+  .hero .shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(250,249,255,.6) 0%, rgba(250,249,255,0) 40%); }
+  .pane { flex: 0 0 min(480px, 100vw); display: grid; place-items: center; padding: 40px clamp(24px, 5vw, 64px); background: #fff; }
+  @media (max-width: 860px) { body { flex-direction: column; } .hero { min-height: 180px; flex: none; } .pane { flex: 1; } }
+  .card { width: min(100%, 380px); display: grid; gap: 18px; }
+  .brand { display: flex; align-items: center; justify-content: center; gap: 12px; }
+  .brand img { height: 34px; width: auto; }
+  .brand img + img { padding-left: 12px; border-left: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.03em; text-align: center; }
+  .sub { margin: -10px 0 0; color: var(--muted); font-size: 13px; text-align: center; }
+  label { display: grid; gap: 5px; font-size: 12px; font-weight: 650; color: #454060; }
+  .input { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 12px; border: 1px solid #c9c4e2; border-radius: 10px; background: #faf9ff; }
+  .input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,75,196,.13); }
+  .input input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; font: inherit; }
+  .toggle { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 4px; }
+  button.primary { height: 46px; border: 0; border-radius: 10px; background: linear-gradient(100deg, #5b4bc4, #7163cf); color: #fff; font: inherit; font-weight: 650; cursor: pointer; }
+  button.primary:disabled { opacity: .7; cursor: default; }
+  .error { margin: 0; padding: 9px 11px; border-radius: 8px; background: #fbe9e7; color: var(--danger); font-size: 13px; display: none; }
+  .foot { margin-top: 6px; display: flex; justify-content: center; gap: 16px; font-size: 11px; color: var(--muted); }
+  .foot a { color: inherit; }
+</style>
+</head>
+<body>
+  <div class="hero" aria-hidden="true"><div class="shade"></div></div>
+  <main class="pane">
+    <form class="card" id="form" autocomplete="on">
+      <div class="brand">
+        <img src="/astribot-logo-light.png" alt="Astribot" />
+        <img src="/rlark-logo-zh-light.png" alt="RLark" id="rlark-logo" />
+      </div>
+      <h1 id="t">登录管理平台</h1>
+      <p class="sub" id="s">Astribot Post-Training RL · 统一身份</p>
+      <label><span id="lu">用户名</span>
+        <span class="input"><input id="username" name="username" autocomplete="username" required autofocus /></span>
+      </label>
+      <label><span id="lp">密码</span>
+        <span class="input"><input id="password" name="password" type="password" autocomplete="current-password" required />
+        <button type="button" class="toggle" id="show" aria-label="显示密码">👁</button></span>
+      </label>
+      <p class="error" id="err" role="alert"></p>
+      <button class="primary" id="go" type="submit"><span id="lg">登录</span></button>
+      <div class="foot">
+        <a href="https://www.astribot.com/" target="_blank" rel="noreferrer">Astribot</a>
+        <a href="https://github.com/RLinf/RLark" target="_blank" rel="noreferrer">RLark Open Source</a>
+      </div>
+    </form>
+  </main>
+<script>
+(function () {
+  var zh = (navigator.language || "").toLowerCase().indexOf("zh") === 0;
+  var t = {
+    title: zh ? "登录管理平台" : "Sign in to the platform",
+    sub: zh ? "Astribot Post-Training RL · 统一身份" : "Astribot Post-Training RL · unified identity",
+    user: zh ? "用户名" : "Username",
+    pass: zh ? "密码" : "Password",
+    login: zh ? "登录" : "Sign in",
+    busy: zh ? "登录中…" : "Signing in…",
+    bad: zh ? "账号或密码错误" : "Invalid credentials",
+    disabled: zh ? "账号已停用" : "Account disabled",
+    rate: zh ? "尝试过于频繁，请稍后再试" : "Too many attempts, try again shortly",
+    failed: zh ? "登录失败，请重试" : "Sign-in failed, try again",
+    show: zh ? "显示密码" : "Show password"
+  };
+  if (!zh) {
+    document.title = "Astribot Post-Training RL Platform";
+    document.getElementById("rlark-logo").src = "/rlark-logo-en-light.png";
+    document.getElementById("t").textContent = t.title;
+    document.getElementById("s").textContent = t.sub;
+    document.getElementById("lu").textContent = t.user;
+    document.getElementById("lp").textContent = t.pass;
+    document.getElementById("lg").textContent = t.login;
+    document.getElementById("show").setAttribute("aria-label", t.show);
+  }
+  var next = "/";
+  try {
+    var q = new URLSearchParams(window.location.search).get("next") || "/";
+    if (q.charAt(0) === "/" && q.charAt(1) !== "/") next = q;
+  } catch (e) {}
+  var show = document.getElementById("show"), pwd = document.getElementById("password");
+  show.addEventListener("click", function () {
+    pwd.type = pwd.type === "password" ? "text" : "password";
+  });
+  var err = document.getElementById("err"), go = document.getElementById("go"), form = document.getElementById("form");
+  function fail(msg) { err.textContent = msg; err.style.display = "block"; go.disabled = false; }
+  form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    err.style.display = "none";
+    go.disabled = true;
+    document.getElementById("lg").textContent = t.busy;
+    fetch("/api/iam/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ username: document.getElementById("username").value.trim(), password: pwd.value })
+    }).then(function (r) {
+      if (r.status === 401) throw new Error(t.bad);
+      if (r.status === 403) throw new Error(t.disabled);
+      if (r.status === 429) throw new Error(t.rate);
+      if (!r.ok) throw new Error(t.failed);
+      return r.json();
+    }).then(function (o) {
+      var admin = o.role === "admin";
+      try {
+        sessionStorage.setItem("rlark-auth-token", o.token);
+        sessionStorage.setItem("rlark-auth-role", admin ? "admin" : "user");
+        if (admin) {
+          sessionStorage.setItem("rlark-admin-auth", "1");
+          sessionStorage.setItem("rlark-admin-user-name", o.user && o.user.username || "");
+        } else {
+          sessionStorage.setItem("rlark-user-auth", "1");
+          sessionStorage.setItem("rlark-user-name", o.user && o.user.username || "");
+        }
+      } catch (e) {}
+      window.location.replace(next);
+    }).catch(function (e) { fail(e.message || t.failed); });
+  });
+})();
+</script>
+</body>
+</html>
