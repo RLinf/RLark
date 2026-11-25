@@ -28,6 +28,7 @@ import { joinStageLabel, joinStages, nodeJoinView, type NodeJoin } from "../lib/
 import { machineJoinProgress, machineJoinSteps } from "../lib/machineJoin";
 import {
   classPasswordLabel,
+  hasRegisteredRobotClass,
   machineClassAccess,
   machineLabelChoices,
   machineNotTickable,
@@ -387,8 +388,9 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
             : (zh ? "没有扫到未加入的机器。新机器插上网线后，站点下一次扫描时会出现在这里；普通电脑/GPU 可以用 SSH 手动添加，场地第一台也可以用入网码。" : "No machine that has not joined was found. A new machine shows up after the site's next scan; ordinary computers/GPUs can be added over SSH, and a site's first machine can use a join code.")}
         </div> : <div className="join-machine-grid">
           {visibleScanned.map((machine) => {
-            const reach = machineReach(machine, zh);
-            const why = machineNotTickable(machine, zh);
+            const hasClassMatch = hasRegisteredRobotClass(machine, list?.classes ?? {});
+            const reach = hasClassMatch ? machineReach(machine, zh) : undefined;
+            const why = hasClassMatch ? machineNotTickable(machine, zh) : "";
             const inProgress = machine.joining && machine.admit_cluster_id === clusterID;
             const checked = selectable(machine) && ticked.includes(machine.name);
             return <article className={`join-machine-card${machine.admissible ? "" : " is-disabled"}${inProgress ? " is-joining" : ""}${checked ? " is-selected" : ""}`} key={machine.name}>
@@ -404,9 +406,11 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
                 <small>{zh ? "最近发现" : "Seen"} {seenTime(machine.last_seen, now)}{machineUnseen(machine, now) && <span className="join-missing"> · {unseenFor(machine.last_seen, now, zh)}</span>}</small>
               </div>
               <div className="join-machine-reach">
-                <div className="join-reach-pair"><div><small>Orin {zh ? "上联" : "entry"}</small><ReachCell zh={zh} reach={reach.orin} machine={machine} now={now} /></div><div><small>x86 {zh ? "计算机" : "computer"}</small><ReachCell zh={zh} reach={reach.x86} machine={machine} now={now} /></div></div>
-                {why && <small className="join-reach-reason">{why}</small>}
-                {!inProgress && machine.phase === "Admitted" && <small className="join-reach-reason">{zh ? "入网停住了，勾选它再点加入，重新入网" : "Its join stopped: tick it and add it again to join it anew"}</small>}
+                {reach ? <>
+                  <div className="join-reach-pair"><div><small>Orin {zh ? "上联" : "entry"}</small><ReachCell zh={zh} reach={reach.orin} machine={machine} now={now} /></div><div><small>x86 {zh ? "计算机" : "computer"}</small><ReachCell zh={zh} reach={reach.x86} machine={machine} now={now} /></div></div>
+                  {why && <small className="join-reach-reason">{why}</small>}
+                  {!inProgress && machine.phase === "Admitted" && <small className="join-reach-reason">{zh ? "入网停住了，勾选它再点加入，重新入网" : "Its join stopped: tick it and add it again to join it anew"}</small>}
+                </> : machine.port ? <small className="muted">SSH · {zh ? `端口 ${machine.port}` : `port ${machine.port}`}</small> : null}
               </div>
               <div className="join-machine-state">
                 {inProgress ? <span className="status status-pending"><i />{zh ? "已在入网中" : "Joining"}</span> : machine.admissible ? <span className="status status-online"><i />{zh ? "可选择" : "Selectable"}</span> : <span className="status status-failed"><i />{zh ? "不可选" : "Not selectable"}</span>}

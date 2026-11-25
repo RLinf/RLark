@@ -4,6 +4,8 @@ import { ApiError } from "../../api";
 import { useAutoRefresh } from "../../hooks";
 import { RefreshOverlay } from "../../components/shared";
 import { useAction } from "../components/useAction";
+import { clustersApi } from "../../backend";
+import type { ClusterSummary } from "../../types";
 import { isSiteNetworkConflict, validateDiscovery } from "../lib/siteNetwork";
 import { machinesApi, siteNetworkApi, siteNodesApi, type SiteNetworkDiscovery, type SiteNetworkSite, type SiteNetworkView } from "../api";
 import { isRobotNode, robotPowerState, seenTime, type Machine, type SiteNode } from "../lib/siteNodeDisplay";
@@ -36,6 +38,7 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
   const [readOnly, setReadOnly] = useState(false);
   const [machines, setMachines] = useState<Machine[]>([]);
   const [siteNodes, setSiteNodes] = useState<SiteNode[]>([]);
+  const [clusterDisplayNames, setClusterDisplayNames] = useState<Record<string, string>>({});
   const [insightsLoaded, setInsightsLoaded] = useState(false);
   const [savedEvents, setSavedEvents] = useState<ScanEvent[]>([]);
   const { pending, error: actionError, setError, run } = useAction();
@@ -46,14 +49,16 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
 
   const loadInsights = useCallback(async (view: SiteNetworkView) => {
     const request = ++insightsRequest.current;
-    const clusters = [...new Set(view.sites.flatMap((site) => site.clusters))];
-    const [machineResult, nodeResults] = await Promise.all([
+    const clusterIDs = [...new Set(view.sites.flatMap((site) => site.clusters))];
+    const [machineResult, nodeResults, clusterSummaries] = await Promise.all([
       machinesApi.list().catch(() => ({ items: [] as Machine[], classes: {} })),
-      Promise.all(clusters.map((cluster) => siteNodesApi.list(cluster).catch(() => ({ items: [] as SiteNode[] })))),
+      Promise.all(clusterIDs.map((cluster) => siteNodesApi.list(cluster).catch(() => ({ items: [] as SiteNode[] })))),
+      clustersApi.list<ClusterSummary>().catch(() => [] as ClusterSummary[]),
     ]);
     if (request !== insightsRequest.current) return;
     setMachines(machineResult.items);
     setSiteNodes(nodeResults.flatMap((result) => result.items));
+    setClusterDisplayNames(Object.fromEntries(clusterSummaries.map((cluster) => [cluster.id, cluster.name] as const).filter(([, name]) => Boolean(name))));
     setInsightsLoaded(true);
   }, []);
 
@@ -271,7 +276,11 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
           <div className="site-network-rail">
             <div className="site-network-rail-head"><span>{zh ? "站点" : "Sites"}</span><span>{data.sites.length}</span></div>
             <div className="site-network-sites" role="tablist" aria-label={zh ? "站点" : "Sites"}>
-              {data.sites.map((site) => {
+              {data.sites.map((siteRecord) => {
+                const site = {
+                  ...siteRecord,
+                  clusters: siteRecord.clusters.map((cluster) => clusterDisplayNames[cluster]?.trim() || cluster),
+                };
                 const count = data.members.filter((member) => member.role === "Hub" && member.site === site.name).length;
                 const clusterNames = site.clusters.join(" · ");
                 const enabled = Boolean(site.discovery?.enabled);
