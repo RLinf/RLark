@@ -14,7 +14,7 @@ Astribot IAM（`astribot-iam`）是 RLark 控制台之上的一层独立身份�
 
 | 组件 | 位置 |
 | --- | --- |
-| IAM 服务（Go） | `apps/rlark/astribot/iam/`，入口 `apps/rlark/cmd/astribot-iam` |
+| IAM 服务（Go） | `apps/rlark/astribot/iam/`，入口 `apps/rlark/astribot/cmd/astribot-iam` |
 | 控制台页面 | `apps/rlark-ui/src/astribot/iam/`（管理员控制台的「身份与访问」页，`/admin/iam`） |
 | 发布接线 | `astribot/release/rlark.Dockerfile`、`astribot/release/images`、`astribot/release/control-plane/rlark.compose.yaml`、`astribot/release/rlark-ui.nginx.conf`、`astribot/release/iam-provision.sh` |
 | 服务账号供给 | `astribot/release/iam-provision.sh`（创建 `astribot-iam-admin/operator/user` 三个网关 service account，明文 token 只写进 `${R}/iam/upstream-tokens.json`，0600） |

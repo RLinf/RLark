@@ -14,7 +14,7 @@ This release is a **shadow launch**: nginx routes only `/api/iam/*` to `astribot
 
 | Component | Location |
 | --- | --- |
-| IAM service (Go) | `apps/rlark/astribot/iam/`, entrypoint `apps/rlark/cmd/astribot-iam` |
+| IAM service (Go) | `apps/rlark/astribot/iam/`, entrypoint `apps/rlark/astribot/cmd/astribot-iam` |
 | Console page | `apps/rlark-ui/src/astribot/iam/` (the admin console's "Identity & Access" page, `/admin/iam`) |
 | Release wiring | `astribot/release/rlark.Dockerfile`, `astribot/release/images`, `astribot/release/control-plane/rlark.compose.yaml`, `astribot/release/rlark-ui.nginx.conf`, `astribot/release/iam-provision.sh` |
 | Service-account provisioning | `astribot/release/iam-provision.sh` (creates the `astribot-iam-admin/operator/user` gateway service accounts; plaintext tokens are written only to `${R}/iam/upstream-tokens.json`, mode 0600) |
