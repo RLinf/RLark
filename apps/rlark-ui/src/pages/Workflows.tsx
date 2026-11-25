@@ -399,13 +399,11 @@ export function WorkflowDetailPage({
 
 export function WorkflowsPage({
   copy: c,
-  onCreate,
   selectedName,
   onSelect,
   onJobClick,
 }: {
   copy: Copy;
-  onCreate: () => void;
   selectedName: string;
   onSelect: (name?: string) => void;
   onJobClick: (jobName: string) => void;
@@ -568,10 +566,6 @@ export function WorkflowsPage({
           <h2>{c.workflows.title}</h2>
           <p>{c.workflows.desc}</p>
         </div>
-        <button className="primary-button" onClick={onCreate}>
-          <Plus size={17} />
-          {c.workflows.createTitle}
-        </button>
       </div>
       <PageToolbar
         placeholder={c.workflows.search}

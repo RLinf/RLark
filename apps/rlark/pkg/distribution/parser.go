@@ -29,22 +29,16 @@ func Parse(data map[string][]byte) (Definition, error) {
 		return Definition{}, fmt.Errorf("parse config: %w", err)
 	}
 	if config.Apply.Mode == "" {
-		config.Apply.Mode = "ServerSideApply"
+		config.Apply.Mode = ApplyModeServerSideApply
 	}
 	if config.Apply.ConflictPolicy == "" {
-		config.Apply.ConflictPolicy = "Fail"
+		config.Apply.ConflictPolicy = ConflictPolicyFail
 	}
 	if config.Apply.DeletionPolicy == "" {
-		config.Apply.DeletionPolicy = "Delete"
+		config.Apply.DeletionPolicy = DeletionPolicyDelete
 	}
-	if config.Apply.Mode != "ServerSideApply" {
-		return Definition{}, fmt.Errorf("unsupported apply mode %q", config.Apply.Mode)
-	}
-	if config.Apply.ConflictPolicy != "Fail" && config.Apply.ConflictPolicy != "Force" {
-		return Definition{}, fmt.Errorf("unsupported conflict policy %q", config.Apply.ConflictPolicy)
-	}
-	if config.Apply.DeletionPolicy != "Delete" && config.Apply.DeletionPolicy != "Orphan" {
-		return Definition{}, fmt.Errorf("unsupported deletion policy %q", config.Apply.DeletionPolicy)
+	if err := config.Apply.Validate(); err != nil {
+		return Definition{}, err
 	}
 	if config.Targets.Namespaces != nil {
 		if err := validateSelector(*config.Targets.Namespaces); err != nil {

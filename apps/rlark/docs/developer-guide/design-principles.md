@@ -45,6 +45,49 @@ Every create, update, delete, persistence, and provider operation must be safe t
 
 Permanent errors should produce a stable condition and wait for relevant input to change. Conflicts should cause a fresh read and recalculation, not replay of a stale update.
 
+### 2.1 Classify the outcome of a pass as data
+
+A reconcile pass must report what happened as a value, not encode it in the
+shape of its return. `(error, requeue)` conflates distinct situations: "nothing
+left to do", "waiting for an input to change", "retrying a transient failure",
+"teardown in progress", "blocked on a permanent condition" and "this
+observation no longer applies" all collapse into a bool and a possibly-nil
+error. Neither the shell that decides requeue timing, the metric that counts
+passes, nor the reviewer can recover the distinction afterwards.
+
+`apps/rlark/pkg/reconcile` provides the primitives every reconciler shares:
+
+| Primitive | Role |
+| --- | --- |
+| `Outcome` | What the pass concluded, as one of a closed set |
+| `RetryClass` and `RetryDirective` | Why the pass should be revisited, plus an optional delay hint the shell may clamp or jitter |
+| `Result[Observed]` | The outcome, the retry directive, a bounded `Reason`, and an optional status intent |
+| `StatusIntent[Observed]` and `MergeStatusIntents` | A declared status opinion plus the single deterministic merge of several opinions |
+| `StatusWriter[T, Observed]` | The idempotent, identity-fenced publication of a merged intent |
+| `ConditionMutation` and `ApplyConditionMutations` | A batch of set-or-remove condition edits, applied once and reported as changed or not |
+| `HeartbeatState`, `HeartbeatLease`, and `HeartbeatObservation` | The pure classification of a heartbeat lease into fresh, stale, or never-seen, plus when to look again |
+| `KeyedLocks` | Per-object serialization of passes within one process |
+| `ValidateReason` | The bounded shape required of a reason |
+
+The package is deliberately resource-neutral and sits at the top level rather
+than under `controllermanager/` or `agent/`, because both planes import it.
+Package dependencies between the two planes must not be inverted to share
+these primitives.
+
+`Observed` is a type parameter because the observed payload is the only
+resource-specific part of a status intent: the data plane reports observed
+nodes for a Task, while control-plane resources report their own shapes.
+Parameterizing it keeps **one** merge implementation for every resource.
+Resource-specific packages may define thin aliases over the generic types —
+`host.StatusIntent` is `reconcile.StatusIntent[host.TaskObservation]` — but
+must not define a second `Outcome`, `StatusIntent`, or merge function. Two
+merge implementations drift, and the drift is invisible until two controllers
+publish different status from the same inputs.
+
+`RetryDirective.After` is a hint, not a schedule. The shell owns clamping and
+jitter so that a fleet of objects failing on the same dependency does not
+retry in lockstep.
+
 ## 3. Separate intent, observation, operations, and history
 
 Each representation has one role:

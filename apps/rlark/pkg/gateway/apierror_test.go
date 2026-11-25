@@ -280,3 +280,31 @@ func TestKubeErrorStatus(t *testing.T) {
 type errTestForbidden struct{}
 
 func (errTestForbidden) Error() string { return "test error" }
+
+func TestRequestLanguage(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{name: "default is Chinese", header: "", want: languageChinese},
+		{name: "explicit Chinese", header: "zh", want: languageChinese},
+		{name: "regional Chinese", header: "zh-CN", want: languageChinese},
+		{name: "explicit English", header: "en", want: languageEnglish},
+		{name: "English with region", header: "en-US,en;q=0.9", want: languageEnglish},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodGet, "/probe", nil)
+			if testCase.header != "" {
+				c.Request.Header.Set("Accept-Language", testCase.header)
+			}
+			if got := requestLanguage(c); got != testCase.want {
+				t.Fatalf("requestLanguage() = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}

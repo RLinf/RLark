@@ -151,11 +151,11 @@ function resourceApi<T>(resource: string) {
     create(body: object) {
       return requestJson<T>(resourcePath(resource), { method: "POST", body });
     },
-    replace(name: string, body: object) {
-      return requestJson<T>(resourcePath(resource, name), {
-        method: "PUT",
-        body,
-      });
+    replace(name: string, body: object, namespace?: string) {
+      return requestJson<T>(
+        withQuery(resourcePath(resource, name), { namespace }),
+        { method: "PUT", body },
+      );
     },
     patch(name: string, body: object, namespace?: string) {
       return requestJson<T>(
@@ -163,13 +163,56 @@ function resourceApi<T>(resource: string) {
         { method: "PATCH", body },
       );
     },
-    remove(name: string) {
-      return request(resourcePath(resource, name), { method: "DELETE" });
+    remove(name: string, namespace?: string) {
+      return request(withQuery(resourcePath(resource, name), { namespace }), {
+        method: "DELETE",
+      });
     },
   };
 }
 
-export const nodesApi = resourceApi<CRDNode>("nodes");
+export const nodesApi = {
+  ...resourceApi<CRDNode>("nodes"),
+  // POST /api/v1/rlinf.io/v1alpha1/nodes/:name/drain?namespace=xxx
+  drain(name: string, namespace?: string) {
+    return requestJson<{
+      success: boolean;
+      data?: CRDNode;
+      operationId?: string;
+    }>(withQuery(resourcePath("nodes", name) + "/drain", { namespace }), {
+      method: "POST",
+    });
+  },
+  // POST /api/v1/rlinf.io/v1alpha1/nodes/:name/undrain?namespace=xxx
+  undrain(name: string, namespace?: string) {
+    return requestJson<{ success: boolean; data?: CRDNode }>(
+      withQuery(resourcePath("nodes", name) + "/undrain", { namespace }),
+      { method: "POST" },
+    );
+  },
+  // POST /api/v1/rlinf.io/v1alpha1/nodes/:name/uncordon?namespace=xxx
+  uncordon(name: string, namespace?: string) {
+    return requestJson<{ success: boolean; data?: CRDNode }>(
+      withQuery(resourcePath("nodes", name) + "/uncordon", { namespace }),
+      { method: "POST" },
+    );
+  },
+  // PATCH /api/v1/rlinf.io/v1alpha1/nodes/:name/patch-labels?namespace=xxx
+  // Patches non-system labels on the data-plane Kubernetes Node directly.
+  // body is a strategic merge patch of metadata.labels, with null values
+  // as delete markers. Gateway resolves the management Node's cluster →
+  // agentID and relays the patch through the Server proxy.
+  patchLabels(
+    name: string,
+    labelsPatch: Record<string, string | null>,
+    namespace?: string,
+  ) {
+    return requestJson<{ success: boolean; data?: CRDNode }>(
+      withQuery(resourcePath("nodes", name) + "/patch-labels", { namespace }),
+      { method: "PATCH", body: { labels: labelsPatch } },
+    );
+  },
+};
 export const tasksApi = resourceApi<CRDTask>("tasks");
 export const podsApi = {
   ...resourceApi<CRDPod>("pods"),
@@ -406,11 +449,136 @@ export const addonsApi = {
   },
 };
 
+export interface UpgradeJobItem {
+  metadata: {
+    name: string;
+    annotations?: Record<string, string>;
+    creationTimestamp?: string;
+  };
+  spec: {
+    image: string;
+    configPatch?: string;
+    clusterNames?: string[];
+    clusterSelector?: Record<string, string>;
+    strategy?: {
+      concurrency?: number;
+      failureTolerate?: number;
+      timeoutSeconds?: number;
+      autoRollback?: boolean;
+    };
+  };
+  status: {
+    phase: string;
+    totalClusters: number;
+    upgradingClusters?: number;
+    upgradedClusters: number;
+    failedClusters: number;
+    rollbackClusters: number;
+    startTime?: string;
+    completionTime?: string;
+    conditions?: {
+      cluster: string;
+      status: string;
+      reason?: string;
+      targetImage: string;
+      rollbackImage?: string;
+      upgradeTime?: string;
+    }[];
+  };
+}
+
+export interface UpgradeJobCreateRequest {
+  metadata?: {
+    annotations?: Record<string, string>;
+  };
+  spec: {
+    image: string;
+    configPatch?: string;
+    clusterSelector?: Record<string, string>;
+    clusterNames?: string[];
+    strategy?: {
+      concurrency?: number;
+      failureTolerate?: number;
+      timeoutSeconds?: number;
+      autoRollback?: boolean;
+    };
+  };
+}
+
+export const upgradeJobsApi = {
+  async list(): Promise<UpgradeJobItem[]> {
+    const response = await requestJson<{ items?: UpgradeJobItem[] }>(
+      "/api/v1/upgrade-jobs",
+    );
+    return response.items ?? [];
+  },
+  async get(name: string): Promise<UpgradeJobItem> {
+    return requestJson<UpgradeJobItem>(
+      `/api/v1/upgrade-jobs/${encodeURIComponent(name)}`,
+    );
+  },
+  create(body: UpgradeJobCreateRequest) {
+    return requestJson<UpgradeJobItem>("/api/v1/upgrade-jobs", {
+      method: "POST",
+      body,
+    });
+  },
+  remove(name: string) {
+    return request(`/api/v1/upgrade-jobs/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    });
+  },
+};
+
 export const terminalApi = {
   createSocket(podName: string) {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     return new WebSocket(
       `${protocol}//${location.host}${resourcePath("pods", podName)}/terminal`,
+    );
+  },
+};
+
+// --- Admin data-plane node management (unmanaged nodes, manage/unmanage) ---
+
+export interface DataPlaneNodeSummary {
+  name: string;
+  labels?: Record<string, string>;
+  addresses?: Array<{ type: string; address: string }>;
+  ready: boolean;
+  managed: boolean;
+}
+
+export interface ClusterDataPlaneNodes {
+  cluster: string;
+  namespace: string;
+  error?: string;
+  nodes?: DataPlaneNodeSummary[];
+}
+
+export const dataPlaneNodesApi = {
+  async listAll(): Promise<ClusterDataPlaneNodes[]> {
+    const response = await requestJson<{ clusters?: ClusterDataPlaneNodes[] }>(
+      "/api/v1/data-plane-nodes",
+    );
+    return response.clusters ?? [];
+  },
+  async listForCluster(agentId: string): Promise<DataPlaneNodeSummary[]> {
+    const response = await requestJson<{ nodes?: DataPlaneNodeSummary[] }>(
+      `/api/v1/data-plane-nodes/${encodeURIComponent(agentId)}`,
+    );
+    return response.nodes ?? [];
+  },
+  manage(agentId: string, nodeName: string) {
+    return requestJson<{ agentId: string; nodeName: string; enabled: boolean }>(
+      `/api/v1/data-plane-nodes/${encodeURIComponent(agentId)}/nodes/${encodeURIComponent(nodeName)}/manage`,
+      { method: "POST" },
+    );
+  },
+  unmanage(agentId: string, nodeName: string) {
+    return requestJson<{ agentId: string; nodeName: string; enabled: boolean }>(
+      `/api/v1/data-plane-nodes/${encodeURIComponent(agentId)}/nodes/${encodeURIComponent(nodeName)}/unmanage`,
+      { method: "POST" },
     );
   },
 };

@@ -148,7 +148,8 @@ func (p *Provider) Get(ctx context.Context, ref agentruntime.ObjectRef) (agentru
 	if ref.UID != "" && string(object.GetUID()) != ref.UID {
 		return agentruntime.Object{}, fault.New(fault.Conflict, "Kubernetes object UID does not match reference")
 	}
-	return p.convert(object, ref.LogicalTask)
+	converted, _, err := p.convertObserved(ctx, object, ref.LogicalTask)
+	return converted, err
 }
 
 // ListManaged returns a targeted snapshot of objects provably managed for task.
@@ -179,17 +180,19 @@ func (p *Provider) ListManaged(ctx context.Context, task agentruntime.TaskIdenti
 	// 3. Convert and sort the complete result deterministically so callers can
 	// diff it safely and derive a stable snapshot revision.
 	result := make([]agentruntime.Object, 0, len(objects))
+	revisioned := append([]client.Object(nil), objects...)
 	for _, object := range objects {
-		converted, err := p.convert(object, task.Logical)
+		converted, witnesses, err := p.convertObserved(ctx, object, task.Logical)
 		if err != nil {
 			return agentruntime.ObjectSnapshot{}, err
 		}
 		result = append(result, converted)
+		revisioned = append(revisioned, witnesses...)
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].Ref.ID+"/"+result[i].Ref.Name < result[j].Ref.ID+"/"+result[j].Ref.Name
 	})
-	return agentruntime.ObjectSnapshot{Revision: snapshotRevision(objects), Objects: result}, nil
+	return agentruntime.ObjectSnapshot{Revision: snapshotRevision(revisioned), Objects: result}, nil
 }
 
 // ListCandidates returns a complete snapshot for the bounded candidates
@@ -285,17 +288,19 @@ func (p *Provider) ListCandidates(ctx context.Context, query agentruntime.Manage
 		}
 	}
 	result := make([]agentruntime.Object, 0, len(objects))
+	revisioned := append([]client.Object(nil), objects...)
 	for _, object := range objects {
-		converted, err := p.convert(object, query.Task.Logical)
+		converted, witnesses, err := p.convertObserved(ctx, object, query.Task.Logical)
 		if err != nil {
 			return agentruntime.ObjectSnapshot{}, err
 		}
 		result = append(result, converted)
+		revisioned = append(revisioned, witnesses...)
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].Ref.ID+"/"+result[i].Ref.Name < result[j].Ref.ID+"/"+result[j].Ref.Name
 	})
-	return agentruntime.ObjectSnapshot{Revision: snapshotRevision(objects), Objects: result}, nil
+	return agentruntime.ObjectSnapshot{Revision: snapshotRevision(revisioned), Objects: result}, nil
 }
 
 // ListInstances returns Pods and Pod-scoped events for the requested workload roots.
@@ -1121,6 +1126,68 @@ func (p *Provider) convert(object client.Object, logical agentruntime.LogicalTas
 	}
 	kind := agentruntime.ObjectKind{Group: gvk.Group, Version: gvk.Version, Kind: gvk.Kind}
 	return agentruntime.Object{Ref: ref, Manifest: agentruntime.TypedManifest{Type: kind, Object: data}}, nil
+}
+
+// convertObserved converts one object and attaches the Runtime conditions that
+// the object's own status does not express. It also returns the Events that
+// witnessed those conditions so callers can fold them into a snapshot revision
+// and observe again when a new failure Event appears.
+func (p *Provider) convertObserved(ctx context.Context, object client.Object, logical agentruntime.LogicalTaskID) (agentruntime.Object, []client.Object, error) {
+	converted, err := p.convert(object, logical)
+	if err != nil {
+		return agentruntime.Object{}, nil, err
+	}
+	events, err := p.workloadEvents(ctx, object)
+	if err != nil {
+		return agentruntime.Object{}, nil, err
+	}
+	converted.Conditions = objectConditions(object, events)
+	witnesses := make([]client.Object, 0, len(events))
+	for i := range events {
+		witnesses = append(witnesses, &events[i])
+	}
+	return converted, witnesses, nil
+}
+
+// workloadEvents returns the current UID-fenced Warning Events reported on a
+// workload root. Only workload roots are queried: the upstream StatefulSet and
+// DaemonSet controllers never populate status conditions, so a rejected Pod
+// template is observable only through their own Events.
+func (p *Provider) workloadEvents(ctx context.Context, object client.Object) ([]corev1.Event, error) {
+	kind := workloadKind(object)
+	if kind == "" {
+		return nil, nil
+	}
+	var list corev1.EventList
+	if err := p.client.List(ctx, &list, client.InNamespace(object.GetNamespace()), client.MatchingFields{"involvedObject.uid": string(object.GetUID())}); err != nil {
+		return nil, fault.Wrap(fault.Internal, "list Kubernetes workload events", err)
+	}
+	result := make([]corev1.Event, 0, len(list.Items))
+	for i := range list.Items {
+		event := list.Items[i]
+		if event.InvolvedObject.Kind != kind || event.InvolvedObject.UID != object.GetUID() || event.Type != corev1.EventTypeWarning {
+			continue
+		}
+		result = append(result, event)
+	}
+	return result, nil
+}
+
+func objectConditions(object client.Object, events []corev1.Event) []agentruntime.ObjectCondition {
+	if len(events) == 0 {
+		return nil
+	}
+	conditions := make([]agentruntime.ObjectCondition, 0, len(events))
+	for i := range events {
+		conditions = append(conditions, agentruntime.ObjectCondition{Source: "kubernetes", Scope: "object", Subject: object.GetName(), Reason: events[i].Reason, Message: events[i].Message})
+	}
+	sort.SliceStable(conditions, func(i, j int) bool {
+		if conditions[i].Reason != conditions[j].Reason {
+			return conditions[i].Reason < conditions[j].Reason
+		}
+		return conditions[i].Message < conditions[j].Message
+	})
+	return conditions
 }
 
 func (p *Provider) gvk(object runtime.Object) (schema.GroupVersionKind, error) {

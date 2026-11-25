@@ -2,7 +2,9 @@ package imagepull
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -253,6 +255,39 @@ func TestHandle_ImageExistsShortCircuitsPull(t *testing.T) {
 	}
 }
 
+func TestHandle_ImageExistsClearsStaleProgress(t *testing.T) {
+	rt := &fakeExecPuller{exists: map[string]bool{"nginx:alpine": true}}
+	p := newTestPuller(t, rt, rlarkv1alpha1.AgentTypeDocker, "node1", nil)
+	fakePatcher := &fakeProgressPatcher{}
+	p.patcher = fakePatcher
+	p.mgmtNS = "test-ns"
+
+	// Simulate an entry left behind by an earlier pull that never reported its
+	// cleanup (patch failure or agent restart). A cloned Job that reuses this
+	// image must not keep showing it.
+	p.progressMu.Lock()
+	p.progressMap["nginx:alpine"] = &imageProgressState{
+		image: "nginx:alpine", downloaded: 512, total: 1024, status: "pulling",
+	}
+	p.progressMu.Unlock()
+
+	p.handle(mkTask("u1", "1", rlarkv1alpha1.AgentTypeDocker, []string{"nginx:alpine"}, nil))
+	drain(t, p)
+
+	if got := fakePatcher.callCount(); got != 1 {
+		t.Fatalf("expected 1 progress report to clear the stale entry, got %d", got)
+	}
+	if got := fakePatcher.lastProgress(); len(got) != 0 {
+		t.Errorf("expected an empty progress report, got %v", got)
+	}
+	p.progressMu.Lock()
+	_, exists := p.progressMap["nginx:alpine"]
+	p.progressMu.Unlock()
+	if exists {
+		t.Error("expected stale progress entry to be removed")
+	}
+}
+
 func TestHandle_PullFailureDoesNotMarkPulled(t *testing.T) {
 	rt := &fakeExecPuller{pullFn: func(string) error { return context.DeadlineExceeded }}
 	p := newTestPuller(t, rt, rlarkv1alpha1.AgentTypeDocker, "", nil)
@@ -305,6 +340,34 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 	}
 }
 
+func TestRunClearsStaleProgressOnStartup(t *testing.T) {
+	rt := &fakeExecPuller{}
+	p := newTestPuller(t, rt, rlarkv1alpha1.AgentTypeDocker, "node1", nil)
+	fakePatcher := &fakeProgressPatcher{}
+	p.patcher = fakePatcher
+	p.mgmtNS = "test-ns"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- p.Run(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for fakePatcher.callCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	// The previous process may have left entries on the Node status; an empty
+	// report at startup removes them.
+	if fakePatcher.callCount() == 0 {
+		t.Fatal("expected an empty progress report at startup")
+	}
+	if got := fakePatcher.lastProgress(); len(got) != 0 {
+		t.Errorf("expected startup report to contain no progress, got %v", got)
+	}
+}
+
 // --- helpers ---
 
 func pulledFor(t *testing.T, p *Puller, uid, image string) bool {
@@ -346,13 +409,63 @@ func countOccurrences(s []string, v string) int {
 // --- progress patcher tests ---
 
 type fakeProgressPatcher struct {
-	calls int
-	err   error
+	mu         sync.Mutex
+	calls      int
+	err        error
+	failures   int
+	progresses []rlarkv1alpha1.PullProgress
 }
 
 func (f *fakeProgressPatcher) PatchPullProgress(ctx context.Context, nodeName, namespace string, progresses []rlarkv1alpha1.PullProgress) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls++
+	f.progresses = append([]rlarkv1alpha1.PullProgress(nil), progresses...)
+	if f.failures > 0 {
+		f.failures--
+		return fmt.Errorf("transient patch failure")
+	}
 	return f.err
+}
+
+func (f *fakeProgressPatcher) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (f *fakeProgressPatcher) lastProgress() []rlarkv1alpha1.PullProgress {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.progresses
+}
+
+func TestReportProgressRetriesTransientFailure(t *testing.T) {
+	rt := &fakeExecPuller{}
+	p := newTestPuller(t, rt, rlarkv1alpha1.AgentTypeDocker, "node1", nil)
+	patcher := &fakeProgressPatcher{failures: 1}
+	p.patcher = patcher
+	p.mgmtNS = "test-ns"
+
+	p.reportProgress(context.Background(), nil)
+
+	if got := patcher.callCount(); got != 2 {
+		t.Fatalf("expected 2 patch attempts, got %d", got)
+	}
+}
+
+func TestReportProgressStopsAfterMaxAttempts(t *testing.T) {
+	rt := &fakeExecPuller{}
+	p := newTestPuller(t, rt, rlarkv1alpha1.AgentTypeDocker, "node1", nil)
+	patcher := &fakeProgressPatcher{err: fmt.Errorf("permanent failure")}
+	p.patcher = patcher
+	p.mgmtNS = "test-ns"
+
+	p.reportProgress(context.Background(), nil)
+
+	if got := patcher.callCount(); got != progressReportAttempts {
+		t.Fatalf("expected %d patch attempts, got %d", progressReportAttempts, got)
+	}
 }
 
 func TestBuildPullProgressMergePatch(t *testing.T) {

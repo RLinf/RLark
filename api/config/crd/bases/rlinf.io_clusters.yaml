@@ -75,6 +75,13 @@ spec:
               of a data-plane cluster.
             properties:
               conditions:
+                description: |-
+                  Conditions records the structured conclusions of the Cluster controller,
+                  which is their only writer. Ready and Degraded are independent dimensions:
+                  a cluster that lost part of its capacity reports Ready=True together with
+                  Degraded=True. They are observation-driven and therefore carry no
+                  per-condition ObservedGeneration; use the status-level ObservedGeneration
+                  above to tell whether they already reflect the latest Spec.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -133,9 +140,40 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              degradedNodes:
+                description: DegradedNodes is the number of connected Nodes that are
+                  not ready or report Degraded=True.
+                format: int32
+                type: integer
+              disconnectedNodes:
+                description: DisconnectedNodes is the number of Nodes whose AgentConnected
+                  condition is not True.
+                format: int32
+                type: integer
+              dominantFailureReason:
+                description: DominantFailureReason is the most frequent reason among
+                  unavailable candidate Nodes.
+                type: string
               lastHeartbeatTime:
                 format: date-time
                 type: string
+              lastStatusChangeTime:
+                description: |-
+                  LastStatusChangeTime is the time Phase last changed. It carries the same
+                  semantics as the identically named field on NodeStatus and distinguishes
+                  "has stayed in this phase for a long time" from "just flipped".
+                format: date-time
+                type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation observed by the Cluster
+                  controller the last time it finished a reconciliation. ClusterSpec's
+                  cordoned / draining are Spec-driven switches, so consumers must compare
+                  this field with metadata.generation to tell whether phase and conditions
+                  already reflect the latest Spec. It is a controller contract, not an API
+                  server guarantee.
+                format: int64
+                type: integer
               onlineNodes:
                 format: int32
                 type: integer
@@ -152,7 +190,18 @@ spec:
                 - Draining
                 - Delisted
                 type: string
+              readyNodes:
+                description: |-
+                  ReadyNodes is the number of connected Nodes with Ready=True that are not
+                  cordoned by spec.unschedulable. A ready Node under resource pressure is
+                  still counted here even though it is excluded from new placement.
+                format: int32
+                type: integer
               totalNodes:
+                format: int32
+                type: integer
+              unschedulableNodes:
+                description: UnschedulableNodes is the number of Nodes with spec.unschedulable=true.
                 format: int32
                 type: integer
             type: object

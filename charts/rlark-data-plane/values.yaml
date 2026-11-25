@@ -1,0 +1,40 @@
+# RLark Data Plane Helm Chart Values
+
+global:
+  imagePullPolicy: Always
+  imagePullSecrets: []
+
+# Agent container image (same as control plane rlark image)
+image: rlark:latest
+
+# Control plane Server address (required)
+controlPlaneAddress: https://rlark-server.rlark-system.svc:8443
+
+# Server SSH address for cross-cluster networking (user@host:port)
+# Auto-derived from controlPlaneAddress when empty
+sshAddress: ""
+
+# Cluster agent (Deployment) — reconciles Task CRs into local K8s workloads
+agent:
+  enabled: true
+  replicas: 1
+
+# Node agent (DaemonSet) — network routing, image pre-pull
+agentNode:
+  enabled: true
+  # Containerd socket path; empty = default /run/containerd/containerd.sock
+  containerdSocket: /run/containerd/containerd.sock
+
+# Agent certificates (required, no defaults)
+# Obtain them from the control plane and pass them at install time, for example:
+#   --set-file certs.caCert=ca.crt \
+#   --set-file certs.agentCert=agent.crt \
+#   --set-file certs.agentKey=agent.key
+# Never commit real certificates or private keys into this file.
+certs:
+  caCert: ""
+  agentCert: ""
+  agentKey: ""
+
+# Skip TLS verification (not recommended for production)
+insecureSkipTLSVerify: false

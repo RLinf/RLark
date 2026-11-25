@@ -1,0 +1,212 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: clusters.rlinf.io
+spec:
+  group: rlinf.io
+  names:
+    kind: Cluster
+    listKind: ClusterList
+    plural: clusters
+    shortNames:
+    - rlcluster
+    singular: cluster
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.onlineNodes
+      name: Online
+      type: integer
+    - jsonPath: .status.totalNodes
+      name: Total
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ClusterSpec declares the durable operational state of a data-plane
+              cluster.
+            properties:
+              agentNamespace:
+                description: AgentNamespace is the management-plane namespace that
+                  contains the agent heartbeat Lease and Node CRs.
+                minLength: 1
+                type: string
+              cordoned:
+                type: boolean
+              delisted:
+                type: boolean
+              drainPreviousCordoned:
+                type: boolean
+              draining:
+                type: boolean
+            required:
+            - agentNamespace
+            type: object
+          status:
+            description: ClusterStatus reports the controller's current observation
+              of a data-plane cluster.
+            properties:
+              conditions:
+                description: |-
+                  Conditions records the structured conclusions of the Cluster controller,
+                  which is their only writer. Ready and Degraded are independent dimensions:
+                  a cluster that lost part of its capacity reports Ready=True together with
+                  Degraded=True. They are observation-driven and therefore carry no
+                  per-condition ObservedGeneration; use the status-level ObservedGeneration
+                  above to tell whether they already reflect the latest Spec.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              degradedNodes:
+                description: DegradedNodes is the number of connected Nodes that are
+                  not ready or report Degraded=True.
+                format: int32
+                type: integer
+              disconnectedNodes:
+                description: DisconnectedNodes is the number of Nodes whose AgentConnected
+                  condition is not True.
+                format: int32
+                type: integer
+              dominantFailureReason:
+                description: DominantFailureReason is the most frequent reason among
+                  unavailable candidate Nodes.
+                type: string
+              lastHeartbeatTime:
+                format: date-time
+                type: string
+              lastStatusChangeTime:
+                description: |-
+                  LastStatusChangeTime is the time Phase last changed. It carries the same
+                  semantics as the identically named field on NodeStatus and distinguishes
+                  "has stayed in this phase for a long time" from "just flipped".
+                format: date-time
+                type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the metadata.generation observed by the Cluster
+                  controller the last time it finished a reconciliation. ClusterSpec's
+                  cordoned / draining are Spec-driven switches, so consumers must compare
+                  this field with metadata.generation to tell whether phase and conditions
+                  already reflect the latest Spec. It is a controller contract, not an API
+                  server guarantee.
+                format: int64
+                type: integer
+              onlineNodes:
+                format: int32
+                type: integer
+              phase:
+                description: |-
+                  ClusterPhase summarizes the current lifecycle state of a data-plane cluster.
+                  The set is closed in the CRD schema: adding a value requires updating the
+                  enum marker, regenerating the CRD manifests, and updating the documentation.
+                enum:
+                - Online
+                - Offline
+                - Downgraded
+                - Cordoned
+                - Draining
+                - Delisted
+                type: string
+              readyNodes:
+                description: |-
+                  ReadyNodes is the number of connected Nodes with Ready=True that are not
+                  cordoned by spec.unschedulable. A ready Node under resource pressure is
+                  still counted here even though it is excluded from new placement.
+                format: int32
+                type: integer
+              totalNodes:
+                format: int32
+                type: integer
+              unschedulableNodes:
+                description: UnschedulableNodes is the number of Nodes with spec.unschedulable=true.
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

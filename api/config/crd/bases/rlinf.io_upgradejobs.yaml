@@ -1,0 +1,266 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: upgradejobs.rlinf.io
+spec:
+  group: rlinf.io
+  names:
+    kind: UpgradeJob
+    listKind: UpgradeJobList
+    plural: upgradejobs
+    shortNames:
+    - upjob
+    singular: upgradejob
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.upgradedClusters
+      name: Upgraded
+      type: integer
+    - jsonPath: .status.failedClusters
+      name: Failed
+      type: integer
+    - jsonPath: .status.totalClusters
+      name: Total
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: UpgradeJobSpec defines the desired state of an upgrade job.
+            properties:
+              clusterNames:
+                description: ClusterNames is the list of target cluster names for
+                  upgrade.
+                items:
+                  type: string
+                type: array
+              clusterSelector:
+                description: ClusterSelector selects the target clusters for upgrade.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+              configPatch:
+                description: |-
+                  ConfigPatch is the full deployment configuration for this upgrade.
+                  When empty, the current configuration from rlark-state is used.
+                  When set, it must be a complete DeployConfig including apiVersion, kind, and plane.
+                type: string
+              image:
+                description: Image is the target rlarkadm image for upgrade.
+                minLength: 1
+                type: string
+              maintenanceWindow:
+                description: MaintenanceWindow defines the maintenance window for
+                  the upgrade.
+                properties:
+                  endTime:
+                    description: EndTime is the end time of the maintenance window.
+                    format: date-time
+                    type: string
+                  startTime:
+                    description: StartTime is the start time of the maintenance window.
+                    format: date-time
+                    type: string
+                type: object
+              strategy:
+                description: Strategy defines the upgrade strategy.
+                properties:
+                  autoRollback:
+                    default: true
+                    description: AutoRollback indicates whether to automatically rollback
+                      on failure.
+                    type: boolean
+                  backoffLimit:
+                    default: 1
+                    description: BackoffLimit is the number of retries before declaring
+                      the upgrade failed.
+                    format: int32
+                    maximum: 5
+                    minimum: 0
+                    type: integer
+                  concurrency:
+                    default: 1
+                    description: Concurrency is the number of clusters to upgrade
+                      concurrently.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  failureTolerate:
+                    default: 0
+                    description: FailureTolerate is the percentage of clusters that
+                      can fail before stopping the upgrade.
+                    maximum: 1
+                    minimum: 0
+                    type: number
+                  timeoutSeconds:
+                    default: 600
+                    description: TimeoutSeconds is the timeout for each cluster upgrade.
+                    format: int64
+                    minimum: 60
+                    type: integer
+                type: object
+            required:
+            - image
+            type: object
+          status:
+            description: UpgradeJobStatus defines the observed state of an upgrade
+              job.
+            properties:
+              completionTime:
+                description: CompletionTime is the time when the upgrade job completed.
+                format: date-time
+                type: string
+              conditions:
+                description: Conditions is the list of conditions for each cluster.
+                items:
+                  description: UpgradeJobCondition reports the per-cluster result
+                    of an upgrade job.
+                  properties:
+                    cluster:
+                      description: Cluster is the name of the cluster.
+                      type: string
+                    reason:
+                      description: Reason is a human-readable message about the current
+                        status.
+                      type: string
+                    rollbackImage:
+                      description: RollbackImage is the image the cluster was rolled
+                        back to.
+                      type: string
+                    status:
+                      description: Status is the phase of the ClusterUpgradeJob (Pending,
+                        Upgrading, Succeeded, Failed, RolledBack).
+                      type: string
+                    targetImage:
+                      description: TargetImage is the image the cluster was asked
+                        to upgrade to.
+                      type: string
+                    type:
+                      description: Type is the type of the condition. Reserved for
+                        future use.
+                      type: string
+                    upgradeTime:
+                      description: UpgradeTime is when the cluster upgrade completed.
+                      format: date-time
+                      type: string
+                  required:
+                  - cluster
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - cluster
+                x-kubernetes-list-type: map
+              failedClusters:
+                description: FailedClusters is the number of clusters that failed
+                  to upgrade.
+                format: int32
+                type: integer
+              phase:
+                description: Phase is the current phase of the upgrade job.
+                enum:
+                - Pending
+                - Upgrading
+                - Succeeded
+                - Failed
+                - RollingBack
+                type: string
+              rollbackClusters:
+                description: RollbackClusters is the number of clusters that were
+                  rolled back.
+                format: int32
+                type: integer
+              startTime:
+                description: StartTime is the time when the upgrade job started.
+                format: date-time
+                type: string
+              totalClusters:
+                description: TotalClusters is the total number of target clusters.
+                format: int32
+                type: integer
+              upgradedClusters:
+                description: UpgradedClusters is the number of clusters that have
+                  been upgraded successfully.
+                format: int32
+                type: integer
+              upgradingClusters:
+                description: UpgradingClusters is the number of clusters currently
+                  being upgraded.
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

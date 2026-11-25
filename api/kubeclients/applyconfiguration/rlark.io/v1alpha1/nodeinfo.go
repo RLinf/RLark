@@ -23,6 +23,7 @@ type NodeInfoApplyConfiguration struct {
 	Architecture    *string `json:"architecture,omitempty"`
 	KernelVersion   *string `json:"kernelVersion,omitempty"`
 	AgentVersion    *string `json:"agentVersion,omitempty"`
+	RuntimeVersion  *string `json:"runtimeVersion,omitempty"`
 	OperatingSystem *string `json:"operatingSystem,omitempty"`
 }
 
@@ -53,6 +54,14 @@ func (b *NodeInfoApplyConfiguration) WithKernelVersion(value string) *NodeInfoAp
 // If called multiple times, the AgentVersion field is set to the value of the last call.
 func (b *NodeInfoApplyConfiguration) WithAgentVersion(value string) *NodeInfoApplyConfiguration {
 	b.AgentVersion = &value
+	return b
+}
+
+// WithRuntimeVersion sets the RuntimeVersion field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RuntimeVersion field is set to the value of the last call.
+func (b *NodeInfoApplyConfiguration) WithRuntimeVersion(value string) *NodeInfoApplyConfiguration {
+	b.RuntimeVersion = &value
 	return b
 }
 

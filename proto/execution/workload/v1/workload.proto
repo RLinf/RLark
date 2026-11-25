@@ -33,6 +33,21 @@ message WorkloadTypeInfo {
   ConfigurationContract configuration = 4;
   rlark.execution.common.v1.ProtocolVersion protocol_version = 5;
   repeated rlark.execution.common.v1.ProtocolCapability capabilities = 6;
+  repeated ObservationContract observations = 7;
+}
+
+message ObservationContract {
+  string runtime_kind = 1;
+  repeated ObservationRoot roots = 2;
+}
+
+message ObservationRoot {
+  string group = 1;
+  string version = 2;
+  string kind = 3;
+  string carrier_type = 4;
+  // Empty means root-only; non-empty selects a trusted Runtime-owned profile.
+  string instance_profile = 5;
 }
 
 message GetInfoResponse {

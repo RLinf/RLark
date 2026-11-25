@@ -8,10 +8,8 @@ import (
 	"reflect"
 	"slices"
 	"strings"
-	"sync"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -23,9 +21,13 @@ import (
 	agentruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/workload"
 	"github.com/rlinf/rlark/apps/rlark/pkg/common"
+	"github.com/rlinf/rlark/apps/rlark/pkg/reconcile"
 )
 
 const (
+	// ConditionExecutionAdmitted is Host-owned and describes execution admission,
+	// not workload readiness. Its ObservedGeneration fences Spec-driven results.
+	ConditionExecutionAdmitted = "ExecutionAdmitted"
 	// TaskFinalizer is owned exclusively by Host cleanup reconciliation.
 	TaskFinalizer = common.TaskAgentCleanupFinalizer
 	// TaskClaimantAnnotation records the stable Agent scope owning a Task.
@@ -60,12 +62,6 @@ type Eligibility interface {
 	ValidationMessage(*rlarkv1alpha1.Task) string
 }
 
-// StatusWriter is the single Task Status mutation boundary used by pull and
-// targeted observation reconcilers.
-type StatusWriter interface {
-	WriteStatus(context.Context, *rlarkv1alpha1.Task, StatusIntent) error
-}
-
 // KubernetesStatusWriter patches only the compatibility status fields owned by
 // the Task Host and fences stale Task incarnations and generations.
 type KubernetesStatusWriter struct {
@@ -77,7 +73,7 @@ func (w KubernetesStatusWriter) WriteStatus(ctx context.Context, task *rlarkv1al
 	if w.Client == nil {
 		return errors.New("management client is required")
 	}
-	if intent.TaskUID != "" && intent.TaskUID != string(task.UID) {
+	if intent.ObjectUID != "" && intent.ObjectUID != string(task.UID) {
 		return nil
 	}
 	if intent.Generation != 0 && intent.Generation != task.Generation {
@@ -90,37 +86,37 @@ func (w KubernetesStatusWriter) WriteStatus(ctx context.Context, task *rlarkv1al
 	if intent.MessageSet {
 		desired.Status.Message = intent.Message
 	}
-	if intent.ObservedNodesSet {
-		desired.Status.ObservedNodes = slices.Clone(intent.ObservedNodes)
+	if intent.ObservedSet {
+		desired.Status.ObservedNodes = slices.Clone(intent.Observed.Nodes)
 	}
-	if desired.Status.Phase == rlarkv1alpha1.TaskPhaseStopped {
+	if intent.ObservedSet && len(intent.Observed.DrainRequests) > 0 {
+		desired.Status.DrainRequests = slices.Clone(intent.Observed.DrainRequests)
+	}
+	workloadObserved := intent.Phase != "" || intent.ObservedSet
+	if workloadObserved && desired.Status.Phase == rlarkv1alpha1.TaskPhaseStopped {
 		desired.Status.PullProgress = nil
 		desired.Status.Events = nil
 	}
 	// ObservedGeneration is the data-plane controller's reconciliation contract:
 	// it records the Spec generation that this observed Phase / Message /
-	// ObservedNodes snapshot corresponds to. It is advanced on every accepted
-	// write, including writes whose observed values happen to be unchanged,
-	// otherwise a Spec-only change would leave the reported status silently stale.
-	desired.Status.ObservedGeneration = task.Generation
-	for _, mutation := range intent.Conditions {
-		if mutation.Remove {
-			apimeta.RemoveStatusCondition(&desired.Status.Conditions, mutation.Condition.Type)
-			continue
-		}
-		condition := mutation.Condition
-		if condition.ObservedGeneration == 0 {
-			condition.ObservedGeneration = task.Generation
-		}
-		apimeta.SetStatusCondition(&desired.Status.Conditions, condition)
+	// ObservedNodes snapshot corresponds to. Advance only when the intent reports
+	// a workload/lifecycle conclusion, even if its values are unchanged. A
+	// condition-only (or message-only) opinion cannot refresh old workload state.
+	if workloadObserved {
+		desired.Status.ObservedGeneration = task.Generation
 	}
+	reconcile.ApplyConditionMutations(&desired.Status.Conditions, task.Generation, intent.Conditions)
 	if reflect.DeepEqual(task.Status, desired.Status) {
 		return nil
 	}
-	if err := w.Client.Status().Patch(ctx, desired, client.MergeFrom(task)); err != nil {
+	if err := w.Client.Status().Patch(ctx, desired, client.MergeFromWithOptions(task, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("patch Task status: %w", err)
 	}
 	task.Status = desired.Status
+	// Status patches advance resourceVersion too. Ordered claim/lifecycle
+	// patches must use the version returned by this CAS publication, not its base.
+	// Never retry a stale intent against a newer API version inside this writer.
+	task.ResourceVersion = desired.ResourceVersion
 	return nil
 }
 
@@ -132,7 +128,7 @@ type Host struct {
 	Eligibility Eligibility
 	Status      StatusWriter
 	Claimant    string
-	locks       keyedLocks
+	locks       reconcile.KeyedLocks
 }
 
 // Validate rejects incomplete production assembly before reconciliation starts.
@@ -192,7 +188,7 @@ func (h *Host) Reconcile(ctx context.Context, key types.NamespacedName) (result 
 	// 1. Serialize one management Task by namespace/name, then read its current
 	// API state. A missing Task is dropped because identity-based cleanup cannot
 	// be proven from the reconcile key alone.
-	unlock := h.locks.lock(key.String())
+	unlock := h.locks.Lock(key.String())
 	defer unlock()
 
 	var task rlarkv1alpha1.Task
@@ -287,16 +283,26 @@ func (h *Host) Reconcile(ctx context.Context, key types.NamespacedName) (result 
 	// Persist the claim before any Runtime effect. Re-read immediately so the
 	// remaining flow uses authoritative metadata and survives a concurrent
 	// update, deletion, or process restart after the claim write.
+	if !claimed && !task.Spec.Suspended {
+		if result, err := h.admitExecution(ctx, &task, snapshot); err != nil || result.Outcome == OutcomeBlocked {
+			return result, err
+		}
+	}
 	if !claimed {
 		if err := h.persistClaim(ctx, &task, snapshot.WorkloadSelector, snapshot.CarrierSelector, true); err != nil {
 			return retryResult(err), err
 		}
 		scope.Event(observability.Event{Name: "task.claim", Attributes: map[string]string{"action": "claim", "result": "persisted"}})
+		claimUID, claimVersion := task.UID, task.ResourceVersion
 		if err := h.Tasks.Get(ctx, key, &task); err != nil {
 			if client.IgnoreNotFound(err) == nil {
 				return Result{Outcome: OutcomeDropped, Reason: "TaskDeletedDuringClaim"}, nil
 			}
 			return retryResult(err), fmt.Errorf("read claimed Task: %w", err)
+		}
+		if task.UID != claimUID || task.ResourceVersion != claimVersion || task.DeletionTimestamp != nil || !slices.Contains(task.Finalizers, TaskFinalizer) || !h.isClaimant(&task) {
+			err := apierrors.NewConflict(rlarkv1alpha1.GroupVersion.WithResource("tasks").GroupResource(), task.Name, errors.New("task changed after claim; re-read and recompute admission"))
+			return retryResult(err), err
 		}
 	} else if !h.isClaimant(&task) {
 		return Result{Outcome: OutcomeWaitingForChange, Retry: RetryDirective{Class: RetryOnChange}, Reason: "ClaimedByOtherHost"}, nil
@@ -329,12 +335,22 @@ func (h *Host) Reconcile(ctx context.Context, key types.NamespacedName) (result 
 			return Result{Outcome: OutcomeWaitingForChange, Retry: RetryDirective{Class: RetryOnChange}, Reason: "CarrierSelectorChanged"}, nil
 		}
 	}
+	if claimed && !task.Spec.Suspended {
+		if result, err := h.admitExecution(ctx, &task, snapshot); err != nil || result.Outcome == OutcomeBlocked {
+			return result, err
+		}
+	}
 	if task.Spec.Suspended {
 		cleaned, err := h.cleanup(ctx, &task, false)
 		if err != nil || cleaned.Outcome != OutcomeSucceeded {
 			return cleaned, err
 		}
 		intent := IntentForTask(&task, rlarkv1alpha1.TaskPhaseStopped, "", nil, StatusPriorityLifecycle)
+		intent.Conditions = []ConditionMutation{{Condition: metav1.Condition{Type: ConditionExecutionAdmitted}, Remove: true}}
+		// Suspension bumps the Task generation, so earlier Drain observations are
+		// stale. A stopped Task runs on no Node; report every pending Drain
+		// satisfied again or the Node Drain stays blocked forever.
+		intent.Observed.DrainRequests = StoppedTaskDrainStatuses(&task)
 		if err := h.Status.WriteStatus(ctx, &task, intent); err != nil {
 			return Result{Outcome: OutcomeRetrying, Retry: RetryDirective{Class: RetryConflict}}, err
 		}
@@ -436,7 +452,7 @@ func (h *Host) Reconcile(ctx context.Context, key types.NamespacedName) (result 
 	if after != nil {
 		intents = append(intents, *after)
 	}
-	merged := MergeStatusIntents(string(task.UID), task.Generation, intents...)
+	merged := reconcile.MergeStatusIntents(string(task.UID), task.Generation, intents...)
 	if merged != nil {
 		if err := h.Status.WriteStatus(ctx, &task, *merged); err != nil {
 			return Result{Outcome: OutcomeRetrying, Retry: RetryDirective{Class: RetryConflict}}, err
@@ -511,41 +527,6 @@ func (h *Host) decodeRegisteredTask(task *rlarkv1alpha1.Task) (coordination.Task
 	return snapshot, nil
 }
 
-type keyedLocks struct {
-	mu      sync.Mutex
-	entries map[string]*keyedLock
-}
-
-type keyedLock struct {
-	mu   sync.Mutex
-	refs int
-}
-
-func (l *keyedLocks) lock(key string) func() {
-	l.mu.Lock()
-	if l.entries == nil {
-		l.entries = make(map[string]*keyedLock)
-	}
-	entry := l.entries[key]
-	if entry == nil {
-		entry = &keyedLock{}
-		l.entries[key] = entry
-	}
-	entry.refs++
-	l.mu.Unlock()
-
-	entry.mu.Lock()
-	return func() {
-		entry.mu.Unlock()
-		l.mu.Lock()
-		entry.refs--
-		if entry.refs == 0 {
-			delete(l.entries, key)
-		}
-		l.mu.Unlock()
-	}
-}
-
 func (h *Host) cleanup(ctx context.Context, task *rlarkv1alpha1.Task, release bool) (Result, error) {
 	identity := agentruntime.TaskIdentity{
 		Logical: agentruntime.LogicalTaskID{
@@ -600,6 +581,49 @@ func (h *Host) cleanup(ctx context.Context, task *rlarkv1alpha1.Task, release bo
 		}
 	}
 	return Result{Outcome: OutcomeSucceeded, Retry: RetryDirective{Class: RetryNone}, Reason: "CleanupComplete"}, nil
+}
+
+func (h *Host) admitExecution(ctx context.Context, task *rlarkv1alpha1.Task, snapshot coordination.TaskSnapshot) (Result, error) {
+	if h.Bundle.Admit == nil {
+		return Result{}, nil
+	}
+	snapshot.RuntimeSelector = h.Bundle.RuntimeSelector
+	input := LifecycleInput{External: task.DeepCopy(), Snapshot: snapshot}
+	if h.Bundle.AdmissionRequired != nil && !h.Bundle.AdmissionRequired(input) {
+		intent := ConditionIntent(task, metav1.Condition{Type: ConditionExecutionAdmitted}, true, StatusPriorityLifecycle)
+		if err := h.Status.WriteStatus(ctx, task, intent); err != nil {
+			return retryResult(err), err
+		}
+		return Result{}, nil
+	}
+	condition := metav1.Condition{Type: ConditionExecutionAdmitted, Status: metav1.ConditionTrue, Reason: "ExecutionAdmissionSucceeded", Message: "Current Task configuration passed execution admission", ObservedGeneration: task.Generation}
+	if err := h.Bundle.Admit(ctx, input); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return retryResult(err), err
+		}
+		if fault.Is(err, fault.FailedPrecondition) || fault.Is(err, fault.InvalidArgument) {
+			condition.Status = metav1.ConditionFalse
+			condition.Reason = "ExecutionAdmissionFailed"
+			// Do not publish arbitrary transport errors or their cause chains.
+			// Local faults carry a contract message; remote causes stay diagnostic.
+			condition.Message = "Current Task configuration cannot execute; check required capabilities and workload/environment configuration"
+			var domain *fault.Error
+			if errors.As(err, &domain) && domain.Cause == nil && domain.Message != "" {
+				condition.Message = domain.Message
+			}
+			intent := ConditionIntent(task, condition, false, StatusPriorityInvalid)
+			if writeErr := h.Status.WriteStatus(ctx, task, intent); writeErr != nil {
+				return retryResult(writeErr), writeErr
+			}
+			return Result{Outcome: OutcomeBlocked, Retry: RetryDirective{Class: RetryOnChange}, Reason: condition.Reason, Status: &intent}, nil
+		}
+		return retryResult(err), err
+	}
+	intent := ConditionIntent(task, condition, false, StatusPriorityInvalid)
+	if err := h.Status.WriteStatus(ctx, task, intent); err != nil {
+		return retryResult(err), err
+	}
+	return Result{}, nil
 }
 
 func retryResult(err error) Result {
@@ -766,10 +790,33 @@ func validatedClaimedCarrierSelector(task *rlarkv1alpha1.Task) (coordination.Car
 
 // IntentForTask returns a fenced compatibility status intent.
 func IntentForTask(task *rlarkv1alpha1.Task, phase rlarkv1alpha1.TaskPhase, message string, nodes []string, priority StatusPriority) StatusIntent {
-	return StatusIntent{TaskUID: string(task.UID), Generation: task.Generation, Phase: string(phase), MessageSet: true, Message: message, ObservedNodesSet: true, ObservedNodes: slices.Clone(nodes), Priority: priority}
+	return StatusIntent{ObjectUID: string(task.UID), Generation: task.Generation, Phase: string(phase), MessageSet: true, Message: message, ObservedSet: true, Observed: TaskObservation{Nodes: slices.Clone(nodes)}, Priority: priority}
+}
+
+// StoppedTaskDrainStatuses reports every pending Drain request as satisfied for
+// the Task's current generation. A Task whose root workload is stopped runs on
+// no Node, so any Node Drain targeting it can complete.
+func StoppedTaskDrainStatuses(task *rlarkv1alpha1.Task) []rlarkv1alpha1.TaskDrainStatus {
+	if task == nil {
+		return nil
+	}
+	statuses := make([]rlarkv1alpha1.TaskDrainStatus, 0, len(task.Spec.DrainRequests))
+	for _, request := range task.Spec.DrainRequests {
+		if request.OperationID == "" || request.NodeUID == "" {
+			continue
+		}
+		statuses = append(statuses, rlarkv1alpha1.TaskDrainStatus{
+			OperationID:        request.OperationID,
+			NodeUID:            request.NodeUID,
+			ObservedGeneration: task.Generation,
+			State:              rlarkv1alpha1.TaskDrainStateWaitingForReschedule,
+			Reason:             "RootWorkloadStopped",
+		})
+	}
+	return statuses
 }
 
 // ConditionIntent returns a fenced condition mutation intent.
 func ConditionIntent(task *rlarkv1alpha1.Task, condition metav1.Condition, remove bool, priority StatusPriority) StatusIntent {
-	return StatusIntent{TaskUID: string(task.UID), Generation: task.Generation, Conditions: []ConditionMutation{{Condition: condition, Remove: remove}}, Priority: priority}
+	return StatusIntent{ObjectUID: string(task.UID), Generation: task.Generation, Conditions: []ConditionMutation{{Condition: condition, Remove: remove}}, Priority: priority}
 }

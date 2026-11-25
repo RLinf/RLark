@@ -7,18 +7,50 @@ import {
 } from "../dist/test/utils/nodeVisibility.js";
 
 function node(name, labels = {}) {
-  return { metadata: { name, labels } };
+  return { metadata: { name }, status: { observedNodeLabels: labels } };
 }
 
-test("shows categorized workload workers", () => {
-  for (const category of ["cloud", "edge", "robot"]) {
+test("shows RLark-managed nodes", () => {
+  for (const managed of ["cloud", "edge", "robot"]) {
     assert.equal(
       isBusinessWorkerNode(
-        node(`${category}-worker`, { "rlark.io/node-category": category }),
+        node(`${managed}-worker`, { "rlark.io/enabled": "true" }),
       ),
       true,
     );
   }
+});
+
+test("shows a managed Kubernetes control-plane node", () => {
+  assert.equal(
+    isBusinessWorkerNode(
+      node("test-master01", {
+        "rlark.io/enabled": "true",
+        "rlark.io/node-category-cloud": "true",
+        "node-role.kubernetes.io/control-plane": "true",
+        "node-role.kubernetes.io/master": "true",
+      }),
+    ),
+    true,
+  );
+});
+
+test("hides nodes without the RLark managed marker", () => {
+  assert.equal(isBusinessWorkerNode(node("unmanaged")), false);
+  assert.equal(
+    isBusinessWorkerNode(
+      node("unmanaged-categorized", { "rlark.io/node-category": "cloud" }),
+    ),
+    false,
+  );
+  assert.equal(
+    isBusinessWorkerNode(
+      node("unmanaged-legacy-control-plane", {
+        "kubernetes.io/role": "control-plane",
+      }),
+    ),
+    false,
+  );
 });
 
 test("supports multiple Kubernetes-safe category labels", () => {
@@ -27,52 +59,15 @@ test("supports multiple Kubernetes-safe category labels", () => {
     "rlark.io/node-category-robot": "true",
   });
   assert.deepEqual(getNodeCategories(hybrid), ["cloud", "robot"]);
-  assert.equal(isBusinessWorkerNode(hybrid), true);
 });
 
-test("hides uncategorized management nodes", () => {
-  assert.equal(isBusinessWorkerNode(node("management-node")), false);
-  assert.equal(getNodeCategory(node("management-node")), "unknown");
-});
-
-test("shows uncategorized nodes that advertise workload devices", () => {
+test("infers a cloud category from advertised GPU resources", () => {
   const gpuNode = node("gpu-worker");
   gpuNode.status = { allocatable: { "nvidia.com/gpu": "8" } };
-  assert.equal(isBusinessWorkerNode(gpuNode), true);
   assert.equal(getNodeCategory(gpuNode), "cloud");
-
-  const robotNode = node("robot-worker");
-  robotNode.status = { capacity: { "rlinf.io/device-franka": "1" } };
-  assert.equal(isBusinessWorkerNode(robotNode), true);
 });
 
-test("hides Kubernetes control-plane nodes even when categorized", () => {
-  const category = { "rlark.io/node-category": "cloud" };
-  assert.equal(
-    isBusinessWorkerNode(
-      node("master", {
-        ...category,
-        "node-role.kubernetes.io/master": "",
-      }),
-    ),
-    false,
-  );
-  assert.equal(
-    isBusinessWorkerNode(
-      node("control-plane", {
-        ...category,
-        "node-role.kubernetes.io/control-plane": "",
-      }),
-    ),
-    false,
-  );
-  assert.equal(
-    isBusinessWorkerNode(
-      node("legacy-control-plane", {
-        ...category,
-        "kubernetes.io/role": "control-plane",
-      }),
-    ),
-    false,
-  );
+test("reports an unknown category for uncategorized nodes", () => {
+  assert.equal(getNodeCategory(node("plain-node")), "unknown");
+  assert.deepEqual(getNodeCategories(node("plain-node")), ["unknown"]);
 });

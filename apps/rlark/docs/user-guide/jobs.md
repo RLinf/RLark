@@ -13,23 +13,25 @@ For each role:
 1. Select the target cluster. Each option shows the cluster name, type label, and current status in one line.
 2. Choose one GPU or embodied-device specification from the list, which shows available/total devices and nodes, then set the shared per-Worker resource request. Set the request to `0` for debugging workloads that should keep the placement constraint without requesting the selected device.
 3. Choose one scheduling mode:
-   - **Automatic selection**: enter the desired Worker count. The console validates the total request against schedulable capacity and selects eligible nodes.
-   - **Select nodes**: click eligible nodes or drag across node cards. Each selected node creates one Worker; click or drag across selected nodes again to remove them. Changing the per-Worker resource request afterwards keeps every selected node that still has enough free capacity and only drops the nodes that no longer fit.
+   - **Automatic selection**: enter the desired Worker count. The console validates the total request against available capacity and selects nodes whose controller-written `Schedulable` condition is `True`.
+   - **Select nodes**: click eligible nodes or drag across node cards. Each card shows the same availability judgement as the node list: **Available**, **Unavailable**, or **Service degraded**. **Available** and **Service degraded** nodes both have `Schedulable=True` and can be selected by automatic or manual placement; **Service degraded** is diagnostic because `Degraded` does not block placement. Only **Unavailable** nodes (`Schedulable` not `True`) are blocked and hidden by default; enable **Show unavailable nodes** above the grid to display them as non-selectable cards, and hover the availability badge or the alert icon beside the status to see the controller-written `Schedulable` reason, plus the `Degraded` reason for a service-degraded node. Each selected node creates one Worker; click or drag across selected nodes again to remove them. Changing the per-Worker resource request afterwards keeps every selected node that still has enough free capacity and only drops the nodes that no longer fit.
 4. Review the shared placement summary, then configure the image, prepare script, environment variables, and storage mounts.
 
 When cloning a Job, the scheduling mode is preserved. A role that did not pin
 specific nodes remains in automatic-selection mode instead of being converted
 to manual node selection.
 
+The last step shows a YAML preview of the Job that will be submitted. The preview is serialized against YAML 1.1, the version Kubernetes tooling reads, so it parses back into the same values the form captured and can be copied out and applied unchanged. Multi-line values such as a prepare script or a run command are rendered as literal block scalars, carrying an explicit indentation or chomping indicator (`|2-`, `|`, `|+`) when the value needs one to survive a round trip. A string that YAML 1.1 would otherwise read as another type — for example `true`, `1.0`, `1_000`, `2026-11-23`, or `1:2:3` — is quoted.
+
 Submit the Job, then open Job details to verify the running state and inspect Workers.
 
 After selecting a role, its resource summary shows the GPU or embodied-device model configured on the assigned node and its requested quantity, such as `NVIDIA RTX 4090 · 1 GPU`. If the Worker has not reported its assigned node yet, the console resolves the model from the role's selected hostname candidates.
 
-When a Worker is Pending, hover or focus the information icon beside that Worker's status. RLark reads the related data-plane Pod, Task, or node events and converts recognized Kubernetes events into concise pending reasons in the current UI language. The mapping covers common scheduling, node pressure and availability, image-pull, volume, runtime environment, container-creation, and health-check issues. Unrecognized events use a generic pending label instead of exposing raw runtime messages. Image-pull progress remains separate and shows byte or percentage progress only when the runtime reports it.
+When a Worker is Pending, hover or focus the information icon beside that Worker's status. RLark reads the related data-plane Pod, Task, or node events and converts recognized Kubernetes events into concise pending reasons in the current UI language. The mapping covers common scheduling, node pressure and availability, image-pull, volume, runtime environment, container-creation, and health-check issues. Unrecognized events use a generic pending label instead of exposing raw runtime messages. Image-pull progress remains separate and shows byte or percentage progress only when the runtime reports it; it is limited to the images this Job declares, so pulls owned by other Tasks on the same node are never shown. Click the information icon to pin the tooltip: it stays open while you move the pointer into it to read or copy the contents, and closes when you click the icon again, click elsewhere, or press `Escape`.
 
 The tooltip reports the current blocking reason rather than a raw event log:
 
-- `Pulling` and `Pulled` are per-container point-in-time events, and a Worker Pod also pulls platform-injected sidecar images. Only the newest pull-progress event stays in the current reasons; older ones move to the **Earlier Events** section. If the image pull failed, or a warning event is at least as recent as the newest progress event, every pull-progress event moves there too, so a successful sidecar pull can no longer read as "Image pulled" next to a failing Worker.
+- `Pulling` and `Pulled` are per-container, per-image point-in-time events, and a Worker Pod also pulls platform-injected sidecar/init images. Pull progress for those platform images is filtered out and never shown. Of the remaining pull progress for the Job's own images, only the newest event stays in the current reasons; older ones move to the **Earlier Events** section. If the image pull failed, or a warning event is at least as recent as the newest progress event, every pull-progress event moves there too, so a successful pull can no longer read as "Image pulled" next to a failing Worker.
 - kubelet reports both image-pull failures and container start failures as `Failed`. RLark narrows that reason using the event message, so an unusable image reads as "Invalid image name" or "Image pull failed" instead of "Worker startup failed".
 - Repeated events are collapsed by reason, keeping the most recent occurrence, and the list is ordered newest first. The **Earlier Events** section keeps superseded entries visible, dimmed and struck through, for troubleshooting.
 
@@ -45,11 +47,15 @@ RLark supports the following job types, each pre-configured with default roles t
 
 Each job type pre-configures a set of default roles. You can add, remove, or customize roles to fit your specific training pipeline. Roles define the worker groups that collaborate during training, and each role can have its own container image, resource requirements, and command.
 
+The selected job type is recorded on the Job object as the label `rlark.io/job-type`, whose value is one of `RL`, `DataCollection`, `Evaluation`, or `Custom`. The UI reads this label to render the job type. Jobs created before this label existed do not carry it; for those, the UI infers an approximate type from `spec.tasks[].role`, which can misreport a custom job as a reinforcement learning job. The label is informational for the console and is not consumed by the control plane or the agents.
+
+For built-in job types the console normalizes each role name into the coarse `spec.tasks[].role` grouping (`Actor`, `Rollout`, or `Env`). For custom jobs the role name you type is written to `spec.tasks[].role` verbatim, because `TaskRole` is not restricted to a closed set of values. The original role name is always available in the `RLARK_TASK_ROLE` container environment variable regardless of job type.
+
 ## Worker Configuration
 
 For each worker role, configure the following:
 
-- **Cluster and Node** — Select the target cluster and optionally a specific node. Use the **Node Selector** to filter nodes by attributes such as:
+- **Cluster and Node** — Select the target cluster and optionally a specific node. Worker Pod templates include required node affinity that excludes nodes labeled `rlark.io/unschedulable=true`. Use the **Node Selector** to filter nodes by attributes such as:
   - Node type: cloud, edge, or robot
   - GPU model (e.g., A100, H100, RTX 4090)
   - Physical location or zone
@@ -68,6 +74,13 @@ For each worker role, configure the following:
   - **PVC** (PersistentVolumeClaim): Mount Kubernetes storage using the selected storage class. The current Web UI writes `ephemeral.volumeClaimTemplate`, so these PVCs are Pod-scoped and are deleted and recreated with their Pods. Imported or older Tasks using `persistentVolumeClaim` and the deprecated PVC maps follow the retained Task-managed compatibility lifecycle instead.
 
   Jobs submitted through the API may use other Kubernetes-native volume types, such as `emptyDir`, `configMap`, or `secret`. The Job editor cannot create or modify these volumes, but it lists them read-only in the role's mount list and on the Job detail page and preserves their original definitions when you edit or clone the Job. Removing the mount is the only change the editor supports for them.
+
+- **Advanced** — Optional runtime capabilities for the role. Currently supported:
+  - **Shared memory (shm)** — Mount a memory-backed `emptyDir` as `/dev/shm` into every regular container. Specify the size limit (e.g. `512Mi`, `1Gi`) to cap the shared-memory filesystem capacity. The default Kubernetes `/dev/shm` is only 64Mi, which is insufficient for multi-process data loaders (e.g. PyTorch `DataLoader` with `num_workers > 0`), shared-memory object stores (e.g. Ray Object Store), or high-throughput IPC.
+
+    **Resource semantics**: `sizeLimit` is a filesystem capacity cap, not a memory reservation. All regular containers in the same Pod share one volume and capacity limit; different Pods do not share. Actual usage counts against container memory consumption and can trigger OOM. Configure appropriate memory `requests`/`limits` for your containers. Currently only the Kubernetes runtime implements this capability; other runtimes (e.g. Docker) are planned but not yet supported.
+
+    **Conflicts**: If `/dev/shm` is already mounted by a non-equivalent mount (e.g. `readOnly: true` or `subPath`), the handler returns a conflict error instead of overwriting. An equivalent mount uses the same volume name, mount path, is writable, and has no sub-path.
 
 > **Screenshot note:** Screenshots are from an example environment. Resource names and data are illustrative; your environment will differ.
 
@@ -210,6 +223,8 @@ Stopping a Job first changes its displayed state to `Stopping`. RLark deletes al
 
 The time at which a manually stopped Job enters `Stopped` is recorded and shown in the Jobs table.
 
+When a Node or Cluster Drain stops every Worker of a running Job, the Job transitions to `Stopped` on its own and publishes the `Evicted` condition with `Reason=Evicted` and the bilingual message `所有 Worker 已被驱逐 / All workers were evicted`. The Job returns to `Pending` once the Workers are rescheduled.
+
 ### Resume a Stopped Job
 
 Starting a stopped Job recreates the Tasks and Worker Pods from the same configuration. A Task that explicitly references the same existing PVC continues to see its data; RLark does not provision that claim. Pod-scoped ephemeral volumes receive new PVCs. HostPath data remains available.
@@ -234,7 +249,7 @@ Deleting a Job cleans up its active workload resources, with these storage excep
 
 Both actions prefill the editor from the source Job and keep its roles, including custom roles that are not part of the selected job type's default roles. For each role the editor restores the container image, run command, prepare script, environment variables, replica count, CPU, memory and device requests, scheduling mode, and storage mounts; volume types the editor cannot edit keep their original definitions. Changing the job type after prefilling only updates the job type label and leaves the role list untouched: the prefilled roles are configuration you already confirmed, so add any default roles of the new type manually.
 
-The source cluster is not stored on the Job itself. The editor resolves it from each role's node selector, so verify the cluster selection before resubmitting.
+The source cluster is not stored on the Job itself. The editor resolves it from each role's node selector. If that cluster no longer exists or has stopped scheduling, the editor ignores its remaining nodes and moves the role to a schedulable cluster. Nodes that are no longer schedulable (offline, cordoned, delisted, or no longer part of the selected cluster) are deselected and removed from the draft as well, so the submitted Job and the YAML preview never keep a node that cannot host a Worker. In node-selection mode the Worker count follows the remaining nodes. When the removed nodes leave a role without any selected node, the editor blocks the next step and asks you to choose nodes again.
 
 ## Preflight Checklist
 

@@ -30,18 +30,33 @@ Quick commands:
 ```bash
 # Create Kind, deploy RLark, verify, collect evidence, and clean up
 make test-e2e-rlark
+
+# Verify control-plane node pressure derivation without a data plane Agent
+make test-e2e-rlark-node-pressure
 ```
 
-This is the only RLark E2E entry point. It builds `rlarkadm` and the default
-RLark/UI images, creates an isolated Kind cluster, loads the images,
-installs RLark using the Kubernetes management API, verifies API discovery and
-component availability, collects evidence, uninstalls RLark, and removes the
-cluster. Set `RLARK_SMOKE_IMAGE` and `RLARK_SMOKE_UI_IMAGE` to choose other
-build tags. To use existing immutable local images, also set
+The smoke entry point builds `rlarkadm` and the default RLark/UI images,
+creates an isolated Kind cluster, loads the images, installs RLark using the
+Kubernetes management API, verifies API discovery and component availability,
+collects evidence, uninstalls RLark, and removes the cluster. Set
+`RLARK_SMOKE_IMAGE` and `RLARK_SMOKE_UI_IMAGE` to choose other build tags. To
+use existing immutable local images, also set
 `RLARK_SMOKE_BUILD_IMAGES=false`; the entry point validates and loads those
 exact images. Restricted environments can set `RLARK_SMOKE_GO_BASE_IMAGE`,
 `RLARK_SMOKE_RUNTIME_BASE_IMAGE`, and `RLARK_SMOKE_UI_BASE_IMAGE`; repository
 defaults do not embed a private registry.
+
+The node pressure entry point deploys only the control plane. It creates a
+synthetic Node in a dedicated namespace, injects `status.diskPressure=true`
+through the status subresource, and maintains the `node-heartbeat-<node-name>`
+Lease normally written by the Agent. It verifies that the Node controller
+derives `ResourcePressure=True`, `StorageReady=False`, `Ready=True`,
+`Degraded=True`, and phase `Degraded` without writing files to fill a disk. It
+does not exercise the Agent-to-status mapping; unit tests cover that path. Set
+`RLARK_NODE_PRESSURE_IMAGE`, `RLARK_NODE_PRESSURE_UI_IMAGE`,
+`RLARK_NODE_PRESSURE_RLARKADM`, and `RLARK_NODE_PRESSURE_TIMEOUT` to configure
+this scenario. Set `RLARK_NODE_PRESSURE_BUILD_IMAGES=false` to reuse existing
+local images.
 
 Product deployment inputs such as images, namespaces, feature settings, and
 upgrade versions belong to the scenario that uses them, not global framework

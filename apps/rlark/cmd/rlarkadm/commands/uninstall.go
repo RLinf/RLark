@@ -27,6 +27,9 @@ func UninstallCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := cfg.Validate(); err != nil {
+				return err
+			}
 
 			if level, _ := cmd.Flags().GetString("log-level"); level != "" {
 				log.InitLogger(level)

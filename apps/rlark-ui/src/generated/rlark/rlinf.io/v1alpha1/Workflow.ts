@@ -43,6 +43,17 @@ export interface IWorkflow {
         }>;
         "tasks"?: Array<{
           "downstreamName"?: string;
+          /**
+           * DrainRequests are one-shot Node-agent-owned requests to stop this Task's
+           * root workload during Node Drain. The Node Agent reconciles them from the
+           * Node's current Drain operations and removes an entry when its operation is
+           * no longer present, including after undrain and recover.
+           */
+          "drainRequests"?: Array<{
+            "nodeName": string;
+            "nodeUID": string;
+            "operationID": string;
+          }>;
           "environments"?: Array<{
             "parameters"?: any;
             "type": string;

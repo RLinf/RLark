@@ -504,6 +504,39 @@ func (g *Gateway) handleStartJob(c *gin.Context) {
 			return
 		}
 
+		// Starting a Job is also the explicit resume action for Tasks that a
+		// cluster or node drain stopped. Those Tasks stay Stopped across uncordon
+		// and undrain, so the drain markers have to be released here for the Job
+		// controller to dispatch them.
+		if job, ok := existing.(*rlarkiov1alpha1.Job); ok {
+			stoppedByClusterDrain, err := g.jobHasClusterDrainStops(c.Request.Context(), job)
+			if err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+			stoppedByNodeDrain, err := g.jobHasNodeDrainStops(c.Request.Context(), job)
+			if err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+			// Only an actual start needs the placement check. Re-applying start to a
+			// running Job must stay a no-op even if its Cluster has since gone offline.
+			if job.Spec.Suspended || stoppedByClusterDrain || stoppedByNodeDrain {
+				if err := g.validateJobPlacement(c, job, requestLanguage(c)); err != nil {
+					respondError(c, http.StatusConflict, CodeResourceConflict, err.Error())
+					return
+				}
+			}
+			if err := g.clearClusterDrainStopsForJob(c.Request.Context(), job); err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+			if err := g.clearNodeDrainStopsForJob(c.Request.Context(), job); err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+		}
+
 		patch := []byte(`{"spec":{"suspended":false}}`)
 		result, patchErr := g.accessors["jobs"].patch(c, c.Query("namespace"), name, patch)
 		if patchErr != nil {
@@ -547,6 +580,13 @@ func (g *Gateway) handleStartJob(c *gin.Context) {
 	}
 
 	setSuspendedFalse(newObj)
+
+	if job, ok := newObj.(*rlarkiov1alpha1.Job); ok {
+		if err := g.validateJobPlacement(c, job, requestLanguage(c)); err != nil {
+			respondError(c, http.StatusConflict, CodeResourceConflict, err.Error())
+			return
+		}
+	}
 
 	created, err := g.createRestoredResource(c, "jobs", newObj)
 	if err != nil {

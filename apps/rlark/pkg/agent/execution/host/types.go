@@ -4,15 +4,14 @@ package host
 
 import (
 	"context"
-	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/coordination"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/coordination/coordinator"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/observability"
 	agentruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/workload"
+	"github.com/rlinf/rlark/apps/rlark/pkg/reconcile"
 )
 
 // Executor is the narrow Runtime mutation and observation boundary used by a
@@ -85,82 +84,68 @@ type LifecycleDecision struct {
 	AfterCleanupStatus *StatusIntent
 }
 
-// Outcome is the mutually exclusive result of one Host reconciliation.
-type Outcome string
+// TaskObservation is the Task-specific observed payload owned by the Host.
+//
+// It exists so the Host can carry its observation through the shared status
+// intent without the shared package having to know about Tasks.
+type TaskObservation struct {
+	// Nodes are the Nodes the Task was observed running on.
+	Nodes []string
+	// DrainRequests carries the bounded drain-status observation written by
+	// the Host. Empty means no drain activity to report; a nil slice is
+	// treated the same as empty on write.
+	DrainRequests []rlarkv1alpha1.TaskDrainStatus
+}
 
-const (
-	OutcomeSucceeded         Outcome = "Succeeded"
-	OutcomeWaitingForChange  Outcome = "WaitingForChange"
-	OutcomeRetrying          Outcome = "Retrying"
-	OutcomeCleanupInProgress Outcome = "CleanupInProgress"
-	OutcomeBlocked           Outcome = "Blocked"
-	OutcomeDropped           Outcome = "Dropped"
+// The reconciliation vocabulary below is defined once in pkg/reconcile and is
+// re-exported here as aliases. Aliases, not new types, so that a Host result
+// and a control-plane result are the same type and the shared shell can handle
+// both; the re-export keeps the existing host.Outcome / host.Result spelling
+// usable by the Runtime assemblies and controller adapters.
+type (
+	// Outcome is the mutually exclusive result of one Host reconciliation.
+	Outcome = reconcile.Outcome
+	// RetryClass classifies retry behavior without inspecting error text.
+	RetryClass = reconcile.RetryClass
+	// RetryDirective describes when a result should be retried.
+	RetryDirective = reconcile.RetryDirective
+	// StatusPriority defines deterministic precedence when Host inputs provide
+	// multiple status intents during one reconciliation.
+	StatusPriority = reconcile.StatusPriority
+	// ConditionMutation describes a typed condition upsert or removal.
+	ConditionMutation = reconcile.ConditionMutation
+	// StatusIntent is the Task instantiation of the shared status intent.
+	StatusIntent = reconcile.StatusIntent[TaskObservation]
+	// Result is the generic Host result returned to controller adapters.
+	Result = reconcile.Result[TaskObservation]
+	// StatusWriter is the single Task Status mutation boundary used by pull and
+	// targeted observation reconcilers.
+	StatusWriter = reconcile.StatusWriter[*rlarkv1alpha1.Task, TaskObservation]
 )
 
-// RetryClass classifies retry behavior without inspecting error text.
-type RetryClass string
-
+// Go has no constant aliases, so the shared outcome, retry and priority
+// constants are re-declared. They keep the shared types through the aliases
+// above, so a host constant and a reconcile constant remain interchangeable.
 const (
-	RetryNone       RetryClass = "None"
-	RetryOnChange   RetryClass = "OnChange"
-	RetryConflict   RetryClass = "Conflict"
-	RetryTransient  RetryClass = "Transient"
-	RetryInProgress RetryClass = "InProgress"
+	OutcomeSucceeded         = reconcile.OutcomeSucceeded
+	OutcomeWaitingForChange  = reconcile.OutcomeWaitingForChange
+	OutcomeRetrying          = reconcile.OutcomeRetrying
+	OutcomeCleanupInProgress = reconcile.OutcomeCleanupInProgress
+	OutcomeBlocked           = reconcile.OutcomeBlocked
+	OutcomeDropped           = reconcile.OutcomeDropped
+
+	RetryNone       = reconcile.RetryNone
+	RetryOnChange   = reconcile.RetryOnChange
+	RetryConflict   = reconcile.RetryConflict
+	RetryTransient  = reconcile.RetryTransient
+	RetryInProgress = reconcile.RetryInProgress
+
+	StatusPriorityEnvironment = reconcile.StatusPriorityEnvironment
+	StatusPriorityWorkload    = reconcile.StatusPriorityWorkload
+	StatusPriorityInvalid     = reconcile.StatusPriorityInvalid
+	StatusPriorityLifecycle   = reconcile.StatusPriorityLifecycle
+	StatusPriorityCleanup     = reconcile.StatusPriorityCleanup
 )
-
-// RetryDirective describes when a result should be retried.
-type RetryDirective struct {
-	Class RetryClass
-	After time.Duration
-}
-
-// StatusPriority defines deterministic precedence when Host inputs provide
-// multiple status intents during one reconciliation.
-type StatusPriority int
-
-const (
-	StatusPriorityEnvironment StatusPriority = iota + 10
-	StatusPriorityWorkload
-	StatusPriorityInvalid
-	StatusPriorityLifecycle
-	StatusPriorityCleanup
-)
-
-// ConditionMutation describes a typed condition upsert or removal.
-type ConditionMutation struct {
-	Condition metav1.Condition
-	Remove    bool
-}
-
-// StatusIntent contains only Task status fields owned by the Host. TaskUID and
-// Generation fence stale asynchronous observations.
-type StatusIntent struct {
-	TaskUID          string
-	Generation       int64
-	Phase            string
-	MessageSet       bool
-	Message          string
-	ObservedNodesSet bool
-	ObservedNodes    []string
-	Conditions       []ConditionMutation
-	Priority         StatusPriority
-	ReasonCode       string
-}
-
-// Result is the generic Host result returned to controller adapters.
-type Result struct {
-	// Outcome is the mutually exclusive result of the Host state machine.
-	Outcome Outcome
-	// Retry tells the controller adapter whether and when to reconcile again.
-	Retry RetryDirective
-	// Reason is a stable, low-cardinality explanation for the result. It is
-	// data for controller adapters, must not contain object names or error text,
-	// and does not make Host responsible for logs.
-	Reason string
-	// Status is the merged Host-owned status intent applied during this
-	// reconciliation, when one exists.
-	Status *StatusIntent
-}
 
 // Bundle contains all immutable dependencies for one configured Runtime ID.
 type Bundle struct {
@@ -179,6 +164,13 @@ type Bundle struct {
 	// AfterExecution receives a successful full reconcile result for process-local
 	// acceleration caches. It must be best-effort and must not perform external effects.
 	AfterExecution func(coordination.TaskSnapshot, coordinator.ReconcileResult)
+	// Admit performs effect-free execution validation before normal claim and
+	// lifecycle effects. Deletion and suspension retain identity-only cleanup.
+	// It must not cache an execution decision across reconciliation boundaries.
+	Admit func(context.Context, LifecycleInput) error
+	// AdmissionRequired distinguishes execution from identity-only cleanup/reset.
+	// A nil predicate requires admission whenever Admit is configured.
+	AdmissionRequired func(LifecycleInput) bool
 }
 
 // ImplementationKey selects one exact Workload implementation for one Runtime

@@ -24,13 +24,14 @@ const (
 type ProtocolCapability int32
 
 const (
-	ProtocolCapability_PROTOCOL_CAPABILITY_UNSPECIFIED                 ProtocolCapability = 0
-	ProtocolCapability_PROTOCOL_CAPABILITY_WORKLOAD_INVENTORY          ProtocolCapability = 1
-	ProtocolCapability_PROTOCOL_CAPABILITY_RUNTIME_CANDIDATE_INVENTORY ProtocolCapability = 2
-	ProtocolCapability_PROTOCOL_CAPABILITY_OWNED_FIELD_PROJECTION      ProtocolCapability = 3
-	ProtocolCapability_PROTOCOL_CAPABILITY_CLAIMED_WORKLOAD_RECOVERY   ProtocolCapability = 4
-	ProtocolCapability_PROTOCOL_CAPABILITY_INCARNATION_ADOPTION        ProtocolCapability = 5
-	ProtocolCapability_PROTOCOL_CAPABILITY_RECONCILE_PROFILES          ProtocolCapability = 6
+	ProtocolCapability_PROTOCOL_CAPABILITY_UNSPECIFIED                   ProtocolCapability = 0
+	ProtocolCapability_PROTOCOL_CAPABILITY_WORKLOAD_INVENTORY            ProtocolCapability = 1
+	ProtocolCapability_PROTOCOL_CAPABILITY_RUNTIME_CANDIDATE_INVENTORY   ProtocolCapability = 2
+	ProtocolCapability_PROTOCOL_CAPABILITY_OWNED_FIELD_PROJECTION        ProtocolCapability = 3
+	ProtocolCapability_PROTOCOL_CAPABILITY_CLAIMED_WORKLOAD_RECOVERY     ProtocolCapability = 4
+	ProtocolCapability_PROTOCOL_CAPABILITY_INCARNATION_ADOPTION          ProtocolCapability = 5
+	ProtocolCapability_PROTOCOL_CAPABILITY_RECONCILE_PROFILES            ProtocolCapability = 6
+	ProtocolCapability_PROTOCOL_CAPABILITY_WORKLOAD_OBSERVATION_CONTRACT ProtocolCapability = 7
 )
 
 // Enum value maps for ProtocolCapability.
@@ -43,15 +44,17 @@ var (
 		4: "PROTOCOL_CAPABILITY_CLAIMED_WORKLOAD_RECOVERY",
 		5: "PROTOCOL_CAPABILITY_INCARNATION_ADOPTION",
 		6: "PROTOCOL_CAPABILITY_RECONCILE_PROFILES",
+		7: "PROTOCOL_CAPABILITY_WORKLOAD_OBSERVATION_CONTRACT",
 	}
 	ProtocolCapability_value = map[string]int32{
-		"PROTOCOL_CAPABILITY_UNSPECIFIED":                 0,
-		"PROTOCOL_CAPABILITY_WORKLOAD_INVENTORY":          1,
-		"PROTOCOL_CAPABILITY_RUNTIME_CANDIDATE_INVENTORY": 2,
-		"PROTOCOL_CAPABILITY_OWNED_FIELD_PROJECTION":      3,
-		"PROTOCOL_CAPABILITY_CLAIMED_WORKLOAD_RECOVERY":   4,
-		"PROTOCOL_CAPABILITY_INCARNATION_ADOPTION":        5,
-		"PROTOCOL_CAPABILITY_RECONCILE_PROFILES":          6,
+		"PROTOCOL_CAPABILITY_UNSPECIFIED":                   0,
+		"PROTOCOL_CAPABILITY_WORKLOAD_INVENTORY":            1,
+		"PROTOCOL_CAPABILITY_RUNTIME_CANDIDATE_INVENTORY":   2,
+		"PROTOCOL_CAPABILITY_OWNED_FIELD_PROJECTION":        3,
+		"PROTOCOL_CAPABILITY_CLAIMED_WORKLOAD_RECOVERY":     4,
+		"PROTOCOL_CAPABILITY_INCARNATION_ADOPTION":          5,
+		"PROTOCOL_CAPABILITY_RECONCILE_PROFILES":            6,
+		"PROTOCOL_CAPABILITY_WORKLOAD_OBSERVATION_CONTRACT": 7,
 	}
 )
 
@@ -788,6 +791,7 @@ type RuntimeObject struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Reference     *ObjectReference       `protobuf:"bytes,1,opt,name=reference,proto3" json:"reference,omitempty"`
 	Manifest      *TypedValue            `protobuf:"bytes,2,opt,name=manifest,proto3" json:"manifest,omitempty"`
+	Conditions    []*ObjectCondition     `protobuf:"bytes,3,rep,name=conditions,proto3" json:"conditions,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -836,6 +840,89 @@ func (x *RuntimeObject) GetManifest() *TypedValue {
 	return nil
 }
 
+func (x *RuntimeObject) GetConditions() []*ObjectCondition {
+	if x != nil {
+		return x.Conditions
+	}
+	return nil
+}
+
+type ObjectCondition struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
+	Scope         string                 `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
+	Subject       string                 `protobuf:"bytes,3,opt,name=subject,proto3" json:"subject,omitempty"`
+	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	Message       string                 `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ObjectCondition) Reset() {
+	*x = ObjectCondition{}
+	mi := &file_common_v1_types_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObjectCondition) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObjectCondition) ProtoMessage() {}
+
+func (x *ObjectCondition) ProtoReflect() protoreflect.Message {
+	mi := &file_common_v1_types_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObjectCondition.ProtoReflect.Descriptor instead.
+func (*ObjectCondition) Descriptor() ([]byte, []int) {
+	return file_common_v1_types_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ObjectCondition) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *ObjectCondition) GetScope() string {
+	if x != nil {
+		return x.Scope
+	}
+	return ""
+}
+
+func (x *ObjectCondition) GetSubject() string {
+	if x != nil {
+		return x.Subject
+	}
+	return ""
+}
+
+func (x *ObjectCondition) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *ObjectCondition) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 type ObjectSnapshot struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Revision      string                 `protobuf:"bytes,1,opt,name=revision,proto3" json:"revision,omitempty"`
@@ -846,7 +933,7 @@ type ObjectSnapshot struct {
 
 func (x *ObjectSnapshot) Reset() {
 	*x = ObjectSnapshot{}
-	mi := &file_common_v1_types_proto_msgTypes[9]
+	mi := &file_common_v1_types_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -858,7 +945,7 @@ func (x *ObjectSnapshot) String() string {
 func (*ObjectSnapshot) ProtoMessage() {}
 
 func (x *ObjectSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_common_v1_types_proto_msgTypes[9]
+	mi := &file_common_v1_types_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -871,7 +958,7 @@ func (x *ObjectSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ObjectSnapshot.ProtoReflect.Descriptor instead.
 func (*ObjectSnapshot) Descriptor() ([]byte, []int) {
-	return file_common_v1_types_proto_rawDescGZIP(), []int{9}
+	return file_common_v1_types_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ObjectSnapshot) GetRevision() string {
@@ -899,7 +986,7 @@ type ResourceOwnership struct {
 
 func (x *ResourceOwnership) Reset() {
 	*x = ResourceOwnership{}
-	mi := &file_common_v1_types_proto_msgTypes[10]
+	mi := &file_common_v1_types_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -911,7 +998,7 @@ func (x *ResourceOwnership) String() string {
 func (*ResourceOwnership) ProtoMessage() {}
 
 func (x *ResourceOwnership) ProtoReflect() protoreflect.Message {
-	mi := &file_common_v1_types_proto_msgTypes[10]
+	mi := &file_common_v1_types_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -924,7 +1011,7 @@ func (x *ResourceOwnership) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceOwnership.ProtoReflect.Descriptor instead.
 func (*ResourceOwnership) Descriptor() ([]byte, []int) {
-	return file_common_v1_types_proto_rawDescGZIP(), []int{10}
+	return file_common_v1_types_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ResourceOwnership) GetScope() IdentityScope {
@@ -957,7 +1044,7 @@ type OwnedFieldProjection struct {
 
 func (x *OwnedFieldProjection) Reset() {
 	*x = OwnedFieldProjection{}
-	mi := &file_common_v1_types_proto_msgTypes[11]
+	mi := &file_common_v1_types_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -969,7 +1056,7 @@ func (x *OwnedFieldProjection) String() string {
 func (*OwnedFieldProjection) ProtoMessage() {}
 
 func (x *OwnedFieldProjection) ProtoReflect() protoreflect.Message {
-	mi := &file_common_v1_types_proto_msgTypes[11]
+	mi := &file_common_v1_types_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -982,7 +1069,7 @@ func (x *OwnedFieldProjection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OwnedFieldProjection.ProtoReflect.Descriptor instead.
 func (*OwnedFieldProjection) Descriptor() ([]byte, []int) {
-	return file_common_v1_types_proto_rawDescGZIP(), []int{11}
+	return file_common_v1_types_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *OwnedFieldProjection) GetPaths() []string {
@@ -1006,7 +1093,7 @@ type RuntimeObjectCandidate struct {
 
 func (x *RuntimeObjectCandidate) Reset() {
 	*x = RuntimeObjectCandidate{}
-	mi := &file_common_v1_types_proto_msgTypes[12]
+	mi := &file_common_v1_types_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1018,7 +1105,7 @@ func (x *RuntimeObjectCandidate) String() string {
 func (*RuntimeObjectCandidate) ProtoMessage() {}
 
 func (x *RuntimeObjectCandidate) ProtoReflect() protoreflect.Message {
-	mi := &file_common_v1_types_proto_msgTypes[12]
+	mi := &file_common_v1_types_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1031,7 +1118,7 @@ func (x *RuntimeObjectCandidate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeObjectCandidate.ProtoReflect.Descriptor instead.
 func (*RuntimeObjectCandidate) Descriptor() ([]byte, []int) {
-	return file_common_v1_types_proto_rawDescGZIP(), []int{12}
+	return file_common_v1_types_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *RuntimeObjectCandidate) GetType() *TypeReference {
@@ -1095,7 +1182,7 @@ type DesiredRuntimeObject struct {
 
 func (x *DesiredRuntimeObject) Reset() {
 	*x = DesiredRuntimeObject{}
-	mi := &file_common_v1_types_proto_msgTypes[13]
+	mi := &file_common_v1_types_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1107,7 +1194,7 @@ func (x *DesiredRuntimeObject) String() string {
 func (*DesiredRuntimeObject) ProtoMessage() {}
 
 func (x *DesiredRuntimeObject) ProtoReflect() protoreflect.Message {
-	mi := &file_common_v1_types_proto_msgTypes[13]
+	mi := &file_common_v1_types_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1120,7 +1207,7 @@ func (x *DesiredRuntimeObject) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DesiredRuntimeObject.ProtoReflect.Descriptor instead.
 func (*DesiredRuntimeObject) Descriptor() ([]byte, []int) {
-	return file_common_v1_types_proto_rawDescGZIP(), []int{13}
+	return file_common_v1_types_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *DesiredRuntimeObject) GetLogicalName() string {
@@ -1221,7 +1308,7 @@ type RuntimeInstance struct {
 
 func (x *RuntimeInstance) Reset() {
 	*x = RuntimeInstance{}
-	mi := &file_common_v1_types_proto_msgTypes[14]
+	mi := &file_common_v1_types_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1233,7 +1320,7 @@ func (x *RuntimeInstance) String() string {
 func (*RuntimeInstance) ProtoMessage() {}
 
 func (x *RuntimeInstance) ProtoReflect() protoreflect.Message {
-	mi := &file_common_v1_types_proto_msgTypes[14]
+	mi := &file_common_v1_types_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1246,7 +1333,7 @@ func (x *RuntimeInstance) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeInstance.ProtoReflect.Descriptor instead.
 func (*RuntimeInstance) Descriptor() ([]byte, []int) {
-	return file_common_v1_types_proto_rawDescGZIP(), []int{14}
+	return file_common_v1_types_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *RuntimeInstance) GetRuntimeId() string {
@@ -1353,7 +1440,7 @@ type InstanceCondition struct {
 
 func (x *InstanceCondition) Reset() {
 	*x = InstanceCondition{}
-	mi := &file_common_v1_types_proto_msgTypes[15]
+	mi := &file_common_v1_types_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1365,7 +1452,7 @@ func (x *InstanceCondition) String() string {
 func (*InstanceCondition) ProtoMessage() {}
 
 func (x *InstanceCondition) ProtoReflect() protoreflect.Message {
-	mi := &file_common_v1_types_proto_msgTypes[15]
+	mi := &file_common_v1_types_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1378,7 +1465,7 @@ func (x *InstanceCondition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstanceCondition.ProtoReflect.Descriptor instead.
 func (*InstanceCondition) Descriptor() ([]byte, []int) {
-	return file_common_v1_types_proto_rawDescGZIP(), []int{15}
+	return file_common_v1_types_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *InstanceCondition) GetSource() string {
@@ -1426,7 +1513,7 @@ type InstanceSnapshot struct {
 
 func (x *InstanceSnapshot) Reset() {
 	*x = InstanceSnapshot{}
-	mi := &file_common_v1_types_proto_msgTypes[16]
+	mi := &file_common_v1_types_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1438,7 +1525,7 @@ func (x *InstanceSnapshot) String() string {
 func (*InstanceSnapshot) ProtoMessage() {}
 
 func (x *InstanceSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_common_v1_types_proto_msgTypes[16]
+	mi := &file_common_v1_types_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1451,7 +1538,7 @@ func (x *InstanceSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstanceSnapshot.ProtoReflect.Descriptor instead.
 func (*InstanceSnapshot) Descriptor() ([]byte, []int) {
-	return file_common_v1_types_proto_rawDescGZIP(), []int{16}
+	return file_common_v1_types_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *InstanceSnapshot) GetRevision() string {
@@ -1511,10 +1598,19 @@ const file_common_v1_types_proto_rawDesc = "" +
 	"\tnamespace\x18\x03 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04name\x18\x04 \x01(\tR\x04name\x12\x10\n" +
 	"\x03uid\x18\x05 \x01(\tR\x03uid\x12P\n" +
-	"\x0flogical_task_id\x18\x06 \x01(\v2(.rlark.execution.common.v1.LogicalTaskIdR\rlogicalTaskId\"\x9c\x01\n" +
+	"\x0flogical_task_id\x18\x06 \x01(\v2(.rlark.execution.common.v1.LogicalTaskIdR\rlogicalTaskId\"\xe8\x01\n" +
 	"\rRuntimeObject\x12H\n" +
 	"\treference\x18\x01 \x01(\v2*.rlark.execution.common.v1.ObjectReferenceR\treference\x12A\n" +
-	"\bmanifest\x18\x02 \x01(\v2%.rlark.execution.common.v1.TypedValueR\bmanifest\"p\n" +
+	"\bmanifest\x18\x02 \x01(\v2%.rlark.execution.common.v1.TypedValueR\bmanifest\x12J\n" +
+	"\n" +
+	"conditions\x18\x03 \x03(\v2*.rlark.execution.common.v1.ObjectConditionR\n" +
+	"conditions\"\x8b\x01\n" +
+	"\x0fObjectCondition\x12\x16\n" +
+	"\x06source\x18\x01 \x01(\tR\x06source\x12\x14\n" +
+	"\x05scope\x18\x02 \x01(\tR\x05scope\x12\x18\n" +
+	"\asubject\x18\x03 \x01(\tR\asubject\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\x12\x18\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\"p\n" +
 	"\x0eObjectSnapshot\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\tR\brevision\x12B\n" +
 	"\aobjects\x18\x02 \x03(\v2(.rlark.execution.common.v1.RuntimeObjectR\aobjects\"\xd6\x01\n" +
@@ -1577,7 +1673,7 @@ const file_common_v1_types_proto_rawDesc = "" +
 	"\amessage\x18\x05 \x01(\tR\amessage\"x\n" +
 	"\x10InstanceSnapshot\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\tR\brevision\x12H\n" +
-	"\tinstances\x18\x02 \x03(\v2*.rlark.execution.common.v1.RuntimeInstanceR\tinstances*\xd7\x02\n" +
+	"\tinstances\x18\x02 \x03(\v2*.rlark.execution.common.v1.RuntimeInstanceR\tinstances*\x8e\x03\n" +
 	"\x12ProtocolCapability\x12#\n" +
 	"\x1fPROTOCOL_CAPABILITY_UNSPECIFIED\x10\x00\x12*\n" +
 	"&PROTOCOL_CAPABILITY_WORKLOAD_INVENTORY\x10\x01\x123\n" +
@@ -1585,7 +1681,8 @@ const file_common_v1_types_proto_rawDesc = "" +
 	"*PROTOCOL_CAPABILITY_OWNED_FIELD_PROJECTION\x10\x03\x121\n" +
 	"-PROTOCOL_CAPABILITY_CLAIMED_WORKLOAD_RECOVERY\x10\x04\x12,\n" +
 	"(PROTOCOL_CAPABILITY_INCARNATION_ADOPTION\x10\x05\x12*\n" +
-	"&PROTOCOL_CAPABILITY_RECONCILE_PROFILES\x10\x06*\xdb\x01\n" +
+	"&PROTOCOL_CAPABILITY_RECONCILE_PROFILES\x10\x06\x125\n" +
+	"1PROTOCOL_CAPABILITY_WORKLOAD_OBSERVATION_CONTRACT\x10\a*\xdb\x01\n" +
 	"\rIdentityScope\x12\x1e\n" +
 	"\x1aIDENTITY_SCOPE_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fIDENTITY_SCOPE_TASK_INCARNATION\x10\x01\x12\x1f\n" +
@@ -1623,7 +1720,7 @@ func file_common_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_common_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_common_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_common_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_common_v1_types_proto_goTypes = []any{
 	(ProtocolCapability)(0),         // 0: rlark.execution.common.v1.ProtocolCapability
 	(IdentityScope)(0),              // 1: rlark.execution.common.v1.IdentityScope
@@ -1639,15 +1736,16 @@ var file_common_v1_types_proto_goTypes = []any{
 	(*RuntimeUnit)(nil),             // 11: rlark.execution.common.v1.RuntimeUnit
 	(*ObjectReference)(nil),         // 12: rlark.execution.common.v1.ObjectReference
 	(*RuntimeObject)(nil),           // 13: rlark.execution.common.v1.RuntimeObject
-	(*ObjectSnapshot)(nil),          // 14: rlark.execution.common.v1.ObjectSnapshot
-	(*ResourceOwnership)(nil),       // 15: rlark.execution.common.v1.ResourceOwnership
-	(*OwnedFieldProjection)(nil),    // 16: rlark.execution.common.v1.OwnedFieldProjection
-	(*RuntimeObjectCandidate)(nil),  // 17: rlark.execution.common.v1.RuntimeObjectCandidate
-	(*DesiredRuntimeObject)(nil),    // 18: rlark.execution.common.v1.DesiredRuntimeObject
-	(*RuntimeInstance)(nil),         // 19: rlark.execution.common.v1.RuntimeInstance
-	(*InstanceCondition)(nil),       // 20: rlark.execution.common.v1.InstanceCondition
-	(*InstanceSnapshot)(nil),        // 21: rlark.execution.common.v1.InstanceSnapshot
-	nil,                             // 22: rlark.execution.common.v1.RuntimeObjectCandidate.LabelsEntry
+	(*ObjectCondition)(nil),         // 14: rlark.execution.common.v1.ObjectCondition
+	(*ObjectSnapshot)(nil),          // 15: rlark.execution.common.v1.ObjectSnapshot
+	(*ResourceOwnership)(nil),       // 16: rlark.execution.common.v1.ResourceOwnership
+	(*OwnedFieldProjection)(nil),    // 17: rlark.execution.common.v1.OwnedFieldProjection
+	(*RuntimeObjectCandidate)(nil),  // 18: rlark.execution.common.v1.RuntimeObjectCandidate
+	(*DesiredRuntimeObject)(nil),    // 19: rlark.execution.common.v1.DesiredRuntimeObject
+	(*RuntimeInstance)(nil),         // 20: rlark.execution.common.v1.RuntimeInstance
+	(*InstanceCondition)(nil),       // 21: rlark.execution.common.v1.InstanceCondition
+	(*InstanceSnapshot)(nil),        // 22: rlark.execution.common.v1.InstanceSnapshot
+	nil,                             // 23: rlark.execution.common.v1.RuntimeObjectCandidate.LabelsEntry
 }
 var file_common_v1_types_proto_depIdxs = []int32{
 	6,  // 0: rlark.execution.common.v1.TypedValue.type:type_name -> rlark.execution.common.v1.TypeReference
@@ -1657,30 +1755,31 @@ var file_common_v1_types_proto_depIdxs = []int32{
 	8,  // 4: rlark.execution.common.v1.ObjectReference.logical_task_id:type_name -> rlark.execution.common.v1.LogicalTaskId
 	12, // 5: rlark.execution.common.v1.RuntimeObject.reference:type_name -> rlark.execution.common.v1.ObjectReference
 	7,  // 6: rlark.execution.common.v1.RuntimeObject.manifest:type_name -> rlark.execution.common.v1.TypedValue
-	13, // 7: rlark.execution.common.v1.ObjectSnapshot.objects:type_name -> rlark.execution.common.v1.RuntimeObject
-	1,  // 8: rlark.execution.common.v1.ResourceOwnership.scope:type_name -> rlark.execution.common.v1.IdentityScope
-	2,  // 9: rlark.execution.common.v1.ResourceOwnership.incarnation_policy:type_name -> rlark.execution.common.v1.IncarnationOwnershipPolicy
-	6,  // 10: rlark.execution.common.v1.RuntimeObjectCandidate.type:type_name -> rlark.execution.common.v1.TypeReference
-	22, // 11: rlark.execution.common.v1.RuntimeObjectCandidate.labels:type_name -> rlark.execution.common.v1.RuntimeObjectCandidate.LabelsEntry
-	15, // 12: rlark.execution.common.v1.RuntimeObjectCandidate.ownership:type_name -> rlark.execution.common.v1.ResourceOwnership
-	3,  // 13: rlark.execution.common.v1.RuntimeObjectCandidate.lifecycle:type_name -> rlark.execution.common.v1.ResourceLifecycle
-	6,  // 14: rlark.execution.common.v1.DesiredRuntimeObject.type:type_name -> rlark.execution.common.v1.TypeReference
-	7,  // 15: rlark.execution.common.v1.DesiredRuntimeObject.manifest:type_name -> rlark.execution.common.v1.TypedValue
-	15, // 16: rlark.execution.common.v1.DesiredRuntimeObject.ownership:type_name -> rlark.execution.common.v1.ResourceOwnership
-	3,  // 17: rlark.execution.common.v1.DesiredRuntimeObject.lifecycle:type_name -> rlark.execution.common.v1.ResourceLifecycle
-	4,  // 18: rlark.execution.common.v1.DesiredRuntimeObject.update_mode:type_name -> rlark.execution.common.v1.UpdateMode
-	16, // 19: rlark.execution.common.v1.DesiredRuntimeObject.owned_fields:type_name -> rlark.execution.common.v1.OwnedFieldProjection
-	6,  // 20: rlark.execution.common.v1.DesiredRuntimeObject.reconcile_profile:type_name -> rlark.execution.common.v1.TypeReference
-	11, // 21: rlark.execution.common.v1.DesiredRuntimeObject.units:type_name -> rlark.execution.common.v1.RuntimeUnit
-	12, // 22: rlark.execution.common.v1.RuntimeInstance.parent:type_name -> rlark.execution.common.v1.ObjectReference
-	9,  // 23: rlark.execution.common.v1.RuntimeInstance.task:type_name -> rlark.execution.common.v1.TaskIdentity
-	20, // 24: rlark.execution.common.v1.RuntimeInstance.conditions:type_name -> rlark.execution.common.v1.InstanceCondition
-	19, // 25: rlark.execution.common.v1.InstanceSnapshot.instances:type_name -> rlark.execution.common.v1.RuntimeInstance
-	26, // [26:26] is the sub-list for method output_type
-	26, // [26:26] is the sub-list for method input_type
-	26, // [26:26] is the sub-list for extension type_name
-	26, // [26:26] is the sub-list for extension extendee
-	0,  // [0:26] is the sub-list for field type_name
+	14, // 7: rlark.execution.common.v1.RuntimeObject.conditions:type_name -> rlark.execution.common.v1.ObjectCondition
+	13, // 8: rlark.execution.common.v1.ObjectSnapshot.objects:type_name -> rlark.execution.common.v1.RuntimeObject
+	1,  // 9: rlark.execution.common.v1.ResourceOwnership.scope:type_name -> rlark.execution.common.v1.IdentityScope
+	2,  // 10: rlark.execution.common.v1.ResourceOwnership.incarnation_policy:type_name -> rlark.execution.common.v1.IncarnationOwnershipPolicy
+	6,  // 11: rlark.execution.common.v1.RuntimeObjectCandidate.type:type_name -> rlark.execution.common.v1.TypeReference
+	23, // 12: rlark.execution.common.v1.RuntimeObjectCandidate.labels:type_name -> rlark.execution.common.v1.RuntimeObjectCandidate.LabelsEntry
+	16, // 13: rlark.execution.common.v1.RuntimeObjectCandidate.ownership:type_name -> rlark.execution.common.v1.ResourceOwnership
+	3,  // 14: rlark.execution.common.v1.RuntimeObjectCandidate.lifecycle:type_name -> rlark.execution.common.v1.ResourceLifecycle
+	6,  // 15: rlark.execution.common.v1.DesiredRuntimeObject.type:type_name -> rlark.execution.common.v1.TypeReference
+	7,  // 16: rlark.execution.common.v1.DesiredRuntimeObject.manifest:type_name -> rlark.execution.common.v1.TypedValue
+	16, // 17: rlark.execution.common.v1.DesiredRuntimeObject.ownership:type_name -> rlark.execution.common.v1.ResourceOwnership
+	3,  // 18: rlark.execution.common.v1.DesiredRuntimeObject.lifecycle:type_name -> rlark.execution.common.v1.ResourceLifecycle
+	4,  // 19: rlark.execution.common.v1.DesiredRuntimeObject.update_mode:type_name -> rlark.execution.common.v1.UpdateMode
+	17, // 20: rlark.execution.common.v1.DesiredRuntimeObject.owned_fields:type_name -> rlark.execution.common.v1.OwnedFieldProjection
+	6,  // 21: rlark.execution.common.v1.DesiredRuntimeObject.reconcile_profile:type_name -> rlark.execution.common.v1.TypeReference
+	11, // 22: rlark.execution.common.v1.DesiredRuntimeObject.units:type_name -> rlark.execution.common.v1.RuntimeUnit
+	12, // 23: rlark.execution.common.v1.RuntimeInstance.parent:type_name -> rlark.execution.common.v1.ObjectReference
+	9,  // 24: rlark.execution.common.v1.RuntimeInstance.task:type_name -> rlark.execution.common.v1.TaskIdentity
+	21, // 25: rlark.execution.common.v1.RuntimeInstance.conditions:type_name -> rlark.execution.common.v1.InstanceCondition
+	20, // 26: rlark.execution.common.v1.InstanceSnapshot.instances:type_name -> rlark.execution.common.v1.RuntimeInstance
+	27, // [27:27] is the sub-list for method output_type
+	27, // [27:27] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_common_v1_types_proto_init() }
@@ -1688,14 +1787,14 @@ func file_common_v1_types_proto_init() {
 	if File_common_v1_types_proto != nil {
 		return
 	}
-	file_common_v1_types_proto_msgTypes[14].OneofWrappers = []any{}
+	file_common_v1_types_proto_msgTypes[15].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_common_v1_types_proto_rawDesc), len(file_common_v1_types_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   18,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

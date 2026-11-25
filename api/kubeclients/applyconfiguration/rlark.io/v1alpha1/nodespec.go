@@ -23,10 +23,24 @@ import (
 
 // NodeSpecApplyConfiguration represents a declarative configuration of the NodeSpec type for use
 // with apply.
+//
+// NodeSpec contains only management-owned durable desired state. Agents must not
+// write this section; administrative APIs own Unschedulable and Operations.
 type NodeSpecApplyConfiguration struct {
+	// AgentType is a reserved compatibility field for the Node access form.
+	//
+	// Deprecated: use Runtime.Type for new integrations. This field must remain in
+	// the API and generated CRD while non-Kubernetes runtime implementations are
+	// incomplete, so existing resources and clients retain their declared intent.
 	AgentType *rlarkiov1alpha1.AgentType `json:"agentType,omitempty"`
-	// 节点接入的形态
+	// Identity is set by the management API or control plane when the Node is registered.
+	Identity *NodeIdentityApplyConfiguration `json:"identity,omitempty"`
+	// Runtime is the management-selected runtime reference for this Node.
+	Runtime *NodeRuntimeReferenceApplyConfiguration `json:"runtime,omitempty"`
+	// Unschedulable durably blocks placement of new workloads without stopping existing ones.
 	Unschedulable *bool `json:"unschedulable,omitempty"`
+	// Operations contains uniquely identified one-shot maintenance or drain requests.
+	Operations []NodeOperationRequestApplyConfiguration `json:"operations,omitempty"`
 }
 
 // NodeSpecApplyConfiguration constructs a declarative configuration of the NodeSpec type for use with
@@ -43,10 +57,39 @@ func (b *NodeSpecApplyConfiguration) WithAgentType(value rlarkiov1alpha1.AgentTy
 	return b
 }
 
+// WithIdentity sets the Identity field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Identity field is set to the value of the last call.
+func (b *NodeSpecApplyConfiguration) WithIdentity(value *NodeIdentityApplyConfiguration) *NodeSpecApplyConfiguration {
+	b.Identity = value
+	return b
+}
+
+// WithRuntime sets the Runtime field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Runtime field is set to the value of the last call.
+func (b *NodeSpecApplyConfiguration) WithRuntime(value *NodeRuntimeReferenceApplyConfiguration) *NodeSpecApplyConfiguration {
+	b.Runtime = value
+	return b
+}
+
 // WithUnschedulable sets the Unschedulable field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Unschedulable field is set to the value of the last call.
 func (b *NodeSpecApplyConfiguration) WithUnschedulable(value bool) *NodeSpecApplyConfiguration {
 	b.Unschedulable = &value
+	return b
+}
+
+// WithOperations adds the given value to the Operations field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Operations field.
+func (b *NodeSpecApplyConfiguration) WithOperations(values ...*NodeOperationRequestApplyConfiguration) *NodeSpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithOperations")
+		}
+		b.Operations = append(b.Operations, *values[i])
+	}
 	return b
 }

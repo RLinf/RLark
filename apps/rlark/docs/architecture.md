@@ -74,6 +74,7 @@ Controller-Manager runs in the control plane, coordinating the lifecycle of high
 | Domain Controller   | Manage Domain CRD, allocate IP subnets, sign DomainPeer certificates         | [domain/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/domain/)     |
 | Task Controller     | Watch Task status, sync to corresponding Job                                 | [task/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/task/)         |
 | Node Controller     | Watch Node registration/offline events                                       | [node/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/node/)         |
+| Upgrade Controller  | Manage cluster upgrades, create ClusterUpgradeJob per target cluster         | [upgrade/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/upgrade/)   |
 
 **Job State Machine**:
 
@@ -87,6 +88,8 @@ stateDiagram-v2
     Succeeded --> [*]
 ```
 
+**Cluster Upgrade**: See [Cluster Upgrade Architecture](architecture/upgrade.md) for details on the upgrade mechanism.
+
 ## 4. Data Plane Components
 
 ### 4.1 Agent
@@ -99,6 +102,8 @@ Agent is deployed in each data plane cluster with two operating modes:
 | `node`    | nodeAgent    | Network routing: Runs NodeServer, handles cross-cluster Pod traffic forwarding; Image pre-pull: pre-pulls dispatched task images into the node container runtime (containerd/docker) |
 
 **clusterAgent Controllers**:
+
+Kubernetes Task execution is built as one complete, single-Runtime assembly: Host/Coordinator, the shared Adapter registry, scoped observation runner, and management Task resync. Build performs bounded metadata/permission preflight without starting watches or writing workloads; one-time Setup precedes manager startup, and any setup failure aborts the Agent. Managers retain ownership of cancellation and worker shutdown. The assembly does not own Node/Pod reporting, node-agent or networking, and it does not introduce Docker/Raw execution or node assignment. See [Runtime assembly boundaries](developer-guide/runtime-provider.md#single-runtime-task-assembly).
 
 ```mermaid
 graph LR
@@ -131,11 +136,13 @@ graph LR
 **Push Controller**:
 
 1. Watch local K8s resource changes (Pod create/delete/status changes)
-2. Observe the changed workload root, its owned Pods, and Pod events without running a full desired-plan diff
-3. Sync workload state to the corresponding control plane Task and Pod CRs
+2. Task observers use Adapter-declared typed/unstructured roots and Runtime-owned Pod owner-chain profiles; they verify identity and enqueue hints only
+3. The Task pull Host/Coordinator alone observes workload semantics and writes Task Status; the separate Pod controller reports Pod CRs
 4. Periodically report Node info (addresses, capacity, GPU count)
 
 The in-process Kubernetes implementation is the only production workload path. Versioned Runtime Provider and Workload Adapter gRPC contracts exist for future external implementations, but the default Task controller does not select remote implementations. A selected Workload Adapter receives the complete Workload configuration and owns all Workload-specific optional features; there is no separate Workload Extension service. See [Runtime, Workload, and Environment Boundary](developer-guide/runtime-provider.md).
+
+Task observation uses a separate namespace-scoped cache for each trusted Runtime scope, not an unrestricted discovery watch. Startup resolves the finite registered GVKs/profiles and checks explicit `get/list/watch` permissions before atomically registering the observer group. A denied or indeterminate permission aborts startup. UID-verified deletion hints force full pull reconciliation; replay and periodic resync recover lost events. Shutdown cancels cache and worker sources together. Production retains one default Kubernetes Runtime and the historical workload namespace; scoped observation is not a claim of complete multi-Runtime execution support.
 
 ### 4.2 Network Sidecar
 

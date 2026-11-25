@@ -7,11 +7,169 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"
 )
+
+func TestNodeMatchesSelectorUsesAnnotations(t *testing.T) {
+	node := &rlarkv1alpha1.Node{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+			"rlark.io/node-category-cloud": "true",
+		}},
+		Status: rlarkv1alpha1.NodeStatus{
+			ObservedNodeLabels: map[string]string{"rlark.io/gpu-model": "A100"},
+		},
+	}
+	if !nodeMatchesSelector(node, map[string]string{
+		"rlark.io/node-category-cloud": "true",
+		"rlark.io/gpu-model":           "A100",
+	}) {
+		t.Fatal("expected selector to match the observed label and managed annotation")
+	}
+	if nodeMatchesSelector(node, map[string]string{"rlark.io/node-category-cloud": "false"}) {
+		t.Fatal("expected selector with a different annotation value not to match")
+	}
+}
+
+// TestMarkJobProgressTracksAndWithdraws pins the Progressing contract: it is
+// published while the controller still has work to drive, and withdrawn --
+// not set to False -- once the Job settles, so that "idle" never masquerades
+// as "failed".
+func TestMarkJobProgressTracksAndWithdraws(t *testing.T) {
+	cases := []struct {
+		name      string
+		suspended bool
+		phase     rlarkv1alpha1.JobPhase
+		reason    string
+	}{
+		{name: "pending awaits tasks", phase: rlarkv1alpha1.JobPhasePending, reason: jobReasonAwaitingTasks},
+		{name: "running reports tasks", phase: rlarkv1alpha1.JobPhaseRunning, reason: jobReasonTasksRunning},
+		{name: "suspended reports stopping", suspended: true, phase: rlarkv1alpha1.JobPhaseRunning, reason: jobReasonStoppingTasks},
+		{name: "suspended and stopped withdraws", suspended: true, phase: rlarkv1alpha1.JobPhaseStopped},
+		{name: "succeeded withdraws", phase: rlarkv1alpha1.JobPhaseSucceeded},
+		{name: "failed withdraws", phase: rlarkv1alpha1.JobPhaseFailed},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			job := &rlarkv1alpha1.Job{
+				ObjectMeta: metav1.ObjectMeta{Generation: 7},
+				Spec:       rlarkv1alpha1.JobSpec{Suspended: testCase.suspended},
+				Status: rlarkv1alpha1.JobStatus{
+					Phase: testCase.phase,
+					// Seed a stale condition so a withdrawal is observable.
+					Conditions: []metav1.Condition{{
+						Type:               jobConditionProgressing,
+						Status:             metav1.ConditionTrue,
+						Reason:             "Stale",
+						ObservedGeneration: 6,
+						LastTransitionTime: metav1.Now(),
+					}},
+				},
+			}
+
+			if !markJobProgress(job) {
+				t.Fatal("expected the seeded condition to be rewritten or withdrawn")
+			}
+
+			condition := apimeta.FindStatusCondition(job.Status.Conditions, jobConditionProgressing)
+			if testCase.reason == "" {
+				if condition != nil {
+					t.Fatalf("expected Progressing to be withdrawn, got %#v", condition)
+				}
+				return
+			}
+			if condition == nil {
+				t.Fatal("expected Progressing to be published")
+				return
+			}
+			if condition.Status != metav1.ConditionTrue {
+				t.Fatalf("Progressing status = %q, want True", condition.Status)
+			}
+			if condition.Reason != testCase.reason {
+				t.Fatalf("Progressing reason = %q, want %q", condition.Reason, testCase.reason)
+			}
+			if condition.ObservedGeneration != job.Generation {
+				t.Fatalf("Progressing observedGeneration = %d, want %d", condition.ObservedGeneration, job.Generation)
+			}
+			if markJobProgress(job) {
+				t.Fatal("expected a second call on unchanged state to report no change")
+			}
+		})
+	}
+}
+
+func TestMarkJobEvictedTracksAndWithdraws(t *testing.T) {
+	stopped := []rlarkv1alpha1.JobTaskStatus{
+		{Name: "head", Phase: rlarkv1alpha1.TaskPhaseStopped},
+		{Name: "worker", Phase: rlarkv1alpha1.TaskPhaseStopped},
+	}
+	cases := []struct {
+		name      string
+		suspended bool
+		phase     rlarkv1alpha1.JobPhase
+		tasks     []rlarkv1alpha1.JobTaskStatus
+		want      bool
+	}{
+		{name: "evicted job is reported", phase: rlarkv1alpha1.JobPhaseStopped, tasks: stopped, want: true},
+		{name: "suspended job is not an eviction", suspended: true, phase: rlarkv1alpha1.JobPhaseStopped, tasks: stopped},
+		{name: "running job is not an eviction", phase: rlarkv1alpha1.JobPhaseRunning, tasks: stopped},
+		{name: "partially stopped job is not an eviction", phase: rlarkv1alpha1.JobPhaseStopped, tasks: []rlarkv1alpha1.JobTaskStatus{
+			{Name: "head", Phase: rlarkv1alpha1.TaskPhaseStopped},
+			{Name: "worker", Phase: rlarkv1alpha1.TaskPhaseRunning},
+		}},
+		{name: "job without workers is not an eviction", phase: rlarkv1alpha1.JobPhaseStopped},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			job := &rlarkv1alpha1.Job{
+				Spec: rlarkv1alpha1.JobSpec{Suspended: testCase.suspended},
+				Status: rlarkv1alpha1.JobStatus{
+					Phase: testCase.phase,
+					Tasks: testCase.tasks,
+					// Seed a stale condition so a withdrawal is observable.
+					Conditions: []metav1.Condition{{
+						Type:               jobConditionEvicted,
+						Status:             metav1.ConditionTrue,
+						Reason:             "Stale",
+						LastTransitionTime: metav1.Now(),
+					}},
+				},
+			}
+
+			if !markJobEvicted(job) {
+				t.Fatal("expected the seeded condition to be rewritten or withdrawn")
+			}
+
+			condition := apimeta.FindStatusCondition(job.Status.Conditions, jobConditionEvicted)
+			if !testCase.want {
+				if condition != nil {
+					t.Fatalf("expected Evicted to be withdrawn, got %#v", condition)
+				}
+				return
+			}
+			if condition == nil {
+				t.Fatal("expected Evicted to be published")
+			}
+			if condition.Status != metav1.ConditionTrue || condition.Reason != jobReasonEvicted {
+				t.Fatalf("Evicted condition = %#v, want True/%s", condition, jobReasonEvicted)
+			}
+			if condition.Message != jobEvictedMessage {
+				t.Fatalf("Evicted message = %q, want %q", condition.Message, jobEvictedMessage)
+			}
+			if condition.ObservedGeneration != 0 {
+				t.Fatalf("Evicted observedGeneration = %d, want 0 for an observation-driven condition", condition.ObservedGeneration)
+			}
+			if markJobEvicted(job) {
+				t.Fatal("expected a second call on unchanged state to report no change")
+			}
+		})
+	}
+}
 
 func TestSetRayExecutionPreservesScripts(t *testing.T) {
 	parameters, err := json.Marshal(taskapi.RayExecutionParametersV1{
@@ -115,6 +273,23 @@ func TestEvaluateJobEventWaitsForAllTasks(t *testing.T) {
 			want: EventJobStopped,
 		},
 		{
+			name: "running becomes stopped when every worker is evicted",
+			job: jobWithTaskPhases(false, rlarkv1alpha1.JobPhaseRunning,
+				rlarkv1alpha1.TaskPhaseStopped, rlarkv1alpha1.TaskPhaseStopped),
+			want: EventJobStopped,
+		},
+		{
+			name: "evicted job stays stopped while every worker is still gone",
+			job: jobWithTaskPhases(false, rlarkv1alpha1.JobPhaseStopped,
+				rlarkv1alpha1.TaskPhaseStopped, rlarkv1alpha1.TaskPhaseStopped),
+		},
+		{
+			name: "evicted job returns to pending when workers come back",
+			job: jobWithTaskPhases(false, rlarkv1alpha1.JobPhaseStopped,
+				rlarkv1alpha1.TaskPhasePending, rlarkv1alpha1.TaskPhasePending),
+			want: EventTasksPending,
+		},
+		{
 			name: "starting becomes pending while tasks are mixed",
 			job: jobWithTaskPhases(false, rlarkv1alpha1.JobPhaseStopped,
 				rlarkv1alpha1.TaskPhaseStopped, rlarkv1alpha1.TaskPhasePending),
@@ -171,24 +346,53 @@ func TestBuildTaskUsesOnlyJobSuspension(t *testing.T) {
 	}
 }
 
+func TestBuildTaskDropsTemplateDrainRequests(t *testing.T) {
+	// A cloned or restored Job can carry stale DrainRequests in its Task
+	// template. They are Node-Agent-owned one-shot projections and must never be
+	// copied into a new Task.
+	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "job"}}
+	task := buildTask(job, rlarkv1alpha1.JobTaskTemplate{
+		Name: "worker",
+		TaskSpec: rlarkv1alpha1.TaskSpec{DrainRequests: []rlarkv1alpha1.TaskDrainRequest{{
+			OperationID: "op",
+			NodeUID:     "node-uid",
+			NodeName:    "node",
+		}}},
+	}, "job-worker", "default")
+
+	if len(task.Spec.DrainRequests) != 0 {
+		t.Fatalf("drain requests = %#v, want none", task.Spec.DrainRequests)
+	}
+}
+
 func TestBuildTaskCarriesJobRestartOperation(t *testing.T) {
 	job := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{
 		Name:        "job",
 		Annotations: map[string]string{RestartedAtAnnotation: "2026-08-21T00:00:00Z"},
 	}}
-	task := buildTask(job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"}, "job-worker", "default")
+	task := mustDesiredTask(t, job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"})
 
 	if got := task.Annotations[RestartedAtAnnotation]; got != job.Annotations[RestartedAtAnnotation] {
 		t.Fatalf("Job restart operation = %q, want %q", got, job.Annotations[RestartedAtAnnotation])
 	}
-	if !taskEqual(task, job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"}) {
-		t.Fatal("Task from the current Job restart operation should be equal")
+	if !taskUpToDate(task, mustDesiredTask(t, job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"})) {
+		t.Fatal("Task from the current Job restart operation should be up to date")
 	}
 
 	job.Annotations[RestartedAtAnnotation] = "2026-08-21T00:01:00Z"
-	if taskEqual(task, job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"}) {
+	if taskUpToDate(task, mustDesiredTask(t, job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"})) {
 		t.Fatal("Task from an older Job restart operation should require replacement")
 	}
+}
+
+// mustDesiredTask builds the desired Task for the fixed test coordinates.
+func mustDesiredTask(t *testing.T, job *rlarkv1alpha1.Job, template rlarkv1alpha1.JobTaskTemplate) *rlarkv1alpha1.Task {
+	t.Helper()
+	task, err := desiredTask(job, template, "job-worker", "default", false)
+	if err != nil {
+		t.Fatalf("build desired Task: %v", err)
+	}
+	return task
 }
 
 func TestBuildTaskCarriesJobTags(t *testing.T) {
@@ -213,7 +417,7 @@ func TestBuildTaskLowersJobDomainToNetworkEnvironment(t *testing.T) {
 			Domain: "training-network",
 		},
 	}
-	task := buildTask(job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"}, "job-worker", "default")
+	task := mustDesiredTask(t, job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"})
 
 	var found *rlarkv1alpha1.TaskEnvironment
 	for i := range task.Spec.Environments {
@@ -233,7 +437,7 @@ func TestBuildTaskLowersJobDomainToNetworkEnvironment(t *testing.T) {
 		t.Fatalf("network domain = %q, want %q", parameters.Domain, job.Spec.Domain)
 	}
 	job.Spec.Domain = "other-network"
-	if taskEqual(task, job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"}) {
+	if taskUpToDate(task, mustDesiredTask(t, job, rlarkv1alpha1.JobTaskTemplate{Name: "worker"})) {
 		t.Fatal("Task with stale network environment matched changed Job domain")
 	}
 }
@@ -329,6 +533,7 @@ func TestMarkJobValid(t *testing.T) {
 	cond := findCondition(job.Status.Conditions, jobConditionValidated)
 	if cond == nil {
 		t.Fatal("expected a Validated condition")
+		return
 	}
 	if cond.Status != metav1.ConditionTrue {
 		t.Errorf("Validated status = %q, want True", cond.Status)

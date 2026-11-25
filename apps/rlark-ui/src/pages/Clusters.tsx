@@ -45,9 +45,12 @@ import {
   getNodeResourceSummary,
   getResourceUsagePercent,
   isBusinessWorkerNode,
-  nodeStatusReasonLabel,
   parseResourceQuantity,
 } from "../utils/nodes";
+import {
+  buildNodeWorkloads,
+  isActiveWorkerPhase,
+} from "../utils/nodeWorkloads";
 import {
   compareSortValues,
   MetricCard,
@@ -58,6 +61,18 @@ import {
 } from "../components/shared";
 import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
 import { formatChinaDateTime } from "../utils/time";
+import {
+  formatDurationSince,
+  nodeAvailabilityNote,
+  nodeConditionLabel,
+  nodeConditionMessage,
+  nodeConditionStatusLabel,
+  nodeDegradationState,
+  nodeReasonLabel,
+  nodeSchedulingBadgeState,
+  nodeStateLabel,
+} from "../utils/nodeState";
+import { pullProgressLabel } from "../utils/pullProgress";
 
 type NodeWorker = {
   id: string;
@@ -80,6 +95,12 @@ function addRequestedResource(
 ) {
   const value = parseResourceQuantity(key, String(raw ?? ""));
   if (value !== null) totals[key] = (totals[key] ?? 0) + value;
+}
+
+function formatRelativeTime(value: string | undefined, zh: boolean): string {
+  const elapsed = formatDurationSince(value);
+  if (!elapsed) return "—";
+  return zh ? `${elapsed}前` : `${elapsed} ago`;
 }
 
 export function ClustersPage({
@@ -128,43 +149,7 @@ export function ClustersPage({
         podsApi.list(),
       ]);
       setRealNodes(nodes);
-      const taskJobs = new Map<string, string>(
-        tasks.map(
-          (task: {
-            metadata?: { name?: string; labels?: Record<string, string> };
-          }) => [
-            task.metadata?.name ?? "",
-            task.metadata?.labels?.["rlinf.io/job"] ?? "",
-          ],
-        ),
-      );
-      const workloadMap = new Map<
-        string,
-        { jobs: Set<string>; workers: number }
-      >();
-      for (const pod of pods as Array<{
-        spec?: { taskName?: string };
-        status?: { phase?: string; node?: string };
-      }>) {
-        if (pod.status?.phase !== "Running" || !pod.status?.node) continue;
-        const nodeName = pod.status.node as string;
-        const current = workloadMap.get(nodeName) ?? {
-          jobs: new Set<string>(),
-          workers: 0,
-        };
-        const jobName = taskJobs.get(pod.spec?.taskName ?? "");
-        if (jobName) current.jobs.add(jobName);
-        current.workers += 1;
-        workloadMap.set(nodeName, current);
-      }
-      setNodeWorkloads(
-        Object.fromEntries(
-          [...workloadMap].map(([name, workload]) => [
-            name,
-            { jobs: [...workload.jobs].sort(), workers: workload.workers },
-          ]),
-        ),
-      );
+      setNodeWorkloads(buildNodeWorkloads(tasks, pods));
     } catch (e) {
       setRealNodes([]);
       setNodeWorkloads({});
@@ -175,6 +160,17 @@ export function ClustersPage({
   };
 
   useAutoRefresh(fetchNodes, 10000);
+
+  // Reset the detail-page container's scrollTop whenever the selected node
+  // changes. The node detail view is rendered inside an
+  // `overflow: hidden auto` container; browser scroll-restore (and any prior
+  // interaction that left the container scrolled) would otherwise hide the
+  // top heading and action bar below the viewport.
+  useEffect(() => {
+    if (!selectedNodeName) return;
+    const container = document.querySelector(".node-detail-page");
+    if (container) container.scrollTop = 0;
+  }, [selectedNodeName]);
 
   const handleRefresh = async () => {
     if (refreshing) return;
@@ -429,6 +425,17 @@ function formatBytes(bytes: number): string {
   return bytes + "B";
 }
 
+// nodePhaseTitle explains a degraded phase from the controller-written Degraded
+// condition so the UI never implies a cause the controller did not report.
+function nodePhaseTitle(node: CRDNode, zh: boolean): string | undefined {
+  if (node.status?.phase !== "Degraded") return undefined;
+  const degradation = nodeDegradationState(node);
+  const detail = nodeReasonLabel(degradation.condition?.reason, zh);
+  return detail
+    ? `${nodeStateLabel("degraded", zh)}${zh ? "：" : ": "}${detail}`
+    : undefined;
+}
+
 export function ClusterDetailReal({
   namespace,
   nodes: clusterNodes,
@@ -506,7 +513,7 @@ export function ClusterDetailReal({
                   <td>
                     <small>{zh ? categoryInfo.zh : categoryInfo.en}</small>
                   </td>
-                  <td>
+                  <td title={nodePhaseTitle(node, zh)}>
                     <StatusBadge
                       phase={(node.status?.phase ?? "Offline") as Phase}
                       copy={c}
@@ -580,10 +587,12 @@ export function NodeDetailReal({
   node,
   copy: c,
   onTaskNavigate,
+  showConditions = false,
 }: {
   node: CRDNode;
   copy: Copy;
   onTaskNavigate?: (name: string) => void;
+  showConditions?: boolean;
 }) {
   const zh = c.nav.overview === "总览";
   const [nodeWorkers, setNodeWorkers] = useState<NodeWorker[]>([]);
@@ -598,8 +607,13 @@ export function NodeDetailReal({
       );
       const workers: NodeWorker[] = (podItems as Record<string, unknown>[])
         .filter(
-          (pod: { status?: { node?: string } }) =>
-            pod.status?.node === node.metadata.name,
+          (pod: {
+            metadata?: { namespace?: string };
+            status?: { node?: string; phase?: string };
+          }) =>
+            pod.status?.node === node.metadata.name &&
+            pod.metadata?.namespace === node.metadata.namespace &&
+            isActiveWorkerPhase(pod.status?.phase),
         )
         .map(
           (pod: {
@@ -640,7 +654,9 @@ export function NodeDetailReal({
     [node.metadata.name],
   );
   const phase = (node.status?.phase ?? "Offline") as Phase;
-  const labels = node.metadata.labels ?? {};
+  const schedulingBadge = nodeSchedulingBadgeState(node);
+  const schedulingNote = nodeAvailabilityNote(node, zh);
+  const labels = node.status?.observedNodeLabels ?? {};
   const addresses = node.status?.addresses ?? [];
   const internalAddress =
     addresses.find((address) => address.type === "InternalIP")?.address ??
@@ -660,6 +676,8 @@ export function NodeDetailReal({
       Object.entries(totals).map(([key, value]) => [key, String(value)]),
     );
   }, [nodeWorkers]);
+  // status.used is allocated Pod requests, not real-time utilization. The local
+  // fallback is also requests aggregated from the displayed Workers.
   const reportedUsed = node.status?.used ?? {};
   const used =
     Object.keys(reportedUsed).length > 0 ? reportedUsed : requestedFallback;
@@ -793,6 +811,28 @@ export function NodeDetailReal({
       : []),
   ];
   const created = formatChinaDateTime(node.metadata.creationTimestamp);
+  const conditionOrder = [
+    "AgentConnected",
+    "Ready",
+    "RuntimeReady",
+    "NetworkReady",
+    "StorageReady",
+    "DeviceReady",
+    "ResourcePressure",
+    "Draining",
+    "Degraded",
+  ];
+  const conditions = [...(node.status?.conditions ?? [])].sort(
+    (left, right) => {
+      const leftOrder = conditionOrder.indexOf(left.type);
+      const rightOrder = conditionOrder.indexOf(right.type);
+      return (
+        (leftOrder === -1 ? conditionOrder.length : leftOrder) -
+          (rightOrder === -1 ? conditionOrder.length : rightOrder) ||
+        left.type.localeCompare(right.type)
+      );
+    },
+  );
   return (
     <>
       <div className="node-resource-detail node-insight-detail">
@@ -817,28 +857,17 @@ export function NodeDetailReal({
             <StatusBadge phase={phase} copy={c} />
             <span
               className={
-                node.spec.unschedulable
-                  ? "schedule-chip blocked"
-                  : "schedule-chip"
+                schedulingBadge === "schedulable"
+                  ? "schedule-chip"
+                  : "schedule-chip blocked"
               }
+              title={schedulingNote === "—" ? undefined : schedulingNote}
+              aria-label={schedulingNote === "—" ? undefined : schedulingNote}
             >
-              {node.spec.unschedulable
-                ? zh
-                  ? "已停止调度"
-                  : "Unschedulable"
-                : zh
-                  ? "可调度"
-                  : "Schedulable"}
+              {nodeStateLabel(schedulingBadge, zh)}
             </span>
           </div>
         </header>
-
-        {node.status?.reason && (
-          <div className="node-health-message">
-            <Activity size={15} />
-            <span>{nodeStatusReasonLabel(node.status.reason, zh)}</span>
-          </div>
-        )}
 
         <div className="node-insight-facts">
           <div>
@@ -1044,7 +1073,7 @@ export function NodeDetailReal({
                             {p.image}
                           </code>
                           <span className={`node-pull-status chip-${p.status}`}>
-                            {p.message || p.status}
+                            {pullProgressLabel(p.message, p.status, zh)}
                           </span>
                         </div>
                         {isPulling && p.total > 0 && (
@@ -1164,6 +1193,76 @@ export function NodeDetailReal({
           onTaskNavigate={onTaskNavigate}
         />
       </section>
+      {showConditions && (
+        <section className="node-insight-section node-conditions-section">
+          <div className="node-insight-section-head">
+            <div>
+              <span>{zh ? "节点状态条件" : "Conditions"}</span>
+              <small>
+                {zh
+                  ? "以条件类型、状态和原因表达当前节点结论；说明文本仅供诊断。"
+                  : "Current node conclusions use condition type, status, and reason; messages are diagnostic only."}
+              </small>
+            </div>
+          </div>
+          {conditions.length === 0 ? (
+            <p className="muted">
+              {zh ? "尚未上报节点状态条件。" : "No conditions reported."}
+            </p>
+          ) : (
+            <div className="node-conditions-table-wrap">
+              <table className="node-conditions-table">
+                <thead>
+                  <tr>
+                    <th>{zh ? "类型" : "Type"}</th>
+                    <th>{zh ? "状态" : "Status"}</th>
+                    <th>{zh ? "原因" : "Reason"}</th>
+                    <th>{zh ? "说明" : "Message"}</th>
+                    <th>{zh ? "最后转换" : "Last transition"}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {conditions.map((condition) => (
+                    <tr key={condition.type}>
+                      <td>
+                        <strong title={condition.type}>
+                          {nodeConditionLabel(condition.type, zh)}
+                        </strong>
+                      </td>
+                      <td>
+                        <span
+                          className={`node-condition-status ${condition.status.toLowerCase()}`}
+                        >
+                          {nodeConditionStatusLabel(condition.status, zh)}
+                        </span>
+                      </td>
+                      <td>{nodeReasonLabel(condition.reason, zh) ?? "—"}</td>
+                      <td>
+                        {nodeConditionMessage(
+                          condition.type,
+                          condition.message,
+                          zh,
+                        ) || "—"}
+                      </td>
+                      <td
+                        title={
+                          condition.lastTransitionTime
+                            ? formatChinaDateTime(condition.lastTransitionTime)
+                            : undefined
+                        }
+                      >
+                        {condition.lastTransitionTime
+                          ? formatRelativeTime(condition.lastTransitionTime, zh)
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
     </>
   );
 }

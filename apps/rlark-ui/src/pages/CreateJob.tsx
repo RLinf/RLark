@@ -1,10 +1,43 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type ImageUsage = {
   image: string;
   useCount: number;
   lastUsedAt: string;
 };
+
+function parseQuantityMi(size: string): string {
+  const match = size.match(/^(\d+)(Mi|Gi)$/);
+  if (!match) return "";
+  const num = Number(match[1]);
+  if (match[2] === "Gi") return String(num * 1024);
+  return String(num);
+}
+
+function parseMemoryToMi(mem: string): number {
+  const match = mem.match(/^(\d+)(Mi|Gi|Ki|Ti)$/);
+  if (!match) return 0;
+  const num = Number(match[1]);
+  switch (match[2]) {
+    case "Ti":
+      return num * 1024 * 1024;
+    case "Gi":
+      return num * 1024;
+    case "Mi":
+      return num;
+    case "Ki":
+      return Math.floor(num / 1024);
+    default:
+      return 0;
+  }
+}
+
+function formatMi(mi: number): string {
+  if (mi >= 1024) {
+    return `${Math.floor(mi / 1024)}Gi`;
+  }
+  return `${mi}Mi`;
+}
 
 function formatImageUsage(usedAt: string, useCount: number, zh: boolean) {
   const seconds = Math.max(
@@ -45,17 +78,23 @@ import type { JobTag } from "../data";
 import {
   ROLE_TEMPLATES,
   automaticNetworkDomain,
+  clusterNodeNamespaces,
   generateJobCRD,
   generateJobResourceName,
+  isClusterSchedulable,
+  isSchedulableClusterValue,
   isValidJobDisplayName,
   isValidRoleName,
   JOB_DISPLAY_NAME_MAX_LENGTH,
   ROLE_NAME_MAX_LENGTH,
   parseNodeSelectorStr,
+  schedulableNodeNamespaces,
+  selectorToStr,
 } from "../utils/job";
 import { toYaml } from "../utils/yaml";
 import { describeVolumeSource } from "../utils/crd";
 import { useNodeLabels } from "../utils/nodes";
+import { nodeAvailabilityState } from "../utils/nodeState";
 import { imageReferenceHasWhitespace } from "../utils/imageReference";
 import { RoleNameInput } from "../components/create";
 import { CodeEditorField } from "../components/CodeEditor";
@@ -281,13 +320,22 @@ export function CreateJobModal({
   const [domains, setDomains] = useState<{ name: string; cidr: string }[]>([]);
   const [reclaimableResources, setReclaimableResources] =
     useState<ReclaimableResources>({});
-  const {
-    clusterDisplayNames,
-    nodes: allNodes,
-    loading: nodesLoading,
-  } = useNodeLabels();
+  const { nodes: allNodes, loading: nodesLoading } = useNodeLabels();
   const [availableClusters, setAvailableClusters] = useState<Cluster[]>(
     clusters.slice(0, 4),
+  );
+  // Node CR 仅从当前可调度的集群中选取。已停止调度或已删除的集群仍可能残留
+  // Node，若把它们的节点作为候选，复制/编辑后的任务会创建成功却无法被调度。
+  const [placementNamespaces, setPlacementNamespaces] = useState<Set<string>>(
+    new Set(),
+  );
+  const defaultCluster = availableClusters[0]?.id ?? "";
+  const placementNodes = useMemo(
+    () =>
+      allNodes.filter((node) =>
+        placementNamespaces.has(node.metadata.namespace ?? ""),
+      ),
+    [allNodes, placementNamespaces],
   );
   const [storageClasses, setStorageClasses] = useState<
     { id: string; name: string; description: string; bucket: string }[]
@@ -300,12 +348,12 @@ export function CreateJobModal({
   const lastFetchedStorageClusterRef = useRef<string>("");
   const inferenceDoneRef = useRef(false);
 
-  useEffect(() => {
+  const fetchRecentImages = () => {
     imagesApi
       .list<ImageUsage>()
       .then(setRecentImages)
       .catch(() => {});
-  }, []);
+  };
 
   useEffect(() => {
     jobsApi
@@ -368,44 +416,48 @@ export function CreateJobModal({
 
   useEffect(() => {
     clustersApi
-      .list<Partial<Cluster>>()
+      .list<Partial<Cluster> & { agentNamespace?: string }>()
       .then((data) => {
-        const list: Cluster[] = data.map((c) => ({
-          id: c.id ?? c.name ?? "",
-          name: c.name ?? c.id ?? "",
-          type: c.type === "Embodied" ? "Embodied" : "Cloud",
-          region: c.region ?? "",
-          location: c.location ?? "",
-          phase: c.phase ?? "Online",
-          cloudNodes: c.cloudNodes ?? 0,
-          embodiedNodes: c.embodiedNodes ?? 0,
-          robots: c.robots ?? 0,
-          gpuModels: c.gpuModels ?? [],
-          robotModels: c.robotModels ?? [],
-          cpuUsage: c.cpuUsage ?? 0,
-          gpuUsage: c.gpuUsage ?? 0,
-          robotUsage: c.robotUsage ?? 0,
-          runningJobs: c.runningJobs ?? 0,
-          description: c.description ?? "",
-        }));
-        const schedulable = list.filter(
-          (cluster) =>
-            cluster.phase === "Online" || cluster.phase === "Downgraded",
+        const list: Array<Cluster & { agentNamespace?: string }> = data.map(
+          (c) => ({
+            id: c.id ?? c.name ?? "",
+            name: c.name ?? c.id ?? "",
+            type: c.type === "Embodied" ? "Embodied" : "Cloud",
+            region: c.region ?? "",
+            location: c.location ?? "",
+            phase: c.phase ?? "Online",
+            cloudNodes: c.cloudNodes ?? 0,
+            embodiedNodes: c.embodiedNodes ?? 0,
+            robots: c.robots ?? 0,
+            gpuModels: c.gpuModels ?? [],
+            robotModels: c.robotModels ?? [],
+            cpuUsage: c.cpuUsage ?? 0,
+            gpuUsage: c.gpuUsage ?? 0,
+            robotUsage: c.robotUsage ?? 0,
+            runningJobs: c.runningJobs ?? 0,
+            description: c.description ?? "",
+            agentNamespace: c.agentNamespace,
+          }),
         );
-        const realList = schedulable.length > 0 ? schedulable : [];
-        setAvailableClusters(realList);
-        setClustersLoaded(list.length > 0);
-        if (realList.length > 0) {
+        const schedulable = list.filter((cluster) =>
+          isClusterSchedulable(cluster),
+        );
+        setAvailableClusters(schedulable);
+        setPlacementNamespaces(schedulableNodeNamespaces(list));
+        // 即使列表为空也视为加载完成：没有可调度集群时必须阻止继续提交，
+        // 而不是沿用复制/编辑任务中已经失效的集群。
+        setClustersLoaded(true);
+        if (schedulable.length > 0) {
           setRoleResources((prev) =>
             Object.fromEntries(
               Object.entries(prev).map(([role, rr]) => {
                 const current = rr.cluster;
-                const match = realList.find(
+                const match = schedulable.find(
                   (c) => c.id === current || c.name === current,
                 );
                 return [
                   role,
-                  { ...rr, cluster: match ? match.id : realList[0].id },
+                  { ...rr, cluster: match ? match.id : schedulable[0].id },
                 ];
               }),
             ),
@@ -479,6 +531,9 @@ export function CreateJobModal({
           pvcSizeGb: m.pvcSizeGb ?? 10,
           ...(m.rawVolume ? { rawVolume: m.rawVolume } : {}),
         })),
+        ...(res.advanced?.sharedMemorySize
+          ? { advanced: { sharedMemorySize: res.advanced.sharedMemorySize } }
+          : {}),
       };
     });
   }
@@ -487,7 +542,7 @@ export function CreateJobModal({
     roles.forEach((entry, index) => {
       defaultRoleResources[entry.id] = {
         role: entry.name,
-        cluster: clusterDisplayNames[0] ?? "",
+        cluster: defaultCluster,
         nodeSelector: "",
         replicas: 0,
         cpu: "",
@@ -574,24 +629,11 @@ export function CreateJobModal({
   }, [availableClusters]);
 
   useEffect(() => {
-    if (clusterDisplayNames.length === 0) return;
-    setRoleResources((prev) => {
-      let changed = false;
-      const next: Record<string, RoleResource> = {};
-      for (const [k, v] of Object.entries(prev)) {
-        if (!v.cluster && clusterDisplayNames[0]) {
-          next[k] = { ...v, cluster: clusterDisplayNames[0] };
-          changed = true;
-        } else {
-          next[k] = v;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [clusterDisplayNames]);
-
-  useEffect(() => {
-    if (inferenceDoneRef.current || allNodes.length === 0 || !clustersLoaded)
+    if (
+      inferenceDoneRef.current ||
+      placementNodes.length === 0 ||
+      !clustersLoaded
+    )
       return;
     inferenceDoneRef.current = true;
 
@@ -602,8 +644,10 @@ export function CreateJobModal({
           const selectorMap = parseNodeSelectorStr(resource.nodeSelector);
           if (Object.keys(selectorMap).length === 0) return [role, resource];
 
-          const matched = allNodes.filter((n) => {
-            const labels = n.metadata.labels ?? {};
+          // 只从可调度集群的节点反查集群，避免复制/编辑的任务被残留节点
+          // 固定到已经停止调度或已删除的集群。
+          const matched = placementNodes.filter((n) => {
+            const labels = n.status?.observedNodeLabels ?? {};
             return Object.entries(selectorMap).every(([k, v]) => {
               const values = v.split(",");
               return labels[k] !== undefined && values.includes(labels[k]);
@@ -629,7 +673,68 @@ export function CreateJobModal({
       );
       return changed ? next : prev;
     });
-  }, [allNodes, clustersLoaded]);
+  }, [placementNodes, clustersLoaded]);
+
+  // 复制、编辑或编辑后重启的任务可能保留已经不可用（离线、停用调度、已下架）
+  // 或不再属于所选集群的节点。这里直接从表单数据中移除这些节点，确保提交内容
+  // 和 YAML 预览不会保留无法承载 Worker 的节点。
+  useEffect(() => {
+    if (!clustersLoaded || nodesLoading || allNodes.length === 0) return;
+    setRoleResources((prev) => {
+      let changed = false;
+      const next: Record<string, RoleResource> = { ...prev };
+      for (const [role, resource] of Object.entries(prev)) {
+        const selector = parseNodeSelectorStr(resource.nodeSelector);
+        const hostnames = (selector["kubernetes.io/hostname"] ?? "")
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean);
+        if (hostnames.length === 0) continue;
+
+        const namespaces = clusterNodeNamespaces(
+          resource.cluster,
+          availableClusters,
+        );
+        const selectableNames = new Set(
+          placementNodes
+            .filter((node) => namespaces.has(node.metadata.namespace ?? ""))
+            .filter(
+              (node) => nodeAvailabilityState(node).kind !== "unavailable",
+            )
+            .map((node) => node.metadata.name),
+        );
+        const keptNames = hostnames.filter((name) => selectableNames.has(name));
+        if (keptNames.length === hostnames.length) continue;
+
+        // 只裁剪 hostname，保留源任务中的其他节点选择条件。
+        if (keptNames.length > 0) {
+          selector["kubernetes.io/hostname"] = keptNames.join(",");
+        } else {
+          delete selector["kubernetes.io/hostname"];
+        }
+        next[role] = {
+          ...resource,
+          nodeSelector: selectorToStr(selector),
+          // 自动选择模式的 Worker 数量是独立配置；指定节点模式下每个选中的
+          // 节点对应一个 Worker，仅在副本数与节点数一致时随选择同步，避免
+          // 改写通过 API 提交的、两者不一致的配置。
+          ...(placementModes[role] === "model" ||
+          Number(resource.replicas) !== hostnames.length
+            ? {}
+            : { replicas: keptNames.length }),
+        };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [
+    allNodes,
+    availableClusters,
+    clustersLoaded,
+    nodesLoading,
+    placementModes,
+    placementNodes,
+  ]);
 
   useEffect(() => {
     if (!activeRoleTab) return;
@@ -658,7 +763,7 @@ export function CreateJobModal({
     templateEntries.forEach((entry, index) => {
       newRR[entry.id] = roleResources[entry.id] ?? {
         role: entry.name,
-        cluster: clusterDisplayNames[0] ?? "",
+        cluster: defaultCluster,
         nodeSelector: "",
         replicas: 0,
         cpu: "",
@@ -682,7 +787,7 @@ export function CreateJobModal({
       ...prev,
       [id]: {
         role: "",
-        cluster: clusterDisplayNames[0] ?? "",
+        cluster: defaultCluster,
         nodeSelector: "",
         replicas: 0,
         cpu: "",
@@ -803,6 +908,62 @@ export function CreateJobModal({
       return { ...prev, [role]: { ...rr, mounts: newMounts } };
     });
   };
+  const [advancedOpen, setAdvancedOpen] = useState<Record<string, boolean>>(
+    () =>
+      Object.fromEntries(
+        Object.entries(roleResources)
+          .filter(([, rr]) => !!rr.advanced?.sharedMemorySize)
+          .map(([roleId]) => [roleId, true]),
+      ),
+  );
+  const shmCapacityForRole = (roleId: string): number => {
+    const rr = roleResources[roleId];
+    if (!rr) return 0;
+    const selector = parseNodeSelectorStr(rr.nodeSelector);
+    const hostnames = (selector["kubernetes.io/hostname"] ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter(Boolean);
+    if (hostnames.length === 0) return 0;
+    const namespaces = clusterNodeNamespaces(rr.cluster, availableClusters);
+    const selectedNodes = placementNodes.filter(
+      (node) =>
+        namespaces.has(node.metadata.namespace ?? "") &&
+        hostnames.includes(node.metadata.name),
+    );
+    if (selectedNodes.length === 0) return 0;
+    const minCapacity = Math.min(
+      ...selectedNodes.map((node) => {
+        const mem = node.status?.capacity?.memory ?? "0";
+        return parseMemoryToMi(mem);
+      }),
+    );
+    return minCapacity > 0 ? minCapacity : 0;
+  };
+  const shmCapacityMi = useMemo(
+    () => shmCapacityForRole(activeRoleTab),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [roleResources, activeRoleTab, placementNodes, availableClusters],
+  );
+  // 共享内存输入框的本地草稿值，让用户可以全部清空后再重新输入；
+  // roleResources 里始终保留合法的 "<num>Mi"，避免下游渲染/提交拿到空串。
+  const [shmDrafts, setShmDrafts] = useState<Record<string, string>>({});
+  const updateRRAdvanced = (
+    role: string,
+    field: "sharedMemorySize",
+    v: string | undefined,
+  ) => {
+    setRoleResources((prev) => {
+      const rr = prev[role];
+      const next = { ...rr.advanced };
+      if (v === undefined) {
+        delete next[field];
+      } else {
+        next[field] = v;
+      }
+      return { ...prev, [role]: { ...rr, advanced: next } };
+    });
+  };
 
   const automaticDomain = automaticNetworkDomain(domains);
   const crd = generateJobCRD({
@@ -823,7 +984,17 @@ export function CreateJobModal({
     sshPublicKey,
     tags,
   });
-  const yaml = toYaml(crd);
+  // 新建时 Job ID 由服务端在提交时生成，前端这个占位名不会出现在最终资源里。
+  // 预览里展示它会让用户按一个不存在的名字去查任务，因此直接略去。
+  const previewCrd = isEdit
+    ? crd
+    : {
+        ...crd,
+        metadata: Object.fromEntries(
+          Object.entries(crd.metadata ?? {}).filter(([key]) => key !== "name"),
+        ),
+      };
+  const yaml = toYaml(previewCrd);
   const steps = zh
     ? ["角色和资源", "Worker 配置", "公共配置", "YAML 预览"]
     : ["Roles & Resources", "Worker Config", "Common Config", "YAML Preview"];
@@ -871,6 +1042,15 @@ export function CreateJobModal({
           return zh
             ? `请为 ${role} 选择集群。`
             : `Select a cluster for ${role}.`;
+        // 复制或编辑的任务可能保留一个已停止调度/已删除的集群。它不会出现在
+        // 集群下拉框中，必须要求重新选择，否则任务创建后无法被调度。
+        if (
+          clustersLoaded &&
+          !isSchedulableClusterValue(resource.cluster, availableClusters)
+        )
+          return zh
+            ? `${role} 选择的集群已停止调度或不可用，请重新选择集群。`
+            : `The cluster selected for ${role} is not schedulable. Select another cluster.`;
         if (!resource.image.trim())
           return zh ? `请为 ${role} 输入镜像。` : `Enter an image for ${role}.`;
         if (imageReferenceHasWhitespace(resource.image))
@@ -889,11 +1069,47 @@ export function CreateJobModal({
           .split(",")
           .map((name) => name.trim())
           .filter(Boolean);
-        const selectedNodes = allNodes.filter(
-          (node) =>
-            node.metadata.namespace === resource.cluster &&
-            selectedNames.includes(node.metadata.name),
+        const clusterNamespaces = clusterNodeNamespaces(
+          resource.cluster,
+          availableClusters,
         );
+        const clusterNodes = placementNodes.filter((node) =>
+          clusterNamespaces.has(node.metadata.namespace ?? ""),
+        );
+        const selectedNodes = clusterNodes.filter((node) =>
+          selectedNames.includes(node.metadata.name),
+        );
+        // 源任务的节点选择器可能指向已停止调度集群中的节点。即使集群选择
+        // 已被替换为一个可用集群，也不能带着这些失效的 hostname 提交。
+        if (
+          clustersLoaded &&
+          !nodesLoading &&
+          selectedNames.length > selectedNodes.length
+        )
+          return zh
+            ? `${role} 选择的节点已不可调度或不属于所选集群，请重新选择节点。`
+            : `${role} has selected nodes that are not schedulable in the selected cluster. Select the nodes again.`;
+        const selectorKeys = Object.keys(selector);
+        const matchedNodes =
+          selectorKeys.length > 0 && clustersLoaded && !nodesLoading
+            ? clusterNodes.filter((node) =>
+                selectorKeys.every((key) => {
+                  const values = selector[key].split(",");
+                  const labels = node.status?.observedNodeLabels ?? {};
+                  const label = labels[key];
+                  return label !== undefined && values.includes(label);
+                }),
+              )
+            : [];
+        if (
+          selectorKeys.length > 0 &&
+          clustersLoaded &&
+          !nodesLoading &&
+          matchedNodes.length === 0
+        )
+          return zh
+            ? `${role} 的节点选择条件在当前集群没有匹配到可调度节点，请重新选择集群或节点。`
+            : `${role}'s node selector matches no schedulable nodes in the selected cluster. Adjust its cluster or node selector.`;
         const resourceRequest =
           resource.gpu && resource.gpu !== "0"
             ? { key: "nvidia.com/gpu", amount: Number(resource.gpu) }
@@ -950,6 +1166,15 @@ export function CreateJobModal({
                 : `${role}'s PVC size must be between 1 and 200 Gi.`;
             }
           }
+        }
+        const shmSize = resource?.advanced?.sharedMemorySize;
+        if (shmSize) {
+          const shmMi = Number(parseQuantityMi(shmSize));
+          const capacity = shmCapacityForRole(entry.id);
+          if (shmMi > 0 && capacity > 0 && shmMi > capacity)
+            return zh
+              ? `${role} 的共享内存 ${formatMi(shmMi)} 超出所选节点内存上限 ${formatMi(capacity)}，请调小共享内存或更换节点。`
+              : `${role}'s shared memory ${formatMi(shmMi)} exceeds the selected nodes' memory limit ${formatMi(capacity)}. Reduce the shared memory or pick other nodes.`;
         }
       }
       if (effectiveHeader && !canBeHeader(effectiveHeader))
@@ -1017,6 +1242,10 @@ export function CreateJobModal({
             ...current.metadata,
             ...requestBody.metadata,
             name: editJob!.name,
+            labels: {
+              ...current.metadata?.labels,
+              ...requestBody.metadata?.labels,
+            },
             annotations: {
               ...current.metadata?.annotations,
               ...requestBody.metadata?.annotations,
@@ -1305,7 +1534,7 @@ export function CreateJobModal({
                         <ResourcePlacementPicker
                           zh={zh}
                           cluster={rr.cluster}
-                          nodes={allNodes}
+                          nodes={placementNodes}
                           loading={nodesLoading}
                           reclaimableResources={reclaimableResources}
                           nodeSelector={rr.nodeSelector}
@@ -1348,7 +1577,10 @@ export function CreateJobModal({
                           <div className="image-picker">
                             <input
                               value={rr.image}
-                              onFocus={() => setImagePickerRole(role)}
+                              onFocus={() => {
+                                fetchRecentImages();
+                                setImagePickerRole(role);
+                              }}
                               onChange={(e) => {
                                 updateRR(role, "image", e.target.value);
                                 setImagePickerRole(role);
@@ -1719,6 +1951,165 @@ export function CreateJobModal({
                             ),
                           )}
                         </div>
+                        <div className="form-section" style={{ marginTop: 12 }}>
+                          <div
+                            className="form-section-head"
+                            style={{ cursor: "pointer" }}
+                            onClick={() =>
+                              setAdvancedOpen((prev) => ({
+                                ...prev,
+                                [role]: !prev[role],
+                              }))
+                            }
+                          >
+                            <small>
+                              {zh ? "高级配置" : "Advanced"}
+                              <span style={{ marginLeft: 8, opacity: 0.6 }}>
+                                {advancedOpen[role] ? "▼" : "▶"}
+                              </span>
+                            </small>
+                          </div>
+                          {advancedOpen[role] && (
+                            <div style={{ paddingTop: 8 }}>
+                              {advancedOpen[role] && (
+                                <>
+                                  <div
+                                    className="mount-row"
+                                    style={{
+                                      gridTemplateColumns:
+                                        "minmax(0, 1fr) 32px",
+                                    }}
+                                  >
+                                    <div className="mount-field-box">
+                                      <span>
+                                        {zh
+                                          ? "共享内存 (shm)"
+                                          : "Shared memory (shm)"}
+                                      </span>
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          alignItems: "center",
+                                          gap: 4,
+                                          padding: "0 8px",
+                                        }}
+                                      >
+                                        <input
+                                          type="text"
+                                          inputMode="numeric"
+                                          value={
+                                            shmDrafts[role] ??
+                                            parseQuantityMi(
+                                              rr.advanced?.sharedMemorySize ??
+                                                "",
+                                            )
+                                          }
+                                          onChange={(e) => {
+                                            const raw = e.target.value.trim();
+                                            if (raw === "") {
+                                              setShmDrafts((prev) => ({
+                                                ...prev,
+                                                [role]: "",
+                                              }));
+                                              updateRRAdvanced(
+                                                role,
+                                                "sharedMemorySize",
+                                                "",
+                                              );
+                                              return;
+                                            }
+                                            if (!/^\d+$/.test(raw)) return;
+                                            setShmDrafts((prev) => {
+                                              const next = { ...prev };
+                                              delete next[role];
+                                              return next;
+                                            });
+                                            updateRRAdvanced(
+                                              role,
+                                              "sharedMemorySize",
+                                              `${raw}Mi`,
+                                            );
+                                          }}
+                                          style={{
+                                            border: "none",
+                                            flex: 1,
+                                            minWidth: 0,
+                                          }}
+                                        />
+                                        <span
+                                          style={{
+                                            fontSize: 11,
+                                            color: "var(--muted, #8a94a6)",
+                                          }}
+                                        >
+                                          Mi
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <button
+                                      className="icon-button danger"
+                                      onClick={() => {
+                                        setShmDrafts((prev) => {
+                                          const next = { ...prev };
+                                          delete next[role];
+                                          return next;
+                                        });
+                                        setAdvancedOpen((prev) => ({
+                                          ...prev,
+                                          [role]: false,
+                                        }));
+                                        updateRRAdvanced(
+                                          role,
+                                          "sharedMemorySize",
+                                          undefined,
+                                        );
+                                      }}
+                                      title={zh ? "删除" : "Delete"}
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                  {shmCapacityMi > 0 && (
+                                    <small
+                                      style={{
+                                        display: "block",
+                                        marginTop: 4,
+                                        fontSize: 11,
+                                        color:
+                                          Number(
+                                            parseQuantityMi(
+                                              rr.advanced?.sharedMemorySize ??
+                                                "",
+                                            ),
+                                          ) > shmCapacityMi
+                                            ? "#e53e3e"
+                                            : "var(--muted, #8a94a6)",
+                                      }}
+                                    >
+                                      {zh
+                                        ? `节点内存上限: ${formatMi(shmCapacityMi)}`
+                                        : `Node memory limit: ${formatMi(shmCapacityMi)}`}
+                                    </small>
+                                  )}
+                                </>
+                              )}
+                              {!advancedOpen[role] && (
+                                <button
+                                  className="secondary-button"
+                                  onClick={() =>
+                                    setAdvancedOpen((prev) => ({
+                                      ...prev,
+                                      [role]: true,
+                                    }))
+                                  }
+                                >
+                                  <Plus size={14} />
+                                  {zh ? "共享内存" : "Shared memory"}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </section>
                     </div>
                   );
@@ -1896,8 +2287,12 @@ export function CreateJobModal({
                 <strong>{zh ? "任务 YAML 预览" : "Job YAML Preview"}</strong>
                 <small>
                   {zh
-                    ? "提交前可检查最终资源定义。"
-                    : "Review the final resource definition before submitting."}
+                    ? isEdit
+                      ? "提交前可检查最终资源定义。"
+                      : "提交前可检查最终资源定义。任务 ID（metadata.name）由服务端在提交时生成。"
+                    : isEdit
+                      ? "Review the final resource definition before submitting."
+                      : "Review the final resource definition before submitting. The job ID (metadata.name) is assigned by the server on submit."}
                 </small>
               </div>
               {error && (

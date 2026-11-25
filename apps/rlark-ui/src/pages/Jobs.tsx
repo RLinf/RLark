@@ -50,8 +50,10 @@ import { effectiveJobPhase, type JobDisplayPhase } from "../utils/jobPhase";
 import { formatChinaDateTime } from "../utils/time";
 import { resolveSSHKeyOwners, type SSHUserKey } from "../utils/sshKeys";
 import { isDiskUsageWarning } from "../utils/nodeResources";
+import { pullProgressLabel } from "../utils/pullProgress";
 import { overlayContainer } from "../utils/overlayContainer";
 import {
+  keepPullProgressForImage,
   partitionWorkerEvents,
   refineWorkerEventReason,
   workerEventTime,
@@ -85,15 +87,17 @@ function taskResourceName(jobName: string, taskName: string) {
 // aggregateNodePullProgress flattens the detail page's nodeName -> pullProgress
 // cache into a single list for the top StatusBadge hover, surfacing image pull
 // progress while a job is Pending (mirrors WorkerRow's worker-level tooltip).
-// The cache is built from this job's Task.status.observedNodes, so every entry
-// already belongs to the job being displayed.
+// Node.status.pullProgress is node-scoped and may also contain pulls owned by
+// other Tasks on the same node, so only this job's images are kept.
 function aggregateNodePullProgress(
   nodePullProgressMap: Record<string, PullProgressEntry[]>,
+  images: Set<string>,
 ): PullProgressEntry[] {
   const aggregated: PullProgressEntry[] = [];
   const seen = new Set<string>();
   for (const entries of Object.values(nodePullProgressMap)) {
     for (const p of entries) {
+      if (!images.has(p.image)) continue;
       // Dedup by image+status to avoid showing identical entries from
       // multiple nodes pulling the same image.
       const key = `${p.image}|${p.status}`;
@@ -1780,10 +1784,13 @@ export function JobDetailPage({
 
   // Aggregate Node CR pullProgress for the top StatusBadge hover. Uses Node CR
   // (not the Task CR-derived pullProgressMap used by WorkerRow) so the tooltip
-  // reflects raw node-agent reported progress while the job is Pending.
+  // reflects raw node-agent reported progress while the job is Pending. The
+  // node-scoped cache is filtered to this job's images so another (or an
+  // earlier) task's pull progress is never shown here.
+  const jobImages = new Set(job.resources.map((resource) => resource.image));
   const jobPullProgress =
     job.phase === "Pending"
-      ? aggregateNodePullProgress(nodePullProgressMap)
+      ? aggregateNodePullProgress(nodePullProgressMap, jobImages)
       : [];
   // 同样从 Node CR events 聚合本 job 的 warning 事件，用于详情顶部
   // StatusBadge 的 "i" tooltip。worker 行 tooltip 则按节点取
@@ -2241,14 +2248,19 @@ export function JobDetailPage({
           // 同样从 Node.status.events 取节点 warning 事件；当 pod.node
           // 缺失时回退到 Task.status.events，让 Pending worker 行 tooltip
           // 在调度前就能展示 DiskPressure 等原因。
-          const workerEvents =
+          // 平台注入的 sidecar/init 镜像同样会按镜像上报 Pulling/Pulled，
+          // 这些拉取进展不属于任务自身镜像，先剔除，避免历史事件里常驻一条
+          // 被划掉的"镜像已拉取"。
+          const workerEvents = keepPullProgressForImage(
             phase === "Pending" || phase === "Failed"
               ? (podEventsMap[pod.name] ?? []).length > 0
                 ? (podEventsMap[pod.name] ?? [])
                 : pod.node && (nodeEventsMap[pod.node] ?? []).length > 0
                   ? (nodeEventsMap[pod.node] ?? [])
                   : (taskEventsMap[pod.taskName?.toLowerCase() ?? ""] ?? [])
-              : [];
+              : [],
+            resource?.image,
+          );
           // pod.node 非空即表示 kube-scheduler 已完成绑定，此后 Pending 只可能
           // 来自容器创建或镜像拉取；把绑定前的 FailedScheduling 拆到
           // resolvedEvents，避免首条调度失败事件被当成当前阻塞原因。
@@ -4156,6 +4168,20 @@ function RoleRuntimeConfig({
               })}
               empty={zh ? "未配置数据挂载" : "No data mounts configured"}
             />
+            {resource.advanced?.sharedMemorySize && (
+              <RoleRuntimeDataTable
+                className="role-runtime-advanced-table"
+                title={zh ? "高级配置" : "Advanced"}
+                headers={[zh ? "配置项" : "Setting", zh ? "值" : "Value"]}
+                rows={[
+                  [
+                    zh ? "共享内存 (shm)" : "Shared memory (shm)",
+                    resource.advanced.sharedMemorySize,
+                  ],
+                ]}
+                empty={zh ? "未配置高级配置" : "No advanced settings"}
+              />
+            )}
           </div>
         </div>
       )}
@@ -4679,6 +4705,9 @@ export function PullProgressInfo({
   const tooltipRef = useRef<HTMLSpanElement | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
+  // Pinned tooltips ignore mouse-leave so the pointer can move into the popup
+  // to read or copy its contents.
+  const [pinned, setPinned] = useState(false);
   const [pos, setPos] = useState<{
     top: number;
     left: number;
@@ -4757,17 +4786,26 @@ export function PullProgressInfo({
       closeTimerRef.current = null;
     }
   };
-  const show = () => {
-    cancelClose();
-    setPos(null);
-    setOpen(true);
-  };
   const clear = () => {
     cancelClose();
     setOpen(false);
     setPos(null);
+    setPinned(false);
+  };
+  const show = () => {
+    cancelClose();
+    // Only reset the cached position when the tooltip is actually opening;
+    // resetting while it is already visible makes it jump to the fallback
+    // position for a frame, which can push it out from under the pointer and
+    // make the tooltip impossible to hold.
+    if (!open) setPos(null);
+    setOpen(true);
   };
   const handleMouseLeave = (event: React.MouseEvent<HTMLSpanElement>) => {
+    // A pinned tooltip stays open until the user clicks the icon again, clicks
+    // elsewhere, or presses Escape. This lets the pointer travel into the
+    // tooltip to read or copy its contents.
+    if (pinned) return;
     const nextTarget = event.relatedTarget;
     if (
       nextTarget instanceof Node &&
@@ -4779,8 +4817,54 @@ export function PullProgressInfo({
     cancelClose();
     closeTimerRef.current = window.setTimeout(clear, 250);
   };
+  const togglePinned = (event: React.SyntheticEvent<HTMLSpanElement>) => {
+    event.stopPropagation();
+    if (pinned) {
+      clear();
+      return;
+    }
+    cancelClose();
+    setPinned(true);
+    if (!open) setPos(null);
+    setOpen(true);
+  };
 
   useEffect(() => () => cancelClose(), []);
+
+  // Pinned tooltips are portalled, so "click outside" must check both the icon
+  // and the tooltip element instead of relying on DOM ancestry.
+  useEffect(() => {
+    if (!pinned) return;
+    const close = () => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+      setOpen(false);
+      setPos(null);
+      setPinned(false);
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (
+        wrapperRef.current?.contains(target) ||
+        tooltipRef.current?.contains(target)
+      ) {
+        return;
+      }
+      close();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [pinned]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -4815,13 +4899,34 @@ export function PullProgressInfo({
   return (
     <>
       <span
-        className={`status-info${variant === "danger" ? " status-info-danger" : ""}`}
+        className={`status-info${variant === "danger" ? " status-info-danger" : ""}${pinned ? " status-info-pinned" : ""}`}
         tabIndex={0}
+        role="button"
+        aria-expanded={open}
+        aria-pressed={pinned}
+        aria-label={
+          pinned
+            ? zh
+              ? "取消固定提示"
+              : "Unpin tooltip"
+            : zh
+              ? "固定提示"
+              : "Pin tooltip"
+        }
         ref={wrapperRef}
         onMouseEnter={show}
         onMouseLeave={handleMouseLeave}
         onFocus={show}
-        onBlur={clear}
+        onBlur={() => {
+          if (!pinned) clear();
+        }}
+        onClick={togglePinned}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            togglePinned(event);
+          }
+        }}
       >
         <Info size={13} />
       </span>
@@ -4874,7 +4979,7 @@ export function PullProgressInfo({
                     <span key={`p-${i}`} className="pull-entry">
                       <code>{p.image}</code>
                       <span className="pull-status">
-                        {p.message || p.status}
+                        {pullProgressLabel(p.message, p.status, zh)}
                         {p.status === "pulling" && p.total > 0
                           ? ` · ${pct}%`
                           : ""}

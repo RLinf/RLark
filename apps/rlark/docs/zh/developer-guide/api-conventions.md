@@ -47,26 +47,39 @@
 
 切勿把一次性动作建模为 `spec` 布尔量（例如 `restart: true`）。`spec` 开关必须是持久化的期望状态，重启后重新调谐仍然安全。
 
+当一次性动作确实以「带标识的请求列表」形式放在 `spec` 中时（例如 `Node.spec.operations`），这份契约由 API 边界校验，而不是交给每个消费方各自解释：
+
+- 标识字段必填且不得为空。没有 ID 的 operation 无法被跟踪、回报，也无法幂等重试，于是每个消费方都只能跳过它，这个请求就会无声无息地消失。
+- 动作枚举是封闭的，且其允许的每个取值都有且只有一个消费归属方。不支持的取值由 API Server 直接拒绝，而不是被那些认不出它的控制器静默忽略。
+
 ### 2.2 控制面与数据面
 
 `Task` 是 status 归属被拆分的资源，也是引入新拆分时应遵循的范式：
 
-- 数据面集群 Agent 拥有 `status.phase`、`status.message` 和 `status.observedNodes`。它依据实际工作负载把这些字段收集为 `StatusIntent`——Kubernetes 运行时在 `apps/rlark/pkg/agent/controllers/task/push_deployment.go` 与 `lifecycle_kubernetes.go` 中产出 Intent——再由 `apps/rlark/pkg/agent/execution/host/host.go` 中与运行时无关的 task host 按优先级合并，并执行唯一一次 status 写入。运行时 Provider 绝不能自行 patch Task status。数据面也是 `status.observedGeneration` 的归属方，并在每次被接受的写入中推进它——包括观测值恰好未发生变化的写入，否则仅修改 Spec 会让上报的 status 悄然陈旧（见 [4.3](#43-observedgeneration)）。
-- 控制面 Task 控制器拥有 `status.pullProgress` 和 `status.events`，在 `apps/rlark/pkg/controllermanager/task/task_controller.go` 中聚合。
+- 数据面集群 Agent 拥有 `status.phase`、`status.message` 和 `status.observedNodes`。它依据实际工作负载把这些字段收集为 `StatusIntent`——Kubernetes 运行时在 `apps/rlark/pkg/agent/controllers/task/push_deployment.go` 与 `lifecycle_kubernetes.go` 中产出 Intent——再由 `apps/rlark/pkg/agent/execution/host/host.go` 中与运行时无关的 task host 按优先级合并，并执行唯一一次 status 写入。运行时 Provider 绝不能自行 patch Task status。数据面也是 `status.observedGeneration` 的归属方，仅在被接受的 Intent 报告工作负载/生命周期结论（Phase 或 observed payload）时推进它，包括这些观测值未发生变化的情况。Condition-only 和 message-only 写入保留顶层 generation；Spec 驱动的 Condition 分别记录自身 generation。准入拒绝必须让旧 Running Phase 仍可识别为陈旧（见 [4.3](#43-observedgeneration)）。
+- 控制面 Task 控制器拥有 `status.pullProgress` 和 `status.events`，在 `apps/rlark/pkg/controllermanager/task/task_controller.go` 中聚合。它由 Node watch 唤醒：只有当某个 Node 上报的拉取进度或事件真正发生变化时，才入队观察该 Node 的 Pending Task；此外还有一个只在 leader 上运行的抖动 resync 重新入队 Pending Task，使 watch 事件丢失不会让聚合值无限期滞后。每一轮 resync 都会访问全部 Task，并且在控制器处理不过来时等待而不是跳过，因此滞后上界是一个 resync 周期加上控制器消化完这一轮所需的时间。该控制器不再按固定间隔自我重新入队，因此聚合字段必须始终从当前 Node 状态重算，而不能依赖上一次调谐观测到的内容。
 
-两个写入方都使用 `client.MergeFrom(original)` 进行 status patch，从而只发送自己的字段。任一方改用整体 `Status().Update` 都会在每次调谐时抹掉对方的字段。task host 还会用它观测到的 Task UID 与 generation 对写入做围栏，因此为陈旧 Task 实例计算出的 status intent 会被丢弃而不是被应用。
+两个写入方都使用 merge status patch，只发送自己的字段。task host 使用 `MergeFromWithOptimisticLock`：并发 API 变化必须在发布前产生冲突，重试必须重新读取并计算 intent。仅发布成功后才可更新本地 resourceVersion，供有顺序依赖的 claim/lifecycle 写入使用。任一方改用整体 `Status().Update` 都会在每次调谐时抹掉对方的字段。task host 还会将 intent 的 UID/generation 与本地快照比较，但本地检查不能替代 API 侧 resourceVersion 前置条件。
 
 其余资源的归属方是单一的：
 
 - 控制面拥有 `Job`、`Workflow`、`Domain` 的 status。
-- 数据面 Agent 只拥有 `Node` status 中由 Kubernetes 派生的容量与健康字段。控制面的 Node Reconciler 独占写入由 Agent Lease 推导的连接 `phase`、心跳时间和 `Ready` Condition；两个写入方都只能 patch 自己声明拥有的字段。
-- 控制面的 Cluster Reconciler 拥有 Cluster 聚合 status 及其 `Ready` Condition。它通过列出 `Cluster.spec.agentNamespace` 中的 Node CR 推导成员关系，绝不通过选择可变的 `rlark.io/cluster-id` 标签。
+- 数据面 Agent 只拥有 `Node` status 中由 Kubernetes 派生的容量与健康字段，包括原始的 `status.diskPressure` 观测。控制面的 Node Reconciler 独占写入 `phase`、`status.lastHeartbeatTime`、`status.lastStatusChangeTime`、`status.drainOperations` 以及整个 `status.conditions` 列表——它们由 Agent Lease 和 Agent 自身上报的观测推导得出；两个写入方都只能 patch 自己声明拥有的字段。`lastHeartbeatTime` 是 Lease 的续约时间经控制面时钟重新发布的结果，因此它在所有 Node 之间可比较，并且只会向前推进；Agent 不得写入该字段，因为各 Agent 用自己的时钟打的时间戳会让时钟偏差看起来像存活。控制器若需要判断 Agent 是否已经上报过，应读取 Agent 自己拥有的字段，例如 `status.kubernetesNodeUID`。
+- 控制面的 Cluster Reconciler 拥有 Cluster 聚合 status 及其 `Ready` 与 `Degraded` Condition，以及 `status.observedGeneration` 与 `status.lastStatusChangeTime`。`lastStatusChangeTime` 与 `NodeStatus` 上的同名字段语义一致：只在 `phase` 真正发生变化时推进，从而让消费者能区分「已在该 phase 停留很久」与「刚刚翻转」。它通过列出 `Cluster.spec.agentNamespace` 中的 Node CR 推导成员关系，绝不通过选择可变的 `rlark.io/cluster-id` 标签。
 - Gateway 对 `/nodes` 同样实施该归属规则，包括提供 `namespace` 查询参数时。未被认领的 Namespace 返回 `items: []` 的空列表；若两个 Cluster 声明同一 Agent Namespace，Gateway 只列出该 Namespace 一次并记录 warning 日志，避免历史重复声明导致 Node 列表不可用。Cluster 写入目前直接经由管理 API，Gateway 不注册 Cluster 的创建、更新与 Patch 路由；权威归属方必须检测并报告冲突声明。由于该列表合并多个 Namespace，其不透明的 `metadata.continue` token 只能由 Gateway 签发和消费，不能转发给 Kubernetes API。聚合 Node 列表不支持 `labelSelector` 和 `fieldSelector`；两个参数都会返回 `400 INVALID_REQUEST`。
 - 数据面 Agent 拥有 `Pod` 与 `Addon` 的 status，它们是向上上报的纯观测。
 
 ### 2.3 确定性
 
 status 写入方对相同输入必须产生逐字节相同的输出，因为每个 reconciler 都会把计算出的 status 与已存值比较，相等时跳过写入。对 Go map 不排序直接聚合会破坏这一点：比较永不成立，控制器就会每次调谐都写 status。因此 `aggregatePullProgress` 先对节点名排序，再按镜像做稳定排序，最后按固定上界截断。
+
+父对象为子对象渲染的期望状态同样受这条要求约束。按结构整体比较子对象 spec，会让比较结果依赖父对象并不拥有的字段：一个被 defaulting 或数据面写入的字段就能翻转结果，父对象于是重写一个本已正确的子对象。因此父对象把自己拥有的字段投影为 canonical 形态，用 `reconcile.NewDigest` 计算摘要，并把摘要记录在子对象上：
+
+| 注解 | 常量 | 含义 |
+| --- | --- | --- |
+| `rlark.io/desired-digest` | `job.DesiredDigestAnnotation` | 父对象上次为该子对象渲染的期望状态摘要。摘要相符的子对象即为最新，不得重写。 |
+
+没有携带摘要的子对象来自该注解之前的版本。父对象仅对这类子对象退回按结构比较，并在下一次写入时补上摘要，因此该回退路径会收敛而不会长期存在。摘要写在 metadata 中，不会 bump `generation`，所以补写摘要不会被任何 watch 该子对象的一方误判为 spec 变更。
 
 ## 3. 身份
 
@@ -95,7 +108,94 @@ Kubernetes 对象的 name 就是稳定的业务身份。不存在第二个业务
 
     `PersistenceBackend` 接口抽象 PostgreSQL 和 Kubernetes Secret 两种后端，Syncer 和 Gateway 共用同一契约。新增后端类型只需实现 `Save`/`Load`/`List`/`Delete` 并在 `controller-manager.go` 和 `gateway.go` 中注册。
 
+### 3.1 证明子对象的归属
+
 在认领、修改或删除子对象或外部对象之前，必须用最强证据证明所有权：UID、OwnerReference、父对象 name、模板身份和范围元数据。无法证明所有权时，什么都不做。
+
+父对象在创建每个子对象时都会写入同一套 canonical 元数据，使后续 reconcile 无需靠名字猜测即可证明归属：
+
+| 元数据 | 常量 | 含义 |
+| --- | --- | --- |
+| controller `OwnerReference` | — | 该子对象实例由该父对象实例控制。 |
+| `rlark.io/parent-uid` 注解 | `utils.ParentUIDAnnotation` | 创建该子对象的父对象实例的 UID，使同名重建的父对象无法继承它。 |
+| `rlark.io/child-template` 注解 | `utils.ChildTemplateAnnotation` | 该子对象由父对象 spec 中的哪个模板渲染而来。 |
+| 父对象标签 | `rlinf.io/workflow`、`rlinf.io/job`、`rlinf.io/domain` | 用于缩小 List 范围的范围元数据，单独绝不构成归属证明。 |
+
+`utils.ClassifyChild` 与 `utils.ClassifyRemovedChild` 是解释这些证据的唯一位置，返回四种结果之一：
+
+| 结果 | 证据 | 调用方必须的动作 |
+| --- | --- | --- |
+| `Owned` | controller 引用、父对象 UID 与模板三者一致。 | 可以操作该子对象。 |
+| `Adoptable` | 只存在 canonical 形态之前的证据，例如只有 controller 引用而没有注解，或只有标签但名字是父对象自己记录过的。 | 操作该子对象，并一次性回写 canonical 元数据。 |
+| `Foreign` | 证据指向另一个父对象，或完全没有指向任何父对象。 | 不要碰该子对象。这是正确结果，不是错误。 |
+| `Unproven` | 证据有歧义或自相矛盾，例如只有标签、而名字父对象从未记录过。 | 返回错误并终止本次 reconcile。绝不退化为按名字前缀猜测。 |
+
+`Unproven` 刻意阻塞 reconcile 而不是跳过该对象：静默忽略有歧义的子对象会掩盖泄漏，靠猜测删除则可能销毁别人的数据。因此这两个函数的错误语义是刻意不对称的 —— `Foreign` 对 `ClassifyChild` 是错误（父对象预期管理的子对象必须可归因），但对 `ClassifyRemovedChild` 不是（剪除过程中跳过别人的对象正是预期结果）。
+
+当控制器用字段索引窄化 List 而不是全量列举时，索引必须覆盖分类器承认的**每一种**归属证据。只按标签建索引会让仅带 controller 引用的子对象对其父对象不可见，从而静默泄漏。`utils.ChildIndexKeys` 会产出全部可接受的索引键，索引函数必须使用它。
+
+收养是一次性收敛而不是反复写入：canonical 元数据就位之后，再次 reconcile 必须识别出无变化并且不发起任何更新。
+
+### 3.2 Finalizer
+
+finalizer 是对某一个控制器自身清理义务的声明，绝不是对整个对象状态的陈述。因此控制器只检查并释放自己的 finalizer，并且只要自身义务履行完毕就立即释放，不论还有哪些其他 finalizer 存在。等待 finalizer 列表清空会让互相等待的两个控制器死锁。
+
+| Finalizer | 常量 | 义务 |
+| --- | --- | --- |
+| `domains.rlinf.io/peer-cleanup` | `domain.CleanupFinalizer` | 该 Domain 的 DomainPeer 已在可证明归属的前提下删除。 |
+
+清理必须先决策再执行：回答"该 Domain 是否仍对 peer 负有义务"的规则是对当前列表的纯函数，因此无需 API Server 即可测试，执行阶段只负责应用该决策。每一趟都会重读子对象并重新决策，所以在"删掉了部分子对象但还没释放 finalizer"处被中断的一趟可以正确续作。
+
+finalizer 只能用 `Update` 修改，绝不能用 merge patch：merge patch 整体替换该列表且不带乐观并发，会静默丢弃另一个控制器并发添加的 finalizer。
+
+删除过程中同样必须证明归属。归属为 `Unproven` 的子对象会阻塞 finalizer 释放而不是被删除，因为父对象正在删除时，一次错误的猜测是不可恢复的。
+
+仍在等待子对象消失的那一趟不会排定任何定时器，因此它需要一个子对象事件来被唤醒。为此 Domain 控制器用显式映射而不是 `Owns()` 来 watch DomainPeer：在归属元数据出现之前写出的 peer 没有 `OwnerReference`，`Owns()` 会把它的删除映射到"没有任何 Domain"，finalizer 就会一直持有该 Domain 直到下一次全量 resync。该映射、字段索引和孤儿清扫器都读同一个 helper，因此它们对"一个 peer 可能属于哪些 Domain"不可能给出不同答案：peer 的名字、它的 Domain label、以及它的 controller `OwnerReference` 都是候选，带归属的、遗留的和被改名的 peer 都能唤醒其 Domain。
+
+这些候选只是检索键，不是归属证据。一个 peer 既按自己的名字建索引，也按它的 label 建索引，所以用一个已经从 API server 上消失的 Domain 名字去查 peer，同样会查出属于另一个存活 Domain 的 peer。因此针对已消失 Domain 的清理只对 label 没有指向别的 Domain 的 peer 套用命名约定。
+
+### 3.3 孤儿兜底清扫
+
+父对象驱动的清理是主路径，但并不完备：watch 事件可能丢失、finalizer 可能被强行移除，更早版本控制器写出的子对象根本没有 `OwnerReference` 供垃圾回收处理。因此控制面对"父对象为 cluster-scoped 的 namespaced 子对象"运行周期清扫器 —— Domain 下的 DomainPeer、Job 下的 Task。
+
+清扫器每一趟都以当前状态重算，绝不信任上一趟的判断。删除分两个阶段，因为一次读不到父对象不足以构成删除依据：
+
+| 注解 | 常量 | 含义 |
+| --- | --- | --- |
+| `rlark.io/stale-since` | `sweep.StaleSinceAnnotation` | 清扫器首次观测到该子对象成为孤儿的时刻。 |
+
+父对象已消失的子对象会被打上该时间戳。只有自记录时刻起经过 `--orphan-stale-ttl` 之后才会被删除，这段时间留给普通 reconcile 从丢失的事件中恢复。父对象重新出现时，标记会被移除。时间戳落盘而不是留在内存，是为了让 leader 切换不会重置计时、从而导致 TTL 永不到期。
+
+名字对上并不等于归属成立，因此仅凭名字永远不会触发删除。回收一个子对象之前，清扫器会按拥有它的控制器所用的同一套归属证据做判定，只要结论不明确就停手：
+
+- 子对象的 controller `OwnerReference` 指向另一个 Kind 的，一律放过：它属于清扫器完全不了解的另一个控制器。
+- 子对象由一个存活的父对象控制的，一律放过，即使子对象上的注解给出相反说法。存活的 OwnerReference 胜过陈旧元数据，出现矛盾是停手的理由，不是删除的理由。
+- 只有当子对象引用的每一个父对象名字要么不存在、要么被一个可证明并不拥有它的对象占用时（例如子对象记录的是更早使用过同一名字的那个对象的 UID），才会继续回收。
+
+完全没有指向任何父对象的子对象同样会被放过：其归属无法证明，清扫器绝不猜测。每页规模由 `--orphan-sweep-page-size` 约束，并通过绕过缓存的 reader 读取 —— controller-runtime 的缓存 reader 会拒绝带 continue token 的 List，而对集群内全部子对象做不分页 List 正是这里要避免的故障。清扫器要求 leader election，并对 `--orphan-sweep-interval` 施加抖动。
+
+### 3.4 终态归档
+
+终态资源由归档注册表从管理 API 中移除，使"终态判定 + TTL"按 Kind 收敛在一处，而不是每个 Kind 写一个控制器。已注册的 Kind：
+
+| Kind | 终态条件 | TTL 原点 |
+| --- | --- | --- |
+| `Job` | `status.phase` 为 `Stopped` | `status.endTime` |
+| `Workflow` | `status.phase` 为 `Stopped` | `status.endTime` |
+
+`Succeeded` 与 `Failed` 不归档：它们正是运维需要检视的结果，而且删除 Workflow 会级联删除其 Job。只有停止路径刻意置入的显式 `Stopped` 才构成回收该对象的请求。每个终态相位通常都会写入 `status.endTime`，TTL 因此有原点。
+
+已进入终态但缺少 `status.endTime` 的对象同样需要被归档，也同样不会被立刻删除。第一趟看到它的调谐会记下当前时间，之后一直以这一刻为计时起点：
+
+| 注解 | 常量 | 含义 |
+| --- | --- | --- |
+| `rlark.io/archive-observed-since` | `archive.ArchiveObservedSinceAnnotation` | 控制器首次观测到该终态对象且其缺少 `status.endTime` 的时刻。 |
+
+该时间戳写回对象而不是留在内存，否则重新排队或进程重启都会把计时清零，对象就永远不会被归档。注解值无法解析时按当前时间重写：一个任意字符串不应该决定对象什么时候被删除。
+
+!!! note "Task 不按 TTL 归档"
+
+    Task 刻意不在注册表中。Job 存活期间，Job reconciler 会重建缺失的 Task，因此按 TTL 删除终态 Task 只会产生 delete/recreate 循环而不是归档。Task 在 Job 被删除时由 OwnerReference 回收；若 OwnerReference 缺失，则由 §3.3 的孤儿清扫器回收。
 
 ## 4. Phase 与 Condition
 
@@ -111,6 +211,9 @@ Kubernetes 对象的 name 就是稳定的业务身份。不存在第二个业务
 | `AddonPhase` | `Pending`、`Installing`、`Ready`、`Failed`、`Upgrading` |
 | `PodPhase` | `Pending`、`Running`、`Succeeded`、`Failed`、`Unknown` |
 | `NodePhase` | `Online`、`Offline` |
+| `ClusterPhase` | `Online`、`Offline`、`Downgraded`、`Cordoned`、`Draining` |
+
+`Enum` 标注应标在 phase **类型**声明上，而不是标在恰好使用该类型的某个 `status.phase` 字段上。取值集合封闭是类型自身的属性，标在类型上可以让现在与将来引用它的每个字段都受同一集合约束。
 
 向这些枚举新增取值属于 API 变更：必须同时提交重新生成的 CRD manifest，并确保消费方能容忍新取值。
 
@@ -121,17 +224,22 @@ Condition 承载 `Phase` 有意省略的机器可读细节。所有 Condition Ty
 | 类型 | 含义 | 写入方 |
 | --- | --- | --- |
 | `Validated` | 控制器对资源 Spec 的校验结论。`False` 表示 Spec 非法且不会再被调谐。 | 控制面 Job、Workflow、Domain 控制器 |
-| `Progressing` | 资源仍在向期望状态推进。`True` 表示仍有进行中的动作。 | 数据面 Task 控制器 |
-| `Ready` | 资源当前是否可用。它是 `Phase` 的结构化补充：`Phase` 给出聚合阶段，`Ready` 给出布尔结论与机器可读的 `Reason`。 | 数据面 Addon 控制器 |
+| `Progressing` | 控制器仍有未完成的动作要把资源推向其 Spec。`True` 时由 `Reason` 指出当前正在做的那个动作。 | 控制面 Job、Workflow 控制器 |
+| `Ready` | 资源当前是否可用。它是 `Phase` 的结构化补充：`Phase` 给出聚合阶段，`Ready` 给出布尔结论与机器可读的 `Reason`。 | 控制面 Node、Cluster 控制器，数据面 Addon 控制器 |
+| `Degraded` | 资源可用但已降级，消费者应预期容量或可靠性下降，而不是不可用。它只在 `Ready=True` 的前提下有意义。 | 控制面 Node、Cluster 控制器 |
+| `Evicted` | Job 的所有 Worker 都因驱逐（Node 或 Cluster Drain）而停止，且 Job 本身未被挂起。`True` 表示已无 Worker 存活，`Reason=Evicted`，`Message` 为中英双语。 | 控制面 Job 控制器 |
 
-`Progressing` 目前只在已认领 Workload 的迁移路径上写出，因此未发生 Workload Kind 迁移就收敛的 Task 不会上报 `Progressing` Condition；消费者不得把它的缺失读作「未在推进」。
+`Evicted` 描述的是观测到的 Worker 状态，而不是对某个 Spec 版本的结论，因此写入方不得填写 `ObservedGeneration`。当 Job 被挂起、离开 `Stopped`，或至少有一个 Worker 不是因驱逐而停止时，该 Condition 即被撤回。
 
-`Node` 声明了 `status.conditions` 但尚无写入方：节点就绪性只通过 `status.phase` 上报，因此消费者不得预期 Node 上存在 `Ready` Condition。
+`Progressing` 上报的是动作而不是状态。它只在控制器仍有事可做时写出，一旦资源稳定下来就必须**撤回而不是置为 `False`**。置为 `False` 会把「没有事要做」与「动作失败了」压进同一个取值；失败由 `Validated=False` 或终态 `Phase` 上报。因此消费者必须把 `Progressing` 的缺失读作「写入方当前没有进行中的动作」，而不是「写入方没有实现该 Condition」。
+
+`Degraded` 同理：降级消失后即被撤回，所以它的缺失表示「就写入方所能观测到的范围内没有降级」。写入 `Degraded=True` 的控制器必须按自己的判断独立维护 `Ready`：`Degraded` 是对一个可用资源的收窄，不是对就绪性的替代。
 
 `Conditions` 字段的规则：
 
 - 字段类型为 `[]metav1.Condition`，带 `+listType=map` 与 `+listMapKey=type`，因此同一 Type 至多出现一次。
-- 通过 `apimeta.SetStatusCondition` 写入，以保证 `LastTransitionTime` 语义正确。
+- 通过 `apimeta.SetStatusCondition` 写入，以保证 `LastTransitionTime` 语义正确。需要在同一次调谐里既写入又撤回 Condition 的控制器应走 `reconcile.ApplyConditionMutations`：它一次性应用一批「写入或撤回」变更并返回是否真的发生了变化，从而在没有变化时跳过一次 status 写入。
+- 不再适用的 Condition 应当被移除，而不是取反。只有当 `False` 本身就是消费者需要的结论时才写 `False`（例如「Spec 非法」「资源不可用」）。
 - `Reason` 与资源和场景相关，使用 CamelCase，取值稳定且可被程序消费。Reason 有意不做集中定义。
 - `Validated` 的写入方必须记录两种结论。只写 `False` 会在用户修好 Spec 之后留下陈旧的拒绝结论，因此同一控制器在 Spec 校验通过时也要写 `True`。
 - 非法 Spec 无法通过重试修复。因此控制器记录 `Validated=False` 后即停止，而不是返回 error——返回 error 会导致无限重入队；当出现新的 generation 时调谐自然恢复。
@@ -140,11 +248,24 @@ Condition 承载 `Phase` 有意省略的机器可读细节。所有 Condition Ty
 
 `ObservedGeneration` 是**控制器契约，而非 API Server 保证**。它只表示「写入时该控制器已完成对这一 generation 的调谐」。消费者必须把 `observedGeneration` 落后于 `metadata.generation` 的 status 视为陈旧，且不得据此对当前 Spec 下任何结论。
 
-因此它只存在于真正存在 Spec→Status 调谐回路的资源：`JobStatus`、`WorkflowStatus`、`TaskStatus`、`DomainStatus`、`AddonStatus`。它有意不存在于 `Node`、`Pod`、`DomainPeer`——这些资源的 status 是纯数据面观测，没有需要收敛的 Spec；在那里加该字段等于宣称一个没有控制器履行的契约。
+因此它只存在于真正存在 Spec→Status 调谐回路的资源：`JobStatus`、`WorkflowStatus`、`TaskStatus`、`DomainStatus`、`AddonStatus`、`ClusterStatus`。`ClusterStatus` 之所以成立，是因为 `ClusterSpec.cordoned` 与 `ClusterSpec.draining` 是 Spec 驱动开关：读取 `phase` 的消费者必须能判断该 phase 是否已经反映了开关的最新位置。它有意不存在于 `Node`、`Pod`、`DomainPeer`——这些资源的 status 是纯观测结论（由数据面上报，或由控制面从心跳汇总得出），没有需要收敛的 Spec；在那里加该字段等于宣称一个没有控制器履行的契约。
 
-同理，`Ready` 不填写 `ObservedGeneration`：它是观测驱动而非 Spec 驱动的。`Ready` 描述的是控制器最近一次观测到的事实，而不是哪个 Spec generation 产生了它。
+同理，观测驱动的 `Ready` 与 `Degraded` 不填写 `ObservedGeneration`：它们描述的是控制器最近一次观测到的事实，而不是哪个 Spec generation 产生了它。Spec 驱动的 `Validated` 与 `Progressing` 则必须填写。`conditions.go` 是这一划分的权威来源，`pkg/reconcile` 中有一个 lint 测试强制执行它：Spec 驱动的 Condition 字面量未显式填写 `ObservedGeneration` 会被拒绝，观测驱动的填写了也会被拒绝。
 
 写入方只在一次调谐成功返回之后推进它，绝不在开始时推进。`metav1.Condition` 另带 per-condition 的 `ObservedGeneration`，Spec 驱动的 Condition 必须填写。
+
+### 4.4 Reason 的基数约束
+
+Reason 是**数据，不是消息**。同一个字符串会同时被当作 `metav1.Condition` 的 reason、Kubernetes Event 的 reason 以及指标的 label value 消费。这三者都要求取值集合有界：用对象名、节点名或 error 字符串拼出的 reason 会把一条指标时间线炸成无界多条，并让自动化无法再按 Condition 匹配。面向人的细节属于 `Message`，后者没有这项约束。
+
+`apps/rlark/pkg/reconcile` 用两重互补的检查落实这一点，因为任何一重单独都不充分：
+
+- `ValidateReason` 约束**取值**的形态：非空、UpperCamelCase、仅含 ASCII 字母与数字、长度不超过 `MaxReasonLength`（63）。
+- `TestReasonFieldsAreConstantExpressions` 约束**产生该取值的表达式**的形态。运行时拼出的 reason 可以完全满足 `ValidateReason` 却依然无界，所以基数必须静态检查。`Reason` 与 `ReasonCode` 字段只能是字符串字面量、已声明的常量，或从另一个值上拷贝的同名字段（`x.Reason`、`x.GetReason()`）；函数调用、类型转换与字符串拼接一律拒绝。
+
+允许字段拷贝，是因为它并没有产生新的 reason。写 `Reason: wire.GetReason()` 的传输层解码器只是原样透传一个取值，该取值的基数属于它的生产方。若在每个边界都强制要求常量，解码器就只能自己编造一个，并丢掉生产方实际报告的 reason。
+
+Reason 仍然有意保持去中心化：如 [4.2](#42-condition) 所述，每个资源与场景在写入它的代码附近声明自己的常量。上述检查约束的是 reason 可以**怎样被构造**，而不是存在哪些 reason。
 
 ## 5. 租户与 Owner 元数据
 
@@ -285,7 +406,7 @@ Gateway 当前生效的配额作用于客户端提交的 `JobTag` 条目，在 C
 
 ## 8. 兼容性门禁
 
-生成产物是契约的一部分，由 CI 中的 `make verify-generated` 检查：它执行 `make generate`，当已提交的 CRD manifest、deepcopy 函数、类型化客户端或 CRD 参考文档与重新生成的输出不一致时失败，并且在出现未跟踪的生成文件时同样失败。
+生成产物是契约的一部分，由 CI 中的 `make verify-generated` 检查：它执行 `make generate`，当已提交的 CRD manifest、deepcopy 函数、类型化客户端、CRD 参考文档或 Helm Chart 内置的 CRD 副本与重新生成的输出不一致时失败，并且在出现未跟踪的生成文件时同样失败。
 
 因此对 `api/rlark.io/` 下任意类型的修改必须与以下内容一起提交：
 
@@ -293,6 +414,7 @@ Gateway 当前生效的配额作用于客户端提交的 `JobTag` 条目，在 C
 - `api/kubeclients/`
 - `api/rlark.io/**/zz_generated.deepcopy.go`
 - `apps/rlark/docs/reference/crd.md`
+- `charts/rlark-control-plane/files/crds/`
 
 OpenAPI 规范由 `swagger_test.go` 双向把关：
 

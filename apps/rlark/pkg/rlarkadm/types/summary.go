@@ -24,6 +24,14 @@ type InstallSummary struct {
 	UserPassword        string
 }
 
+// UpgradeSummary summarizes upgrade results.
+type UpgradeSummary struct {
+	Plane      string
+	Mode       string
+	Namespace  string
+	Components []ComponentStatus
+}
+
 // Print is an exported method.
 func (s *InstallSummary) Print() {
 	var b strings.Builder
@@ -82,6 +90,41 @@ func (s *InstallSummary) Print() {
 	if s.Plane == "data" && s.ControlPlaneAddress != "" {
 		b.WriteString("\n")
 		_, _ = fmt.Fprintf(&b, "Agent connecting to control plane: %s\n", s.ControlPlaneAddress)
+	}
+
+	b.WriteString("\n")
+	fmt.Println(b.String())
+}
+
+// Print prints the upgrade summary.
+func (s *UpgradeSummary) Print() {
+	var b strings.Builder
+
+	b.WriteString("\n")
+	_, _ = fmt.Fprintf(&b, "RLark %s plane upgraded successfully!\n", s.Plane)
+	_, _ = fmt.Fprintf(&b, "Deployment mode: %s\n", s.Mode)
+	if s.Namespace != "" {
+		_, _ = fmt.Fprintf(&b, "Namespace: %s\n", s.Namespace)
+	}
+	b.WriteString("\n")
+	b.WriteString("Components:\n")
+
+	maxName := 0
+	for _, c := range s.Components {
+		if len(c.Name) > maxName {
+			maxName = len(c.Name)
+		}
+	}
+
+	for _, c := range s.Components {
+		mark := "x"
+		status := "Not Ready"
+		if c.Healthy {
+			mark = "v"
+			status = "Running"
+		}
+		padding := strings.Repeat(" ", maxName-len(c.Name)+2)
+		_, _ = fmt.Fprintf(&b, "  [%s] %s%s%s\n", mark, c.Name, padding, status)
 	}
 
 	b.WriteString("\n")

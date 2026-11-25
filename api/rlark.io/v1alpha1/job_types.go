@@ -44,9 +44,9 @@ type JobTaskStatus struct {
 	Message string    `json:"message,omitempty"`
 }
 
-func (s *JobTaskStatus) GetPhase() string    { return string(s.Phase) }
-func (s *JobTaskStatus) SetPhase(p string)   { s.Phase = TaskPhase(p) }
-func (s *JobTaskStatus) SetMessage(m string) { s.Message = m }
+func (s *JobTaskStatus) GetPhase() TaskPhase  { return s.Phase }
+func (s *JobTaskStatus) SetPhase(p TaskPhase) { s.Phase = p }
+func (s *JobTaskStatus) SetMessage(m string)  { s.Message = m }
 
 type JobStatus struct {
 	Phase JobPhase `json:"phase,omitempty"`

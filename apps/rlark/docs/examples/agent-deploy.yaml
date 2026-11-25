@@ -1,5 +1,12 @@
-# Agent Deployment
+# Agent workloads
 # IMAGE is replaced by quickstart.sh (default: localhost:5555/rlark:latest).
+#
+# Two workloads are required, mirroring a production data plane:
+#   * rlark-agent      (Deployment, --mode=cluster) reconciles Tasks and reports
+#     cluster and Node inventory.
+#   * rlark-agent-node (DaemonSet, --mode=node) opens the per-node tunnel that
+#     backs the node-heartbeat Lease and runs NodeServer. Without it every Node
+#     stays Offline and Task placement is rejected.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,7 +32,7 @@ spec:
         imagePullPolicy: IfNotPresent
         command: ["/rlark-agent"]
         args:
-        - "--mode=both"
+        - "--mode=cluster"
         - "--server-address=https://rlark-server:8443"
         - "--client-cert=/etc/agent-certs/cert.pem"
         - "--client-key=/etc/agent-certs/key.pem"
@@ -47,4 +54,79 @@ spec:
       - name: nodeserver-socket
         hostPath:
           path: /var/run/rlark
+          type: DirectoryOrCreate
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rlark-agent-node
+  namespace: rlark-system
+spec:
+  selector:
+    matchLabels:
+      app: rlark-agent-node
+  template:
+    metadata:
+      labels:
+        app: rlark-agent-node
+    spec:
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: rlark-agent
+      nodeSelector:
+        rlark.io/enabled: "true"
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: agent-node
+        image: ${IMAGE}
+        imagePullPolicy: IfNotPresent
+        command: ["/rlark-agent"]
+        securityContext:
+          privileged: true
+        args:
+        - "--mode=node"
+        - "--agent-type=kubernetes"
+        - "--server-address=https://rlark-server:8443"
+        - "--client-cert=/etc/agent-certs/cert.pem"
+        - "--client-key=/etc/agent-certs/key.pem"
+        - "--ca-cert=/etc/agent-certs/ca-cert.pem"
+        - "--rlark-server-ssh-address=client@rlark-server:2222"
+        - "--in-cluster"
+        - "--leader-election=false"
+        - "--metrics-bind-address=:0"
+        - "--image=${IMAGE}"
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        volumeMounts:
+        - name: agent-certs
+          mountPath: /etc/agent-certs
+          readOnly: true
+        - name: nodeserver-socket
+          mountPath: /var/run/rlark
+        - name: containerd-socket
+          mountPath: /run/containerd
+      volumes:
+      - name: agent-certs
+        secret:
+          secretName: agent-certs
+      - name: nodeserver-socket
+        hostPath:
+          path: /var/run/rlark
+          type: DirectoryOrCreate
+      - name: containerd-socket
+        hostPath:
+          path: /run/containerd
           type: DirectoryOrCreate

@@ -1,0 +1,21 @@
+{{- if .Values.kcp.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: kcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kcp
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+spec:
+  selector:
+    app: kcp
+  ports:
+    - name: client
+      port: 6443
+      targetPort: 6443
+    - name: metrics
+      port: 8080
+      targetPort: 8080
+{{- end }}

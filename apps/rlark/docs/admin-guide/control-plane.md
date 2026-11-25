@@ -111,3 +111,5 @@ curl --fail http://localhost:8080/
 ```
 
 Gateway has no dedicated health route; use its Deployment readiness and logs.
+
+For Controller Manager, `/healthz` only reports process liveness and never probes external dependencies, while `/readyz` fails until the informer caches have synced. A Controller Manager that is live but not ready is still warming its caches, not broken.

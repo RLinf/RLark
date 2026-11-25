@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
@@ -39,7 +39,7 @@ func TestReconcileJobAdoptsLegacyAndRejectsConflict(t *testing.T) {
 	template := rlarkv1alpha1.WorkflowJobTemplate{Name: "train"}
 	legacy := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "wf-train", Labels: map[string]string{workflowLabel: wf.Name}, Annotations: map[string]string{"user": "keep"}}}
 	scheme := workflowTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(legacy).Build()
+	c := workflowTestClientBuilder(scheme).WithObjects(legacy).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 	job, err := r.reconcileJob(context.Background(), wf, template, logr.Discard())
 	if err != nil {
@@ -67,7 +67,7 @@ func TestReconcileJobBackfillsMatchingOwnerReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	scheme := workflowTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(job).Build()
+	c := workflowTestClientBuilder(scheme).WithObjects(job).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 	got, err := r.reconcileJob(context.Background(), wf, template, logr.Discard())
 	if err != nil {
@@ -91,7 +91,7 @@ func TestReconcileJobSyncsMutableSpecAndPreservesTerminalJob(t *testing.T) {
 				t.Fatal(err)
 			}
 			scheme := workflowTestScheme(t)
-			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(job).Build()
+			c := workflowTestClientBuilder(scheme).WithObjects(job).Build()
 			r := &Reconciler{Client: c, Scheme: scheme}
 			got, err := r.reconcileJob(context.Background(), wf, template, logr.Discard())
 			if err != nil {
@@ -108,7 +108,9 @@ func TestReconcileJobSyncsMutableSpecAndPreservesTerminalJob(t *testing.T) {
 	}
 }
 
-func TestStoppedWorkflowCompletesAfterJobsDisappear(t *testing.T) {
+// A template that never produced a Job has nothing left to run, so a suspended
+// Workflow owning no Jobs settles in one pass.
+func TestSuspendedWorkflowWithoutJobsCompletesImmediately(t *testing.T) {
 	wf := &rlarkv1alpha1.Workflow{
 		ObjectMeta: metav1.ObjectMeta{Name: "wf", UID: types.UID("wf-uid")},
 		Spec: rlarkv1alpha1.WorkflowSpec{
@@ -118,7 +120,7 @@ func TestStoppedWorkflowCompletesAfterJobsDisappear(t *testing.T) {
 		Status: rlarkv1alpha1.WorkflowStatus{Phase: rlarkv1alpha1.WorkflowPhaseStopping, Jobs: []rlarkv1alpha1.WorkflowJobStatus{{Name: "train", Phase: rlarkv1alpha1.JobPhaseRunning}}},
 	}
 	scheme := workflowTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := workflowTestClientBuilder(scheme).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 
 	changed, err := r.ReconcileStateMachine(context.Background(), wf)
@@ -127,6 +129,133 @@ func TestStoppedWorkflowCompletesAfterJobsDisappear(t *testing.T) {
 	}
 	if !changed || wf.Status.Phase != rlarkv1alpha1.WorkflowPhaseStopped || wf.Status.Jobs[0].Phase != rlarkv1alpha1.JobPhaseStopped {
 		t.Fatalf("stopped Workflow status not completed: %#v", wf.Status)
+	}
+}
+
+// Suspending a Workflow is a durable desired-state switch, not a request to
+// delete its children: the owned Jobs are asked to suspend themselves and must
+// survive so a later resume can restart them.
+//
+// The stop must also never end in ErrRequeueAfterChildCleanup. A Job whose
+// Tasks the Agent has not reported as stopped cannot finish deleting, so a stop
+// that deleted its children left every reconcile awaiting cleanup and the
+// shell never stamped Status.ObservedGeneration, which made the Workflow look
+// like it had not observed a Spec it had in fact already acted on.
+func TestSuspendedWorkflowStopsJobsWithoutDeletingThem(t *testing.T) {
+	wf := &rlarkv1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "wf", UID: types.UID("wf-uid"), Generation: 3},
+		Spec: rlarkv1alpha1.WorkflowSpec{
+			Suspended:    true,
+			JobTemplates: []rlarkv1alpha1.WorkflowJobTemplate{{Name: "prepare"}, {Name: "train"}},
+		},
+		Status: rlarkv1alpha1.WorkflowStatus{Phase: rlarkv1alpha1.WorkflowPhaseRunning, Jobs: []rlarkv1alpha1.WorkflowJobStatus{
+			{Name: "prepare", Phase: rlarkv1alpha1.JobPhaseSucceeded},
+			{Name: "train", Phase: rlarkv1alpha1.JobPhaseRunning},
+		}},
+	}
+	done := buildJob(wf, wf.Spec.JobTemplates[0], "wf-prepare")
+	done.Status.Phase = rlarkv1alpha1.JobPhaseSucceeded
+	job := buildJob(wf, wf.Spec.JobTemplates[1], "wf-train")
+	job.Status.Phase = rlarkv1alpha1.JobPhaseRunning
+	// The Agent has not reported this Job's Tasks as stopped, so deleting it
+	// would only park it in Terminating behind its cleanup finalizer.
+	job.Finalizers = []string{"example.com/agent-cleanup"}
+	for _, j := range []*rlarkv1alpha1.Job{done, job} {
+		if err := setWorkflowOwner(wf, j); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scheme := workflowTestScheme(t)
+	c := workflowTestClientBuilder(scheme).WithObjects(done, job).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+
+	changed, err := r.ReconcileStateMachine(context.Background(), wf)
+	if err != nil {
+		t.Fatalf("suspend reconcile returned an error: %v", err)
+	}
+	if !changed || wf.Status.Phase != rlarkv1alpha1.WorkflowPhaseStopping {
+		t.Fatalf("suspend did not start stopping: changed=%v status=%#v", changed, wf.Status)
+	}
+	if wf.Status.Jobs[1].Phase != rlarkv1alpha1.JobPhaseRunning {
+		t.Fatalf("a Job that is still running was reported as stopped: %#v", wf.Status.Jobs)
+	}
+	var stored rlarkv1alpha1.Job
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(job), &stored); err != nil {
+		t.Fatalf("suspended Workflow deleted the Job it must keep: %v", err)
+	}
+	if !stored.Spec.Suspended || !stored.DeletionTimestamp.IsZero() {
+		t.Fatalf("Job was not asked to suspend itself in place: suspended=%v deletionTimestamp=%v", stored.Spec.Suspended, stored.DeletionTimestamp)
+	}
+	// A Job that already finished keeps its own outcome instead of being
+	// restated as a stop.
+	var storedDone rlarkv1alpha1.Job
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(done), &storedDone); err != nil {
+		t.Fatal(err)
+	}
+	if storedDone.Spec.Suspended {
+		t.Fatalf("a finished Job was suspended after the fact: %#v", storedDone.Spec)
+	}
+
+	// Repeating the pass while the Job is still coming to rest must stay a
+	// clean reconcile, so the shell can record the observed generation.
+	if _, err := r.ReconcileStateMachine(context.Background(), wf); err != nil {
+		t.Fatalf("waiting for a Job to stop returned an error: %v", err)
+	}
+	if wf.Status.Phase != rlarkv1alpha1.WorkflowPhaseStopping {
+		t.Fatalf("Workflow left Stopping before its Job stopped: %#v", wf.Status)
+	}
+
+	stored.Status.Phase = rlarkv1alpha1.JobPhaseStopped
+	if err := c.Update(context.Background(), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReconcileStateMachine(context.Background(), wf); err != nil {
+		t.Fatal(err)
+	}
+	if wf.Status.Phase != rlarkv1alpha1.WorkflowPhaseStopped || wf.Status.Jobs[1].Phase != rlarkv1alpha1.JobPhaseStopped {
+		t.Fatalf("Workflow did not settle once its Job stopped: %#v", wf.Status)
+	}
+	if wf.Status.Jobs[0].Phase != rlarkv1alpha1.JobPhaseSucceeded {
+		t.Fatalf("settled stop overwrote a finished Job status: %#v", wf.Status.Jobs)
+	}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(job), &rlarkv1alpha1.Job{}); err != nil {
+		t.Fatalf("settled stop deleted the Job it must keep: %v", err)
+	}
+}
+
+// Resuming withdraws the stop the same way it was applied: by reconciling the
+// Job Spec back to what the template asks for, so no separate un-suspend path
+// can be skipped or left behind.
+func TestResumedWorkflowClearsJobSuspension(t *testing.T) {
+	wf := &rlarkv1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "wf", UID: types.UID("wf-uid")},
+		Spec:       rlarkv1alpha1.WorkflowSpec{JobTemplates: []rlarkv1alpha1.WorkflowJobTemplate{{Name: "train"}}},
+		Status: rlarkv1alpha1.WorkflowStatus{Phase: rlarkv1alpha1.WorkflowPhaseStopped, Jobs: []rlarkv1alpha1.WorkflowJobStatus{
+			{Name: "train", Phase: rlarkv1alpha1.JobPhaseStopped},
+		}},
+	}
+	job := buildJob(wf, wf.Spec.JobTemplates[0], "wf-train")
+	job.Spec.Suspended = true
+	job.Status.Phase = rlarkv1alpha1.JobPhaseStopped
+	if err := setWorkflowOwner(wf, job); err != nil {
+		t.Fatal(err)
+	}
+	scheme := workflowTestScheme(t)
+	c := workflowTestClientBuilder(scheme).WithObjects(job).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+
+	// The first pass resets the run, the second one dispatches the DAG again.
+	for range 2 {
+		if _, err := r.ReconcileStateMachine(context.Background(), wf); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var stored rlarkv1alpha1.Job
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(job), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Spec.Suspended {
+		t.Fatalf("resumed Workflow left its Job suspended: %#v", stored.Spec)
 	}
 }
 
@@ -145,7 +274,7 @@ func TestWorkflowResumeRerunsDAGFromBeginning(t *testing.T) {
 		}},
 	}
 	scheme := workflowTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	c := workflowTestClientBuilder(scheme).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 
 	if _, err := r.ReconcileStateMachine(context.Background(), wf); err != nil {
@@ -189,7 +318,7 @@ func TestWorkflowResumeWaitsForTerminatingJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	scheme := workflowTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(job).Build()
+	c := workflowTestClientBuilder(scheme).WithObjects(job).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 
 	if _, err := r.reconcileJob(context.Background(), wf, wf.Spec.JobTemplates[0], logr.Discard()); !errors.Is(err, controller.ErrRequeueAfterChildCleanup) {
@@ -211,7 +340,7 @@ func TestStoppedWorkflowPreservesTerminalJobStatuses(t *testing.T) {
 			{Name: "running", Phase: rlarkv1alpha1.JobPhaseRunning},
 		}},
 	}
-	r := &Reconciler{Client: fake.NewClientBuilder().WithScheme(workflowTestScheme(t)).Build()}
+	r := &Reconciler{Client: workflowTestClientBuilder(workflowTestScheme(t)).Build()}
 
 	if _, err := r.ReconcileStateMachine(context.Background(), wf); err != nil {
 		t.Fatal(err)
@@ -245,7 +374,7 @@ func TestTerminalWorkflowReconcilePrunesWithoutDispatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			scheme := workflowTestScheme(t)
-			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(removed, kept).Build()
+			c := workflowTestClientBuilder(scheme).WithObjects(removed, kept).Build()
 			r := &Reconciler{Client: c, Scheme: scheme}
 
 			if r.IsTerminal(wf) {
@@ -287,15 +416,36 @@ func TestWorkflowReconcileUsesOldStatusToPruneSafely(t *testing.T) {
 	if err := setWorkflowOwner(wf, ownerOnly); err != nil {
 		t.Fatal(err)
 	}
-	unrelated := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "wf-unrelated", Labels: map[string]string{workflowLabel: wf.Name}}}
 	scheme := workflowTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(ownerOnly, unrelated).Build()
+	c := workflowTestClientBuilder(scheme).WithObjects(ownerOnly).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 	if _, err := r.ReconcileStateMachine(context.Background(), wf); !errors.Is(err, controller.ErrRequeueAfterChildCleanup) {
 		t.Fatal(err)
 	}
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(ownerOnly), &rlarkv1alpha1.Job{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("owner-only removed Job was not pruned: %v", err)
+	}
+}
+
+// A Job that only carries the Workflow label cannot be attributed to a removed
+// template unless its name is one the Workflow itself recorded. Such a Job must
+// neither be deleted on a name-prefix guess nor silently ignored: the reconcile
+// is blocked so the ambiguity is reported instead of acted on.
+func TestWorkflowReconcileRefusesUnattributableLabelOnlyJob(t *testing.T) {
+	wf := &rlarkv1alpha1.Workflow{
+		ObjectMeta: metav1.ObjectMeta{Name: "wf", UID: "wf-uid"},
+		Status:     rlarkv1alpha1.WorkflowStatus{Phase: rlarkv1alpha1.WorkflowPhaseSucceeded, Jobs: []rlarkv1alpha1.WorkflowJobStatus{{Name: "removed"}}},
+	}
+	unrelated := &rlarkv1alpha1.Job{ObjectMeta: metav1.ObjectMeta{Name: "wf-unrelated", Labels: map[string]string{workflowLabel: wf.Name}}}
+	scheme := workflowTestScheme(t)
+	c := workflowTestClientBuilder(scheme).WithObjects(unrelated).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+	_, err := r.ReconcileStateMachine(context.Background(), wf)
+	if err == nil || errors.Is(err, controller.ErrRequeueAfterChildCleanup) {
+		t.Fatalf("unattributable Job did not block the reconcile: %v", err)
+	}
+	if !strings.Contains(err.Error(), string(utils.ReasonUnprovenOwnership)) {
+		t.Fatalf("reconcile was not blocked on unproven ownership: %v", err)
 	}
 	if err := c.Get(context.Background(), client.ObjectKeyFromObject(unrelated), &rlarkv1alpha1.Job{}); err != nil {
 		t.Fatalf("unrelated label-only prefixed Job was touched: %v", err)
@@ -314,7 +464,7 @@ func TestPruneJobsDeletesOnlyOwned(t *testing.T) {
 	conflict.OwnerReferences[0].UID = "other"
 	conflict.Annotations[utils.ParentUIDAnnotation] = "other"
 	scheme := workflowTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(owned, conflict).Build()
+	c := workflowTestClientBuilder(scheme).WithObjects(owned, conflict).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 	if _, err := r.pruneJobs(context.Background(), wf); err != nil {
 		t.Fatal(err)
@@ -334,7 +484,7 @@ func TestPruneJobsDeletesOwnerOnlyRemovedJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	scheme := workflowTestScheme(t)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(job).Build()
+	c := workflowTestClientBuilder(scheme).WithObjects(job).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}
 	waiting, err := r.pruneJobs(context.Background(), wf)
 	if err != nil || !waiting {
@@ -353,7 +503,7 @@ func TestInvalidDAGFailsWorkflowWithoutRequeue(t *testing.T) {
 		}},
 	}
 	scheme := workflowTestScheme(t)
-	r := &Reconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build(), Scheme: scheme}
+	r := &Reconciler{Client: workflowTestClientBuilder(scheme).Build(), Scheme: scheme}
 
 	// An invalid Spec is not repairable by retrying, so the reconciler must not
 	// return an error (which would requeue forever) and must instead record the
@@ -369,8 +519,12 @@ func TestInvalidDAGFailsWorkflowWithoutRequeue(t *testing.T) {
 	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != workflowReasonInvalidDAG {
 		t.Fatalf("unexpected Validated condition: %#v", wf.Status.Conditions)
 	}
-	if cond.ObservedGeneration != wf.Generation || wf.Status.ObservedGeneration != wf.Generation {
-		t.Fatalf("stale observedGeneration: condition=%d status=%d want=%d", cond.ObservedGeneration, wf.Status.ObservedGeneration, wf.Generation)
+	// Only the condition's ObservedGeneration is asserted here. Status.
+	// ObservedGeneration is now stamped by the shell after the state machine
+	// returns, and this test calls the state machine directly; the shell's
+	// contract is covered in pkg/controllermanager/controller.
+	if cond.ObservedGeneration != wf.Generation {
+		t.Fatalf("stale condition observedGeneration: got=%d want=%d", cond.ObservedGeneration, wf.Generation)
 	}
 	if _, err := r.ReconcileStateMachine(context.Background(), wf); err != nil {
 		t.Fatalf("second reconcile of invalid DAG returned error: %v", err)
@@ -391,7 +545,7 @@ func TestValidSpecClearsStaleValidatedCondition(t *testing.T) {
 		},
 	}
 	scheme := workflowTestScheme(t)
-	r := &Reconciler{Client: fake.NewClientBuilder().WithScheme(scheme).Build(), Scheme: scheme}
+	r := &Reconciler{Client: workflowTestClientBuilder(scheme).Build(), Scheme: scheme}
 
 	if _, err := r.ReconcileStateMachine(context.Background(), wf); err != nil {
 		t.Fatal(err)

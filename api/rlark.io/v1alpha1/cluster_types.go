@@ -30,10 +30,39 @@ type ClusterSpec struct {
 
 // ClusterStatus reports the controller's current observation of a data-plane cluster.
 type ClusterStatus struct {
-	Phase             ClusterPhase `json:"phase,omitempty"`
-	LastHeartbeatTime *metav1.Time `json:"lastHeartbeatTime,omitempty"`
-	TotalNodes        int32        `json:"totalNodes,omitempty"`
-	OnlineNodes       int32        `json:"onlineNodes,omitempty"`
+	Phase ClusterPhase `json:"phase,omitempty"`
+	// ObservedGeneration is the metadata.generation observed by the Cluster
+	// controller the last time it finished a reconciliation. ClusterSpec's
+	// cordoned / draining are Spec-driven switches, so consumers must compare
+	// this field with metadata.generation to tell whether phase and conditions
+	// already reflect the latest Spec. It is a controller contract, not an API
+	// server guarantee.
+	ObservedGeneration int64        `json:"observedGeneration,omitempty"`
+	LastHeartbeatTime  *metav1.Time `json:"lastHeartbeatTime,omitempty"`
+	// LastStatusChangeTime is the time Phase last changed. It carries the same
+	// semantics as the identically named field on NodeStatus and distinguishes
+	// "has stayed in this phase for a long time" from "just flipped".
+	LastStatusChangeTime *metav1.Time `json:"lastStatusChangeTime,omitempty"`
+	TotalNodes           int32        `json:"totalNodes,omitempty"`
+	OnlineNodes          int32        `json:"onlineNodes,omitempty"`
+	// ReadyNodes is the number of connected Nodes with Ready=True that are not
+	// cordoned by spec.unschedulable. A ready Node under resource pressure is
+	// still counted here even though it is excluded from new placement.
+	ReadyNodes int32 `json:"readyNodes,omitempty"`
+	// DegradedNodes is the number of connected Nodes that are not ready or report Degraded=True.
+	DegradedNodes int32 `json:"degradedNodes,omitempty"`
+	// DisconnectedNodes is the number of Nodes whose AgentConnected condition is not True.
+	DisconnectedNodes int32 `json:"disconnectedNodes,omitempty"`
+	// UnschedulableNodes is the number of Nodes with spec.unschedulable=true.
+	UnschedulableNodes int32 `json:"unschedulableNodes,omitempty"`
+	// DominantFailureReason is the most frequent reason among unavailable candidate Nodes.
+	DominantFailureReason string `json:"dominantFailureReason,omitempty"`
+	// Conditions records the structured conclusions of the Cluster controller,
+	// which is their only writer. Ready and Degraded are independent dimensions:
+	// a cluster that lost part of its capacity reports Ready=True together with
+	// Degraded=True. They are observation-driven and therefore carry no
+	// per-condition ObservedGeneration; use the status-level ObservedGeneration
+	// above to tell whether they already reflect the latest Spec.
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"testing"
+	"time"
 
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -21,6 +22,23 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestNodeHeartbeatConfigValidation(t *testing.T) {
+	config := DefaultConfig()
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	config.NodeHeartbeatRetryPeriod = config.NodeHeartbeatRenewDeadline
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected validation error for retry period equal to renew deadline")
+	}
+	config = DefaultConfig()
+	config.NodeHeartbeatLeaseDuration = 10 * time.Second
+	config.NodeHeartbeatRenewDeadline = 10 * time.Second
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected validation error for renew deadline equal to lease duration")
+	}
+}
 
 func TestRegisterAgentGrantsDeliverySecretAndStatusPermissions(t *testing.T) {
 	ctx := context.Background()
@@ -40,11 +58,15 @@ func TestRegisterAgentGrantsDeliverySecretAndStatusPermissions(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, ruleAllows(role.Rules, "", "secrets", "get", "list", "watch", "update", "patch"))
 	assert.True(t, ruleAllows(role.Rules, "", "configmaps", "get", "list", "watch", "create", "update", "patch", "delete"))
+	assert.True(t, ruleAllows(role.Rules, "rlinf.io", "clusterupgradejobs", "get", "list", "watch"))
+	assert.True(t, ruleAllows(role.Rules, "rlinf.io", "clusterupgradejobs/status", "get", "update", "patch"))
 
 	require.NoError(t, server.registerAgent(ctx, "cluster-a"))
 	role, err = client.RbacV1().Roles(namespace).Get(ctx, apis.RLarkAgentServiceAccountName, metav1.GetOptions{})
 	require.NoError(t, err)
 	assert.True(t, ruleAllows(role.Rules, "", "secrets", "patch"))
+	assert.True(t, ruleAllows(role.Rules, "rlinf.io", "clusterupgradejobs", "get", "list", "watch"))
+	assert.True(t, ruleAllows(role.Rules, "rlinf.io", "clusterupgradejobs/status", "get", "update", "patch"))
 }
 
 func TestAgentConnectionMigratesLegacyCluster(t *testing.T) {

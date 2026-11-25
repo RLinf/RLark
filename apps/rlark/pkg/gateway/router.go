@@ -60,6 +60,11 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		adminNodes.PUT("/:name", g.rlinfv1alpha1UpdateNode)
 		adminNodes.PATCH("/:name", g.rlinfv1alpha1PatchNode)
 		adminNodes.DELETE("/:name", g.rlinfv1alpha1DeleteNode)
+		adminNodes.POST("/:name/drain", g.drainNode)
+		adminNodes.POST("/:name/undrain", g.undrainNode)
+		adminNodes.POST("/:name/uncordon", g.uncordonNode)
+		adminNodes.POST("/:name/recover", g.recoverNode)
+		adminNodes.PATCH("/:name/patch-labels", g.patchNodeLabelsRelay)
 	}
 
 	workflows := rlinfv1alpha1.Group("/workflows")
@@ -198,6 +203,25 @@ func (g *Gateway) RegisterRoutes(r gin.IRouter) {
 		clusterAddons.PUT("/:name", g.updateClusterAddon)
 		clusterAddons.DELETE("/:name", g.deleteClusterAddon)
 	}
+
+	// Upgrade Job APIs
+	upgradeJobs := adminAPI.Group("/upgrade-jobs")
+	{
+		upgradeJobs.GET("", g.rlinfv1alpha1ListUpgradeJobs)
+		upgradeJobs.POST("", g.rlinfv1alpha1CreateUpgradeJob)
+		upgradeJobs.GET("/:name", g.rlinfv1alpha1GetUpgradeJob)
+		upgradeJobs.DELETE("/:name", g.rlinfv1alpha1DeleteUpgradeJob)
+	}
+
+	// Admin-only data-plane node management (list all K8s nodes including
+	// unmanaged ones, and manage/unmanage individual nodes).
+	adminDataPlaneNodes := adminAPI.Group("/data-plane-nodes")
+	{
+		adminDataPlaneNodes.GET("", g.listDataPlaneNodes)
+		adminDataPlaneNodes.GET("/:agent_id", g.listDataPlaneNodesForCluster)
+		adminDataPlaneNodes.POST("/:agent_id/nodes/:node_name/manage", g.manageDataPlaneNode)
+		adminDataPlaneNodes.POST("/:agent_id/nodes/:node_name/unmanage", g.unmanageDataPlaneNode)
+	}
 }
 
 // --- Node handlers ---
@@ -207,7 +231,6 @@ func (g *Gateway) rlinfv1alpha1CreateNode(c *gin.Context) { g.handleKubeCreate("
 func (g *Gateway) rlinfv1alpha1GetNode(c *gin.Context)    { g.handleGet("nodes")(c) }
 func (g *Gateway) rlinfv1alpha1UpdateNode(c *gin.Context) { g.handleKubeUpdate("nodes")(c) }
 func (g *Gateway) rlinfv1alpha1PatchNode(c *gin.Context)  { g.handleKubePatch("nodes")(c) }
-func (g *Gateway) rlinfv1alpha1DeleteNode(c *gin.Context) { g.handleKubeDelete("nodes")(c) }
 
 // --- Workflow handlers ---
 
@@ -250,3 +273,10 @@ func (g *Gateway) rlinfv1alpha1GetDomain(c *gin.Context)    { g.handleGet("domai
 func (g *Gateway) rlinfv1alpha1UpdateDomain(c *gin.Context) { g.handleKubeUpdate("domains")(c) }
 func (g *Gateway) rlinfv1alpha1PatchDomain(c *gin.Context)  { g.handleKubePatch("domains")(c) }
 func (g *Gateway) rlinfv1alpha1DeleteDomain(c *gin.Context) { g.handleKubeDelete("domains")(c) }
+
+// --- UpgradeJob handlers ---
+
+func (g *Gateway) rlinfv1alpha1ListUpgradeJobs(c *gin.Context)  { g.handleList("upgradejobs")(c) }
+func (g *Gateway) rlinfv1alpha1CreateUpgradeJob(c *gin.Context) { g.handleKubeCreate("upgradejobs")(c) }
+func (g *Gateway) rlinfv1alpha1GetUpgradeJob(c *gin.Context)    { g.handleGet("upgradejobs")(c) }
+func (g *Gateway) rlinfv1alpha1DeleteUpgradeJob(c *gin.Context) { g.handleKubeDelete("upgradejobs")(c) }

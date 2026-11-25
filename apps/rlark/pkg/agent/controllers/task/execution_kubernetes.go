@@ -8,12 +8,15 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/compatibility/kubernetes"
 	kubernetesenvironment "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/environment/kubernetes"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/environment/kubernetes/network"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/environment/kubernetes/sharedmemory"
 	kubernetesssh "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/environment/kubernetes/ssh"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/environment/kubernetes/tensorboard"
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/observation"
 	kubernetesruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/kubernetes"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/kubernetes/supervision"
 	raykubernetes "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/workload/ray/kubernetes"
@@ -39,9 +42,24 @@ type workloadImplementationRegistry interface {
 	coordinator.WorkloadImplementationSelector
 }
 
-// NewKubernetesExecutionCoordinator constructs the production Coordinator and
-// its immutable implementation registry for built-in Kubernetes Workloads.
-func NewKubernetesExecutionCoordinator(kubeClient client.Client, image string) (*coordinator.Coordinator, error) {
+// KubernetesExecutionConfig freezes the trusted images and lowering options
+// used by one Kubernetes Task assembly. It is not Task-supplied configuration.
+type KubernetesExecutionConfig struct {
+	Image                     string
+	TensorBoardImage          string
+	RestartableInitContainers bool
+}
+
+// KubernetesExecutionConfigFromEnvironment interprets the existing environment
+// settings once at the Agent startup boundary, preserving their defaults.
+func KubernetesExecutionConfigFromEnvironment(image string) KubernetesExecutionConfig {
+	return KubernetesExecutionConfig{
+		Image: image, TensorBoardImage: configuredTensorBoardImage(),
+		RestartableInitContainers: os.Getenv("KUBERNETES_SUPPORT_SIDECAR_FEATURE") != "false",
+	}
+}
+
+func newKubernetesExecutionCoordinator(ctx context.Context, kubeClient client.Client, config KubernetesExecutionConfig) (*coordinator.Coordinator, error) {
 	if kubeClient == nil {
 		return nil, fmt.Errorf("local Kubernetes client is required")
 	}
@@ -50,21 +68,22 @@ func NewKubernetesExecutionCoordinator(kubeClient client.Client, image string) (
 	// explicit environment binding when a persistent tenant provider is added.
 	namespace := func(agentruntime.TaskIdentity) string { return tenant.DefaultNamespace }
 	provider := kubernetesruntime.New(kubeClient, kubeClient.Scheme(), namespace)
-	runtimeInfo, err := provider.Info(context.Background())
+	runtimeInfo, err := provider.Info(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("inspect Kubernetes Runtime Provider: %w", err)
 	}
 	workloads := raykubernetes.Registrations(namespace, kubernetesruntime.Kind)
-	implementations, err := newHostImplementationRegistry(workloads)
+	implementations, err := newHostImplementationRegistryWithContext(ctx, workloads)
 	if err != nil {
 		return nil, fmt.Errorf("initialize Workload implementation registry: %w", err)
 	}
-	networkProfile := network.Profile{Image: image}
-	tensorBoardProfile := tensorboard.Profile{Image: configuredTensorBoardImage()}
+	networkProfile := network.Profile{Image: config.Image}
+	tensorBoardProfile := tensorboard.Profile{Image: config.TensorBoardImage}
 	handlers, err := environment.NewRegistry([]environment.HandlerRegistration{
 		{Handler: network.Handler{RuntimeKind: kubernetesruntime.Kind}},
 		{Handler: kubernetesssh.Handler{RuntimeKind: kubernetesruntime.Kind}},
 		{Handler: tensorboard.Handler{RuntimeKind: kubernetesruntime.Kind}},
+		{Handler: sharedmemory.Handler{RuntimeKind: kubernetesruntime.Kind}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize Environment handler registry: %w", err)
@@ -73,6 +92,7 @@ func NewKubernetesExecutionCoordinator(kubeClient client.Client, image string) (
 		{Type: taskapi.EnvironmentTypeNetwork, Resolver: network.Resolver{RuntimeKind: kubernetesruntime.Kind, Profile: networkProfile}},
 		{Type: taskapi.EnvironmentTypeSSH, Resolver: kubernetesssh.Resolver{RuntimeKind: kubernetesruntime.Kind}},
 		{Type: taskapi.EnvironmentTypeTensorBoard, Resolver: tensorboard.Resolver{RuntimeKind: kubernetesruntime.Kind, Profile: tensorBoardProfile}},
+		{Type: taskapi.EnvironmentTypeSharedMemory, Resolver: sharedmemory.Resolver{RuntimeKind: kubernetesruntime.Kind}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize Environment resolver registry: %w", err)
@@ -80,7 +100,7 @@ func NewKubernetesExecutionCoordinator(kubeClient client.Client, image string) (
 	baseBinder := binding.BindingPlanBinder{Handlers: handlers, Validator: binding.DesiredPlanValidator{
 		RuntimeKind: kubernetesruntime.Kind,
 		Objects:     provider,
-	}, Workloads: supervision.Assembler{ToolsImage: image}, Lowerer: kubernetesruntime.UnitLowerer{RestartableInitContainers: os.Getenv("KUBERNETES_SUPPORT_SIDECAR_FEATURE") != "false"}}
+	}, Workloads: supervision.Assembler{ToolsImage: config.Image}, Lowerer: kubernetesruntime.UnitLowerer{RestartableInitContainers: config.RestartableInitContainers}}
 	return &coordinator.Coordinator{
 		Runtimes:  []coordinator.RuntimeRegistration{{Info: runtimeInfo, Provider: provider, Comparator: kubernetesruntime.ObjectComparator{Profiles: kubernetesruntime.BuiltinProfileRegistry()}}},
 		Workloads: workloads, Implementations: implementations,
@@ -99,8 +119,8 @@ func NewKubernetesExecutionCoordinator(kubeClient client.Client, image string) (
 }
 
 func configuredTensorBoardImage() string {
-	// TODO(environment): Replace this transitional environment variable with a
-	// validated, typed Agent configuration injected into production assembly.
+	// Keep operator-facing environment interpretation at the startup boundary;
+	// production assembly receives the resolved image as a typed input.
 	if image := strings.TrimSpace(os.Getenv(tensorBoardImageEnv)); image != "" {
 		return image
 	}
@@ -129,6 +149,14 @@ func NewKubernetesHost(controller *Controller, execution *coordinator.Coordinato
 		Implementations: implementations,
 		Lifecycle:       kubernetesLifecycle{controller: controller},
 		AfterExecution:  controller.recordVerifiedExecution,
+		Admit: func(ctx context.Context, input host.LifecycleInput) error {
+			return execution.AdmitTask(ctx, input.Snapshot)
+		},
+		AdmissionRequired: func(input host.LifecycleInput) bool {
+			task, err := kubernetesLifecycleTask(input)
+			// Invalid lifecycle input must reach normal validation, never bypass it.
+			return err != nil || (currentDrainRequest(task) == nil && task.Status.Phase != rlarkv1alpha1.TaskPhaseStopped)
+		},
 	}
 	status := host.KubernetesStatusWriter{Client: controller.ManagementClient}
 	result := &host.Host{Tasks: controller.ManagementClient, Bundle: bundle, Eligibility: kubernetesEligibility{agentType: controller.AgentType}, Status: status, Claimant: controller.ManagementNamespace + "/" + controller.AgentType}
@@ -138,15 +166,32 @@ func NewKubernetesHost(controller *Controller, execution *coordinator.Coordinato
 	return result, nil
 }
 
+// KubernetesExecutionObservations returns the Adapter-provided observation
+// contracts from the Coordinator's shared immutable implementation registry.
+func KubernetesExecutionObservations(execution *coordinator.Coordinator) ([]observation.Kubernetes, error) {
+	if execution == nil {
+		return nil, fmt.Errorf("task execution coordinator is required")
+	}
+	implementations, ok := execution.Implementations.(host.ImplementationRegistry)
+	if !ok {
+		return nil, fmt.Errorf("task execution coordinator requires the shared Host implementation registry")
+	}
+	return KubernetesObservationsFromImplementations(implementations, kubernetesruntime.Kind)
+}
+
 // newHostImplementationRegistry translates Coordinator registrations into the
 // shared immutable registry used by both Coordinator and Host. Construction
 // validates that each Adapter advertises the exact registered implementation.
 func newHostImplementationRegistry(workloads []coordinator.WorkloadRegistration) (workloadImplementationRegistry, error) {
+	return newHostImplementationRegistryWithContext(context.Background(), workloads)
+}
+
+func newHostImplementationRegistryWithContext(ctx context.Context, workloads []coordinator.WorkloadRegistration) (workloadImplementationRegistry, error) {
 	registrations := make([]host.WorkloadRegistration, 0, len(workloads))
 	for _, registration := range workloads {
 		registrations = append(registrations, host.WorkloadRegistration{Key: host.ImplementationKey{WorkloadType: registration.Type, WorkloadVersion: registration.Version, RuntimeKind: registration.RuntimeKind}, Adapter: registration.Adapter})
 	}
-	implementations, err := host.NewImplementationRegistry(context.Background(), registrations)
+	implementations, err := host.NewImplementationRegistry(ctx, registrations)
 	if err != nil {
 		return nil, err
 	}

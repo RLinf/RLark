@@ -124,3 +124,16 @@ func (b *JobTaskTemplateApplyConfiguration) WithTags(values ...*JobTagApplyConfi
 	}
 	return b
 }
+
+// WithDrainRequests adds the given value to the DrainRequests field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the DrainRequests field.
+func (b *JobTaskTemplateApplyConfiguration) WithDrainRequests(values ...*TaskDrainRequestApplyConfiguration) *JobTaskTemplateApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithDrainRequests")
+		}
+		b.TaskSpecApplyConfiguration.DrainRequests = append(b.TaskSpecApplyConfiguration.DrainRequests, *values[i])
+	}
+	return b
+}

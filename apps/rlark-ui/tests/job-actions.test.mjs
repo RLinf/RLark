@@ -172,21 +172,43 @@ test("worker node shows the shared info tooltip in the warning color", () => {
   assert.match(jobsStyles, /--danger: #e05270/);
 });
 
+test("pull progress tooltip can be pinned open for reading and copying", () => {
+  assert.match(jobsSource, /const \[pinned, setPinned\] = useState\(false\)/);
+  assert.match(jobsSource, /if \(pinned\) return;/);
+  assert.match(jobsSource, /onClick=\{togglePinned\}/);
+  assert.match(jobsSource, /aria-pressed=\{pinned\}/);
+  assert.match(jobsSource, /event\.key === "Escape"/);
+  assert.match(jobsStyles, /\.status-info\.status-info-pinned \{/);
+  assert.match(jobsStyles, /\.status-info-tooltip \{[^}]*user-select: text;/s);
+});
+
 test("mock topology exposes a real disk warning on gpu-cloud-01", () => {
   assert.match(nodesSource, /node\.id === "gpu-cloud-01" \? 90 : 40/);
   assert.match(nodesSource, /storage: \{/);
   assert.match(nodesSource, /usedBytes: diskUsedBytes/);
 });
 
-test("node detail shows real disk usage with the requested card layout", () => {
+test("node detail separates scheduling resources from monitored usage", () => {
   assert.match(clustersSource, /label: zh \? "磁盘" : "Storage"/);
   assert.match(clustersSource, /getNodeDiskUsage\(node\)/);
-  assert.match(clustersSource, /node\.status\?\.diskPressure === true/);
-  assert.match(clustersSource, /磁盘使用率已达到/);
+  // Disk alerts come from node status and monitored usage, not a client-side
+  // resource-pressure conclusion.
+  assert.match(
+    clustersSource,
+    /node\.status\?\.diskPressure === true \|\|\s*\(diskPercent !== null && diskPercent >= 90\)/,
+  );
+  assert.match(
+    clustersSource,
+    /资源占用按运行 Worker 申请统计，压力来自节点状态/,
+  );
+  // Disk shows monitored usage while CPU/memory/GPU show scheduling requests.
+  assert.match(clustersSource, /zh\s*\? "已使用"\s*: "Used"/s);
+  assert.match(clustersSource, /zh\s*\? "已请求"\s*: "Requested"/s);
   assert.match(clustersSource, /<AlertCircle size=\{16\} \/>/);
   assert.match(clustersSource, /className="node-capacity-alert"/);
   assert.match(clustersSource, /className="node-capacity-alert-tooltip"/);
   assert.match(clustersSource, /健康与容量告警/);
+  assert.match(clustersSource, /磁盘使用率已达到/);
   assert.match(
     jobsStyles,
     /\.node-capacity-alert:hover \.node-capacity-alert-tooltip/,
@@ -194,7 +216,8 @@ test("node detail shows real disk usage with the requested card layout", () => {
   assert.match(clustersSource, /used\[key\]\?\.endsWith\("%"\)/);
   assert.match(clustersSource, /total - \(requested \?\? 0\)/);
   assert.match(clustersSource, /className="node-capacity-progress"/);
-  assert.match(clustersSource, /<em>\{zh \? "剩余量" : "Available"\}<\/em>/);
+  assert.match(clustersSource, /zh \? "总量" : "Total"/);
+  assert.match(clustersSource, /zh \? "剩余量" : "Available"/);
   assert.match(
     jobsStyles,
     /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/,

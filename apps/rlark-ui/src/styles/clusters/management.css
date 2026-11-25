@@ -97,8 +97,8 @@
 .cluster-action-menu {
   position: absolute;
   z-index: 10;
-  top: calc(100% + 4px);
   right: 0;
+  bottom: calc(100% + 4px);
   min-width: 150px;
   display: grid;
   padding: 5px;

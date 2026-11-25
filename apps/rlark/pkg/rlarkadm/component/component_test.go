@@ -71,6 +71,7 @@ func TestKCPWorkloadStrategy(t *testing.T) {
 			}
 			if kcp == nil {
 				t.Fatal("kcp component not found")
+				return
 			}
 			if kcp.WorkloadKind != tt.wantKind {
 				t.Fatalf("WorkloadKind = %q, want %q", kcp.WorkloadKind, tt.wantKind)
@@ -234,6 +235,7 @@ func TestNodeAgentUsesDedicatedRBAC(t *testing.T) {
 		sa, role, binding := RBAC(cfg, &c)
 		if sa == nil || role == nil || binding == nil {
 			t.Fatal("node-agent RBAC is incomplete")
+			return
 		}
 		if sa.Name != constants.ComponentAgentNode || role.Name != constants.ComponentAgentNode || binding.Name != constants.ComponentAgentNode {
 			t.Fatalf("node-agent RBAC names = %q, %q, %q, want %q", sa.Name, role.Name, binding.Name, constants.ComponentAgentNode)
@@ -460,6 +462,7 @@ func TestPostgresqlStorage(t *testing.T) {
 			}
 			if postgresql == nil {
 				t.Fatal("postgresql component not found")
+				return
 			}
 
 			dep := Deployment(cfg, postgresql)

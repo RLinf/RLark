@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 	"github.com/xtaci/smux"
+	"golang.org/x/time/rate"
 )
 
 // Session multiplexes logical connections over a single websocket transport
@@ -40,7 +41,14 @@ type Session struct {
 	auth   ConnectAuthorizer
 	dialer Dialer
 	client bool
+
+	// Pending headers and target dials, not established streams.
+	pendingStreams  int
+	rejectedStreams int
 }
+
+const maxPendingStreams = 128
+const maxRejectedStreams = 8
 
 // ContextKey is the context key type used for remote-dialer diagnostic values.
 type ContextKey struct{}
@@ -232,7 +240,12 @@ func (s *Session) removeSessionKey(clientKey string, sessionKey int) {
 func (s *Session) getSessionKeys(clientKey string) map[int]bool {
 	s.RLock()
 	defer s.RUnlock()
-	return s.remoteClientKeys[clientKey]
+	keys := s.remoteClientKeys[clientKey]
+	result := make(map[int]bool, len(keys))
+	for key, value := range keys {
+		result[key] = value
+	}
+	return result
 }
 
 // clientKeyWithPrefix returns a remote client key that starts with prefix.
@@ -250,6 +263,8 @@ func (s *Session) clientKeyWithPrefix(prefix string) (string, bool) {
 // Serve accepts and handles logical connections for the lifetime of the session.
 // It returns an HTTP-like status code describing why serving stopped.
 func (s *Session) Serve(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	s.RLock()
 	mux := s.mux
 	control := s.control
@@ -262,13 +277,30 @@ func (s *Session) Serve(ctx context.Context) (int, error) {
 	if mux == nil {
 		return 400, errors.New("session not initialized")
 	}
-	defer func() { _ = mux.Close() }()
+	var workers sync.WaitGroup
+	rejectionLogs := rate.NewLimiter(rate.Every(time.Second), 5)
+	logRejection := func(reason string, pending, rejecting int) {
+		if rejectionLogs.Allow() {
+			logrus.WithFields(logrus.Fields{
+				"reason": reason, "sessionKey": s.sessionKey,
+				"pending": pending, "rejecting": rejecting, "limit": maxPendingStreams,
+			}).Info("RemoteDialer stream rejected")
+		}
+	}
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		<-ctx.Done()
+		_ = mux.Close()
+	}()
+	defer func() { cancel(); <-watchDone; workers.Wait() }()
 	s.Lock()
 	s.stage = "serving"
 	s.Unlock()
 
 	if control != nil {
-		go s.serveControl(control)
+		workers.Add(1)
+		go func() { defer workers.Done(); s.serveControl(control) }()
 	}
 
 	for {
@@ -285,7 +317,34 @@ func (s *Session) Serve(ctx context.Context) (int, error) {
 			}
 			return 500, err
 		}
-		go s.handleStream(ctx, stream)
+		s.Lock()
+		if s.pendingStreams >= maxPendingStreams {
+			pending, rejecting := s.pendingStreams, s.rejectedStreams
+			if s.rejectedStreams >= maxRejectedStreams {
+				s.Unlock()
+				logRejection("rejection_workers_full", pending, rejecting)
+				_ = stream.Close()
+				continue
+			}
+			s.rejectedStreams++
+			s.Unlock()
+			logRejection("pending_admission_full", pending, rejecting)
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				defer func() { s.Lock(); s.rejectedStreams--; s.Unlock() }()
+				// Read a bounded header before refusal. An immediate FIN can
+				// precede the peer registering its newly opened smux stream.
+				_ = stream.SetReadDeadline(time.Now().Add(time.Second))
+				_, _, _ = readConnectHeader(stream)
+				_ = stream.Close()
+			}()
+			continue
+		}
+		s.pendingStreams++
+		s.Unlock()
+		workers.Add(1)
+		go func() { defer workers.Done(); s.handleStream(ctx, stream) }()
 	}
 }
 
@@ -293,12 +352,21 @@ func (s *Session) Serve(ctx context.Context) (int, error) {
 // target and pipes data in both directions. Back pressure and stream teardown
 // are handled by smux.
 func (s *Session) handleStream(ctx context.Context, stream *smux.Stream) {
+	release := sync.OnceFunc(func() {
+		s.Lock()
+		s.pendingStreams--
+		s.Unlock()
+	})
+	defer release()
+	// An incomplete connect header must not retain a worker indefinitely.
+	_ = stream.SetReadDeadline(time.Now().Add(time.Minute))
 	proto, address, err := readConnectHeader(stream)
 	if err != nil {
 		logrus.WithError(err).Debug("failed to read connect header")
 		_ = stream.Close()
 		return
 	}
+	_ = stream.SetReadDeadline(time.Time{})
 
 	if s.auth == nil || !s.auth(proto, address) {
 		logrus.Debugf("connect not allowed for %s/%s", proto, address)
@@ -306,7 +374,7 @@ func (s *Session) handleStream(ctx context.Context, stream *smux.Stream) {
 		return
 	}
 
-	clientDial(ctx, s.dialer, stream, proto, address)
+	clientDial(ctx, s.dialer, stream, proto, address, release)
 }
 
 // Dial opens a logical connection to network proto and address through the
@@ -316,6 +384,9 @@ func (s *Session) Dial(ctx context.Context, proto, address string) (net.Conn, er
 }
 
 func (s *Session) serverConnectContext(ctx context.Context, proto, address string) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.RLock()
 	mux := s.mux
 	s.RUnlock()
@@ -327,12 +398,33 @@ func (s *Session) serverConnectContext(ctx context.Context, proto, address strin
 	if err != nil {
 		return nil, err
 	}
+	// Cancellation interrupts header writes, but ownership transfers to the
+	// caller on success: later cancellation must not close an established stream.
+	closed := make(chan struct{})
+	stopClose := context.AfterFunc(ctx, func() { _ = stream.Close(); close(closed) })
+	stopped := false
+	defer func() {
+		if !stopped && !stopClose() {
+			<-closed
+		}
+	}()
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = stream.SetWriteDeadline(deadline)
 	}
 
 	if err := writeConnectHeader(stream, proto, address); err != nil {
+		_ = stream.Close()
+		return nil, errors.Join(ctx.Err(), err)
+	}
+	if !stopClose() {
+		stopped = true
+		<-closed
+		_ = stream.Close()
+		return nil, ctx.Err()
+	}
+	stopped = true
+	if err := ctx.Err(); err != nil {
 		_ = stream.Close()
 		return nil, err
 	}

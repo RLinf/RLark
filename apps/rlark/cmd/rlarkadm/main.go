@@ -19,6 +19,7 @@ func main() {
 
 	root.AddCommand(commands.InstallCommand())
 	root.AddCommand(commands.UninstallCommand())
+	root.AddCommand(commands.UpgradeCommand())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)

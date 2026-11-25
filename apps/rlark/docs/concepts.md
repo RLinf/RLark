@@ -37,8 +37,9 @@ spec:
 status:
   ipAllocations:          # List of allocated IPs
     - ip: "10.0.1.1"
-      task: "actor-head"
-      job: "ppo-cartpole-v1"
+      pod: "default/ppo-cartpole-v1-actor-head-0"   # namespace/name of the reporting Pod
+      task: "default/ppo-cartpole-v1-actor-head"    # namespace/name of the owning Task
+      job: "ppo-cartpole-v1"                        # name of the Job that owns the Task
 ```
 
 ### Design Intent
@@ -82,6 +83,7 @@ spec:
 - **Routing Table**: NodeServer uses DomainPeer to locate target Pod's cluster and actual IP
 - **Certificate Distribution**: DomainPeer carries the Domain's certificate and private key; Agent uses it to establish cross-cluster SSH tunnels
 - **Auto-Update**: Domain Controller automatically updates DomainPeer's pods list on Pod create/delete
+- **Ownership**: The Domain Controller stamps every DomainPeer it manages with the `rlinf.io/domain` label, the `rlark.io/parent-uid` annotation, and a controller `OwnerReference` to the Domain. Because Domain is cluster-scoped it may own a namespaced DomainPeer, so deleting the Domain lets Kubernetes garbage-collect its DomainPeers. A DomainPeer whose metadata proves it belongs to a different Domain is never modified or deleted; a DomainPeer created before this metadata existed is adopted once and then left untouched.
 
 ## 4. Node
 
@@ -119,6 +121,21 @@ status:
     cpu: "30"
     memory: "120Gi"
     nvidia.com/gpu: "8"
+  used:
+    cpu: "6"
+    memory: "24Gi"
+    nvidia.com/gpu: "2"
+  capabilitySnapshot:
+    runtime:
+      type: Kubernetes
+      version: "containerd://1.7.0"
+      workloadKinds: ["rlinf.io/ray"]
+    network:
+      hostNetwork: true
+    devices:
+      - category: nvidia.com/gpu
+        count: 8
+        available: 6
   nodeInfo:
     architecture: amd64
     operatingSystem: linux
@@ -129,31 +146,31 @@ status:
 ### Usage
 
 - **Resource Awareness**: Control plane makes scheduling decisions based on Node resource state (via NodeSelector)
-- **Label Management**: Control plane can push labels to Nodes; Agent's Pull controller syncs them to local k8s Nodes
+- **Label Management**: Label changes are relayed by the Gateway directly to the data-plane Kubernetes Node; the Agent reports the resulting label set in `status.observedNodeLabels`
 - **Taint Management**: Control node schedulability via the `unschedulable` field
 
 ### Administrator Metadata
 
-Administrators can select multiple Nodes in the Admin UI and apply metadata used by both the admin and workspace resource views:
+Administrators edit metadata used by both the admin and workspace resource views from each Node's management panel in the Admin UI:
 
 - `rlark.io/city` annotation: administrator-managed physical location
-- `rlark.io/node-category-{cloud,edge,robot}=true` labels: one or more Node categories
+- `rlark.io/node-category-{cloud,edge,robot}=true` annotations: one or more Node categories
 - `rlark.io/gpu-model` annotation: GPU model for cloud compute Nodes
 - `rlark.io/device-model` annotation: embodied device model for edge compute and robot Nodes
 
-These business fields are stored on the KCP Node CR and are preserved when the Agent refreshes Kubernetes-discovered state. The batch editor shows common current values, marks mixed selections, and changes only properties explicitly enabled by the administrator; clearing an enabled property removes it. The Admin UI also supports selecting all filtered Nodes, clearing the selection, and batch cordon/uncordon. A Node may belong to multiple categories and carry both GPU and embodied-device models.
+The Admin UI also provides a batch editor: select Nodes in the list, enable only the fields to change, and apply. Disabled fields keep their current values, and clearing an enabled field removes its annotation. These business fields are stored on the KCP Node CR as annotations and are preserved when the Agent refreshes Kubernetes-discovered state. A Node may belong to multiple categories and carry both GPU and embodied-device models.
 
-Workspace node totals and cluster-detail node lists include usable Workers carrying an RLark category label. Legacy `rlark.io/node-category` values and unlabeled Nodes that explicitly advertise GPU or embodied-device resources remain supported. Nodes carrying a Kubernetes `master` or `control-plane` role label remain visible only in the administration workspace and are not counted or shown as workload Workers in the business workspace.
+Workspace node totals and cluster-detail node lists include usable Workers carrying RLark category metadata. Legacy `rlark.io/node-category` values, legacy category labels, and unlabeled Nodes that explicitly advertise GPU or embodied-device resources remain supported. Nodes carrying a Kubernetes `master` or `control-plane` role label remain visible only in the administration workspace and are not counted or shown as workload Workers in the business workspace.
 
-CPU, memory, and GPU usage in Node details is aggregated from the Kubernetes `resources.requests` of running Workers. It represents scheduler-reserved resources, not real-time hardware utilization from metrics-server. Disk is reported separately from kubelet Stats Summary: the Agent combines nodefs with a dedicated imagefs, while avoiding double-counting when both refer to the same filesystem. The UI shows real used, total, and available storage and warns at 90% usage or when kubelet reports `DiskPressure=True`. The detail page also lists every Worker on the Node with its Job, role, IP, resource requests, and runtime phase.
+CPU, memory, and GPU usage in Node details is aggregated from the Kubernetes `resources.requests` of non-terminal Pods bound to the Node. It represents scheduler-reserved resources, not real-time hardware utilization from metrics-server. The Node capability snapshot contains only Node-local observations: the selected runtime and version, native `hostNetwork` support, and Kubernetes extended resources. For each extended resource, `count` comes from Node capacity and `available` is allocatable capacity minus the requests reserved by non-terminal Pods; it is not a physical-device health signal. Cluster-level storage classes, cross-cluster routing, service exposure, and remote operation paths are not declared by a Node snapshot. Disk is reported separately from kubelet Stats Summary: the Agent combines nodefs with a dedicated imagefs, while avoiding double-counting when both refer to the same filesystem. The UI shows real used, total, and available storage and warns at 90% usage or when kubelet reports `DiskPressure=True`. The detail page also lists every Worker on the Node with its Job, role, IP, resource requests, and runtime phase.
 
-## 5. Node Cordon/Uncordon
+## 5. Node Pause/Resume Scheduling
 
 Node scheduling can be controlled via the `unschedulable` field.
 
 ### Concept
 
-Setting `spec.unschedulable: true` marks a node as unschedulable, preventing new workloads from being assigned to it. This is equivalent to Kubernetes `kubectl cordon`.
+Setting `spec.unschedulable: true` pauses placement of new **RLark** workloads on the node; existing workloads, including running RLark Tasks, keep running. The Node Agent enforces this by setting the `rlark.io/unschedulable=true` label on the local Kubernetes Node, which every RLark workload template excludes with a required node affinity. RLark does **not** write `spec.unschedulable` on the Kubernetes Node object, so a node paused this way still accepts Pods from workloads that RLark does not manage.
 
 ### Usage
 
@@ -164,7 +181,7 @@ curl -X PATCH "http://localhost:8080/api/v1/rlinf.io/v1alpha1/nodes/gpu-node-01?
   -d '{ "spec": { "unschedulable": true } }'
 ```
 
-The Web UI provides a Cordon/Uncordon button for each node in the node list.
+The Web UI provides a Pause Schedule/Resume Schedule button for each node in the node list.
 
 ## 6. Job
 
@@ -281,7 +298,7 @@ Setting `spec.suspended: true` starts an orderly stop without deleting the Job r
 
 1. **Stop**: RLark deletes the child Task CRs, waits for their underlying workloads to be cleaned up, and retains the Job CR and configuration. Referenced external PVCs remain outside RLark management. Pod-scoped ephemeral PVCs are deleted with their Pods.
 2. **Archive**: After `ArchiveTTL`, the Archive Controller deletes the Job CR from kcp. The persistence backend retains the complete Job record (spec + status). Deleting the Job CR frees etcd and controller memory; business records remain queryable and restorable.
-3. **Start**: `POST /jobs/:name/start` is the unified start endpoint. If the Job is active (KCP has the CR), it patches `spec.suspended=false` directly. If archived (KCP CR was removed after stop), it restores the Job from the persistence backend with the same name and spec, and sets `spec.suspended=false`. The new CR has a new Kubernetes UID but the same business identity (name).
+3. **Start**: `POST /jobs/:name/start` is the unified start endpoint. If the Job is active (KCP has the CR), it patches `spec.suspended=false` directly. If archived (KCP CR was removed after stop), it restores the Job from the persistence backend with the same name and spec, and sets `spec.suspended=false`. The new CR has a new Kubernetes UID but the same business identity (name). Starting is rejected with `409 Conflict` when every Node selected by a task template belongs to an Offline, Cordoned, Draining, or Delisted Cluster, or belongs to no Cluster at all. The same guard applies to updates and patches that change `spec.suspended` from `true` to `false`, including Restart, so the caller learns immediately instead of leaving the Job Pending. Creating a Job that starts immediately (`spec.suspended: false`) is checked the same way; a Job created with `spec.suspended: true` is only a template and is accepted.
 4. **Restart**: The Job controller treats the restart annotation as a Job-level operation identifier. It deletes the current Task objects, waits for each Agent-owned cleanup finalizer to complete Runtime cleanup, and then creates new Task objects with new Kubernetes UIDs from the templates. The Agent does not interpret the restart annotation itself. Restart leaves referenced external PVCs untouched but replaces Pod-scoped ephemeral PVCs. `Succeeded` and `Failed` Jobs both start a new run from their templates.
 5. **Delete**: Deleting a Job first performs the stop-and-wait sequence, then removes the Job and child Tasks. Referenced external PVCs and hostPath data are not deleted by RLark; Pod-scoped ephemeral PVCs are deleted with their Pods. The persistence backend record is also deleted (PostgreSQL row or Secret).
 
@@ -292,7 +309,7 @@ Setting `spec.suspended: true` starts an orderly stop without deleting the Job r
 - **Unified start endpoint**: `POST /jobs/:name/start` works for both active and archived Jobs. The frontend calls this endpoint without knowing whether the Job is in kcp or archived.
 - **Web UI integration**: The Web UI provides Stop, Start, Restart, and Delete actions with lifecycle-aware availability
 
-When a Workflow is stopped, RLark deletes all Jobs from the current run, including completed Jobs. Resuming the Workflow creates a new run from the beginning of the DAG; completion state from the previous run is not reused.
+When a Workflow is stopped, RLark keeps the Jobs of the current run instead of deleting them. Every Job that is still active is given `spec.suspended: true` and stops in place; Jobs that already reached `Succeeded` or `Failed` keep their own outcome and are not rewritten. The Workflow reports `Stopping` until every Job it owns has come to rest, and only then becomes `Stopped`. Resuming the Workflow dispatches the DAG again and reconciles the surviving Jobs back to their templates, which clears the suspension; a Job that already completed is not run again. Stopped Jobs are still archived like any other Job, so once `ArchiveTTL` (default 5 minutes) has elapsed their CRs are removed from kcp and a later resume recreates them from the templates.
 
 ## 8. Task
 
@@ -335,7 +352,7 @@ spec:
           app: ppo-trainer
       spec:
         containers:
-          - name: trainer
+          - name: main
             image: pytorch/pytorch:2.3.0
   environments:
     - type: rlinf.io/network
@@ -370,6 +387,15 @@ status:
 
 `runtime.kind`, `workload.kind`, and `workload.carrier.type` are open identifiers rather than CRD enums. Openness permits provider extension without replacing the Task schema; it does not imply support. The Agent must resolve a registered Provider and Adapter and validate capabilities before any external effect. Workload semantics use `kind`, `version`, and `parameters`; the carrier independently uses `type`, `version`, and `parameters`. `environments` is an ordered list and may contain the same environment type more than once with different parameters.
 
+Built-in environment types:
+
+| Type | Description | Parameters |
+|------|-------------|------------|
+| `rlinf.io/network` | Join a cross-cluster network domain | `domain` |
+| `rlinf.io/ssh` | Inject SSH authorized keys and start an `sshd` sidecar | `authorizedKeys`, `port` |
+| `rlinf.io/tensorboard` | Expose a TensorBoard service for the Task | `logDir` |
+| `rlinf.io/shared-memory` | Mount a memory-backed `emptyDir` as `/dev/shm` into every regular container | `size` (e.g. `512Mi`, `1Gi`) |
+
 **Embodied AI Mapping**:
 
 ```mermaid
@@ -395,6 +421,8 @@ Pod CR is the **control plane mirror** of data plane Pods, reported by the Agent
 ### Concept
 
 When a Pod is created in the data plane cluster, the Agent's Pod Push controller reports the Pod info to the control plane, creating a corresponding Pod CR. Pod CR contains Pod identification info (name, owning Task) and runtime status (IP, node, phase).
+
+The management Pod CR is removed when its local data plane Pod no longer exists. This includes legacy Pod CRs created before the local Pod UID label existed: the Agent marks such a Pod as stale (`Unknown`) and deletes the CR after the configured stale TTL.
 
 ### Usage
 

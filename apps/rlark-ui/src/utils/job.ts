@@ -45,6 +45,10 @@ const ROLE_TEMPLATES: Record<JobType, string[]> = {
   Custom: [],
 };
 
+// 任务类型的持久化载体。写入侧只写这一个规范形式，读取侧在缺失时回落到从
+// task.role 反推，以兼容此前创建的存量任务。
+export const JOB_TYPE_LABEL = "rlark.io/job-type";
+
 export { TASK_ROLE_MAP, ROLE_TEMPLATES };
 
 export function mapTaskRole(role: string): "Actor" | "Rollout" | "Env" {
@@ -110,6 +114,77 @@ export function selectorToStr(sel: Record<string, string>): string {
   return Object.entries(sel)
     .map(([k, v]) => `${k}=${v}`)
     .join(",");
+}
+
+export type PlacementCluster = {
+  id?: string;
+  name?: string;
+  agentNamespace?: string;
+  phase?: string;
+};
+
+// 只有 Online 与服务降级（Downgraded）的集群接受新的调度；停止调度
+// （Cordoned）、排空、离线或已下架的集群仍会返回节点，但调度器不会再向
+// 其中放置新的 Worker。
+export function isClusterSchedulable(cluster: PlacementCluster): boolean {
+  return cluster.phase === "Online" || cluster.phase === "Downgraded";
+}
+
+// Node CR 位于所属集群的 Agent 命名空间。由 Agent 纳管的集群通常以集群名作为
+// 该命名空间，历史或自定义集群可能显式设置 agentNamespace，因此同时接受 id、
+// name 与 agentNamespace，避免把可调度节点误判为不可用。
+export function schedulableNodeNamespaces(
+  clusters: PlacementCluster[],
+): Set<string> {
+  const namespaces = new Set<string>();
+  for (const cluster of clusters) {
+    if (!isClusterSchedulable(cluster)) continue;
+    for (const value of [cluster.id, cluster.name, cluster.agentNamespace]) {
+      if (value) namespaces.add(value);
+    }
+  }
+  return namespaces;
+}
+
+// 复制、编辑或编辑后重启的任务可能保留一个已经不存在或已停止调度的集群，
+// 此时不能继续沿用该选择。
+export function isSchedulableClusterValue(
+  value: string,
+  clusters: PlacementCluster[],
+): boolean {
+  return clusters.some(
+    (cluster) =>
+      isClusterSchedulable(cluster) &&
+      (cluster.id === value ||
+        cluster.name === value ||
+        cluster.agentNamespace === value),
+  );
+}
+
+// 历史集群的 Cluster 名称与 Agent 命名空间可能不同，一个集群选择值应同时
+// 匹配其 id、name 与 agentNamespace，避免把合法节点误判为不属于该集群。
+export function clusterNodeNamespaces(
+  value: string,
+  clusters: PlacementCluster[],
+): Set<string> {
+  const namespaces = new Set<string>();
+  for (const cluster of clusters) {
+    if (
+      cluster.id !== value &&
+      cluster.name !== value &&
+      cluster.agentNamespace !== value
+    )
+      continue;
+    for (const candidate of [
+      cluster.id,
+      cluster.name,
+      cluster.agentNamespace,
+    ]) {
+      if (candidate) namespaces.add(candidate);
+    }
+  }
+  if (namespaces.size === 0 && value) namespaces.add(value);
+  return namespaces;
 }
 
 export function generateJobResourceName(): string {
@@ -242,7 +317,10 @@ export function generateJobCRD(opts: {
       return {
         name: taskName,
         head: isHead,
-        role: mapTaskRole(role),
+        // 自定义类型没有角色模板，mapTaskRole 的兜底会把任意角色名折叠成 Actor，
+        // 丢失用户填写的语义。TaskRole 在 CRD 层不做枚举校验，可以承载自定义
+        // 角色名，因此自定义类型直接写回原始角色名。
+        role: opts.type === "Custom" ? role : mapTaskRole(role),
         placement: {
           nodeSelector: res ? parseNodeSelector(res.nodeSelector) : {},
         },
@@ -315,16 +393,28 @@ export function generateJobCRD(opts: {
             },
           },
         },
-        environments:
-          isHead && opts.tensorBoardDir
-            ? [
-                {
-                  type: "rlinf.io/tensorboard",
-                  version: "v1",
-                  parameters: { logDir: opts.tensorBoardDir },
-                },
-              ]
-            : undefined,
+        environments: (() => {
+          const envs: Array<{
+            type: string;
+            version: string;
+            parameters: Record<string, unknown>;
+          }> = [];
+          if (isHead && opts.tensorBoardDir) {
+            envs.push({
+              type: "rlinf.io/tensorboard",
+              version: "v1",
+              parameters: { logDir: opts.tensorBoardDir },
+            });
+          }
+          if (res?.advanced?.sharedMemorySize) {
+            envs.push({
+              type: "rlinf.io/shared-memory",
+              version: "v1",
+              parameters: { size: res.advanced.sharedMemorySize },
+            });
+          }
+          return envs.length > 0 ? envs : undefined;
+        })(),
       };
     })
     .filter((task): task is Exclude<typeof task, null> => task !== null)
@@ -335,6 +425,9 @@ export function generateJobCRD(opts: {
     kind: "Job",
     metadata: {
       name: opts.name,
+      // 任务类型是用户在向导里显式选择的，必须持久化。读取侧不能只从 task.role
+      // 反推：role 是被折叠过的粗粒度分类，自定义类型会被误判成 RL。
+      labels: { [JOB_TYPE_LABEL]: opts.type },
       ...(opts.displayName
         ? { annotations: { "rlark.io/display-name": opts.displayName } }
         : {}),

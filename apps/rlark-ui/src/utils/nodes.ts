@@ -3,6 +3,7 @@ import { Bot, CircleDot, CloudCog, Server } from "lucide-react";
 import { nodes as mockNodes, type NodeKind } from "../data";
 import type { CRDNode, CRDNodeLite, NodeCategory } from "../types";
 import {
+  getNodeAllLabels,
   getNodeCategories,
   getNodeCategory,
   hasNodeCategory,
@@ -11,6 +12,7 @@ import {
 } from "./nodeVisibility";
 
 export {
+  getNodeAllLabels,
   getNodeCategories,
   getNodeCategory,
   hasNodeCategory,
@@ -27,30 +29,35 @@ export {
   selectDeviceResourceKey,
 } from "./nodeResources";
 
+// Administrator metadata is authored on the management Node CR as annotations,
+// so annotations take precedence over legacy values still present on the
+// data-plane Node's observed labels.
 export function getNodeLocation(node: CRDNode): string {
-  return (
-    node.metadata.annotations?.["rlark.io/city"] ??
-    node.metadata.labels?.["rlark.io/city"] ??
-    ""
-  );
+  const annotations = node.metadata.annotations ?? {};
+  const labels = getNodeAllLabels(node);
+  return annotations["rlark.io/city"] ?? labels["rlark.io/city"] ?? "";
 }
 
 export function getNodeGPUModel(node: CRDNode): string {
+  const annotations = node.metadata.annotations ?? {};
+  const labels = getNodeAllLabels(node);
   return (
-    node.metadata.annotations?.["rlark.io/gpu-model"] ??
-    node.metadata.labels?.["rlark.io/gpu-model"] ??
-    node.metadata.annotations?.["rlark.io/model"] ??
-    node.metadata.labels?.["rlark.io/model"] ??
+    annotations["rlark.io/gpu-model"] ??
+    labels["rlark.io/gpu-model"] ??
+    annotations["rlark.io/model"] ??
+    labels["rlark.io/model"] ??
     ""
   );
 }
 
 export function getNodeDeviceModel(node: CRDNode): string {
+  const annotations = node.metadata.annotations ?? {};
+  const labels = getNodeAllLabels(node);
   return (
-    node.metadata.annotations?.["rlark.io/device-model"] ??
-    node.metadata.labels?.["rlark.io/device-model"] ??
-    node.metadata.annotations?.["rlark.io/model"] ??
-    node.metadata.labels?.["rlark.io/model"] ??
+    annotations["rlark.io/device-model"] ??
+    labels["rlark.io/device-model"] ??
+    annotations["rlark.io/model"] ??
+    labels["rlark.io/model"] ??
     ""
   );
 }
@@ -88,6 +95,127 @@ export const categoryLabels: Record<
 
 export { NODE_CATEGORY_LABEL };
 
+// Mirrors the fixed English messages the Node Controller writes so the mock
+// data renders the same localized explanations as a real control plane.
+const mockConditionLastTransitionTime = "2026-11-16T08:00:00Z";
+
+type MockNodeCondition = {
+  type: string;
+  status: "True" | "False" | "Unknown";
+  reason: string;
+  message: string;
+  lastTransitionTime: string;
+};
+
+// Builds the full condition set the Node Controller would write for a node in
+// the given phase, so local development can exercise connectivity, readiness,
+// resource pressure, cordon, drain, and placement states without a backend.
+function mockNodeConditions(phase: string): MockNodeCondition[] {
+  const connected = ["Online", "Degraded", "Draining"].includes(phase);
+  const draining = phase === "Draining";
+  const pressure = phase === "Degraded";
+  const unschedulable = draining || phase === "Offline";
+  const capabilityStatus: MockNodeCondition["status"] = connected
+    ? "True"
+    : "Unknown";
+
+  const condition = (
+    type: string,
+    status: MockNodeCondition["status"],
+    reason: string,
+    message: string,
+  ): MockNodeCondition => ({
+    type,
+    status,
+    reason,
+    message,
+    lastTransitionTime: mockConditionLastTransitionTime,
+  });
+
+  return [
+    condition(
+      "AgentConnected",
+      connected ? "True" : "False",
+      connected ? "LeaseValid" : "LeaseExpired",
+      "Agent connectivity is derived from the node heartbeat Lease.",
+    ),
+    condition(
+      "RuntimeReady",
+      capabilityStatus,
+      connected ? "RuntimeAvailable" : "RuntimeUnavailable",
+      "Runtime availability is derived from the Agent-reported Kubernetes Node readiness.",
+    ),
+    condition(
+      "NetworkReady",
+      capabilityStatus,
+      connected ? "NetworkAvailable" : "NetworkUnavailable",
+      "Network availability is derived from the Agent-reported Kubernetes Node readiness.",
+    ),
+    condition(
+      "StorageReady",
+      connected ? "True" : "Unknown",
+      connected ? "StorageAvailable" : "StorageUnavailable",
+      "Storage availability is derived from the Agent-reported storage snapshot and disk pressure.",
+    ),
+    condition(
+      "DeviceReady",
+      capabilityStatus,
+      connected ? "DeviceAvailable" : "DeviceUnavailable",
+      "Device availability is derived from the Agent-reported Kubernetes Node readiness.",
+    ),
+    condition(
+      "ResourcePressure",
+      phase === "Offline" ? "Unknown" : pressure ? "True" : "False",
+      phase === "Offline"
+        ? "ResourcePressureUnknown"
+        : pressure
+          ? "ResourcePressureDetected"
+          : "NoResourcePressure",
+      "Resource pressure is derived from the Agent-reported Kubernetes disk pressure.",
+    ),
+    condition(
+      "KubernetesCordoned",
+      phase === "Offline" ? "Unknown" : "False",
+      phase === "Offline"
+        ? "KubernetesCordonUnobserved"
+        : "KubernetesNotCordoned",
+      "Cordon state is the Agent-observed Kubernetes Node spec.unschedulable. RLark does not manage that field, but a cordoned Node blocks every Pod on it, so it makes the Node unschedulable for RLark placement as well.",
+    ),
+    condition(
+      "Draining",
+      draining ? "True" : "False",
+      draining ? "DrainRequested" : "NoDrainRequest",
+      "Draining reflects the current Node drain operation request and Task observations.",
+    ),
+    condition(
+      "Ready",
+      connected && !draining ? "True" : "False",
+      !connected
+        ? "LeaseExpired"
+        : draining
+          ? "DrainRequested"
+          : "KubernetesNodeReady",
+      "Readiness is derived from Agent connectivity, Kubernetes Node readiness, drain state, and critical runtime, network, and device availability; resource pressure does not change readiness.",
+    ),
+    condition(
+      "Degraded",
+      pressure ? "True" : "False",
+      pressure ? "ResourcePressureDetected" : "NoResourcePressure",
+      "Degraded reports resource pressure or failed capability observations for diagnosis; it does not change readiness, and resource pressure separately excludes the Node from new placement.",
+    ),
+    condition(
+      "Schedulable",
+      unschedulable || pressure ? "False" : "True",
+      unschedulable
+        ? "Unschedulable"
+        : pressure
+          ? "ResourcePressureDetected"
+          : "Schedulable",
+      "Schedulability is the single placement decision; it combines spec.unschedulable with Agent connectivity, readiness, an external Kubernetes cordon, and scheduler-relevant resource pressure.",
+    ),
+  ];
+}
+
 export function buildMockCRDNodes(): CRDNode[] {
   const categoryByKind: Record<NodeKind, NodeCategory> = {
     CloudCompute: "cloud",
@@ -106,26 +234,29 @@ export function buildMockCRDNodes(): CRDNode[] {
         : node.cluster.includes("North")
           ? "北京市"
           : "深圳市";
+    const allLabels: Record<string, string> = {
+      [NODE_CATEGORY_LABEL]: categoryByKind[node.kind],
+      "rlark.io/model": node.model,
+      "rlark.io/city": city,
+      "rlark.io/enabled": "true",
+      "kubernetes.io/hostname": node.name,
+      ...(node.kind !== "CloudCompute" && node.tasks > 0
+        ? {
+            "rlark.io/embodied-task": "true",
+            "rlark.io/embodied-task-name":
+              node.kind === "Robot"
+                ? `robot-operation-${node.id.replace(/^robot-/, "")}`
+                : `edge-inference-${node.id.replace(/^edge-/, "")}`,
+          }
+        : {}),
+    };
     return {
       apiVersion: "rlinf.io/v1alpha1",
       kind: "Node",
       metadata: {
         name: node.name,
         namespace: node.cluster,
-        labels: {
-          [NODE_CATEGORY_LABEL]: categoryByKind[node.kind],
-          "rlark.io/model": node.model,
-          "rlark.io/city": city,
-          ...(node.kind !== "CloudCompute" && node.tasks > 0
-            ? {
-                "rlark.io/embodied-task": "true",
-                "rlark.io/embodied-task-name":
-                  node.kind === "Robot"
-                    ? `robot-operation-${node.id.replace(/^robot-/, "")}`
-                    : `edge-inference-${node.id.replace(/^edge-/, "")}`,
-              }
-            : {}),
-        },
+        labels: allLabels,
         creationTimestamp: "2026-06-29T10:00:00Z",
       },
       spec: {
@@ -135,11 +266,18 @@ export function buildMockCRDNodes(): CRDNode[] {
             : node.kind === "EmbodiedCompute"
               ? "Edge"
               : "Kubernetes",
-        unschedulable: node.phase === "Offline",
+        unschedulable: node.phase === "Offline" || node.phase === "Draining",
       },
       status: {
         phase: node.phase,
-        reason: node.robotState,
+        // Mock the Agent-reported observed labels so local dev sees the
+        // same data shape as production. metadata.labels and
+        // observedNodeLabels can differ in real clusters, but mock data
+        // keeps them identical for simplicity.
+        observedNodeLabels: allLabels,
+        // Mock controller-written conditions so local development renders
+        // connectivity, readiness, pressure, cordon, drain, and placement.
+        conditions: mockNodeConditions(node.phase),
         nodeInfo: {
           architecture: "amd64",
           kernelVersion: "mock",

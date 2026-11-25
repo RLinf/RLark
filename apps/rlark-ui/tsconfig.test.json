@@ -21,11 +21,15 @@
     "src/utils/jobPhase.ts",
     "src/utils/nodeBatchMetadata.ts",
     "src/utils/nodeResources.ts",
+    "src/utils/nodeState.ts",
     "src/utils/nodeVisibility.ts",
+    "src/utils/nodeWorkloads.ts",
+    "src/utils/pullProgress.ts",
     "src/utils/resourceAvailability.ts",
     "src/utils/route.ts",
     "src/utils/sshKeys.ts",
     "src/utils/terminalKeyboard.ts",
-    "src/utils/workerEvents.ts"
+    "src/utils/workerEvents.ts",
+    "src/utils/yaml.ts"
   ]
 }

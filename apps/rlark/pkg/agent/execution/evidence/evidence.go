@@ -3,49 +3,27 @@
 package evidence
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"strings"
-
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/coordination"
 	agentruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
+	sharedreconcile "github.com/rlinf/rlark/apps/rlark/pkg/reconcile"
 )
 
-const digestPrefix = "sha256:"
-
 // Digest is a canonical SHA-256 content digest.
-type Digest string
+//
+// The primitive lives in pkg/reconcile because the control plane compares
+// desired-state digests too; this alias keeps the execution vocabulary local
+// without defining a second digest format.
+type Digest = sharedreconcile.Digest
 
 // NewDigest hashes a stable byte projection.
 func NewDigest(value []byte) Digest {
-	sum := sha256.Sum256(value)
-	return Digest(digestPrefix + hex.EncodeToString(sum[:]))
+	return sharedreconcile.NewDigest(value)
 }
 
 // DigestJSON hashes the JSON representation of value. Callers must supply a
 // deterministic projection: maps with string keys are ordered by encoding/json.
 func DigestJSON(value any) (Digest, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return "", err
-	}
-	return NewDigest(data), nil
-}
-
-// Validate reports whether digest uses the canonical sha256:<lowercase-hex> form.
-func (d Digest) Validate() error {
-	value := string(d)
-	if !strings.HasPrefix(value, digestPrefix) || len(value) != len(digestPrefix)+sha256.Size*2 {
-		return errors.New("digest must use sha256:<lowercase-hex>")
-	}
-	encoded := strings.TrimPrefix(value, digestPrefix)
-	if encoded != strings.ToLower(encoded) {
-		return errors.New("digest must use lowercase hexadecimal")
-	}
-	_, err := hex.DecodeString(encoded)
-	return err
+	return sharedreconcile.DigestJSON(value)
 }
 
 // Revision identifies the execution contract recorded on one current root.

@@ -1,0 +1,21 @@
+{{- if .Values.postgresql.enabled }}
+{{- $storage := include "rlark-control-plane.storage" (dict "root" . "component" .Values.postgresql) | fromYaml }}
+{{- if eq $storage.type "pvc" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pg-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: postgresql
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if $storage.storageClass }}
+  storageClassName: {{ $storage.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $storage.size | default "30Gi" | quote }}
+{{- end }}
+{{- end }}

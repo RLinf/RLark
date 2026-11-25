@@ -37,8 +37,9 @@ spec:
 status:
   ipAllocations:          # 已分配的 IP 列表
     - ip: "10.0.1.1"
-      task: "actor-head"
-      job: "ppo-cartpole-v1"
+      pod: "default/ppo-cartpole-v1-actor-head-0"   # 上报该 IP 的 Pod，namespace/name
+      task: "default/ppo-cartpole-v1-actor-head"    # 归属的 Task，namespace/name
+      job: "ppo-cartpole-v1"                        # 拥有该 Task 的 Job 名称
 ```
 
 ### 设计意图
@@ -82,6 +83,7 @@ spec:
 - **路由表**：NodeServer 通过 DomainPeer 查找目标 Pod 所在集群和实际 IP
 - **证书分发**：DomainPeer 携带 Domain 的证书和私钥，Agent 通过它建立跨集群 SSH 隧道
 - **自动更新**：Pod 创建/删除时，Domain Controller 自动更新 DomainPeer 的 pods 列表
+- **归属关系**：Domain Controller 会为它管理的每个 DomainPeer 打上 `rlinf.io/domain` 标签、`rlark.io/parent-uid` 注解，并设置指向 Domain 的 controller `OwnerReference`。Domain 是 cluster-scoped 资源，因此可以拥有 namespaced 的 DomainPeer，删除 Domain 时 Kubernetes 会自动回收其 DomainPeer。元数据表明属于其他 Domain 的 DomainPeer 绝不会被修改或删除；在这套元数据出现之前创建的 DomainPeer 只会被收养一次，之后不再写入。
 
 ## 4. Node（计算节点）
 
@@ -119,6 +121,21 @@ status:
     cpu: "30"
     memory: "120Gi"
     nvidia.com/gpu: "8"
+  used:
+    cpu: "6"
+    memory: "24Gi"
+    nvidia.com/gpu: "2"
+  capabilitySnapshot:
+    runtime:
+      type: Kubernetes
+      version: "containerd://1.7.0"
+      workloadKinds: ["rlinf.io/ray"]
+    network:
+      hostNetwork: true
+    devices:
+      - category: nvidia.com/gpu
+        count: 8
+        available: 6
   nodeInfo:
     architecture: amd64
     operatingSystem: linux
@@ -129,31 +146,31 @@ status:
 ### 用途
 
 - **资源感知**：控制面根据 Node 的资源状态做调度决策（通过 NodeSelector）
-- **标签管理**：控制面可下发标签到 Node，Agent 的 Pull 控制器同步到本地 k8s Node
+- **标签管理**：标签变更由 Gateway 直接转发到数据面 Kubernetes Node；Agent 将结果标签集上报到 `status.observedNodeLabels`
 - **污点管理**：通过 `unschedulable` 字段控制节点是否可调度
 
 ### 管理员标注
 
-管理员可在管理端多选 Node 并批量设置由管理端和业务端共同使用的元数据：
+管理员可在管理端各 Node 的管理面板中设置由管理端和业务端共同使用的元数据：
 
 - `rlark.io/city` Annotation：管理员维护的物理位置
-- `rlark.io/node-category-{cloud,edge,robot}=true` Label：一个或多个节点分类
+- `rlark.io/node-category-{cloud,edge,robot}=true` Annotation：一个或多个节点分类
 - `rlark.io/gpu-model` Annotation：云算力节点的 GPU 型号
 - `rlark.io/device-model` Annotation：端算力和端真机节点的具身设备型号
 
-这些业务字段存储在 KCP Node CR 上，Agent 刷新 Kubernetes 自动发现状态时会保留它们。批量编辑器会带入共同的当前值、标识多值选择，并且只修改管理员明确启用的属性；清空已启用属性表示删除该值。管理端同时支持全选筛选结果、取消全选及批量 Cordon/Uncordon。一个节点可同时属于多个分类，并同时具有 GPU 和具身设备型号。
+管理端还提供批量设置：在节点列表中多选节点后，只启用需要修改的字段并应用；未启用字段保持原值，清空已启用字段即删除对应 Annotation。这些业务字段以 Annotation 形式存储在 KCP Node CR 上，Agent 刷新 Kubernetes 自动发现状态时会保留它们。一个节点可同时属于多个分类，并同时具有 GPU 和具身设备型号。
 
-业务平台的节点总数和集群详情节点列表包含带有 RLark 分类 Label 的可用 Worker；旧版 `rlark.io/node-category` 值及明确上报 GPU 或具身设备资源的未标注节点仍兼容展示。带有 Kubernetes `master` 或 `control-plane` 角色标签的节点仍只在管理平台中展示，不作为业务任务 Worker 统计和展示。
+业务平台的节点总数和集群详情节点列表包含带有 RLark 分类元数据（Annotation）的可用 Worker；旧版 `rlark.io/node-category` 值、旧版分类 Label 及明确上报 GPU 或具身设备资源的未标注节点仍兼容展示。带有 Kubernetes `master` 或 `control-plane` 角色标签的节点仍只在管理平台中展示，不作为业务任务 Worker 统计和展示。
 
-节点详情中的 CPU、内存和 GPU 占用量按运行 Worker 的 Kubernetes `resources.requests` 汇总，反映调度器已预留资源，不代表 metrics-server 的实时硬件利用率。磁盘数据单独来自 kubelet Stats Summary：Agent 汇总 nodefs 与独立 imagefs，并在二者指向同一文件系统时避免重复计算。页面展示真实已使用、总量和剩余量，使用率达到 90% 或 kubelet 上报 `DiskPressure=True` 时显示告警。详情页同时列出该节点上的 Worker、所属 Job、角色、IP、资源申请和运行状态。
+节点详情中的 CPU、内存和 GPU 占用量按已绑定到该节点且未终态 Pod 的 Kubernetes `resources.requests` 汇总，反映调度器已预留资源，不代表 metrics-server 的实时硬件利用率。Node 能力快照只包含节点本地观测：选定的运行时及版本、原生 `hostNetwork` 支持，以及 Kubernetes 扩展资源。每个扩展资源的 `count` 来自 Node capacity，`available` 是 allocatable 减去未终态 Pod 已预留的 requests；它不表示物理设备健康状态。集群级 StorageClass、跨集群路由、服务暴露和远端操作路径不会由 Node 快照声明。磁盘数据单独来自 kubelet Stats Summary：Agent 汇总 nodefs 与独立 imagefs，并在二者指向同一文件系统时避免重复计算。页面展示真实已使用、总量和剩余量，使用率达到 90% 或 kubelet 上报 `DiskPressure=True` 时显示告警。详情页同时列出该节点上的 Worker、所属 Job、角色、IP、资源申请和运行状态。
 
-## 5. Node 调度控制（Cordon/Uncordon）
+## 5. Node 暂停调度与恢复调度（Pause Schedule/Resume Schedule）
 
 通过 `unschedulable` 字段控制节点是否可调度。
 
 ### 概念
 
-设置 `spec.unschedulable: true` 将节点标记为不可调度，阻止新工作负载分配到该节点，等同于 Kubernetes 的 `kubectl cordon`。
+设置 `spec.unschedulable: true` 会暂停在该节点上放置新的 **RLark** 工作负载；已有工作负载（包括正在运行的 RLark Task）继续运行。Node Agent 通过在本地 Kubernetes Node 上设置 `rlark.io/unschedulable=true` 标签来落实该意图，所有 RLark 工作负载模板都带有排除该标签的强制 nodeAffinity。RLark 不会写入 Kubernetes Node 对象的 `spec.unschedulable`，因此以这种方式暂停调度的节点仍可接收非 RLark 纳管工作负载的 Pod。
 
 ### 使用方式
 
@@ -164,7 +181,7 @@ curl -X PATCH "http://localhost:8080/api/v1/rlinf.io/v1alpha1/nodes/gpu-node-01?
   -d '{ "spec": { "unschedulable": true } }'
 ```
 
-Web UI 在节点列表中为每个节点提供 Cordon/Uncordon 按钮。
+Web UI 在节点详情中为每个节点提供“暂停调度/恢复调度”（Pause Schedule/Resume Schedule）按钮。
 
 ## 6. Job（训练作业）
 
@@ -281,7 +298,7 @@ Job Controller 调谐完成后：
 
 1. **停止**：RLark 删除子 Task CR，等待其底层工作负载清理完成，同时保留 Job CR 和配置；引用的外部 PVC 仍不由 RLark 管理；Pod 级临时 PVC 随 Pod 删除
 2. **归档**：`ArchiveTTL` 后，Archive Controller 从 kcp 删除 Job CR。持久化后端保留完整 Job 记录（spec + status）；删除 Job CR 释放 etcd 和 controller 内存，业务记录仍可查询可恢复
-3. **启动**：`POST /jobs/:name/start` 是统一启动接口。活跃 Job（KCP 有 CR）直接 PATCH `spec.suspended=false`；归档 Job（KCP CR 已删）从持久化后端恢复同名同 spec 的新 CR，并置 `spec.suspended=false`。新 CR 的 Kubernetes UID 会变化，但业务标识（name）不变
+3. **启动**：`POST /jobs/:name/start` 是统一启动接口。活跃 Job（KCP 有 CR）直接 PATCH `spec.suspended=false`；归档 Job（KCP CR 已删）从持久化后端恢复同名同 spec 的新 CR，并置 `spec.suspended=false`。新 CR 的 Kubernetes UID 会变化，但业务标识（name）不变。当 Task 模板选中的全部节点都位于 Offline、Cordoned、Draining 或 Delisted 集群，或都不属于任何集群时，启动会以 `409 Conflict` 拒绝。同样的校验适用于把 `spec.suspended` 从 `true` 改为 `false` 的更新和 patch（包括重启），调用方会立即得到错误，而不是让 Job 一直停留在 Pending。创建即运行的 Job（`spec.suspended: false`）也执行相同校验；以 `spec.suspended: true` 创建的 Job 只是模板，允许创建
 4. **重启**：Job controller 将 restart annotation 视为 Job 层操作标识，删除当前 Task 对象，等待每个 Agent-owned cleanup finalizer 完成 Runtime cleanup，再按模板创建具有新 Kubernetes UID 的 Task 对象；Agent 本身不解释 restart annotation。引用的外部 PVC 不受影响，Pod 级临时 PVC 会替换；`Succeeded` 和 `Failed` Job 都会按模板开始一轮新运行
 5. **删除**：先执行停止并等待完成，再删除 Job 和子 Task；RLark 不会删除引用的外部 PVC 和 hostPath 数据，Pod 级临时 PVC 随 Pod 删除；持久化后端记录同步删除（PostgreSQL 行或 Secret）
 
@@ -292,7 +309,7 @@ Job Controller 调谐完成后：
 - **统一启动接口**：`POST /jobs/:name/start` 同时支持活跃和归档 Job；前端调用时无需感知 Job 是否在 kcp 中
 - **Web UI 集成**：Web UI 提供停止、启动、重启和删除操作，并根据生命周期状态控制可用性
 
-停止 Workflow 时，RLark 会删除当前运行的全部 Job，包括已经完成的 Job。恢复 Workflow 会创建一轮全新执行，从 DAG 起点重新运行，不复用上一轮的完成状态。
+停止 Workflow 时，RLark 不会删除当前运行的 Job，而是原地保留：仍然活跃的 Job 会被下传 `spec.suspended: true` 并就地停止；已经进入 `Succeeded` 或 `Failed` 的 Job 保留自身结果，不会被改写。Workflow 在其拥有的全部 Job 停稳之前都显示 `Stopping`，停稳后才进入 `Stopped`。恢复 Workflow 会重新派发 DAG，并把存活的 Job 按模板协调回去，从而撤销挂起；已经完成的 Job 不会重跑。Stopped 的 Job 同样会被归档，`ArchiveTTL`（默认 5 分钟）过后其 CR 会从 kcp 删除，此后恢复 Workflow 会按模板重新创建它们。
 
 ## 8. Task（任务单元）
 
@@ -335,7 +352,7 @@ spec:
           app: ppo-trainer
       spec:
         containers:
-          - name: trainer
+          - name: main
             image: pytorch/pytorch:2.3.0
   environments:
     - type: rlinf.io/network
@@ -370,6 +387,15 @@ status:
 
 `runtime.kind`、`workload.kind` 与 `workload.carrier.type` 是开放标识，而不是 CRD enum。开放性使 Provider 可在不替换 Task Schema 的情况下扩展，但不表示相应能力已受支持。Agent 必须在任何外部副作用前解析已注册 Provider 与 Adapter，并完成能力校验。Workload 语义使用 `kind`、`version` 和 `parameters`；carrier 独立使用 `type`、`version` 和 `parameters`。`environments` 是有序列表，同一种 Environment 可使用不同参数重复装配。
 
+内置 Environment 类型：
+
+| 类型 | 说明 | 参数 |
+|------|------|------|
+| `rlinf.io/network` | 加入跨集群网络域 | `domain` |
+| `rlinf.io/ssh` | 注入 SSH 公钥并启动 `sshd` sidecar | `authorizedKeys`、`port` |
+| `rlinf.io/tensorboard` | 暴露 TensorBoard 服务 | `logDir` |
+| `rlinf.io/shared-memory` | 将 memory-backed `emptyDir` 挂载为所有 regular 容器的 `/dev/shm` | `size`（如 `512Mi`、`1Gi`） |
+
 **具身智能场景映射**：
 
 ```mermaid
@@ -395,6 +421,8 @@ Pod CR 是数据面 Pod 的**控制面镜像**，由 Agent 的 Push 控制器上
 ### 概念
 
 当数据面集群中创建了 Pod 后，Agent 的 Pod Push 控制器会将 Pod 信息上报到控制面，创建对应的 Pod CR。Pod CR 包含 Pod 的标识信息（名称、所属 Task）和运行状态（IP、节点、阶段）。
+
+当本地数据面 Pod 不存在后，对应的管理面 Pod CR 会被清理。这同样适用于尚未携带本地 Pod UID 标签的旧版（legacy）Pod CR：Agent 会先将该 Pod 标记为陈旧（`Unknown`），并在配置的陈旧 TTL 后删除该 CR。
 
 ### 用途
 

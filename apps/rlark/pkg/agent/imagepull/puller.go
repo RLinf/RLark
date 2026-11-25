@@ -31,6 +31,12 @@ const (
 	// to the management node status for ongoing pulls. Status transitions
 	// (completed/failed) are always reported immediately.
 	progressReportThrottle = 1 * time.Second
+	// progressReportAttempts bounds retries for a single node-status progress
+	// patch. A dropped final report would leave a stale entry on Node.status
+	// until another pull reports, so transient failures are retried.
+	progressReportAttempts = 3
+	// progressReportRetryDelay is the delay between progress patch attempts.
+	progressReportRetryDelay = 200 * time.Millisecond
 )
 
 // ProgressPatcher patches the node status with pull progress entries.
@@ -133,6 +139,12 @@ func NewPuller(cfg PullerConfig, taskInformer cache.SharedIndexInformer, log log
 // work happens in informer callbacks (dispatching jobs) and workers (pulling).
 func (p *Puller) Run(ctx context.Context) error {
 	p.log.Info("starting image puller", "workers", numWorkers, "agentType", p.agentType, "nodeName", p.nodeName)
+	// progressMap only tracks pulls started by this process. Entries left on the
+	// management Node status by a previous process describe pulls that no longer
+	// exist (for example an agent restart during a pull), so clear them before
+	// serving. Otherwise a later Task that reuses the same image (such as a
+	// cloned Job) would surface the previous pull's progress in the UI.
+	p.reportProgress(ctx, nil)
 	var wg sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
@@ -167,6 +179,10 @@ func (p *Puller) processJob(ctx context.Context, job pullJob) {
 		log.V(1).Info("image exists check failed, will attempt pull", "err", err.Error())
 	} else if exists {
 		log.V(1).Info("image already present locally, skipping pull")
+		// Drop any progress entry left for this image by an earlier pull that did
+		// not report its cleanup (patch failure, agent restart, ...). Without
+		// this, a new Task reusing the image would show that stale entry.
+		p.cleanupProgress(ctx, job.image)
 		p.markPulled(job.taskUID, job.image)
 		return
 	}
@@ -275,6 +291,8 @@ func (p *Puller) logProgress(progress Progress) {
 }
 
 // reportProgress patches the management Node status with current pull progress.
+// Transient patch failures are retried a bounded number of times so a dropped
+// final report cannot leave a stale entry on Node.status.
 func (p *Puller) reportProgress(ctx context.Context, snapshots []imageProgressState) {
 	if p.patcher == nil || p.nodeName == "" {
 		return
@@ -292,8 +310,20 @@ func (p *Puller) reportProgress(ctx context.Context, snapshots []imageProgressSt
 		})
 	}
 
-	if err := p.patcher.PatchPullProgress(ctx, p.nodeName, p.mgmtNS, progressList); err != nil {
-		p.log.V(1).Info("failed to patch node pull progress", "err", err.Error())
+	for attempt := 1; ; attempt++ {
+		err := p.patcher.PatchPullProgress(ctx, p.nodeName, p.mgmtNS, progressList)
+		if err == nil {
+			return
+		}
+		if attempt >= progressReportAttempts {
+			p.log.V(1).Info("failed to patch node pull progress", "err", err.Error(), "attempts", attempt)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(progressReportRetryDelay):
+		}
 	}
 }
 

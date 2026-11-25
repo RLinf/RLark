@@ -52,7 +52,6 @@
   gap: 9px;
 }
 
-.node-row-status,
 .node-row-meta,
 .node-row-location,
 .node-row-ip,
@@ -61,6 +60,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* node-row-status holds the state badge + offline-info icon button. Its
+   children never overflow horizontally (no ellipsis needed), but its tooltip
+   pops up upward and must NOT be clipped by overflow: hidden. */
+.node-row-status {
+  min-width: 0;
+  overflow: visible;
 }
 
 .node-row-meta,

@@ -20,6 +20,7 @@
 | kind | >= 0.20 | 运行本地 k8s 数据面 |
 | kubectl | >= 1.28 | 与集群交互 |
 | jq | >= 1.6 | 解析 JSON |
+| curl | >= 7.68 | 调用 Gateway REST API |
 | python3 | >= 3.8 | 处理 kubeconfig |
 | node + npm | >= 18 | UI 开发服务器（仅方式 B） |
 
@@ -71,7 +72,7 @@ bash apps/rlark/docs/examples/quickstart.sh
 | 6 | 配置 kubeconfig，安装 CRD，创建 UI 认证凭据 |
 | 7 | 启动控制面组件（server、gateway、controller-manager） |
 | 8 | 创建 kind 集群（`rlark-data-1`、`rlark-data-2`） |
-| 9 | 部署 Agent（签发证书、RBAC、Agent Deployment） |
+| 9 | 部署 Agent（签发证书、RBAC、集群 Agent Deployment 与节点 Agent DaemonSet） |
 | 10 | 验证节点注册 |
 | 11 | 创建跨集群测试资源（Workspace、Domain、Job） |
 | 12 | 验证跨集群网络连通性 |
@@ -90,9 +91,12 @@ KIND_IMAGE=kindest/node:v1.32.0 bash apps/rlark/docs/examples/quickstart.sh
 # 同时设置两项
 CLUSTER_COUNT=3 KIND_IMAGE=kindest/node:v1.32.0 \
   bash apps/rlark/docs/examples/quickstart.sh
+
+# 为示例工作负载镜像指定其他 Ray 版本（默认：2.9.0）
+RAY_VERSION=2.9.3 bash apps/rlark/docs/examples/quickstart.sh
 ```
 
-`CLUSTER_COUNT` 控制创建多少个 `rlark-data-N` 集群。`KIND_IMAGE` 必须是 kind 兼容的节点镜像；脚本会先检查本地 Docker 镜像缓存，再尝试从 Docker Hub 和配置的镜像源拉取。
+`CLUSTER_COUNT` 控制创建多少个 `rlark-data-N` 集群。`KIND_IMAGE` 必须是 kind 兼容的节点镜像；脚本会先检查本地 Docker 镜像缓存，再尝试从 Docker Hub 和配置的镜像源拉取。`RAY_VERSION` 决定示例跨集群工作负载使用的 `rayproject/ray` 标签；脚本会追加 `-py310`（ARM 主机上追加 `-py310-aarch64`），并以 `localhost:5555/ray:quickstart` 推送到本地 registry。该镜像有数 GB，首次运行需要预留磁盘空间和拉取时间。
 
 ### 2. 登录 UI
 
@@ -168,7 +172,7 @@ bash apps/rlark/docs/examples/quickstart-cp.sh --no-ui
   1. 打开 http://localhost:5173/admin 以 admin 登录
   2. 进入集群管理 → 创建集群
   3. 输入集群名称（如 my-cluster）并创建
-  4. 复制集群名称，运行：bash quickstart-dp.sh --cluster-id=my-cluster
+  4. 复制集群名称，运行：bash quickstart-dp.sh --cluster-id my-cluster
   5. 返回 UI 创建域和下发任务
 ```
 
@@ -226,30 +230,37 @@ KIND_IMAGE=kindest/node:v1.32.0 \
 
 **通过 UI：** 管理平台 → 集群与节点。确认两个集群均在线且节点已同步。
 
-**通过 API：**
+**通过 API：** 除 `/api/v1/auth/login` 外，所有 `/api/v1` 路由都需要 JWT，因此需先登录，并把返回的 token 作为 bearer token 发送。`admin` 密码由 quickstart 脚本打印，同时保存在 `rlark-ui-auth` Secret 中。
 
 ```bash
-curl -s "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
+TOKEN=$(curl -fsS -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<admin-password>"}' \
+  "http://localhost:9000/api/v1/auth/login" | jq -r .token)
+
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
   jq '.items[] | {name: .metadata.name, cluster: .metadata.labels["rlark.io/cluster-id"]}'
 ```
+
+`quickstart-dp.sh` 会自行完成上述登录。如需复用已有的 admin token，可通过导出 `RLARK_TOKEN` 指定。
 
 ### 5. 通过 UI 创建任务
 
 1. 打开 `http://localhost:5173`，以 `user` 登录
 2. 进入**任务** → **创建任务**
 3. 选择**自定义任务**作为任务类型
-4. 添加一个名为 `worker` 的角色，设置为**主角色**
-5. 配置 Worker：
-   - **集群**：选择你的集群
-   - **节点数**：1
-   - **镜像**：`rayproject/ray:2.9.0-py310`
-   - **运行脚本**：`echo hello from RLark; sleep 3600`
+4. 在**角色与资源**步骤中点击**添加角色**，命名为 `worker`。首个角色自动即为主角色，无需额外设置。
+5. 在 **Worker 配置**步骤中：
+   - **目标集群**：选择你的集群（例如 `rlark-agent-my-cluster-1`）
+   - **调度方式**：选择**选择节点**并勾选 1 个节点，即为 1 个 Worker
+   - **镜像**：`localhost:5555/ray:quickstart`（由 quickstart 脚本推送到本地镜像仓库）
+6. 在**公共配置**步骤中，将**运行脚本**设置为 `echo hello from RLark; sleep 3600`
 
 > **截图说明：** 截图来自示例环境，资源名称和数据仅供说明，实际环境会有所不同。
 
 ![配置任务 Worker 与调度位置](../images/ui/create-job-worker-configuration.png)
 
-6. 检查 YAML 预览，点击**提交**
+7. 检查 YAML 预览，点击**提交任务**
 
 详细步骤参见 [RL 训练最佳实践](user-guide/best-practices.md)。
 
@@ -272,11 +283,13 @@ curl -s "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" | \
 2. 进入**任务** → **创建任务**
 3. 选择**自定义任务**作为任务类型
 4. 添加两个角色：
-   - **server**：主角色，集群选 `rlark-my-cluster-1`，镜像 `rayproject/ray:2.9.0-py310`，运行脚本：
+   - **server**：主角色（首个添加的角色），目标集群选 `rlark-agent-my-cluster-1`，
+     镜像 `localhost:5555/ray:quickstart`，运行脚本：
      ```bash
      python -u -m http.server 8000 --bind 0.0.0.0
      ```
-   - **client**：集群选 `rlark-my-cluster-2`，镜像 `rayproject/ray:2.9.0-py310`，运行脚本：`sleep infinity`
+   - **client**：目标集群选 `rlark-agent-my-cluster-2`，镜像 `localhost:5555/ray:quickstart`，
+     运行脚本：`sleep infinity`
 5. 在**公共配置**步骤中，选择刚创建的 Domain
 6. 检查并提交；在任务详情页确认 Worker 已在所选节点运行。
 
@@ -297,6 +310,11 @@ kubectl --kubeconfig /tmp/kind-kubeconfig-2 exec -n rlark-system \
 ```
 
 预期输出：`200`
+
+> **Kubernetes 运行时约束。** Kubernetes 运行时当前仅支持 `rlinf.io/ray` 工作负载。Job 控制器总会重写
+> `workload.parameters`，使 main 容器以 `rlark-tools ray-launcher` 作为主进程，因此 Pod 模板中的 `command` 会被替换，
+> 且工作负载镜像必须自带 Ray CLI、`bash` 和 `python`。请把工作负载命令写入 `workload.parameters.run.inline`
+> （UI 中的「运行脚本」字段）；只有 Ray head 会在其 Ray 集群达到 `parameters.totalNodes` 个节点后执行该脚本。
 
 详见 [网络与安全](admin-guide/network-security.md)。可复用清单：[domain.yaml](../examples/domain.yaml) 和 [cross-cluster-ping.yaml](../examples/cross-cluster-ping.yaml)。
 

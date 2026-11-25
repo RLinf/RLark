@@ -12,6 +12,7 @@ import {
   ListChecks,
   LayoutDashboard,
   Terminal,
+  ArrowUpCircle,
 } from "lucide-react";
 import type { NavParent, AdminNavItem } from "./types";
 
@@ -52,6 +53,12 @@ export const adminNavItems: AdminNavItem[] = [
       },
       { id: "clusters-nodes", icon: Server, zh: "节点管理", en: "Nodes" },
       { id: "addons", icon: Package, zh: "组件市场", en: "Addons" },
+      {
+        id: "upgrades",
+        icon: ArrowUpCircle,
+        zh: "集群升级",
+        en: "Upgrades",
+      },
     ],
   },
   { id: "jobs", icon: ListChecks, zh: "任务管理", en: "Jobs" },

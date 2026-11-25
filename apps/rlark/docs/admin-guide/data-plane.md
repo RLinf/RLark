@@ -4,6 +4,8 @@
 
 Onboarding a Kubernetes data plane requires an Agent certificate and a `DeployConfig` for `rlarkadm`. The current admin form signs certificates; it does not ask for a cluster type or region and does not generate a shell installation command.
 
+`rlarkadm` still installs separate cluster/node workloads with canonical `--agent-type=kubernetes`; node startup responsibility defaults to external. A manual Agent startup file is a different schema, not this DeployConfig. For local embedded composition and startup-only validation/diagnostics, see the [Agent guide](agent.md) and [configuration reference](../reference/configuration.md#agent-startup-file-and-validation). managed deployment and Docker/Raw execution remain unsupported.
+
 ## UI-Based Certificate Flow
 
 ### Step 1: Sign the Cluster Certificate
@@ -51,9 +53,10 @@ cert:
 kubernetes:
   kubeconfig: ~/.kube/config
   agent-image: rlark:latest
+  image: rlark:latest
 ```
 
-Replace `kubernetes.kubeconfig` with a kubeconfig that can deploy to the target cluster and set an available Agent image. Add the optional `kubernetes.image` only when enabling components that require the shared RLark image. See [Configuration Reference](../reference/configuration.md) for all accepted keys.
+Replace `kubernetes.kubeconfig` with a kubeconfig that can deploy to the target cluster and set available Agent and RLark tools images. `kubernetes.image` supplies mandatory Task tools and optional network/SSH facilities; the Kubernetes cluster Agent rejects an empty/blank value at startup. Setting `kubernetes.agent-image` alone does not supply the tools image. See [Configuration Reference](../reference/configuration.md) for all accepted keys.
 
 ### Step 3: Install the Data Plane
 
@@ -90,7 +93,7 @@ Update the example's Server address, certificate values or paths, kubeconfig, an
 
 ## Add Scheduling Metadata
 
-Use the Node Management batch editor to set city, one or more cloud/edge/robot categories, GPU model, or device model. You can also cordon or uncordon selected nodes. These fields are stored on the control-plane Node CR and preserved when the Agent refreshes discovered Kubernetes state.
+Use the Node Management batch editor to set city, one or more cloud/edge/robot categories, GPU model, or device model. You can also pause or resume scheduling for selected nodes. These fields are stored on the control-plane Node CR and preserved when the Agent refreshes discovered Kubernetes state.
 
 ## Run a Smoke Test
 

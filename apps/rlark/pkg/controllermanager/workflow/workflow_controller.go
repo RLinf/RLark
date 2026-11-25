@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -14,6 +13,8 @@ import (
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
+	sharedreconcile "github.com/rlinf/rlark/apps/rlark/pkg/reconcile"
+	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
 const (
@@ -21,11 +22,24 @@ const (
 	cleanupRequeue   = time.Second
 )
 
+// Reason codes for the passes this controller classifies itself. Closed set:
+// they are used as a metric label.
+const (
+	reasonCleanupFinalizerAdded = "CleanupFinalizerAdded"
+	reasonNotOwned              = "NotOwned"
+	reasonJobDeletePending      = "JobDeletePending"
+	reasonCleanupFinalizerFreed = "CleanupFinalizerFreed"
+)
+
 // Reconciler reconciles Workflow resources.
 type Reconciler struct {
 	client.Client
 	Scheme                  *runtime.Scheme
 	MaxConcurrentReconciles int
+	// Shell classifies every pass, translates a retry class into a jittered
+	// interval and records the result. The zero value is silent, so a test may
+	// leave it unset.
+	Shell controller.Shell
 }
 
 // +kubebuilder:rbac:groups=rlinf.io,resources=workflows,verbs=get;list;watch;create;update;patch;delete
@@ -40,45 +54,85 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.Get(ctx, req.NamespacedName, wf); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if wf.DeletionTimestamp.IsZero() {
-		if !controllerutil.ContainsFinalizer(wf, CleanupFinalizer) {
-			controllerutil.AddFinalizer(wf, CleanupFinalizer)
-			if err := r.Update(ctx, wf); err != nil {
-				return ctrl.Result{}, fmt.Errorf("add Workflow cleanup finalizer: %w", err)
-			}
-			return ctrl.Result{RequeueAfter: time.Nanosecond}, nil
-		}
-		return controller.ReconcileWith(ctx, req, &rlarkv1alpha1.Workflow{}, "workflow", r)
+	if wf.DeletionTimestamp.IsZero() && controllerutil.ContainsFinalizer(wf, CleanupFinalizer) {
+		return r.Shell.RunStateMachine(ctx, req, &rlarkv1alpha1.Workflow{}, "workflow", r)
 	}
+	return r.Shell.Run(ctx, "workflow", func(ctx context.Context) (controller.Result, error) {
+		if wf.DeletionTimestamp.IsZero() {
+			return r.addCleanupFinalizer(ctx, wf)
+		}
+		return r.reconcileDeletion(ctx, wf)
+	})
+}
+
+// addCleanupFinalizer claims the Workflow before any Job is created.
+//
+// The next pass is driven by the watch event produced by this Update rather
+// than by an immediate requeue, which would only bypass the rate limiter.
+func (r *Reconciler) addCleanupFinalizer(ctx context.Context, wf *rlarkv1alpha1.Workflow) (controller.Result, error) {
+	controllerutil.AddFinalizer(wf, CleanupFinalizer)
+	if err := r.Update(ctx, wf); err != nil {
+		return controller.Result{Reason: reasonCleanupFinalizerAdded},
+			fmt.Errorf("add Workflow cleanup finalizer: %w", err)
+	}
+	return controller.Result{
+		Outcome: sharedreconcile.OutcomeWaitingForChange,
+		Reason:  reasonCleanupFinalizerAdded,
+		Retry:   sharedreconcile.RetryDirective{Class: sharedreconcile.RetryOnChange},
+	}, nil
+}
+
+func (r *Reconciler) reconcileDeletion(ctx context.Context, wf *rlarkv1alpha1.Workflow) (controller.Result, error) {
 	if !controllerutil.ContainsFinalizer(wf, CleanupFinalizer) {
-		return ctrl.Result{}, nil
+		return controller.Result{
+			Outcome: sharedreconcile.OutcomeDropped,
+			Reason:  reasonNotOwned,
+			Retry:   sharedreconcile.RetryDirective{Class: sharedreconcile.RetryNone},
+		}, nil
 	}
 
 	pending, err := r.deleteOwnedJobs(ctx, wf)
 	if err != nil {
-		return ctrl.Result{}, err
+		return controller.Result{Reason: reasonJobDeletePending}, err
 	}
 	if pending {
-		return ctrl.Result{RequeueAfter: cleanupRequeue}, nil
+		return controller.Result{
+			Outcome: sharedreconcile.OutcomeCleanupInProgress,
+			Reason:  reasonJobDeletePending,
+			Retry: sharedreconcile.RetryDirective{
+				Class: sharedreconcile.RetryInProgress,
+				After: cleanupRequeue,
+			},
+		}, nil
 	}
 	controllerutil.RemoveFinalizer(wf, CleanupFinalizer)
 	if err := r.Update(ctx, wf); err != nil {
-		return ctrl.Result{}, fmt.Errorf("remove Workflow cleanup finalizer: %w", err)
+		return controller.Result{Reason: reasonCleanupFinalizerFreed},
+			fmt.Errorf("remove Workflow cleanup finalizer: %w", err)
 	}
-	return ctrl.Result{}, nil
+	return controller.Result{
+		Outcome: sharedreconcile.OutcomeSucceeded,
+		Reason:  reasonCleanupFinalizerFreed,
+		Retry:   sharedreconcile.RetryDirective{Class: sharedreconcile.RetryNone},
+	}, nil
 }
 
 func (r *Reconciler) deleteOwnedJobs(ctx context.Context, wf *rlarkv1alpha1.Workflow) (bool, error) {
-	var jobs rlarkv1alpha1.JobList
-	if err := r.List(ctx, &jobs); err != nil {
-		return false, fmt.Errorf("list Jobs owned by Workflow %s: %w", wf.Name, err)
+	jobs, err := r.listWorkflowJobs(ctx, wf)
+	if err != nil {
+		return false, err
 	}
 
+	parent := workflowParentRef(wf)
+	legacyNames := legacyJobNames(wf)
 	pending := false
 	for i := range jobs.Items {
 		job := &jobs.Items[i]
-		owner := metav1.GetControllerOf(job)
-		if owner == nil || owner.UID != wf.UID || owner.Kind != "Workflow" || owner.APIVersion != rlarkv1alpha1.GroupVersion.String() {
+		decision, err := utils.ClassifyRemovedChild(job, parent, legacyNames)
+		if err != nil {
+			return false, fmt.Errorf("job %s ownership conflict: %w", job.Name, err)
+		}
+		if !decision.Owned() {
 			continue
 		}
 		pending = true
@@ -96,25 +150,30 @@ func (r *Reconciler) deleteOwnedJobs(ctx context.Context, wf *rlarkv1alpha1.Work
 func (r *Reconciler) IsTerminal(client.Object) bool { return false }
 
 // ReconcileStateMachine reconciles the resource.
-//
-// 调谐成功返回后，将 Status.ObservedGeneration 推进到本次所观测的
-// metadata.generation。若调谐以错误（含 ErrRequeueAfterChildCleanup）结束，
-// 则不推进，使消费者能够识别出 Status 尚未对应当前 Spec。
 func (r *Reconciler) ReconcileStateMachine(ctx context.Context, obj client.Object) (bool, error) {
+	return r.reconcileWithStateMachine(ctx, obj.(*rlarkv1alpha1.Workflow))
+}
+
+// SetObservedGeneration implements controller.ObservedGenerationRecorder.
+//
+// The shell calls this only after a pass that fully processed the current Spec,
+// so consumers can still tell that Status does not yet describe the current
+// Spec when a pass ended early.
+func (r *Reconciler) SetObservedGeneration(obj client.Object, generation int64) bool {
 	wf := obj.(*rlarkv1alpha1.Workflow)
-	changed, err := r.reconcileWithStateMachine(ctx, wf)
-	if err != nil {
-		return changed, err
+	if wf.Status.ObservedGeneration == generation {
+		return false
 	}
-	if wf.Status.ObservedGeneration != wf.Generation {
-		wf.Status.ObservedGeneration = wf.Generation
-		changed = true
-	}
-	return changed, nil
+	wf.Status.ObservedGeneration = generation
+	return true
 }
 
 // SetupWithManager registers the controller with the manager.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &rlarkv1alpha1.Job{},
+		jobWorkflowField, indexJobByWorkflow); err != nil {
+		return fmt.Errorf("index Jobs by Workflow: %w", err)
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&rlarkv1alpha1.Workflow{}).
 		Owns(&rlarkv1alpha1.Job{}).

@@ -1,0 +1,170 @@
+/* --- Upgrade Jobs Page --- */
+
+/* Create dialog: slightly narrower than the storage create modal but still roomy. */
+.upgrade-create-modal {
+  width: min(720px, calc(100vw - 48px));
+}
+
+/* Cluster multi-select inside the create dialog */
+.upgrade-cluster-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.upgrade-cluster-options label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
+}
+
+.upgrade-cluster-options label:hover {
+  border-color: var(--accent, #8b5cf6);
+}
+
+.upgrade-cluster-options label.active {
+  border-color: var(--accent, #8b5cf6);
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.upgrade-cluster-options input[type="checkbox"] {
+  accent-color: var(--accent, #8b5cf6);
+  margin: 0;
+}
+
+/* Expandable per-cluster condition table */
+.upgrade-job-detail-row > td {
+  background: rgba(127, 137, 152, 0.04);
+  padding: 0 !important;
+}
+
+.upgrade-condition-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.upgrade-condition-table th,
+.upgrade-condition-table td {
+  padding: 8px 14px;
+  font-size: 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.upgrade-condition-table th {
+  color: var(--muted);
+  font-weight: 500;
+  background: rgba(127, 137, 152, 0.06);
+}
+
+.upgrade-condition-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Config textarea in create dialog */
+.upgrade-config-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  resize: vertical;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+/* Danger secondary button (delete confirmation) */
+.upgrade-jobs-page .secondary-button.danger {
+  color: var(--red);
+  border-color: rgba(239, 90, 122, 0.25);
+}
+
+.upgrade-jobs-page .secondary-button.danger:hover {
+  background: rgba(239, 90, 122, 0.08);
+  border-color: var(--red);
+}
+
+/* Dark theme adjustments */
+.theme-dark .upgrade-jobs-page .secondary-button.danger {
+  color: var(--red);
+  border-color: rgba(239, 90, 122, 0.25);
+}
+
+.theme-dark .upgrade-jobs-page .secondary-button.danger:hover {
+  background: rgba(239, 90, 122, 0.12);
+  border-color: var(--red);
+}
+
+/* Job name link cell — mirrors .jobs-table-panel .link-cell */
+.upgrade-jobs-page .link-cell {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.upgrade-jobs-page .link-cell strong {
+  display: block;
+  color: var(--blue);
+  font-size: 13px;
+}
+
+.upgrade-jobs-page .job-id-cell-wrap {
+  display: grid;
+  gap: 3px;
+}
+
+.upgrade-jobs-page .job-id-cell {
+  width: 100%;
+  min-width: 0;
+}
+
+.upgrade-jobs-page .job-id-cell strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.35;
+}
+
+.theme-dark .upgrade-cluster-options label {
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.theme-dark .upgrade-cluster-options label.active {
+  background: rgba(139, 92, 246, 0.15);
+}
+
+.theme-dark .upgrade-job-detail-row > td {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.theme-dark .upgrade-condition-table th {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.theme-dark .upgrade-condition-table th,
+.theme-dark .upgrade-condition-table td {
+  border-color: var(--line);
+}
+
+.theme-dark .upgrade-config-textarea {
+  background: var(--panel);
+  color: var(--ink);
+  border-color: var(--line);
+}

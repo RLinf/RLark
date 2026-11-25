@@ -74,6 +74,7 @@ Controller-Manager 运行在控制面，负责协调高层资源的生命周期�
 | Domain Controller   | 管理 Domain CRD，分配 IP 子网，签发 DomainPeer 证书                 | [domain/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/domain/)     |
 | Task Controller     | 监听 Task 状态，同步到对应的 Job                                   | [task/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/task/)         |
 | Node Controller     | 监听 Node 注册/离线事件                                         | [node/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/node/)         |
+| Upgrade Controller  | 管理集群升级，为每个目标集群创建 ClusterUpgradeJob                        | [upgrade/](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/controllermanager/upgrade/)   |
 
 **Job 状态机**：
 
@@ -87,6 +88,8 @@ stateDiagram-v2
     Succeeded --> [*]
 ```
 
+**集群升级**：详见 [集群升级架构](architecture/upgrade.md)。
+
 ## 4. 数据面组件
 
 ### 4.1 Agent
@@ -99,6 +102,8 @@ Agent 部署在每个数据面集群中，有两种运行模式：
 | `node`    | nodeAgent    | 网络路由：运行 NodeServer，处理跨集群 Pod 流量转发；镜像预拉取：将分发到节点的任务镜像预拉取到节点容器运行时（containerd/docker） |
 
 **clusterAgent 控制器**：
+
+Kubernetes Task 执行以完整的单 Runtime 组件包装配：Host/Coordinator、共享 Adapter registry、scoped observation runner 和管理 Task resync。Build 进行有时限的 metadata/权限 preflight，不启动 watch 或写 workload；一次性 Setup 在 manager 启动前完成，任何 setup 错误都中止 Agent。Manager 继续负责取消与 worker 关闭。该组件包不接管 Node/Pod 上报、node-agent 或网络，不新增 Docker/Raw 执行或节点 assignment。参见 [Runtime 装配边界](developer-guide/runtime-provider.md#runtime-task)。
 
 ```mermaid
 graph LR
@@ -131,11 +136,13 @@ graph LR
 **Push 控制器**：
 
 1. 监听本地 K8s 资源变化（Pod 创建/删除/状态变更）
-2. 定向观测发生变化的 workload root、其拥有的 Pod 和 Pod Event，不执行完整期望计划 diff
-3. 将 workload 状态同步到管理面对应的 Task 和 Pod CR
+2. Task observer 使用 Adapter 声明的 typed/unstructured root 和 Runtime-owned Pod owner-chain profile，只验证 identity 并入队 hint
+3. 只有 Task pull Host/Coordinator 执行 workload 语义观察和 Task Status 写入；独立 Pod controller 上报 Pod CR
 4. Node 信息（地址、容量、GPU 数量）定期上报
 
 当前只有进程内 Kubernetes 实现属于生产 workload 路径。项目已经为未来外部实现定义版本化 Runtime Provider 和 Workload Adapter gRPC 合同，但默认 Task controller 尚不选择远程实现。所选 Workload Adapter 会接收完整 Workload configuration，并负责所有 Workload-specific 可选功能；系统不再提供独立 Workload Extension service。详见 [Runtime、Workload 与 Environment 边界](developer-guide/runtime-provider.md)。
+
+Task 观察为每个可信 Runtime scope 使用独立 namespace-scoped cache，不执行无限制 discovery watch。启动时解析有限的注册 GVK/profile 并检查显式 `get/list/watch` 权限，之后才原子注册观察组；拒绝或不确定权限会中止启动。经过 UID 校验的删除 hint 强制完整 pull 调谐；replay 和周期 resync 恢复丢失事件。Shutdown 一并取消 cache 与 worker source。生产仍保持单个默认 Kubernetes Runtime 和历史 workload namespace；scope 隔离不代表完整多 Runtime 执行已经实现。
 
 ### 4.2 Network Sidecar
 

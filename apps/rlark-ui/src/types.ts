@@ -45,6 +45,11 @@ export interface ClusterSummary {
   totalNodes: number;
   onlineNodes: number;
   offlineNodes: number;
+  readyNodes?: number;
+  degradedNodes?: number;
+  disconnectedNodes?: number;
+  unschedulableNodes?: number;
+  dominantFailureReason?: string;
   cloudNodes: number;
   embodiedNodes: number;
   robots: number;
@@ -119,6 +124,9 @@ export interface RoleResource {
     pvcSizeGb: number | "";
     rawVolume?: CRDVolume;
   }>;
+  advanced?: {
+    sharedMemorySize?: string;
+  };
 }
 
 export interface WorkflowJobDef {
@@ -145,9 +153,18 @@ export interface CRDNodeLite {
   };
   status?: {
     phase?: string;
+    conditions?: Array<{
+      type: string;
+      status: "True" | "False" | "Unknown";
+      reason: string;
+      message?: string;
+      lastTransitionTime?: string;
+      observedGeneration?: number;
+    }>;
     capacity?: Record<string, string>;
     allocatable?: Record<string, string>;
     used?: Record<string, string>;
+    observedNodeLabels?: Record<string, string>;
   };
 }
 
@@ -188,17 +205,47 @@ export interface CRDNode {
   metadata: {
     name: string;
     namespace?: string;
+    // metadata.labels on the management Node CR only receives RLark system
+    // labels written by the Agent; it is not a complete mirror of the
+    // data-plane Node. The authoritative label set is status.observedNodeLabels,
+    // which the Agent reads directly from the K8s Node.
     labels?: Record<string, string>;
     annotations?: Record<string, string>;
     creationTimestamp?: string;
+    generation?: number;
   };
   spec: {
     agentType?: string;
     unschedulable?: boolean;
+    operations?: Array<{
+      id: string;
+      type: "Drain" | "EnterMaintenance";
+    }>;
   };
   status?: {
     phase?: string;
-    reason?: string;
+    conditions?: Array<{
+      type: string;
+      status: "True" | "False" | "Unknown";
+      reason: string;
+      message?: string;
+      lastTransitionTime?: string;
+      observedGeneration?: number;
+    }>;
+    // observedNodeLabels is the authoritative label dictionary the Agent reads
+    // directly from the local Kubernetes Node. Frontend label display must use
+    // this field, not metadata.labels — RLark only writes its own system labels
+    // (rlark.io/*) to metadata.labels on the management Node CR.
+    observedNodeLabels?: Record<string, string>;
+    // drainOperations 是 Node Controller 对每个 Drain 操作的有界进度汇总，
+    // 与控制面 nodePhase/drainingCondition 使用同一判定规则。前端据此在
+    // Draining Condition 尚未写入时也能立即判断节点是否正在排空。
+    drainOperations?: Array<{
+      operationID: string;
+      waiting?: number;
+      blocked?: number;
+      completed?: boolean;
+    }>;
     lastHeartbeatTime?: string;
     lastStatusChangeTime?: string;
     nodeInfo?: {
@@ -217,6 +264,15 @@ export interface CRDNode {
     allocatable?: Record<string, string>;
     capacity?: Record<string, string>;
     used?: Record<string, string>;
+    activeWorkloads?: {
+      total?: number;
+      pending?: number;
+      // running 统计节点上全部非终态 Pod（含系统组件），不能用来判断节点上是否
+      // 还有 RLark 工作负载；rlarkManaged 才是由 RLark 托管的 Pod 数量。
+      running?: number;
+      stopping?: number;
+      rlarkManaged?: number;
+    };
     // PullProgress 由数据面 node-agent 上报，cluster-agent 仅在 Pod 处于
     // ContainerCreating 期间聚合写入 Task.status.pullProgress；此处保留
     // node 原始上报值，前端用于在任务 Pending 时展示镜像拉取进度。

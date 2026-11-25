@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rlark-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: rlark-gateway
+spec:
+  replicas: {{ .Values.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: rlark-gateway
+  template:
+    metadata:
+      labels:
+        app: rlark-gateway
+    spec:
+      {{- if eq .Values.managementApi "kubernetes" }}
+      serviceAccountName: rlark-gateway
+      {{- end }}
+      {{- include "rlark-control-plane.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: rlark-gateway
+          image: {{ .Values.images.gateway | quote }}
+          imagePullPolicy: {{ include "rlark-control-plane.imagePullPolicy" . }}
+          ports:
+            - containerPort: 8090
+          command:
+            - /usr/local/bin/gateway
+          args:
+            - --addr=:8090
+            {{- if .Values.db }}
+            - --db-config=/etc/rlark/db.yaml
+            {{- end }}
+            {{- include "rlark-control-plane.managementArgs" . | nindent 12 }}
+          env:
+            {{- include "rlark-control-plane.commonEnvs" . | nindent 12 }}
+          volumeMounts:
+            {{- include "rlark-control-plane.managementVolumeMounts" . | nindent 12 }}
+            {{- if .Values.db }}
+            - name: db-config
+              mountPath: /etc/rlark/db.yaml
+              subPath: db.yaml
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- include "rlark-control-plane.managementVolumes" . | nindent 8 }}
+        {{- if .Values.db }}
+        - name: db-config
+          configMap:
+            name: rlark-db-config
+        {{- end }}

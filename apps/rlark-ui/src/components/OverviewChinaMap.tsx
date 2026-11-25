@@ -81,10 +81,58 @@ const cityCoords: Record<string, [number, number]> = {
   惠州市: [114.41, 23.11],
 };
 
+// 省/自治区/直辖市名称到省会城市坐标的映射，用于管理员填写省级位置时的兜底定位。
+const regionCapital: Record<string, string> = {
+  北京: "北京市",
+  天津: "天津市",
+  河北: "石家庄市",
+  山西: "太原市",
+  内蒙古: "呼和浩特市",
+  辽宁: "沈阳市",
+  吉林: "长春市",
+  黑龙江: "哈尔滨市",
+  上海: "上海市",
+  江苏: "南京市",
+  浙江: "杭州市",
+  安徽: "合肥市",
+  福建: "福州市",
+  江西: "南昌市",
+  山东: "济南市",
+  河南: "郑州市",
+  湖北: "武汉市",
+  湖南: "长沙市",
+  广东: "广州市",
+  广西: "南宁市",
+  海南: "海口市",
+  重庆: "重庆市",
+  四川: "成都市",
+  贵州: "贵阳市",
+  云南: "昆明市",
+  西藏: "拉萨市",
+  陕西: "西安市",
+  甘肃: "兰州市",
+  青海: "西宁市",
+  宁夏: "银川市",
+  新疆: "乌鲁木齐市",
+};
+
+function locationCoords(name: string): [number, number] | null {
+  const trimmed = name.trim();
+  const direct = cityCoords[trimmed];
+  if (direct) return direct;
+  const normalized = trimmed.replace(
+    /(特别行政区|回族自治区|壮族自治区|维吾尔自治区|自治区|省|市)$/u,
+    "",
+  );
+  const city = cityCoords[`${normalized}市`];
+  if (city) return city;
+  const capital = regionCapital[normalized];
+  return capital ? (cityCoords[capital] ?? null) : null;
+}
+
 interface CityData {
   name: string;
-  lon: number;
-  lat: number;
+  coords: [number, number] | null;
   nodes: number;
   clusters: number;
   cloud: number;
@@ -92,6 +140,8 @@ interface CityData {
   robot: number;
   dominant: "cloud" | "edge" | "robot";
 }
+
+type MappedCity = CityData & { coords: [number, number] };
 
 function parseNodeLocations(nodes: CRDNode[]): {
   cities: CityData[];
@@ -136,8 +186,6 @@ function parseNodeLocations(nodes: CRDNode[]): {
 
   const cities: CityData[] = [];
   for (const [name, entry] of cityMap) {
-    const coords = cityCoords[name];
-    if (!coords) continue;
     const dominant = (
       [
         ["cloud", entry.cloud],
@@ -147,8 +195,7 @@ function parseNodeLocations(nodes: CRDNode[]): {
     ).sort((a, b) => b[1] - a[1])[0][0];
     cities.push({
       name,
-      lon: coords[0],
-      lat: coords[1],
+      coords: locationCoords(name),
       nodes: entry.nodes,
       clusters: entry.clusters.size,
       cloud: entry.cloud,
@@ -162,7 +209,7 @@ function parseNodeLocations(nodes: CRDNode[]): {
   return { cities, totalByCat };
 }
 
-function buildConnections(cities: CityData[]): [number, number][] {
+function buildConnections(cities: MappedCity[]): [number, number][] {
   if (cities.length < 2) return [];
   const conns: [number, number][] = [];
   for (let i = 1; i < cities.length; i++) {
@@ -207,14 +254,14 @@ function geometryPath(geometry: Geometry) {
 }
 
 function connectionPath(
-  cities: CityData[],
+  cities: MappedCity[],
   fromIndex: number,
   toIndex: number,
 ) {
   const fromCity = cities[fromIndex];
   const toCity = cities[toIndex];
-  const from = project(fromCity.lon, fromCity.lat);
-  const to = project(toCity.lon, toCity.lat);
+  const from = project(...fromCity.coords);
+  const to = project(...toCity.coords);
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const controlX = (from.x + to.x) / 2 - dy * 0.16;
@@ -266,7 +313,14 @@ export function OverviewChinaMap({
     () => parseNodeLocations(nodes),
     [nodes],
   );
-  const connections = useMemo(() => buildConnections(cities), [cities]);
+  const mappedCities = useMemo(
+    () => cities.filter((city): city is MappedCity => city.coords !== null),
+    [cities],
+  );
+  const connections = useMemo(
+    () => buildConnections(mappedCities),
+    [mappedCities],
+  );
 
   const totalNodes = nodes.length;
   const totalClusters = clusters.length;
@@ -455,10 +509,10 @@ export function OverviewChinaMap({
                   </path>
                 ))}
               </g>
-              {cities.length >= 2 && (
+              {mappedCities.length >= 2 && (
                 <g className="china-city-links" aria-hidden="true">
                   {connections.map(([from, to], index) => {
-                    const path = connectionPath(cities, from, to);
+                    const path = connectionPath(mappedCities, from, to);
                     return (
                       <g key={`${from}-${to}`}>
                         <path className="city-link-line" d={path} />
@@ -479,8 +533,8 @@ export function OverviewChinaMap({
                 </g>
               )}
               <g className="china-city-pins">
-                {cities.map((city) => {
-                  const point = project(city.lon, city.lat);
+                {mappedCities.map((city) => {
+                  const point = project(...city.coords);
                   return (
                     <g
                       key={city.name}
@@ -551,7 +605,7 @@ export function OverviewChinaMap({
               {zh ? "地图加载中…" : "Loading map…"}
             </div>
           )}
-          {cities.length === 0 && provincePaths.length > 0 && (
+          {mappedCities.length === 0 && provincePaths.length > 0 && (
             <div className="overview-map-loading">
               {zh ? "暂无节点位置数据" : "No node location data"}
             </div>

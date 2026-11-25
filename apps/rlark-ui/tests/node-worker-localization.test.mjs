@@ -5,23 +5,17 @@ import { readStyles } from "./read-styles.mjs";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("maps node status reasons to localized labels", async () => {
-  const source = await read("../src/utils/nodes.ts");
-  assert.match(source, /export function nodeStatusReasonLabel\(/);
-  assert.match(source, /AgentLeaseActive: \{ zh: "节点代理心跳正常"/);
-  assert.match(source, /AgentLeaseExpired: \{ zh: "节点代理心跳已过期"/);
-  assert.match(source, /NodeAgentLeaseMissing: \{/);
-  // Unknown reasons stay verbatim so new controller reasons remain visible.
-  assert.match(source, /if \(!label\) return reason;/);
-});
-
-test("renders node status reasons through the localized label", async () => {
+test("does not read the removed node status reason field", async () => {
+  // Node status reasons are expressed through conditions; status.reason no
+  // longer exists in the CRD and must not be rendered.
   const clusters = await read("../src/pages/Clusters.tsx");
-  assert.match(clusters, /nodeStatusReasonLabel\(node\.status\.reason, zh\)/);
-  assert.doesNotMatch(clusters, /\{node\.status\.reason\}/);
+  assert.doesNotMatch(clusters, /status\??\.reason/);
 
   const overview = await read("../src/pages/Overview.tsx");
-  assert.match(overview, /nodeStatusReasonLabel\(n\.status\?\.reason, isZh\)/);
+  assert.doesNotMatch(overview, /status\??\.reason/);
+
+  const types = await read("../src/types.ts");
+  assert.doesNotMatch(types, /phase\?: string;\s*\n\s*reason\?: string;/);
 });
 
 test("keeps the node kind filter key stable across languages", async () => {

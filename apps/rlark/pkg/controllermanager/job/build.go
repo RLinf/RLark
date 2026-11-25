@@ -10,10 +10,9 @@ import (
 	"strconv"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"
@@ -21,24 +20,64 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
+// nodeMatchesSelector reports whether a Node's observed labels or
+// administrator-maintained annotations satisfy every entry in selector. Each
+// selector value may be a comma-separated list; the Node matches if the
+// corresponding label or annotation equals any one of the listed values.
+func nodeMatchesSelector(node *rlarkv1alpha1.Node, selector map[string]string) bool {
+	labels := node.Status.ObservedNodeLabels
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	for key, rawValue := range selector {
+		nodeValue, ok := labels[key]
+		if !ok {
+			// Administrator metadata such as rlark.io/node-category-* lives on
+			// the management Node CR as annotations, not on the data plane.
+			nodeValue, ok = node.Annotations[key]
+		}
+		if !ok {
+			return false
+		}
+		values := strings.Split(rawValue, ",")
+		matched := false
+		for _, v := range values {
+			if v == nodeValue {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
 func (r *Reconciler) resolveTaskNamespace(ctx context.Context, t *rlarkv1alpha1.JobTaskTemplate) (string, error) {
-	if len(t.Placement.NodeSelector) == 0 {
-		return "default", nil
-	}
-
-	simpleSelector := make(map[string]string)
-	for k, v := range t.Placement.NodeSelector {
-		simpleSelector[k] = strings.Split(v, ",")[0] // nodeSelector 的 value 可能是逗号分隔的多个值，取一个即可
-	}
-
-	selector := labels.SelectorFromSet(simpleSelector)
 	var nodeList rlarkv1alpha1.NodeList
-	if err := r.List(ctx, &nodeList, &client.ListOptions{LabelSelector: selector}); err != nil {
-		return "", fmt.Errorf("list Nodes matching selector for Task template %q: %w", t.Name, err)
+	if err := r.List(ctx, &nodeList); err != nil {
+		return "", fmt.Errorf("list Nodes for Task template %q: %w", t.Name, err)
 	}
 	if len(nodeList.Items) == 0 {
+		return "", fmt.Errorf("no Nodes available for Task template %q", t.Name)
+	}
+
+	// Filter using observedNodeLabels plus administrator annotations: the
+	// management Node CR's metadata.labels only carries RLark-owned system
+	// labels, so Kubernetes LabelSelector cannot find data-plane labels or
+	// managed annotations such as gpu-model or rlark.io/node-category-*.
+	selector := t.Placement.NodeSelector
+	filtered := make([]rlarkv1alpha1.Node, 0, len(nodeList.Items))
+	for i := range nodeList.Items {
+		if len(selector) == 0 || nodeMatchesSelector(&nodeList.Items[i], selector) {
+			filtered = append(filtered, nodeList.Items[i])
+		}
+	}
+	if len(filtered) == 0 {
 		return "", fmt.Errorf("no Nodes match selector for Task template %q", t.Name)
 	}
+	nodeList.Items = filtered
 
 	var clusterList rlarkv1alpha1.ClusterList
 	if err := r.List(ctx, &clusterList); err != nil {
@@ -52,7 +91,7 @@ func (r *Reconciler) resolveTaskNamespace(ctx context.Context, t *rlarkv1alpha1.
 
 	eligible := nodeList.Items[:0]
 	for _, node := range nodeList.Items {
-		if node.Spec.Unschedulable || node.Status.Phase != rlarkv1alpha1.NodeOnline {
+		if !nodeReadyForScheduling(node.Status.Conditions) || !nodeSupportsTask(node, t) {
 			continue
 		}
 		clusters := clustersByNamespace[node.Namespace]
@@ -66,7 +105,7 @@ func (r *Reconciler) resolveTaskNamespace(ctx context.Context, t *rlarkv1alpha1.
 		eligible = append(eligible, node)
 	}
 	if len(eligible) == 0 {
-		return "", fmt.Errorf("no schedulable Nodes in an Online or Downgraded Cluster match selector for Task template %q", t.Name)
+		return "", fmt.Errorf("no Node with Schedulable=True and supported runtime and device capacity in an Online or Downgraded Cluster matches selector for Task template %q", t.Name)
 	}
 
 	sort.Slice(eligible, func(i, j int) bool {
@@ -76,6 +115,104 @@ func (r *Reconciler) resolveTaskNamespace(ctx context.Context, t *rlarkv1alpha1.
 		return eligible[i].Namespace < eligible[j].Namespace
 	})
 	return eligible[0].Namespace, nil
+}
+
+// nodeReadyForScheduling reports whether a Node may receive new placement. The
+// Node Controller owns this decision in the Schedulable condition; the scheduler
+// must not re-derive it from individual conditions, or its filter can drift from
+// what the console and other consumers report.
+func nodeReadyForScheduling(conditions []metav1.Condition) bool {
+	return conditionIsTrue(conditions, rlarkv1alpha1.ConditionTypeSchedulable)
+}
+
+func nodeSupportsTask(node rlarkv1alpha1.Node, task *rlarkv1alpha1.JobTaskTemplate) bool {
+	capabilities := node.Status.CapabilitySnapshot
+	if capabilities.Runtime.Type == "" && len(capabilities.Runtime.WorkloadKinds) == 0 && len(capabilities.Devices) == 0 {
+		// Compatibility: an Agent that has not reported a capability snapshot yet (for
+		// example during a rolling upgrade) cannot be filtered by capability. Fall back
+		// to the declared Node runtime so existing workloads keep scheduling.
+		return legacyNodeSupportsTask(node, task)
+	}
+	if capabilities.Runtime.Type != rlarkv1alpha1.AgentType(task.Runtime.Kind) || !stringInSlice(string(task.Workload.Kind), capabilities.Runtime.WorkloadKinds) {
+		return false
+	}
+	if task.Workload.Template == nil {
+		return true
+	}
+	return taskFitsDevices(capabilities.Devices, taskDeviceRequests(task))
+}
+
+func legacyNodeSupportsTask(node rlarkv1alpha1.Node, task *rlarkv1alpha1.JobTaskTemplate) bool {
+	runtimeType := node.Spec.Runtime.Type
+	if runtimeType == "" {
+		//nolint:staticcheck // Compatibility: read the deprecated Node field for resources that predate Runtime.Type.
+		runtimeType = node.Spec.AgentType
+	}
+	if runtimeType != "" && runtimeType != rlarkv1alpha1.AgentType(task.Runtime.Kind) {
+		return false
+	}
+	return true
+}
+
+func taskDeviceRequests(task *rlarkv1alpha1.JobTaskTemplate) map[string]int64 {
+	requests := make(map[string]int64)
+	if task.Workload.Template == nil {
+		return requests
+	}
+	// Pod-level resources describe the whole Pod, so they replace the per-container sum.
+	if task.Workload.Template.Spec.Resources != nil {
+		addExtendedRequests(requests, task.Workload.Template.Spec.Resources.Requests)
+		return requests
+	}
+	for _, container := range task.Workload.Template.Spec.InitContainers {
+		addExtendedRequests(requests, container.Resources.Requests)
+	}
+	for _, container := range task.Workload.Template.Spec.Containers {
+		addExtendedRequests(requests, container.Resources.Requests)
+	}
+	return requests
+}
+
+func addExtendedRequests(target map[string]int64, resources corev1.ResourceList) {
+	for name, quantity := range resources {
+		if strings.Contains(string(name), "/") {
+			target[string(name)] += quantity.Value()
+		}
+	}
+}
+
+func taskFitsDevices(devices []rlarkv1alpha1.NodeDeviceCapability, requests map[string]int64) bool {
+	for name, requested := range requests {
+		available := int64(0)
+		for _, device := range devices {
+			if device.Category == name {
+				available = int64(device.Available)
+				break
+			}
+		}
+		if available < requested {
+			return false
+		}
+	}
+	return true
+}
+
+func stringInSlice(value string, values []string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func conditionIsTrue(conditions []metav1.Condition, conditionType string) bool {
+	for _, condition := range conditions {
+		if condition.Type == conditionType {
+			return condition.Status == metav1.ConditionTrue
+		}
+	}
+	return false
 }
 
 func buildTaskStatusMap(job *rlarkv1alpha1.Job) map[string]*rlarkv1alpha1.JobTaskStatus {
@@ -92,6 +229,10 @@ func buildTask(
 	taskName, namespace string,
 ) *rlarkv1alpha1.Task {
 	taskSpec := *t.TaskSpec.DeepCopy()
+	// DrainRequests is a one-shot projection owned by the Node Agent. A Task
+	// template may carry stale entries (for example when a Job is cloned or
+	// restored), so never copy them into a new Task.
+	taskSpec.DrainRequests = nil
 	setNetworkEnvironment(&taskSpec, job.Spec.Domain)
 	setSSHEnvironment(&taskSpec, job.Spec.SSHPublicKey)
 	setRayExecution(&taskSpec, job, t)

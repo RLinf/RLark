@@ -155,30 +155,43 @@ const jobs: CRDJob[] = [
     },
     status: {
       phase: phase as "Pending" | "Running" | "Succeeded",
-      tasks: taskNames.map((taskName, taskIndex) => ({
+      // Running/Succeeded 的 job 所有 task 统一为对应状态，这样节点列表
+      // 的 worker 统计能有足够的 Running pod 均匀分布到各节点
+      tasks: taskNames.map((taskName) => ({
         name: taskName,
-        phase:
-          phase === "Succeeded"
-            ? "Succeeded"
-            : taskIndex === 0
-              ? (phase as "Pending" | "Running" | "Succeeded")
-              : "Pending",
+        phase: phase as "Pending" | "Running" | "Succeeded",
         message: "Mock data generated from the shared topology",
       })),
     },
   };
 });
 
-const pods = jobs.flatMap((job, jobIndex) =>
-  (job.status?.tasks ?? []).map((task, taskIndex) => {
+// 按集群分组，Offline 节点不承载 pod
+const nodesByCluster: Record<string, typeof nodes> = {};
+for (const node of nodes) {
+  if (node.status?.phase === "Offline") continue;
+  const ns = node.metadata.namespace ?? "";
+  if (!nodesByCluster[ns]) nodesByCluster[ns] = [];
+  nodesByCluster[ns].push(node);
+}
+
+// round-robin 分配指针：每个集群独立维护
+const rrIndexByCluster: Record<string, number> = {};
+
+function assignNodeForCluster(cluster: string): string {
+  const clusterNodes = nodesByCluster[cluster] ?? [];
+  if (clusterNodes.length === 0) return "";
+  const idx = rrIndexByCluster[cluster] ?? 0;
+  rrIndexByCluster[cluster] = (idx + 1) % clusterNodes.length;
+  return clusterNodes[idx].metadata.name;
+}
+
+const pods = jobs.flatMap((job, jobIndex) => {
+  const cluster = clusterNames[jobIndex % clusterNames.length];
+  return (job.status?.tasks ?? []).map((task, taskIndex) => {
     const podName = `${job.metadata?.name ?? ""}-${task.name ?? ""}-${taskIndex}`;
     const domain = job.spec?.domain ?? "";
-    const node =
-      nodes.filter(
-        (item) =>
-          item.metadata.namespace ===
-          clusterNames[jobIndex % clusterNames.length],
-      )[taskIndex]?.metadata.name ?? "";
+    const node = assignNodeForCluster(cluster);
     return {
       apiVersion: "rlinf.io/v1alpha1",
       kind: "Pod",
@@ -197,8 +210,8 @@ const pods = jobs.flatMap((job, jobIndex) =>
         message: task.message,
       },
     };
-  }),
-);
+  });
+});
 
 const pendingWorkerEvents: NodeEventEntry[] = [
   {
@@ -326,6 +339,14 @@ function clusterPayload() {
   }));
 }
 
+const NODES_PREFIX = "/api/v1/rlinf.io/v1alpha1/nodes/";
+
+// nodeNameFromPath 取出 /nodes/<name> 中的 <name>。不能直接取最后一段：
+// /nodes/<name>/patch-labels 这类子路径的最后一段是子路径名，不是节点名。
+function nodeNameFromPath(path: string) {
+  return decodeURIComponent(path.slice(NODES_PREFIX.length).split("/")[0]);
+}
+
 const sshUserKeys = [
   {
     index: 0,
@@ -360,19 +381,37 @@ export function installMockBackend() {
     }
     if (method === "GET" && path === "/api/v1/rlinf.io/v1alpha1/nodes")
       return json({ items: nodes });
-    if (
-      method === "GET" &&
-      path.startsWith("/api/v1/rlinf.io/v1alpha1/nodes/")
-    ) {
-      const name = decodeURIComponent(path.split("/").pop()!);
+    if (method === "GET" && path.startsWith(NODES_PREFIX)) {
+      const name = nodeNameFromPath(path);
       const node = nodes.find((item) => item.metadata.name === name);
       return node ? json(node) : json({ error: "not found" }, 404);
     }
     if (
       method === "PATCH" &&
-      path.startsWith("/api/v1/rlinf.io/v1alpha1/nodes/")
+      path.startsWith(NODES_PREFIX) &&
+      path.endsWith("/patch-labels")
     ) {
-      const name = decodeURIComponent(path.split("/").pop()!);
+      const name = nodeNameFromPath(path);
+      const node = nodes.find((item) => item.metadata.name === name);
+      if (!node) return json({ error: "not found" }, 404);
+      const body = (await request.json()) as {
+        labels?: Record<string, string | null>;
+      };
+      // 标签的唯一来源是 observedNodeLabels（与真实 Agent 上报一致）。null 是
+      // 删除标记，与 Gateway 转发的 strategic merge patch 语义相同。
+      const observed = { ...(node.status?.observedNodeLabels ?? {}) };
+      for (const [key, value] of Object.entries(body.labels ?? {})) {
+        if (value === null) {
+          delete observed[key];
+        } else {
+          observed[key] = value;
+        }
+      }
+      node.status = { ...node.status, observedNodeLabels: observed };
+      return json({ success: true, nodeName: name });
+    }
+    if (method === "PATCH" && path.startsWith(NODES_PREFIX)) {
+      const name = nodeNameFromPath(path);
       const node = nodes.find((item) => item.metadata.name === name);
       if (!node) return json({ error: "not found" }, 404);
       const patch = await request.json();

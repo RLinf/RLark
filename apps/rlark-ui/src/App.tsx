@@ -11,7 +11,7 @@ import { Overview } from "./pages/Overview";
 import { ClustersPage } from "./pages/Clusters";
 import { ClusterManagementPage } from "./pages/ClusterManagement";
 import { JobsPage } from "./pages/Jobs";
-import { WorkflowsPage, CreateWorkflowModal } from "./pages/Workflows";
+import { WorkflowsPage } from "./pages/Workflows";
 import {
   StorageClassesPage,
   StorageClassCreatePage,
@@ -38,7 +38,6 @@ export default function App() {
     false,
   );
   const [createOpen, setCreateOpen] = useState(false);
-  const [createWfOpen, setCreateWfOpen] = useState(false);
   const [storageCreateOpen, setStorageCreateOpen] = useState(() => {
     const route = parseRoute();
     return route.page === "storageClass" && route.sub === "create";
@@ -378,7 +377,6 @@ export default function App() {
             onSelect={(name?: string) =>
               navigate("workflows", name, { replace: !name })
             }
-            onCreate={() => setCreateWfOpen(true)}
             onJobClick={(name) => navigate("jobs", name)}
           />
         )}
@@ -406,9 +404,6 @@ export default function App() {
           editJob={editJob}
           restartAfterSave={restartAfterEdit}
         />
-      )}
-      {createWfOpen && (
-        <CreateWorkflowModal onClose={() => setCreateWfOpen(false)} copy={c} />
       )}
       {storageCreateOpen && (
         <StorageClassCreatePage

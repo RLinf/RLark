@@ -20,7 +20,8 @@ package v1alpha1
 // NodeStorageStatusApplyConfiguration represents a declarative configuration of the NodeStorageStatus type for use
 // with apply.
 //
-// NodeStorageStatus reports kubelet filesystem usage in bytes.
+// NodeStorageStatus reports a bounded kubelet filesystem snapshot in bytes.
+// It is monitoring data, not a scheduler capacity input.
 type NodeStorageStatusApplyConfiguration struct {
 	CapacityBytes  *int64 `json:"capacityBytes,omitempty"`
 	UsedBytes      *int64 `json:"usedBytes,omitempty"`
