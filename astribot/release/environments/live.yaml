@@ -2,7 +2,7 @@
 # (astribot/release). The paths are the management machine's. The clusters are the management plane's, each reached by the release's
 # credential for it there (rlark-release-member-credentials/release-<cluster>).
 name: live
-release: ../releases/ci-a6263a8-e60a306.yaml
+release: ../releases/ci-a6263a8-8762eca.yaml
 management:
   # The command's own identity in kcp (rlarkadm identity issue --output-dir /home/cailiang/.local/share/rlark-runtime/identity).
   kubeconfig: /home/cailiang/.local/share/rlark-runtime/identity/rlark-release/kubeconfig
