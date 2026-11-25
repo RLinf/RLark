@@ -232,6 +232,66 @@ func TestLoginOpaqueSessionAndSessionEndpoints(t *testing.T) {
 	}
 }
 
+func TestSessionRestoresTheTokenOfTheCookie(t *testing.T) {
+	store := newMemoryStore()
+	handler := NewServer(store, time.Hour, false, map[Role]string{RoleAdmin: "upstream-secret"}).Handler()
+	login := httptest.NewRequest(http.MethodPost, "/api/iam/login", strings.NewReader(`{"username":"admin","password":"astribot"}`))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, login)
+	var signedIn struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &signedIn); err != nil {
+		t.Fatal(err)
+	}
+	cookie := response.Result().Cookies()[0]
+
+	session := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/iam/session", nil)
+		req.AddCookie(cookie)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr
+	}
+	rr := session()
+	var body struct {
+		Token string         `json:"token"`
+		Role  Role           `json:"role"`
+		User  map[string]any `json:"user"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Code != 200 || body.Token != signedIn.Token || body.Role != RoleAdmin || body.User["username"] != "admin" {
+		t.Fatalf("session status=%d token=%q role=%q user=%v", rr.Code, body.Token, body.Role, body.User)
+	}
+	if strings.Contains(rr.Body.String(), "upstream-secret") || strings.Contains(rr.Body.String(), "passwordHash") {
+		t.Fatal("session response exposed the upstream token or the password hash")
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("session response is cacheable: Cache-Control=%q", got)
+	}
+
+	anonymous := httptest.NewRequest(http.MethodGet, "/api/iam/session", nil)
+	anonymous.Header.Set("Cookie", cookieName+"=not-a-session")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, anonymous)
+	if rr.Code != 401 {
+		t.Fatalf("unknown session status=%d", rr.Code)
+	}
+
+	logout := httptest.NewRequest(http.MethodPost, "/api/iam/logout", nil)
+	logout.Header.Set("Authorization", "Bearer "+signedIn.Token)
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, logout)
+	if rr.Code != 204 {
+		t.Fatalf("logout status=%d", rr.Code)
+	}
+	if rr = session(); rr.Code != 401 {
+		t.Fatalf("a signed-out session was restored: status=%d", rr.Code)
+	}
+}
+
 func TestLoginFailureAndExpiredSession(t *testing.T) {
 	store := newMemoryStore()
 	handler := NewServer(store, time.Hour, false, nil).Handler()

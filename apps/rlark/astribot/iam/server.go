@@ -50,6 +50,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/iam/login", s.handleLogin)
 	mux.HandleFunc("POST /api/iam/logout", s.handleLogout)
 	mux.HandleFunc("GET /api/iam/me", s.handleMe)
+	mux.HandleFunc("GET /api/iam/session", s.handleSession)
 	mux.HandleFunc("POST /api/iam/password", s.handlePassword)
 	mux.HandleFunc("GET /api/iam/sessions", s.handleSessions)
 	mux.HandleFunc("POST /api/iam/sessions/revoke-others", s.handleRevokeOthers)
@@ -146,6 +147,18 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"user": publicUser(a.user)})
+}
+
+// handleSession gives a console that holds the session cookie but not the token
+// in its sessionStorage (a new tab, a bookmark) what it needs to call the API as
+// this session again, so the person is not sent back through the sign-in page.
+func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
+	a, code := s.authenticate(r, false)
+	if code != 0 {
+		writeError(w, code, "unauthorized")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "token": a.token, "role": a.user.Role, "expiresAt": a.session.ExpiresAt, "user": publicUser(a.user)})
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -413,6 +426,14 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(code)
 		return
 	}
+	// The console's pages (everything outside /api/) only need an authenticated
+	// session; their content is static and the business calls authorize on their
+	// own /api/ subrequests. Page views are not audited.
+	if !strings.HasPrefix(uri, "/api/") {
+		w.Header().Set("X-IAM-User", a.user.Username)
+		w.WriteHeader(200)
+		return
+	}
 	if method != "GET" && method != "HEAD" && r.Header.Get("Authorization") == "" {
 		s.audit(r, a.user.Username, a.user.ID, "authorization", uri, "denied", map[string]any{"method": method, "reason": "bearer required"})
 		w.WriteHeader(401)
@@ -435,6 +456,7 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 type authContext struct {
 	user    User
 	session Session
+	token   string
 }
 
 func (s *Server) authenticate(r *http.Request, requireBearer bool) (authContext, int) {
@@ -458,8 +480,9 @@ func (s *Server) authenticate(r *http.Request, requireBearer bool) (authContext,
 	if err != nil || user.Disabled {
 		return authContext{}, 401
 	}
-	return authContext{user: user, session: session}, 0
+	return authContext{user: user, session: session, token: token}, 0
 }
+
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (authContext, int) {
 	a, code := s.authenticate(r, true)
 	if code != 0 {
