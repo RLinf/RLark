@@ -1176,6 +1176,31 @@ paths:
         '403': {description: A forced release by neither administrator nor operator}
         '404': {description: Not Found}
         '409': {description: "ROBOT_CLAIM_BUSY: held by another; details.current is its claim"}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/station-logs:
+    get:
+      tags: [Nodes]
+      summary: The active Station container's latest 200 lines (operator or administrator)
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+        - name: namespace
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Station log tail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logs: {type: string}
+        '403': {description: Operator access required}
+        '404': {description: Node or running robot Addon missing}
+        '502': {description: Member cluster could not serve the logs}
   /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras:
     get:
       tags: [Node]

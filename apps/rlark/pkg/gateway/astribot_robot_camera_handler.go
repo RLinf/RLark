@@ -21,9 +21,9 @@ import (
 // the node's address, read-only; the Gateway reaches them through the member cluster's API server, as a proxy of that
 // Pod, and decides who may look.
 const (
-	robotCameraNamespace = "rlark-system"
-	robotCameraSelector  = "app.kubernetes.io/name=s1u-robot"
-	robotCameraPort      = "18891"
+	robotAddonNamespace = "rlark-system"
+	robotAddonSelector  = "app.kubernetes.io/name=s1u-robot"
+	robotCameraPort     = "18891"
 )
 
 // robotCameraViews are the views a robot may have, in the order of its camera wall (head, torso / wrist_left,
@@ -57,42 +57,14 @@ func (g *Gateway) handleRobotCameras(c *gin.Context) {
 		respondError(c, http.StatusNotFound, CodeResourceNotFound, "a robot's cameras are /cameras, /cameras/<view>.jpg, /cameras/<view>/stream, /cameras/wall.jpg and /cameras/wall/stream; the views are "+strings.Join(robotCameraViews, ", "))
 		return
 	}
-	ctx, name, namespace := c.Request.Context(), c.Param("name"), c.Query("namespace")
-	if !g.authorizeTenantObjectByName(c, "nodes", namespace, name) {
-		return
-	}
-	if _, err := g.accessors["nodes"].get(ctx, namespace, name, metav1.GetOptions{}); err != nil {
-		respondKubeError(c, err.Error(), err)
-		return
-	}
-	agent, ok := strings.CutPrefix(namespace, apis.RLarkAgentNamespacePrefix)
+	agent, pod, ok := g.runningRobotAddon(c)
 	if !ok {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "namespace is the robot's cluster ("+apis.RLarkAgentNamespacePrefix+"<cluster>)")
 		return
 	}
-
-	// The node's camera service: its s1u-robot Pod that runs.
-	listed, err := g.proxyKubeRequest(ctx, http.MethodGet, agent, fmt.Sprintf("/api/v1/namespaces/%s/pods?%s", robotCameraNamespace,
-		url.Values{"labelSelector": {robotCameraSelector}, "fieldSelector": {"spec.nodeName=" + name}}.Encode()), nil)
-	if err != nil {
-		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("the cluster's Pods: %v", err))
-		return
-	}
-	var pods corev1.PodList
-	err = json.NewDecoder(listed.Body).Decode(&pods)
-	_ = listed.Body.Close()
-	if listed.StatusCode != http.StatusOK || err != nil {
-		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("the cluster's Pods: HTTP %d", listed.StatusCode))
-		return
-	}
-	running := slices.IndexFunc(pods.Items, func(pod corev1.Pod) bool { return pod.Status.Phase == corev1.PodRunning })
-	if running < 0 {
-		respondError(c, http.StatusNotFound, CodeResourceNotFound, "no s1u-robot Pod runs on "+name)
-		return
-	}
+	ctx := c.Request.Context()
 
 	answer, err := g.proxyKubeRequest(ctx, http.MethodGet, agent, fmt.Sprintf("/api/v1/namespaces/%s/pods/%s:%s/proxy%s",
-		robotCameraNamespace, pods.Items[running].Name, robotCameraPort, path), nil)
+		robotAddonNamespace, pod, robotCameraPort, path), nil)
 	if err != nil {
 		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("the robot's cameras: %v", err))
 		return
@@ -138,4 +110,72 @@ func (g *Gateway) handleRobotCameras(c *gin.Context) {
 			return // the end, or the robot's side gone: the viewer sees the stream end
 		}
 	}
+}
+
+// runningRobotAddon looks up the authorized node and the standing robot Addon Pod on it.
+func (g *Gateway) runningRobotAddon(c *gin.Context) (string, string, bool) {
+	ctx, name, namespace := c.Request.Context(), c.Param("name"), c.Query("namespace")
+	if !g.authorizeTenantObjectByName(c, "nodes", namespace, name) {
+		return "", "", false
+	}
+	if _, err := g.accessors["nodes"].get(ctx, namespace, name, metav1.GetOptions{}); err != nil {
+		respondKubeError(c, err.Error(), err)
+		return "", "", false
+	}
+	agent, ok := strings.CutPrefix(namespace, apis.RLarkAgentNamespacePrefix)
+	if !ok {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "namespace is the robot's cluster ("+apis.RLarkAgentNamespacePrefix+"<cluster>)")
+		return "", "", false
+	}
+
+	// The node's camera service: its s1u-robot Pod that runs.
+	listed, err := g.proxyKubeRequest(ctx, http.MethodGet, agent, fmt.Sprintf("/api/v1/namespaces/%s/pods?%s", robotAddonNamespace,
+		url.Values{"labelSelector": {robotAddonSelector}, "fieldSelector": {"spec.nodeName=" + name}}.Encode()), nil)
+	if err != nil {
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("the cluster's Pods: %v", err))
+		return "", "", false
+	}
+	var pods corev1.PodList
+	err = json.NewDecoder(listed.Body).Decode(&pods)
+	_ = listed.Body.Close()
+	if listed.StatusCode != http.StatusOK || err != nil {
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("the cluster's Pods: HTTP %d", listed.StatusCode))
+		return "", "", false
+	}
+	running := slices.IndexFunc(pods.Items, func(pod corev1.Pod) bool {
+		return pod.DeletionTimestamp == nil && pod.Status.Phase == corev1.PodRunning
+	})
+	if running < 0 {
+		respondError(c, http.StatusNotFound, CodeResourceNotFound, "no s1u-robot Pod runs on "+name)
+		return "", "", false
+	}
+
+	return agent, pods.Items[running].Name, true
+}
+
+// handleStationLogs reads the bounded tail of the standing Station container.
+func (g *Gateway) handleStationLogs(c *gin.Context) {
+	agent, pod, ok := g.runningRobotAddon(c)
+	if !ok {
+		return
+	}
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/log?container=station&tailLines=200&limitBytes=131072",
+		robotAddonNamespace, pod)
+	answer, err := g.proxyKubeRequest(c.Request.Context(), http.MethodGet, agent, path, nil)
+	if err != nil {
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("Station logs: %v", err))
+		return
+	}
+	defer func() { _ = answer.Body.Close() }()
+	if answer.StatusCode != http.StatusOK {
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("Station logs: HTTP %d", answer.StatusCode))
+		return
+	}
+	logs, err := io.ReadAll(io.LimitReader(answer.Body, 131072))
+	if err != nil {
+		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, fmt.Sprintf("Station logs: %v", err))
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, gin.H{"logs": string(logs)})
 }
