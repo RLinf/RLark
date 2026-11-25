@@ -16,7 +16,8 @@ The default listener is `:8081`. `--session-ttl` defaults to `168h`. Login issue
 - `/api/iam/logout`, `/api/iam/me`, `/api/iam/password`, `/api/iam/sessions`, and `/api/iam/sessions/revoke-others` provide current-user session and profile operations. Revoking other sessions preserves the presented session.
 - `GET /api/iam/session` answers the session's token, role, and user to a request that carries the session (cookie or Bearer), `Cache-Control: no-store`: what a console tab that starts with the cookie but without the token calls to enter again.
 - `/api/iam/users` and `/api/iam/audit` are administrator-only. Resetting a password revokes every target session.
-- `GET /internal/authorize` is intended for a trusted reverse proxy. It requires the original method and URI headers. Under `/api/` it judges by method and path (GET and HEAD may come with the cookie alone, anything else needs the Bearer), rejects malformed paths, fails closed for unknown routes, and emits the selected upstream token only in `X-IAM-Upstream` on success. Any other URI is one of the console's pages: the session alone admits it, and the view is not audited.
+- `GET /internal/admit` admits console page requests for an authenticated session with GET or HEAD. Page views are not audited.
+- `GET /internal/authorize` answers requests matched by nginx's `/api/` location. Every address is judged as an API call by method and path; addresses that are not valid API paths are rejected. GET and HEAD may come with the cookie alone, anything else needs the Bearer. Unknown routes fail closed, and the selected upstream token is emitted only in `X-IAM-Upstream` on success.
 
 All IAM write endpoints require a Bearer session token. The authorization endpoint accepts the session cookie for GET/HEAD requests, supporting browser terminal handshakes. Upstream tokens are never returned by login or IAM management endpoints.
 

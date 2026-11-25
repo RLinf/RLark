@@ -405,3 +405,87 @@ func TestAuthorizeHeadersFailClosedAndMissingTokens(t *testing.T) {
 		t.Fatalf("missing upstream credentials status=%d, want 503", response.Code)
 	}
 }
+
+func TestPagesAreAdmittedAndTheAPIEndpointAuthorizesOnlyCalls(t *testing.T) {
+	store := newMemoryStore()
+	operatorHash, _ := bcrypt.GenerateFromPassword([]byte("operator-password"), 12)
+	store.users["u_operator"] = User{ID: "u_operator", Username: "operator", DisplayName: "Operator", Role: RoleOperator, PasswordHash: string(operatorHash)}
+	store.byName["operator"] = "u_operator"
+	handler := NewServer(store, time.Hour, false, map[Role]string{RoleAdmin: "gateway-secret", RoleOperator: "operator-secret"}).Handler()
+	signIn := func(username, password string) (*http.Cookie, string) {
+		request := httptest.NewRequest(http.MethodPost, "/api/iam/login", strings.NewReader(`{"username":"`+username+`","password":"`+password+`"}`))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != 200 {
+			t.Fatalf("sign in as %s status=%d body=%s", username, response.Code, response.Body.String())
+		}
+		var body struct {
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return response.Result().Cookies()[0], body.Token
+	}
+	cookie, adminToken := signIn("admin", "astribot")
+	_, operatorToken := signIn("operator", "operator-password")
+
+	// nginx asks /internal/admit about a page with the session cookie alone.
+	admit := func(method, uri string, session *http.Cookie) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, "/internal/admit", nil)
+		request.Header.Set("X-Original-Method", method)
+		request.Header.Set("X-Original-URI", uri)
+		if session != nil {
+			request.AddCookie(session)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	for _, uri := range []string{"/", "/admin/iam?tab=users", "/jobs/%E6%9C%BA%E5%99%A8%E4%BA%BA", "/assets/app-9f2c.js"} {
+		if response := admit("GET", uri, cookie); response.Code != 200 || response.Header().Get("X-IAM-User") != "admin" || response.Header().Get("X-IAM-Upstream") != "" {
+			t.Fatalf("page %q: status=%d headers=%v", uri, response.Code, response.Header())
+		}
+	}
+	if response := admit("HEAD", "/index.html", cookie); response.Code != 200 {
+		t.Fatalf("HEAD of a page status=%d", response.Code)
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		if response := admit(method, "/", cookie); response.Code != 403 || response.Header().Get("X-IAM-Upstream") != "" {
+			t.Fatalf("%s to a page status=%d, want 403", method, response.Code)
+		}
+	}
+	if response := admit("GET", "/", nil); response.Code != 401 {
+		t.Fatalf("page without a session status=%d", response.Code)
+	}
+	if response := admit("", "/", cookie); response.Code != 403 {
+		t.Fatalf("page without the original request's metadata status=%d", response.Code)
+	}
+
+	// nginx asks /internal/authorize about what its /api/ location matched. Every
+	// address is judged as an API call: a page's address is not a call, and an
+	// API address written another way names what it names, for the role or not.
+	authorize := func(method, uri, token string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, "/internal/authorize", nil)
+		request.Header.Set("X-Original-Method", method)
+		request.Header.Set("X-Original-URI", uri)
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	for _, uri := range []string{"/", "/admin/iam", "//api/v1/users", "/api%2Fv1%2Fusers", "/api/v1/../v1/users", "/api/v1/a//users"} {
+		if response := authorize("GET", uri, adminToken); response.Code != 403 || response.Header().Get("X-IAM-Upstream") != "" {
+			t.Fatalf("address %q: status=%d headers=%v, want 403 without an upstream token", uri, response.Code, response.Header())
+		}
+	}
+	if response := authorize("GET", "/%61pi/v1/users", adminToken); response.Code != 200 || response.Header().Get("X-IAM-Upstream") != "gateway-secret" {
+		t.Fatalf("the admin's call written with an encoded letter: status=%d headers=%v", response.Code, response.Header())
+	}
+	if response := authorize("GET", "/%61pi/v1/users", operatorToken); response.Code != 403 || response.Header().Get("X-IAM-Upstream") != "" {
+		t.Fatalf("the operator's call to the same address: status=%d headers=%v, want 403", response.Code, response.Header())
+	}
+	if response := authorize("GET", "/api/v1/rlinf.io/v1alpha1/jobs", operatorToken); response.Code != 200 || response.Header().Get("X-IAM-Upstream") != "operator-secret" {
+		t.Fatalf("the operator's call status=%d headers=%v", response.Code, response.Header())
+	}
+}

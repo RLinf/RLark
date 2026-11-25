@@ -61,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/iam/users/{id}/reset-password", s.handleResetPassword)
 	mux.HandleFunc("GET /api/iam/audit", s.handleAudit)
 	mux.HandleFunc("GET /internal/authorize", s.handleAuthorize)
+	mux.HandleFunc("GET /internal/admit", s.handleAdmit)
 	return securityHeaders(mux)
 }
 
@@ -412,10 +413,21 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"events": events})
 }
 
+// originalRequest is what nginx asks about: the method and the address as the
+// browser wrote them (a subrequest's own URI is the internal location's).
+func originalRequest(r *http.Request) (method, uri string, ok bool) {
+	method, uri = r.Header.Get("X-Original-Method"), r.Header.Get("X-Original-URI")
+	return method, uri, method != "" && uri != ""
+}
+
+// handleAuthorize answers for a request nginx routes to the Gateway (its /api/
+// location): the session, the role's permission for the method and the path,
+// then the role's upstream token. nginx picks this endpoint by the location the
+// normalized address matched, so an address written another way (//api/…,
+// /%61pi/…) is judged as the API call it is, never as a page.
 func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
-	method := r.Header.Get("X-Original-Method")
-	uri := r.Header.Get("X-Original-URI")
-	if method == "" || uri == "" {
+	method, uri, ok := originalRequest(r)
+	if !ok {
 		s.audit(r, "anonymous", "", "authorization", "", "failure", map[string]any{"reason": "missing original request metadata"})
 		w.WriteHeader(403)
 		return
@@ -424,14 +436,6 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	if code != 0 {
 		s.audit(r, "anonymous", "", "authorization", uri, "failure", map[string]any{"method": method})
 		w.WriteHeader(code)
-		return
-	}
-	// The console's pages (everything outside /api/) only need an authenticated
-	// session; their content is static and the business calls authorize on their
-	// own /api/ subrequests. Page views are not audited.
-	if !strings.HasPrefix(uri, "/api/") {
-		w.Header().Set("X-IAM-User", a.user.Username)
-		w.WriteHeader(200)
 		return
 	}
 	if method != "GET" && method != "HEAD" && r.Header.Get("Authorization") == "" {
@@ -449,6 +453,30 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("X-IAM-Upstream", s.upstream[a.user.Role])
+	w.Header().Set("X-IAM-User", a.user.Username)
+	w.WriteHeader(200)
+}
+
+// handleAdmit answers for one of the console's pages (nginx's other locations).
+// The pages are static and each business call authorizes on its own, so a
+// session is the whole of it; nothing is written through a page. A page view
+// is not audited.
+func (s *Server) handleAdmit(w http.ResponseWriter, r *http.Request) {
+	method, uri, ok := originalRequest(r)
+	if !ok {
+		w.WriteHeader(403)
+		return
+	}
+	a, code := s.authenticate(r, false)
+	if code != 0 {
+		w.WriteHeader(code)
+		return
+	}
+	if method != "GET" && method != "HEAD" {
+		s.audit(r, a.user.Username, a.user.ID, "authorization", uri, "denied", map[string]any{"method": method, "reason": "a page is only read"})
+		w.WriteHeader(403)
+		return
+	}
 	w.Header().Set("X-IAM-User", a.user.Username)
 	w.WriteHeader(200)
 }

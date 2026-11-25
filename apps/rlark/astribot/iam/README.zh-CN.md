@@ -16,7 +16,8 @@
 - `/api/iam/logout`、`/api/iam/me`、`/api/iam/password`、`/api/iam/sessions`、`/api/iam/sessions/revoke-others` 提供当前用户的会话和资料操作。撤销其他会话时会保留当前请求所用会话。
 - `GET /api/iam/session` 对带有会话（cookie 或 Bearer）的请求返回该会话的 token、角色和用户，应答带 `Cache-Control: no-store`：只有 cookie、没有 token 的控制台标签页用它重新进入。
 - `/api/iam/users` 和 `/api/iam/audit` 仅管理员可访问。重置密码会撤销目标用户的全部会话。
-- `GET /internal/authorize` 面向可信反向代理，需要原始方法和 URI 请求头。对 `/api/` 下的请求按方法和路径判定（GET/HEAD 可以只带 cookie，其余方法必须带 Bearer），路径异常或未知路由均拒绝，授权成功时只通过 `X-IAM-Upstream` 返回所选上游 token。其他 URI 都是控制台的页面：有会话即放行，不记审计。
+- `GET /internal/admit` 为已认证会话放行控制台页面的 GET 或 HEAD 请求。页面访问不记审计。
+- `GET /internal/authorize` 回答 nginx 的 `/api/` location 匹配到的请求。所有地址都按接口调用进行方法和路径判定；不是有效接口路径的地址一律拒绝。GET/HEAD 可以只带 cookie，其余方法必须带 Bearer。未知路由 fail closed，授权成功时只通过 `X-IAM-Upstream` 返回所选上游 token。
 
 所有 IAM 写接口都要求 Bearer 会话 token。授权接口允许 GET/HEAD 使用会话 Cookie，以支持浏览器终端握手。登录和 IAM 管理接口不会返回上游 token。
 
