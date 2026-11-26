@@ -166,6 +166,10 @@ func (c *Coordinator) CleanupTask(ctx context.Context, task agentruntime.TaskIde
 		}
 		workloadSelector = coordination.WorkloadSelector{Type: workloadType, Version: workloadVersion}
 	}
+	if err := c.ValidateCapabilities(ctx, runtimeSelector, workloadSelector); err != nil {
+		finalErr = err
+		return CleanupResult{}, err
+	}
 	adapter, err := c.selectWorkload(workloadSelector, runtimeRegistration.Info.Kind)
 	if err != nil {
 		finalErr = err
@@ -333,9 +337,26 @@ func cleanupOperationKey(task agentruntime.TaskIdentity, runtimeID agentruntime.
 // Evaluate computes a complete execution decision without mutating the
 // Runtime. Production controllers can shadow this method safely.
 func (c *Coordinator) Evaluate(ctx context.Context, task coordination.TaskSnapshot) (Result, error) {
+	return c.evaluate(ctx, task, true)
+}
+
+// AdmitTask validates compilation, binding and inventory declarations without
+// observing or mutating workload objects. A stale workload may need repair and
+// must not block admission simply because its pre-repair observation is invalid.
+// The normal reconciliation still evaluates fresh Runtime state before writes.
+func (c *Coordinator) AdmitTask(ctx context.Context, task coordination.TaskSnapshot) error {
+	_, err := c.evaluate(ctx, task, false)
+	return err
+}
+
+func (c *Coordinator) evaluate(ctx context.Context, task coordination.TaskSnapshot, observe bool) (Result, error) {
 	ctx, scope := c.startObservation(ctx, "coordinator.evaluate", task.Identity, task.RuntimeSelector)
 	var finalErr error
 	defer func() { scope.End(observationResult(finalErr)) }()
+	if err := c.ValidateCapabilities(ctx, task.RuntimeSelector, task.WorkloadSelector); err != nil {
+		finalErr = err
+		return Result{}, err
+	}
 	// 1. Resolve the exact Runtime and Workload implementation before reading or
 	// writing external state. Selection failures are stable contract faults.
 	runtimeRegistration, err := c.selectRuntime(task.RuntimeSelector)
@@ -442,6 +463,17 @@ func (c *Coordinator) Evaluate(ctx context.Context, task coordination.TaskSnapsh
 		finalErr = err
 		return Result{}, err
 	}
+	if err := validateOwnedFieldCapabilities(executable.Objects, adapterInfo.Capabilities, runtimeRegistration.Info.Capabilities); err != nil {
+		finalErr = err
+		return Result{}, err
+	}
+	if err := validateDesiredAdoptionCapabilities(executable.Objects, adapterInfo.Capabilities, runtimeRegistration.Info.Capabilities); err != nil {
+		finalErr = err
+		return Result{}, err
+	}
+	if !observe {
+		return Result{Runtime: runtimeRegistration.Info, Plan: executable}, nil
+	}
 	managed, err := inventoryProvider.ListCandidates(ctx, agentruntime.ManagedObjectQuery{Task: task.Identity, Candidates: inventory.Candidates})
 	if err != nil {
 		finalErr = err
@@ -471,9 +503,6 @@ func (c *Coordinator) Evaluate(ctx context.Context, task coordination.TaskSnapsh
 }
 
 func validateIncarnationAdoptionCapabilities(candidates []agentruntime.ObjectCandidate, adapterCapabilities, runtimeCapabilities []agentruntime.Capability) error {
-	// TODO(execution): Replace feature-specific capability gates with one
-	// versioned composition check that consumes every advertised capability,
-	// including inventory, owned-field projection, and claimed recovery.
 	required := false
 	for _, candidate := range candidates {
 		if candidate.Ownership.IncarnationPolicy == agentruntime.IncarnationOwnershipAllowAdoption {

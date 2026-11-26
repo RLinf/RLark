@@ -23,7 +23,7 @@ test("localizes the CPU core unit", () => {
   assert.equal(formatResourceQuantity("cpu", "8", false), "8 cores");
 });
 
-test("calculates disk usage against allocatable capacity", () => {
+test("calculates scheduled allocation against allocatable capacity", () => {
   assert.equal(
     getResourceUsagePercent("ephemeral-storage", "90Gi", "100Gi"),
     90,
@@ -34,24 +34,46 @@ test("calculates disk usage against allocatable capacity", () => {
   );
 });
 
-test("warns when real disk usage reaches ninety percent", () => {
+test("reports device scheduling availability from allocatable minus allocated requests", () => {
+  const summary = getNodeResourceSummary(
+    {
+      metadata: { name: "reserved-gpu" },
+      spec: {},
+      status: {
+        capacity: { "nvidia.com/gpu": "8" },
+        allocatable: { "nvidia.com/gpu": "6" },
+        used: { "nvidia.com/gpu": "2" },
+      },
+    },
+    false,
+  );
+  assert.equal(summary.lines[0].amount, "4 / 8 GPU");
+});
+
+test("derives pressure from the ResourcePressure condition, not monitoring thresholds", () => {
   const node = {
     metadata: { name: "disk-warning" },
     spec: {},
     status: {
       storage: {
         capacityBytes: 1000,
-        usedBytes: 900,
-        availableBytes: 100,
+        usedBytes: 995,
+        availableBytes: 5,
       },
     },
   };
+  // Monitoring samples alone must not produce a pressure conclusion.
+  assert.equal(isDiskUsageWarning(node), false);
+  node.status.conditions = [
+    {
+      type: "ResourcePressure",
+      status: "True",
+      reason: "ResourcePressureDetected",
+    },
+  ];
   assert.equal(isDiskUsageWarning(node), true);
-  node.status.storage.usedBytes = 899;
-  node.status.storage.availableBytes = 100;
-  assert.equal(isDiskUsageWarning(node), true);
-  node.status.storage.usedBytes = 894;
-  node.status.storage.availableBytes = 106;
+  node.status.conditions[0].status = "False";
+  node.status.conditions[0].reason = "NoResourcePressure";
   assert.equal(isDiskUsageWarning(node), false);
 });
 
@@ -171,6 +193,45 @@ test("shows GPU and embodied device resources together on an edge node", () => {
     [
       { kind: "gpu", primary: "1 / 2 GPU", secondary: "NVIDIA RTX 4090" },
       { kind: "device", primary: "1 / 1 设备", secondary: "Franka" },
+    ],
+  );
+});
+
+test("prefers annotation models over legacy observed labels", () => {
+  const summary = getNodeResourceSummary(
+    {
+      metadata: {
+        name: "migrated",
+        annotations: {
+          "rlark.io/gpu-model": "A100",
+          "rlark.io/device-model": "Unitree G1",
+        },
+      },
+      spec: {},
+      status: {
+        capacity: {
+          "nvidia.com/gpu": "1",
+          "rlinf.io/device-unitree": "1",
+        },
+        allocatable: {
+          "nvidia.com/gpu": "1",
+          "rlinf.io/device-unitree": "1",
+        },
+        used: { "nvidia.com/gpu": "0", "rlinf.io/device-unitree": "0" },
+        observedNodeLabels: {
+          "rlark.io/gpu-model": "legacy-gpu",
+          "rlark.io/device-model": "legacy-device",
+        },
+      },
+    },
+    true,
+  );
+
+  assert.deepEqual(
+    summary.lines.map(({ kind, secondary }) => ({ kind, secondary })),
+    [
+      { kind: "gpu", secondary: "A100" },
+      { kind: "device", secondary: "Unitree G1" },
     ],
   );
 });

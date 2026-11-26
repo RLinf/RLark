@@ -36,6 +36,13 @@ func (s *Server) GetInfo(ctx context.Context, request *workloadv1.GetInfoRequest
 	for _, capability := range info.Capabilities {
 		wire.Capabilities = append(wire.Capabilities, toWireCapability(capability))
 	}
+	for _, contract := range info.Observations {
+		wireContract := &workloadv1.ObservationContract{RuntimeKind: string(contract.RuntimeKind)}
+		for _, root := range contract.Roots {
+			wireContract.Roots = append(wireContract.Roots, &workloadv1.ObservationRoot{Group: root.Group, Version: root.Version, Kind: root.Kind, CarrierType: root.CarrierType, InstanceProfile: root.InstanceProfile})
+		}
+		wire.Observations = append(wire.Observations, wireContract)
+	}
 	return &workloadv1.GetInfoResponse{Info: wire}, nil
 }
 

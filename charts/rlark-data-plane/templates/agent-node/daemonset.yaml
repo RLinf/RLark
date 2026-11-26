@@ -1,0 +1,120 @@
+{{- if .Values.agentNode.enabled }}
+{{- $socketDir := "/run/containerd" }}
+{{- if .Values.agentNode.containerdSocket }}
+{{- $socketDir = dir .Values.agentNode.containerdSocket }}
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rlark-agent-node
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: rlark-agent-node
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rlark-agent-node
+  labels:
+    app: rlark-agent-node
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rlark-agent-node
+  labels:
+    app: rlark-agent-node
+subjects:
+  - kind: ServiceAccount
+    name: rlark-agent-node
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: rlark-agent-node
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rlark-agent-node
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: rlark-agent-node
+spec:
+  selector:
+    matchLabels:
+      app: rlark-agent-node
+  template:
+    metadata:
+      labels:
+        app: rlark-agent-node
+    spec:
+      serviceAccountName: rlark-agent-node
+      hostPID: true
+      {{- include "rlark-data-plane.imagePullSecrets" . | nindent 6 }}
+      nodeSelector:
+        rlark.io/enabled: "true"
+      containers:
+        - name: rlark-agent-node
+          image: {{ .Values.image | quote }}
+          imagePullPolicy: {{ include "rlark-data-plane.imagePullPolicy" . }}
+          securityContext:
+            privileged: true
+          ports:
+            - containerPort: 8081
+          command:
+            - /usr/local/bin/agent
+          args:
+            - --server-address={{ required "controlPlaneAddress is required" .Values.controlPlaneAddress }}
+            - --agent-type=kubernetes
+            - --client-cert=/etc/rlark/certs/tls.crt
+            - --client-key=/etc/rlark/certs/tls.key
+            - --ca-cert=/etc/rlark/certs/ca.crt
+            - --leader-election=false
+            - --mode=node
+            - --rlark-server-ssh-address={{ include "rlark-data-plane.sshServerAddress" . }}
+            - --image-pull-enabled=true
+            - --in-cluster
+            {{- if .Values.agentNode.containerdSocket }}
+            - --containerd-socket={{ .Values.agentNode.containerdSocket }}
+            {{- end }}
+            {{- if .Values.insecureSkipTLSVerify }}
+            - --insecure-skip-tls-verify
+            {{- end }}
+          env:
+            {{- include "rlark-data-plane.commonEnvs" . | nindent 12 }}
+          volumeMounts:
+            - name: cert
+              mountPath: /etc/rlark/certs
+              readOnly: true
+            - name: nodeserver-socket
+              mountPath: /var/run/rlark
+            - name: containerd-socket
+              mountPath: {{ $socketDir }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: cert
+          secret:
+            secretName: rlark-agent-cert
+        - name: nodeserver-socket
+          hostPath:
+            path: /var/run/rlark
+            type: DirectoryOrCreate
+        - name: containerd-socket
+          hostPath:
+            path: {{ $socketDir }}
+            type: DirectoryOrCreate
+{{- end }}

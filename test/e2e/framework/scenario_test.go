@@ -228,6 +228,35 @@ func TestRunScenarioRetainsEnvironmentButCollectsEvidence(t *testing.T) {
 	}
 }
 
+func TestRunScenarioCreatesCleanupContextAfterExecution(t *testing.T) {
+	var steps []string
+	runner := ScenarioRunner{
+		Provider: lifecycleProvider{steps: &steps},
+		CleanupContext: func() (context.Context, context.CancelFunc) {
+			steps = append(steps, "cleanup-context")
+			return context.WithCancel(context.Background())
+		},
+	}
+	scenario := Scenario[struct{}]{
+		Name: "cleanup-timeout-scope",
+		Prepare: func(context.Context, *Run, *ProvisionedEnvironment) (struct{}, error) {
+			steps = append(steps, "prepare")
+			return struct{}{}, nil
+		},
+		Execute: func(context.Context, *Run, struct{}) error {
+			steps = append(steps, "execute")
+			return nil
+		},
+	}
+	if err := RunScenario(context.Background(), runner, &Run{}, scenario); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"provision", "prepare", "execute", "cleanup-context", "provider-collect", "destroy"}
+	if !reflect.DeepEqual(steps, want) {
+		t.Fatalf("steps = %#v, want %#v", steps, want)
+	}
+}
+
 func containsStep(steps []string, expected string) bool {
 	for _, step := range steps {
 		if step == expected {

@@ -44,7 +44,7 @@ func TestACredentialThatComesToMatchDoesNotReplaceRunningPods(t *testing.T) {
 	key := client.ObjectKeyFromObject(task)
 	pass := func() *appsv1.DaemonSet {
 		t.Helper()
-		execution, err := NewKubernetesExecutionCoordinator(local, "rlark:1")
+		execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:1")
 		if err != nil {
 			t.Fatal(err)
 		}

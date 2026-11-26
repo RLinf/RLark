@@ -39,7 +39,7 @@ func TestClusterDisplayMetadata(t *testing.T) {
 				Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "agent-a", DisplayName: tt.displayName},
 			}
 			nodes := []rlarkv1alpha1.Node{{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"rlark.io/region": "node-region"}}}}
-			info := buildClusterInfo(cluster, nodes)
+			info := buildClusterInfo(cluster, nodes, 0)
 			if info.Name != tt.wantName || info.Region != "node-region" {
 				t.Fatalf("name/region = %q/%q, want %q/node-region", info.Name, info.Region, tt.wantName)
 			}

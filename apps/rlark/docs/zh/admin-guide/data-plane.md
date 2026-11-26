@@ -4,6 +4,8 @@
 
 接入 Kubernetes 数据面需要 Agent 证书及供 `rlarkadm` 使用的 `DeployConfig`。当前管理表单用于签发证书，不要求填写集群类型或区域，也不会生成 Shell 安装命令。
 
+`rlarkadm` 仍安装独立 cluster/node 工作负载，使用规范的 `--agent-type=kubernetes`，节点启动责任默认 external。手工 Agent 启动文件是不同 schema，不是这里的 DeployConfig。本机 embedded 组合及启动校验/脱敏诊断见 [Agent 指南](agent.md) 和 [配置参考](../reference/configuration.md#agent-startup-file-and-validation)。managed 部署和 Docker/Raw 执行仍不支持。
+
 ## 通过 UI 获取证书
 
 ### 第一步：签发集群证书
@@ -50,10 +52,11 @@ cert:
 
 kubernetes:
   kubeconfig: ~/.kube/config
-  agent-image: rlark:latest
+  agent-image: ghcr.io/rlinf/rlark:v0.1.0
+  image: ghcr.io/rlinf/rlark:v0.1.0
 ```
 
-将 `kubernetes.kubeconfig` 替换为可向目标集群部署资源的 kubeconfig，并设置可用的 Agent 镜像。仅在启用需要共享 RLark 镜像的组件时添加可选的 `kubernetes.image`。所有可用字段参见[配置参考](../reference/configuration.md)。
+将 `kubernetes.kubeconfig` 替换为可向目标集群部署资源的 kubeconfig，并设置可用的 Agent 和 RLark tools 镜像。`kubernetes.image` 提供必需 Task tools 及可选网络/SSH 功能；Kubernetes cluster Agent 会在启动时拒绝为空或纯空白的值。仅设置 `kubernetes.agent-image` 不会提供 tools 镜像。所有可用字段参见[配置参考](../reference/configuration.md)。
 
 ### 第三步：安装数据面
 
@@ -90,7 +93,7 @@ rlarkadm install -f apps/rlark/docs/examples/deploy-data-plane.yaml
 
 ## 添加调度元数据
 
-使用节点管理的批量编辑器设置城市、一个或多个云算力/端算力/真机分类、GPU 型号或设备型号，也可批量 Cordon/Uncordon。字段存储在控制面的 Node CR 上，并会在 Agent 刷新 Kubernetes 发现状态时保留。
+使用节点管理的批量编辑器设置城市、一个或多个云算力/端算力/真机分类、GPU 型号或设备型号，也可批量执行暂停调度/恢复调度（Pause Schedule/Resume Schedule）。字段存储在控制面的 Node CR 上，并会在 Agent 刷新 Kubernetes 发现状态时保留。
 
 ## 运行冒烟测试
 

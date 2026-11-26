@@ -154,6 +154,80 @@
   white-space: nowrap;
 }
 
+.admin-label-editor .label-edit-row .label-key-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.admin-label-editor .label-edit-row .label-key-cell code {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Warning tooltip decoration shown next to sensitive label keys while editing.
+   kubernetes.io/* → red (core Kubernetes functionality),
+   rlark.io/* → orange (RLark platform behavior). */
+.label-key-tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: help;
+}
+
+.label-key-tooltip svg {
+  display: block;
+}
+
+.label-key-tooltip-danger {
+  color: #d93025;
+}
+
+.label-key-tooltip-warn {
+  color: #e67e22;
+}
+
+.label-key-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 7px);
+  transform: translateX(-50%) translateY(3px);
+  z-index: 999;
+  width: max-content;
+  max-width: 240px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  box-shadow: 0 5px 14px rgba(28, 36, 50, 0.2);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.label-key-tooltip-danger::after {
+  background: #d93025;
+  color: #fff;
+}
+
+.label-key-tooltip-warn::after {
+  background: #e67e22;
+  color: #fff;
+}
+
+.label-key-tooltip:hover::after,
+.label-key-tooltip:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 .admin-label-editor .label-edit-row input,
 .admin-label-editor .label-add-row input {
   height: 36px;

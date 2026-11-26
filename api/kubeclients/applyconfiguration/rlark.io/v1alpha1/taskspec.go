@@ -32,6 +32,11 @@ type TaskSpecApplyConfiguration struct {
 	Workload       *TaskWorkloadSpecApplyConfiguration  `json:"workload,omitempty"`
 	Environments   []TaskEnvironmentApplyConfiguration  `json:"environments,omitempty"`
 	Tags           []JobTagApplyConfiguration           `json:"tags,omitempty"`
+	// DrainRequests are one-shot Node-agent-owned requests to stop this Task's
+	// root workload during Node Drain. The Node Agent reconciles them from the
+	// Node's current Drain operations and removes an entry when its operation is
+	// no longer present, including after undrain and recover.
+	DrainRequests []TaskDrainRequestApplyConfiguration `json:"drainRequests,omitempty"`
 }
 
 // TaskSpecApplyConfiguration constructs a declarative configuration of the TaskSpec type for use with
@@ -110,6 +115,19 @@ func (b *TaskSpecApplyConfiguration) WithTags(values ...*JobTagApplyConfiguratio
 			panic("nil value passed to WithTags")
 		}
 		b.Tags = append(b.Tags, *values[i])
+	}
+	return b
+}
+
+// WithDrainRequests adds the given value to the DrainRequests field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the DrainRequests field.
+func (b *TaskSpecApplyConfiguration) WithDrainRequests(values ...*TaskDrainRequestApplyConfiguration) *TaskSpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithDrainRequests")
+		}
+		b.DrainRequests = append(b.DrainRequests, *values[i])
 	}
 	return b
 }

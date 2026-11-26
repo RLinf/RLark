@@ -1,0 +1,13 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rlark-postgres-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: postgresql
+data:
+  init-db.sql: |
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    GRANT ALL PRIVILEGES ON DATABASE rlark TO postgres;
+{{- end }}

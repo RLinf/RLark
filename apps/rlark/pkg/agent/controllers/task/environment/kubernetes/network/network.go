@@ -21,6 +21,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/fault"
 	executionplan "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/plan"
 	agentruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
+	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
 const (
@@ -193,7 +194,7 @@ func apply(spec *corev1.PodSpec, profile profileValue) error {
 	desired.RestartPolicy = ptr.To(corev1.ContainerRestartPolicyAlways)
 	for _, existing := range append(append([]corev1.Container(nil), spec.Containers...), spec.InitContainers...) {
 		if existing.Name == sidecarName {
-			if !containersEqual(existing, desired) {
+			if !utils.JSONEqual(existing, desired) {
 				return fault.New(fault.Conflict, "network sidecar name is already used by a non-equivalent container")
 			}
 			return ensureVolume(spec)
@@ -207,7 +208,7 @@ func ensureVolume(spec *corev1.PodSpec) error {
 	desired := corev1.Volume{Name: volumeName, VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: socketPath}}}
 	for _, existing := range spec.Volumes {
 		if existing.Name == volumeName {
-			if !volumesEqual(existing, desired) {
+			if !utils.JSONEqual(existing, desired) {
 				return fault.New(fault.Conflict, "network socket volume name is already used by a non-equivalent volume")
 			}
 			return nil
@@ -217,16 +218,6 @@ func ensureVolume(spec *corev1.PodSpec) error {
 	return nil
 }
 
-func containersEqual(left, right corev1.Container) bool {
-	a, _ := json.Marshal(left)
-	b, _ := json.Marshal(right)
-	return string(a) == string(b)
-}
-func volumesEqual(left, right corev1.Volume) bool {
-	a, _ := json.Marshal(left)
-	b, _ := json.Marshal(right)
-	return string(a) == string(b)
-}
 func profileRevision(value []byte) string {
 	sum := sha256.Sum256(value)
 	return fmt.Sprintf("sha256:%x", sum[:])

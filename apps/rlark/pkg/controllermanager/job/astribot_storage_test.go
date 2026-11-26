@@ -95,7 +95,11 @@ func TestReconcileTaskResolvesStorageByName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !taskEqual(task, job, resolved) {
+	desired, err := desiredTask(job, resolved, task.Name, task.Namespace, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !taskUpToDate(task, desired) {
 		t.Fatal("the stored Task differs from its resolved template")
 	}
 }
@@ -168,7 +172,7 @@ func TestReconcileRecordsMissingStorageAndRetries(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := jobTestClientBuilder(scheme).WithStatusSubresource(job).WithObjects(job,
-		&rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n", Namespace: storageTestCluster, Labels: template.Placement.NodeSelector}, Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline}},
+		schedulableNode("n", storageTestCluster, template.Placement.NodeSelector),
 		&rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: storageTestCluster}, Spec: rlarkv1alpha1.ClusterSpec{AgentNamespace: storageTestCluster}, Status: rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterOnline}},
 	).Build()
 	r := &Reconciler{Client: c, Scheme: scheme}

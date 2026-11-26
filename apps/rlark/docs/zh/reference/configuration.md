@@ -43,6 +43,8 @@ debug: false
 | ------ | ------ | -------- | ------ |
 | `--https-port` | int | `8443` | HTTPS 监听端口 |
 | `--ssh-port` | int | `2222` | SSH 监听端口 |
+| `--ssh-max-pending-targets` | int | `64` | 每个 SSH 连接的待完成上游 open 限额及独立的额外等待人数限额，必须为正；不计已建立 channel |
+| `--ssh-admission-wait-timeout` | duration | `5s` | 等待 SSH open 额度的最长时间，必须为正，包含在共用的 30 秒 open context 预算内；等待队列也满时立即拒绝 |
 | `--unsafe-http-port` | int | `8888` | 内部 HTTP：`/healthz`、`/readyz`、`/livez`、`/metrics` 和 Peer 代理 |
 | `--auto-sign-tls-ca-cert` | bool | `false` | 若 TLS CA 证书不存在则自动签发 |
 | `--tls-domains` | strings | `["localhost"]` | TLS 证书域名列表 |
@@ -119,6 +121,11 @@ rlark-gateway \
 | `--task-sync-controller-workers` | int | `8` | Task 数据库同步控制器最大并发调和数 |
 | `--workflow-sync-controller-workers` | int | `8` | Workflow 数据库同步控制器最大并发调和数 |
 | `--node-sync-controller-workers` | int | `8` | Node 数据库同步控制器最大并发调和数 |
+| `--orphan-sweep-interval` | duration | `10m` | 清扫父对象已消失的 DomainPeer 与 Task 的基准周期，实际间隔带 80–120% 抖动，取值必须为正 |
+| `--orphan-sweep-page-size` | int | `200` | 单次孤儿清扫每页列举的子对象数量上限，取值必须为正 |
+| `--orphan-stale-ttl` | duration | `15m` | 子对象被标记为孤儿后，清扫器删除它之前的等待时长，取值必须为正 |
+| `--task-freshness-resync-interval` | duration | `2m` | 兜底重扫的基础周期：重新入队 Pending Task，使 Node watch 事件丢失不会让聚合的 `pullProgress`/`events` 无上界滞后；实际间隔带 80–120% 抖动，`0` 表示关闭扫描，负值非法 |
+| `--task-freshness-resync-page-size` | int | `200` | Task 新鲜度重扫时每页最多列出的 Task 数量 |
 | `--kubeconfig` | string | `$KUBECONFIG` | kubeconfig 文件路径 |
 | `--master` | string | `""` | Kubernetes API Server 地址 |
 | `--in-cluster` | bool | `false` | 使用 in-cluster 配置 |
@@ -129,6 +136,9 @@ rlark-gateway \
 
 !!! note "单实例部署"
     单实例部署时建议设置 `--leader-election=false` 以避免不必要的选举开销。
+
+!!! note "Task 新鲜度由事件驱动"
+    Task 控制器从 Pending Task 所观察的 Node 上聚合 `pullProgress` 与 `events`。其快路径是 Node watch：只唤醒上报进度或事件真正发生变化所涉及的 Pending Task，控制器自身不再按固定间隔重新入队。新鲜度重扫是 watch 事件丢失时唯一能为滞后设定上界的机制，且只在选举出的 leader 上运行。每一轮都会翻完所有分页，覆盖全部 Task，无论数量多大都不会漏掉任何一个；当控制器处理不过来时，扫描会等待而不是丢弃，因此一轮耗时可能超过 `--task-freshness-resync-interval`，下一轮随之推迟。设置 `--task-freshness-resync-interval=0` 会让聚合状态完全依赖 watch 投递，仅用于排障，不建议在生产环境使用。
 
 **示例：**
 
@@ -153,28 +163,32 @@ rlark-controller-manager \
 | `--client-key` | string | `""` | 客户端 TLS 私钥路径 |
 | `--ca-cert` | string | `""` | CA 证书路径 |
 | `--insecure-skip-tls-verify` | bool | `false` | 跳过 TLS 证书验证 |
-| `--agent-type` | string | `Kubernetes` | Agent 类型：Kubernetes、Docker、Raw |
-| `--mode` | string | `cluster` | Agent 模式：cluster、node、both |
-| `--leader-election` | bool | `false` | 启用 Leader Election |
+| `--agent-type` | string | `kubernetes` | 启动 Runtime：kubernetes/docker/raw；兼容旧大小写输入，Docker/Raw 不支持 |
+| `--mode` | string | `cluster` | Agent 角色：cluster 或 node |
+| `--node-startup` | string | `external` | cluster 专属节点部署责任：external 或 embedded；managed 不支持 |
+| `--embedded-node-metrics-bind-address` | string | `:8082` | 仅 cluster+embedded；节点健康/metrics/pprof，与 cluster metrics 使用独立端口；`0` 禁用 |
+| `--config` | string | `""` | 仅启动时读取的 v1 YAML 文件；显式 CLI 覆盖文件 |
+| `--tensorboard-image` | string | `rlinf/tensorboard:2.15.1-rc1` | cluster 专属可信镜像；支持旧环境默认来源 |
+| `--restartable-init-containers` | bool | `true` | cluster 专属 Kubernetes 能力；支持旧环境默认来源 |
+| `--leader-election` | bool | `false` | 保留的历史选项，未接入当前 Agent manager（不执行选主门控） |
 | `--leader-election-key` | string | `default/rlark-agent` | Leader Election Key（namespace/name） |
-| `--leader-election-id` | string | `hostname-pid` | Leader Election 标识 |
+| `--leader-election-id` | string | `$HOSTNAME` / `$POD_NAME` / `node` | 选主参与者标识；每个参与者必须唯一 |
 | `--metrics-bind-address` | string | `:8081` | Metrics 端点绑定地址 |
 | `--task-pull-controller-workers` | int | `8` | Task pull 控制器最大并发调和数 |
 | `--task-runtime-resync-period` | duration | `15m` | cluster 模式共享 Task Runtime 修复扫描的基础周期；实际间隔使用 80%–120% 抖动，`0` 表示禁用，负值无效；node-only 模式接受这个共享 flag，但不会运行扫描器 |
 | `--addon-pull-controller-workers` | int | `8` | Addon pull 控制器最大并发调和数 |
-| `--task-deployment-push-controller-workers` | int | `8` | Task Deployment push 控制器最大并发调和数 |
-| `--task-statefulset-push-controller-workers` | int | `8` | Task StatefulSet push 控制器最大并发调和数 |
+| `--task-runtime-push-controller-workers` | int | `8` | 每个已注册 workload root 的 root/instance hint 调谐并发上限；RBAC preflight 与 flag 迁移见 [Agent 指南](../admin-guide/agent.md) |
 | `--node-push-controller-workers` | int | `8` | Node push 控制器最大并发调和数 |
 | `--pod-push-controller-workers` | int | `8` | Pod push 控制器最大并发调和数 |
-| `--pod-orphan-sweep-interval` | duration | `5m` | Agent 范围内管理 Pod 孤儿扫描间隔 |
+| `--pod-orphan-sweep-interval` | duration | `5m` | 管理 Pod 孤儿扫描间隔，包含本地 Pod 已不存在的旧版（legacy）Pod CR |
 | `--pod-orphan-sweep-page-size` | int | `200` | 每页扫描的管理 Pod 数量 |
 | `--pod-stale-ttl` | duration | `15m` | 本地 Pod 缺失后以 `Unknown`/陈旧状态保留、再删除管理 Pod 的时长 |
 | `--rlark-server-ssh-address` | string | `""` | RLark Server SSH 地址（user@host:port） |
 | `--rlark-server-ssh-host-key` | string | `""` | RLark Server SSH Host Key |
 | `--ssh-max-connections-per-domain` | int | `4` | 每个 Domain 的物理 SSH 连接上限；单连接 channel 负载增长时连接池会弹性增加 transport |
-| `--image` | string | `""` | RLark 网络 Sidecar 镜像 |
+| `--image` | string | `""` | RLark tools/网络/SSH 镜像；Kubernetes cluster 模式 Task 装配在 preflight 前要求非空（无隐式默认值） |
 | `--enable-same-cluster-direct` | bool | `true` | 启用同集群 Pod 直接访问 |
-| `--enable-cross-cluster-direct` | bool | `true` | 启用跨集群 Pod 直接访问 |
+| `--enable-cross-cluster-direct` | bool | `true` | 尚未实现。该参数可以接受但不生效；跨集群流量始终走 SSH 中继 |
 | `--kubelet-dir` | string | `""` | Kubelet 目录（用于查找 Pod UID） |
 | `--image-pull-enabled` | bool | `true` | 启用镜像预拉取 |
 | `--containerd-socket` | string | `/run/containerd/containerd.sock` | Containerd Socket 地址 |
@@ -195,21 +209,61 @@ SSH 连接池为每个活跃 Domain 从一条 transport 开始；单条 transpor
 
 !!! tip "`--mode` 参数说明"
     - `cluster`：仅运行集群级 Agent，管理集群范围内的资源
-    - `node`：仅运行节点级 Agent，管理单个节点的 Task
-    - `both`：同时运行集群和节点级 Agent
+    - `node`：NodeServer、网络、镜像预拉取与事件；没有节点本地 Task assignment controller
+    - 用 `--mode=cluster --node-startup=embedded` 组合本机节点服务与集群控制器。默认 external 不发现或部署其他 Agent。旧组合角色值明确拒绝，不保留 alias。
 
 **示例：**
 
 ```bash
 rlark-agent \
-  --mode=both \
+  --mode=cluster --node-startup=embedded \
   --server-address=https://rlark-server:8443 \
   --client-cert=/etc/rlark/agent-cert.pem \
   --client-key=/etc/rlark/agent-key.pem \
   --ca-cert=/etc/rlark/ca-cert.pem \
-  --image=rlark:latest \
+  --image=ghcr.io/rlinf/rlark:v0.1.0 \
   --node-name=worker-01
 ```
+
+<a id="agent-startup-file-and-validation"></a>
+
+### Agent 启动文件与校验
+
+这与 `rlarkadm` DeployConfig 是不同合同。文件必须是一个 YAML 文档，包含 `version: v1` 与 `options` 映射，键使用上述 Agent flag 名称但不含 `--`（不接受 CLI 诊断/help/version）。未知字段或选项、重复键、alias、null、集合和错误标量类型均拒绝。字符串和 duration 必须是 YAML 字符串；bool 与数字必须使用原生 YAML 类型。显式 `false` 和 `0` 不视为缺失。
+
+```yaml
+version: v1
+options:
+  mode: cluster
+  agent-type: kubernetes
+  node-startup: external
+  server-address: https://rlark-server:8443
+  client-cert: certs/agent.pem
+  client-key: certs/agent-key.pem
+  ca-cert: certs/ca.pem
+  kubeconfig: kubeconfig
+  image: ghcr.io/rlinf/rlark:v0.1.0
+  restartable-init-containers: false
+  task-runtime-resync-period: 0s
+```
+
+执行 `rlark-agent check-config --config agent.yaml` 做本地校验，或 `rlark-agent print-config --config agent.yaml` 校验并输出脱敏有效选项及来源。两个子命令接受与正常启动相同的配置参数，可放在子命令前后；均不连接或启动 worker。旧诊断 flag 不再接受。文件路径相对于配置目录解析，CLI/环境路径相对于启动工作目录解析。不做 Shell/环境插值或文件热更新，配置变化需要重启。managed 部署、文件监听和共享 rollout desired 状态留给 MR 4.2，本加载器不支持。
+
+优先级为显式 CLI > 文件 > 下列兼容环境默认来源 > 内置默认值。诊断显示来源层，任意字符串（包括路径、身份和 SSH 密钥材料）脱敏；仅显示已校验角色/Runtime 枚举和 typed 数字/bool/duration。输出不能作为可复用配置文件。
+
+| 环境变量 | 选项 | 适用范围 / 保留的解释 |
+| --- | --- | --- |
+| `KUBECONFIG` | `kubeconfig` | 本地 Kubernetes API；为空保留 client-go 的 in-cluster 回退 |
+| `NODE_NAME` | `node-name` | node/embedded 本地 Kubernetes 节点名 |
+| `HOSTNAME`，其次 `POD_NAME` | `leader-election-id` | cluster 选主参与者身份，否则为 `node` |
+| `RLARK_TENSORBOARD_IMAGE` | `tensorboard-image` | cluster；去空白后非空值，否则内置镜像 |
+| `KUBERNETES_SUPPORT_SIDECAR_FEATURE` | `restartable-init-containers` | cluster；仅精确 `false` 禁用，其余值保留历史默认启用 |
+
+node 模式拒绝显式新 cluster 专属选项，包括 `node-startup: external`；显式 embedded metrics 地址还要求 embedded。历史共享 flag 在不使用的角色中仍接受（例如 node 的 Task resync、external cluster 的预拉取），不因此启用服务。Kubernetes cluster 要求可信 tools 和 TensorBoard 镜像。node/embedded 要求 node-name、socket、正数 drain timeout、正数 SSH 连接上限，启用预拉取时要求 containerd 配置。in-cluster 不能与 kubeconfig/master 共存；QPS/burst 必须是有限正数，timeout 非负。监听地址必须是 host:数字端口或 `0`，embedded 使用独立的非零端口。必须提供证书及 HTTPS Server 地址；CA 省略时保留现有系统根信任行为，不安全 TLS 仍是显式风险选项。
+
+本地诊断不证明凭据有效、授权、backend 身份或 API 可达。正常启动仍构建客户端，在 manager 启动前执行现有有期限的 Task 装配权限/metadata preflight。管理范围来自证书 namespace；节点名不是身份或授权证明。小写启动类型显式映射现有 `Kubernetes` API/Provider/claimant Kind，持久 selector 不变。
+
+正常启动先检查本地依赖，再启动受监督的 bootstrap tunnel。成功握手确认 Server 已注册，之后才执行管理 API preflight；权限传播在期限内重试，绝不跳过。本地检查、注册等待、管理检查和节点 informer 初次同步各有 30 秒 deadline。业务 worker 启动前必须构建全部选定角色。失败时关闭/join bootstrap tunnel，不回滚注册对象；修正访问/配置并重启，见 [Agent 指南](../admin-guide/agent.md)。本地诊断子命令不连接、不注册，也不执行这些 API 检查。
 
 ## rlark-network-sidecar
 
@@ -259,7 +313,8 @@ rlark-tools sshd \
 
 | 变量 | 默认值 | 说明 |
 | ------ | -------- | ------ |
-| `RLARK_TENSORBOARD_IMAGE` | `rlinf/tensorboard:2.15.1-rc1` | Kubernetes Environment Handler 使用的可信 TensorBoard 镜像。值为空时也使用默认值。该变量是过渡配置方式，未来应迁移到经过校验的 typed Agent 配置。 |
+| `RLARK_TENSORBOARD_IMAGE` | `rlinf/tensorboard:2.15.1-rc1` | 可信 TensorBoard 镜像，在 Agent 启动边界解析一次并注入 Task 装配。空值/空白值使用默认值，非空值会去除首尾空白。环境变量仍是过渡的运维配置接口。 |
+| `KUBERNETES_SUPPORT_SIDECAR_FEATURE` | 除非严格为 `false`，否则启用 | 在 Agent 启动边界解析一次并注入 Kubernetes Task lowering。严格为 `false` 时将 restartable init sidecar 降低为普通 container，其他值保留 restartable init container。这是可信配置开关，不是自动集群能力检测。 |
 | `RLARK_ENABLE_UNSAFE_TASK_PRIVILEGES` | `false` | 仅当值严格等于 `true` 时开启旧版 unsafe Task 模式。 |
 
 unsafe Task 模式会在 Workload 编译阶段为 Task Pod template 中已经声明的 container 和 init container 授予 privileged 权限，并为 Ray Head 以外的任务启用宿主机网络。之后由 Environment binding 注入的 container 不受该旧版特权覆盖逻辑影响；每个可信 Environment Handler 会自行声明所需的 security context。特别是，跨 Domain Network sidecar 仍通过可信 Network profile 获得 privileged 和 `NET_ADMIN`，RLark Tools 与 TensorBoard 则保持各自声明的权限。仅应在可信集群中启用该模式。
@@ -416,12 +471,12 @@ apiVersion: rlark.io/v1alpha1
 kind: DeployConfig
 plane: control
 kubernetes:
-  gateway-image: rlark:latest
-  controller-manager-image: rlark:latest
-  server-image: rlark:latest
+  gateway-image: ghcr.io/rlinf/rlark:v0.1.0
+  controller-manager-image: ghcr.io/rlinf/rlark:v0.1.0
+  server-image: ghcr.io/rlinf/rlark:v0.1.0
   kcp-image: kcp:v0.30.0
   postgresql-image: postgres:15
-  ui-image: rlark-ui:latest
+  ui-image: ghcr.io/rlinf/rlark-ui:v0.1.0
   replicas: 1
 db:
   host: postgresql
@@ -444,6 +499,6 @@ cert:
   agent-key: /path/to/agent-key.pem
 kubernetes:
   kubeconfig: ~/.kube/config
-  agent-image: rlark:latest
-  image: rlark:latest
+  agent-image: ghcr.io/rlinf/rlark:v0.1.0
+  image: ghcr.io/rlinf/rlark:v0.1.0
 ```

@@ -69,9 +69,22 @@ export interface IDomain {
      * Domain CIDR 增长（/16 可达数万条）。
      */
     "ipAllocations"?: Array<{
+      /**
+       * IP 是该条目占用的 Domain 虚拟 IP。
+       */
       "ip"?: string;
+      /**
+       * Job 是拥有 Task 的 Job 名称。Job 是集群级资源，因此只有名称没有 namespace。
+       * 仅当 Task 的 controller ownerReference 可证明归属于 Job 时才填写，否则为空。
+       */
       "job"?: string;
+      /**
+       * Pod 是上报该 IP 的数据面 Pod，形如 namespace/name。
+       */
       "pod"?: string;
+      /**
+       * Task 是归属的控制面 Task，形如 namespace/name。
+       */
       "task"?: string;
     }>;
     /**

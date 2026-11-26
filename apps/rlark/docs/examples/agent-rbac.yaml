@@ -26,6 +26,11 @@ rules:
 - apiGroups: [""]
   resources: ["events"]
   verbs: ["create", "patch"]
+# The cluster Agent reads kubelet stats through the API server node proxy
+# (api/v1/nodes/<node>/proxy/stats/summary) to report Node storage capacity.
+- apiGroups: [""]
+  resources: ["nodes/proxy"]
+  verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

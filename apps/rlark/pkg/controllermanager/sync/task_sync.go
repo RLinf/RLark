@@ -7,6 +7,7 @@ import (
 	controllerconfig "sigs.k8s.io/controller-runtime/pkg/controller"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
 	"github.com/rlinf/rlark/apps/rlark/pkg/db"
 )
 
@@ -36,7 +37,7 @@ type TaskReconciler struct {
 // +kubebuilder:rbac:groups=rlinf.io,resources=tasks/finalizers,verbs=update
 
 // NewTaskReconciler creates a new TaskReconciler.
-func NewTaskReconciler(maxConcurrentReconciles int, client client.Client, backend persistence.Backend) *TaskReconciler {
+func NewTaskReconciler(maxConcurrentReconciles int, client client.Client, backend persistence.Backend, shell controller.Shell) *TaskReconciler {
 	return &TaskReconciler{
 		maxConcurrentReconciles: maxConcurrentReconciles,
 		genericReconciler: &genericReconciler[*rlarkv1alpha1.Task]{
@@ -44,6 +45,8 @@ func NewTaskReconciler(maxConcurrentReconciles int, client client.Client, backen
 			backend: backend,
 			handler: newTaskSyncHandler(),
 			newObj:  func() *rlarkv1alpha1.Task { return &rlarkv1alpha1.Task{} },
+			kind:    "task-sync",
+			shell:   shell,
 		},
 	}
 }

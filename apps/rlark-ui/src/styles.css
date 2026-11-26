@@ -24,6 +24,7 @@
 /* Administrative and interaction layers. */
 @import "./styles/admin/domain-and-responsive.css";
 @import "./styles/admin/settings-and-certificates.css";
+@import "./styles/admin/data-plane-nodes.css";
 @import "./styles/jobs/actions-and-refresh.css";
 @import "./styles/nodes/files-and-selector.css";
 @import "./styles/nodes/resource-browser.css";
@@ -47,6 +48,7 @@
 
 /* Addon page styles precede the final global responsive overrides. */
 @import "./styles/addons.css";
+@import "./styles/upgrades.css";
 @import "./styles/overrides/global-responsive.css";
 
 /* Final component and job editing layers. */

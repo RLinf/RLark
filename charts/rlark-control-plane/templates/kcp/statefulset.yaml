@@ -1,0 +1,98 @@
+{{- if .Values.kcp.enabled }}
+{{- $storage := include "rlark-control-plane.storage" (dict "root" . "component" .Values.kcp) | fromYaml }}
+{{- $useEmbeddedEtcd := not .Values.etcd.enabled }}
+apiVersion: apps/v1
+{{- if $useEmbeddedEtcd }}
+kind: StatefulSet
+{{- else }}
+kind: Deployment
+{{- end }}
+metadata:
+  name: kcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kcp
+spec:
+  replicas: 1
+  {{- if $useEmbeddedEtcd }}
+  serviceName: kcp
+  {{- end }}
+  selector:
+    matchLabels:
+      app: kcp
+  template:
+    metadata:
+      labels:
+        app: kcp
+    spec:
+      {{- include "rlark-control-plane.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: kcp
+          image: {{ .Values.images.kcp | quote }}
+          imagePullPolicy: {{ include "rlark-control-plane.imagePullPolicy" . }}
+          ports:
+            - containerPort: 6443
+            - containerPort: 8080
+          args:
+            - start
+            {{- if .Values.etcd.address }}
+            - --etcd-servers={{ .Values.etcd.address }}
+            {{- else if .Values.etcd.enabled }}
+            - --etcd-servers=http://etcd.{{ .Release.Namespace }}.svc:2379
+            {{- end }}
+          env:
+            - name: KCP_LOG_LEVEL
+              value: "2"
+            {{- include "rlark-control-plane.commonEnvs" . | nindent 12 }}
+          {{- if $useEmbeddedEtcd }}
+            {{- if eq $storage.type "pvc" }}
+          volumeMounts:
+            - name: kcp-data
+              mountPath: /.kcp
+            {{- else if eq $storage.type "hostPath" }}
+          volumeMounts:
+            - name: kcp-data
+              mountPath: /.kcp
+            {{- end }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 6443
+              scheme: HTTPS
+            initialDelaySeconds: 45
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 6
+            successThreshold: 1
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 6443
+              scheme: HTTPS
+            failureThreshold: 6
+      {{- if and $useEmbeddedEtcd (eq $storage.type "hostPath") }}
+      volumes:
+        - name: kcp-data
+          hostPath:
+            path: {{ $storage.hostPath }}
+            type: DirectoryOrCreate
+      {{- end }}
+      {{- with $storage.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if and $useEmbeddedEtcd (eq $storage.type "pvc") }}
+  volumeClaimTemplates:
+    - metadata:
+        name: kcp-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if $storage.storageClass }}
+        storageClassName: {{ $storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $storage.size | default "10Gi" | quote }}
+  {{- end }}
+{{- end }}

@@ -20,11 +20,14 @@ package v1alpha1
 // DomainIPAllocationApplyConfiguration represents a declarative configuration of the DomainIPAllocation type for use
 // with apply.
 type DomainIPAllocationApplyConfiguration struct {
-	IP  *string `json:"ip,omitempty"`
+	// IP 是该条目占用的 Domain 虚拟 IP。
+	IP *string `json:"ip,omitempty"`
+	// Job 是拥有 Task 的 Job 名称。Job 是集群级资源，因此只有名称没有 namespace。
+	// 仅当 Task 的 controller ownerReference 可证明归属于 Job 时才填写，否则为空。
 	Job *string `json:"job,omitempty"`
-	// job name
+	// Task 是归属的控制面 Task，形如 namespace/name。
 	Task *string `json:"task,omitempty"`
-	// namespace / task name
+	// Pod 是上报该 IP 的数据面 Pod，形如 namespace/name。
 	Pod *string `json:"pod,omitempty"`
 }
 

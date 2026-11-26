@@ -6,6 +6,7 @@ import (
 	controllerconfig "sigs.k8s.io/controller-runtime/pkg/controller"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
 	"github.com/rlinf/rlark/apps/rlark/pkg/db"
 	"github.com/rlinf/rlark/apps/rlark/pkg/persistence"
 )
@@ -36,7 +37,7 @@ type JobReconciler struct {
 // +kubebuilder:rbac:groups=rlinf.io,resources=jobs/finalizers,verbs=update
 
 // NewJobReconciler creates a new JobReconciler.
-func NewJobReconciler(maxConcurrentReconciles int, client client.Client, backend persistence.Backend) *JobReconciler {
+func NewJobReconciler(maxConcurrentReconciles int, client client.Client, backend persistence.Backend, shell controller.Shell) *JobReconciler {
 	return &JobReconciler{
 		maxConcurrentReconciles: maxConcurrentReconciles,
 		genericReconciler: &genericReconciler[*rlarkv1alpha1.Job]{
@@ -44,6 +45,8 @@ func NewJobReconciler(maxConcurrentReconciles int, client client.Client, backend
 			backend: backend,
 			handler: newJobSyncHandler(),
 			newObj:  func() *rlarkv1alpha1.Job { return &rlarkv1alpha1.Job{} },
+			kind:    "job-sync",
+			shell:   shell,
 		},
 	}
 }

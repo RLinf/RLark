@@ -1,6 +1,6 @@
 # astribot：本分叉加在 RLark 上的东西
 
-本仓库 = 官方 RLark（基线提交 `9ad4a21`）+ 我们的场站层：场站节点和入网（Station）、机器人 Addon、站点镜像仓库、存储、发布工具。`git cat-file -e 9ad4a21:<路径>` 成功的是官方文件，否则是我们的（本仓库不带官方历史，先按 [upstream.md](docs/upstream.md) 取一次官方仓库）。官方文件尽量不动，合上游时冲突才少。
+本仓库 = 官方 RLark（当前合并基线 `d06745e`）+ Astribot 的场站、机器人 Addon、站点镜像仓库、存储与发布工具。产品分支为 `astribot/main`。上游同步和最初的快照导入历史见 [upstream.md](docs/upstream.md)。
 
 ## 东西在哪
 

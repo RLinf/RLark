@@ -1,6 +1,10 @@
-import { useMemo, useState } from "react";
+import { ClusterName } from "../astribot/components/ClusterName";
+import { NodeName } from "../astribot/components/NodeName";
+import { useClusters } from "../astribot/components/useClusters";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   Ban,
   CloudCog,
   MapPin,
@@ -17,37 +21,52 @@ import { type Phase } from "../data";
 import { type Copy } from "../i18n";
 import { type CRDNode, type NodeCategory } from "../types";
 import {
+  NODE_CATEGORY_LABEL,
   categoryLabels,
+  getNodeAllLabels,
   getNodeCategories,
   getNodeDeviceModel,
   getNodeGPUModel,
   getNodeLocation,
 } from "../utils/nodes";
-import { useClusters } from "../astribot/components/useClusters";
-import { nodeLabel } from "../astribot/lib/displayName";
-import { NodeName } from "../astribot/components/NodeName";
-import { ClusterName } from "../astribot/components/ClusterName";
+import { buildNodeWorkloads } from "../utils/nodeWorkloads";
 import {
-  getRemovedLabelKeys,
   NODE_CATEGORY_KEYS,
-  updateNodeCategoryLabels,
-  updateNodeModelMetadata,
+  getRemovedLabelKeys,
 } from "../utils/nodeBatchMetadata";
 import { useAutoRefresh } from "../hooks";
 import { MetricCard, RefreshOverlay, StatusBadge } from "../components/shared";
 import { NodeResourceBrowser } from "../astribot/components/NodeResourceBrowser";
 import { ClusterDetailReal, NodeDetailReal } from "../astribot/pages/Clusters";
 
-const NODE_FREE_TEXT_KEYS = [
+// Administrator-managed Node metadata lives on the management Node CR as
+// annotations. It is not derived from the data-plane Kubernetes Node, so these
+// fields are edited and saved through the management API rather than the label
+// relay.
+const NODE_FREE_TEXT_ANNOTATION_KEYS = [
   "rlark.io/city",
   "rlark.io/gpu-model",
   "rlark.io/device-model",
 ] as const;
-const NODE_MANAGED_LABEL_KEYS = new Set<string>([
-  ...NODE_FREE_TEXT_KEYS,
+
+const NODE_MANAGED_ANNOTATION_KEYS = [
+  ...NODE_FREE_TEXT_ANNOTATION_KEYS,
+  "rlark.io/node-category-cloud",
+  "rlark.io/node-category-edge",
+  "rlark.io/node-category-robot",
+] as const;
+
+const NODE_MANAGED_KEYS = new Set<string>([
+  ...NODE_MANAGED_ANNOTATION_KEYS,
   ...NODE_CATEGORY_KEYS,
 ]);
+
 type BatchMetadataField = "location" | "categories" | "gpu" | "device";
+
+// Node names are only unique within a namespace, and the admin list spans
+// namespaces, so drafts and saves must be keyed by namespace/name.
+const nodeKey = (node: CRDNode) =>
+  `${node.metadata.namespace ?? ""}/${node.metadata.name}`;
 
 export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
   const zh = c.nav.overview === "总览";
@@ -419,6 +438,7 @@ export function NodeDetailPanel({
   c: Copy;
   editingNode: string | null;
   labelDraft: Record<string, string>;
+  annotationDraft: Record<string, string>;
   newLabelKey: string;
   newLabelValue: string;
   saving: boolean;
@@ -430,13 +450,26 @@ export function NodeDetailPanel({
   onAddLabel: () => void;
   onRemoveLabel: (key: string) => void;
   onUpdateLabel: (key: string, value: string) => void;
+  onUpdateAnnotation: (key: string, value: string) => void;
   onNewLabelKey: (v: string) => void;
   onNewLabelValue: (v: string) => void;
   onDisplayNameSaved: (node: CRDNode) => void;
 }) {
   const { zh, c } = ctx;
-  const isEditing = ctx.editingNode === node.metadata.name;
-  const labels = node.metadata.labels ?? {};
+  const isEditing = ctx.editingNode === nodeKey(node);
+  // Display labels come from status.observedNodeLabels (Agent-observed truth on
+  // the K8s Node). Editing drafts use the same source so the user sees exactly
+  // what will be changed.
+  const allLabels = getNodeAllLabels(node);
+  // Administrator metadata is stored on the management Node CR as annotations,
+  // so show it alongside the observed labels without treating it as a label.
+  const managedAnnotations = Object.fromEntries(
+    NODE_MANAGED_ANNOTATION_KEYS.flatMap((key) => {
+      const value = node.metadata.annotations?.[key];
+      return value ? [[key, value] as [string, string]] : [];
+    }),
+  );
+  const visibleLabels = { ...allLabels, ...managedAnnotations };
   const adminInsight = (
     <div className="admin-node-insight">
       <div className="admin-node-actionbar">
@@ -454,6 +487,15 @@ export function NodeDetailPanel({
           </small>
         </div>
         <div className="row-actions">
+          {!isEditing && (
+            <button
+              className="primary-button"
+              onClick={() => ctx.onStartEdit(node)}
+            >
+              <Pencil size={15} />
+              {zh ? "管理标签" : "Manage labels"}
+            </button>
+          )}
           <button
             className={
               node.spec.unschedulable
@@ -471,24 +513,13 @@ export function NodeDetailPanel({
               : node.spec.unschedulable
                 ? zh
                   ? "恢复调度"
-                  : "Uncordon"
+                  : "Resume Schedule"
                 : zh
-                  ? "停止调度"
-                  : "Cordon"}
+                  ? "暂停调度"
+                  : "Pause Schedule"}
           </button>
-          {!isEditing && (
-            <button
-              className="primary-button"
-              onClick={() => ctx.onStartEdit(node)}
-            >
-              <Pencil size={15} />
-              {zh ? "管理标签" : "Manage labels"}
-            </button>
-          )}
         </div>
       </div>
-
-      <NodeDetailReal node={node} copy={c} onDisplayNameSaved={ctx.onDisplayNameSaved} />
 
       <section className="admin-node-labels node-insight-section">
         <div className="node-insight-section-head">
@@ -502,7 +533,7 @@ export function NodeDetailPanel({
           </div>
           {!isEditing && (
             <b>
-              {Object.keys(labels).length} {zh ? "项" : "items"}
+              {Object.keys(visibleLabels).length} {zh ? "项" : "items"}
             </b>
           )}
         </div>
@@ -515,7 +546,7 @@ export function NodeDetailPanel({
                   {(["cloud", "edge", "robot"] as NodeCategory[]).map(
                     (category) => {
                       const key = `rlark.io/node-category-${category}`;
-                      const selected = ctx.labelDraft[key] === "true";
+                      const selected = ctx.annotationDraft[key] === "true";
                       return (
                         <button
                           type="button"
@@ -523,9 +554,7 @@ export function NodeDetailPanel({
                           className={selected ? "selected" : ""}
                           aria-pressed={selected}
                           onClick={() =>
-                            selected
-                              ? ctx.onRemoveLabel(key)
-                              : ctx.onUpdateLabel(key, "true")
+                            ctx.onUpdateAnnotation(key, selected ? "" : "true")
                           }
                         >
                           {zh
@@ -539,7 +568,7 @@ export function NodeDetailPanel({
                   )}
                 </div>
               </div>
-              {NODE_FREE_TEXT_KEYS.map((key) => (
+              {NODE_FREE_TEXT_ANNOTATION_KEYS.map((key) => (
                 <div className="admin-node-managed-field" key={key}>
                   <label>
                     {key === "rlark.io/city"
@@ -555,9 +584,9 @@ export function NodeDetailPanel({
                           : "Device model"}
                   </label>
                   <input
-                    value={ctx.labelDraft[key] ?? ""}
+                    value={ctx.annotationDraft[key] ?? ""}
                     onChange={(event) =>
-                      ctx.onUpdateLabel(key, event.target.value)
+                      ctx.onUpdateAnnotation(key, event.target.value)
                     }
                     placeholder={
                       key === "rlark.io/city"
@@ -585,35 +614,63 @@ export function NodeDetailPanel({
               </div>
             </div>
             {Object.entries(ctx.labelDraft)
-              .filter(([key]) => !NODE_MANAGED_LABEL_KEYS.has(key))
-              .map(([key, value]) => (
-                <div className="label-edit-row" key={key}>
-                  <code>{key}</code>
-                  <input
-                    value={value}
-                    onChange={(event) =>
-                      ctx.onUpdateLabel(key, event.target.value)
+              .filter(([key]) => !NODE_MANAGED_KEYS.has(key))
+              .map(([key, value]) => {
+                const warning = key.includes("kubernetes.io")
+                  ? {
+                      level: "danger",
+                      text: zh
+                        ? "修改该标签可能影响 Kubernetes 基础功能"
+                        : "Modifying this label may affect core Kubernetes functionality",
                     }
-                    placeholder="value"
-                  />
-                  <button
-                    type="button"
-                    className="icon-button danger"
-                    onClick={() => ctx.onRemoveLabel(key)}
-                    aria-label={`${zh ? "删除标签" : "Remove label"} ${key}`}
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              ))}
+                  : key.includes("rlark.io")
+                    ? {
+                        level: "warn",
+                        text: zh
+                          ? "修改该标签可能影响 RLark 平台任务"
+                          : "Modifying this label may affect RLark platform tasks",
+                      }
+                    : null;
+                return (
+                  <div className="label-edit-row" key={key}>
+                    <div className="label-key-cell">
+                      <code>{key}</code>
+                      {warning && (
+                        <span
+                          className={`label-key-tooltip label-key-tooltip-${warning.level}`}
+                          data-tooltip={warning.text}
+                          tabIndex={0}
+                          role="img"
+                          aria-label={warning.text}
+                        >
+                          <AlertTriangle size={13} />
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      value={value}
+                      onChange={(event) =>
+                        ctx.onUpdateLabel(key, event.target.value)
+                      }
+                      placeholder="value"
+                    />
+                    <button
+                      type="button"
+                      className="icon-button danger"
+                      onClick={() => ctx.onRemoveLabel(key)}
+                      aria-label={`${zh ? "删除标签" : "Remove label"} ${key}`}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                );
+              })}
             <div className="label-add-row">
               <input
                 value={ctx.newLabelKey}
                 onChange={(event) => ctx.onNewLabelKey(event.target.value)}
                 placeholder={
-                  zh
-                    ? "标签键，例如 rlark.io/zone"
-                    : "Label key, e.g. rlark.io/zone"
+                  zh ? "标签键，例如 team/zone" : "Label key, e.g. team/zone"
                 }
                 onKeyDown={(event) => event.key === "Enter" && ctx.onAddLabel()}
               />
@@ -655,7 +712,7 @@ export function NodeDetailPanel({
           </div>
         ) : (
           <div className="label-list">
-            {Object.entries(labels).length === 0 ? (
+            {Object.entries(visibleLabels).length === 0 ? (
               <div className="admin-label-empty">
                 <small>
                   {zh
@@ -671,7 +728,7 @@ export function NodeDetailPanel({
                 </button>
               </div>
             ) : (
-              Object.entries(labels).map(([key, value]) => (
+              Object.entries(visibleLabels).map(([key, value]) => (
                 <span
                   key={key}
                   className="label-chip"
@@ -685,6 +742,8 @@ export function NodeDetailPanel({
           </div>
         )}
       </section>
+
+      <NodeDetailReal node={node} copy={c} showConditions />
     </div>
   );
 
@@ -932,11 +991,17 @@ export function AdminPage({
   const zh = c.nav.overview === "总览";
   const clusters = useClusters();
   const [nodes, setNodes] = useState<CRDNode[]>([]);
+  const [nodeWorkloads, setNodeWorkloads] = useState<
+    Record<string, { jobs: string[]; workers: number }>
+  >({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [editingNode, setEditingNode] = useState<string | null>(null);
   const [labelDraft, setLabelDraft] = useState<Record<string, string>>({});
+  const [annotationDraft, setAnnotationDraft] = useState<
+    Record<string, string>
+  >({});
   const [newLabelKey, setNewLabelKey] = useState("");
   const [newLabelValue, setNewLabelValue] = useState("");
   const [saving, setSaving] = useState(false);
@@ -944,6 +1009,7 @@ export function AdminPage({
   const [selectedNodeKeys, setSelectedNodeKeys] = useState<Set<string>>(
     new Set(),
   );
+  const [batchScheduling, setBatchScheduling] = useState(false);
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchLocation, setBatchLocation] = useState("");
   const [batchGPUModel, setBatchGPUModel] = useState("");
@@ -956,7 +1022,8 @@ export function AdminPage({
     Set<BatchMetadataField>
   >(new Set());
   const [batchSaving, setBatchSaving] = useState(false);
-  const [batchScheduling, setBatchScheduling] = useState(false);
+  const [removingNode, setRemovingNode] = useState<string | null>(null);
+  const [drainingNode, setDrainingNode] = useState<string | null>(null);
 
   const fetchNodes = async (isInitial = true) => {
     if (isInitial) setLoading(true);
@@ -965,6 +1032,18 @@ export function AdminPage({
       setNodes(await nodesApi.list());
     } catch (e) {
       setNodes([]);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+    // The Pod and Task mirrors only enrich the display; their failure must not
+    // hide the Nodes themselves.
+    try {
+      const [tasks, pods] = await Promise.all([
+        tasksApi.list(),
+        podsApi.list(),
+      ]);
+      setNodeWorkloads(buildNodeWorkloads(tasks, pods));
+    } catch (e) {
+      setNodeWorkloads({});
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
@@ -984,27 +1063,36 @@ export function AdminPage({
   };
 
   const startEdit = (node: CRDNode) => {
-    const editableLabels = { ...(node.metadata.labels ?? {}) };
-    NODE_CATEGORY_KEYS.forEach((key) => delete editableLabels[key]);
-    getNodeCategories(node)
-      .filter((category) => category !== "unknown")
-      .forEach((category) => {
-        editableLabels[`rlark.io/node-category-${category}`] = "true";
-      });
-    setEditingNode(node.metadata.name);
-    setLabelDraft({
-      ...editableLabels,
-      ...Object.fromEntries(
-        NODE_FREE_TEXT_KEYS.map((key) => [
-          key,
-          key === "rlark.io/city"
-            ? getNodeLocation(node)
-            : (node.metadata.annotations?.[key] ??
-              node.metadata.labels?.[key] ??
-              ""),
-        ]),
-      ),
-    });
+    // 草稿基于 observedNodeLabels，确保用户看到的是 K8s Node 上实际存在的标签。
+    const observedLabels = getNodeAllLabels(node);
+    const annotations = node.metadata.annotations ?? {};
+    const annotationValues: Record<string, string> = {};
+    // Managed fields live in annotations only; keep a legacy label out of the
+    // label draft so saving never writes these keys back to the data plane.
+    const labelValues = { ...observedLabels };
+    for (const key of NODE_MANAGED_ANNOTATION_KEYS) {
+      // The annotation is canonical; fall back to a legacy label so an existing
+      // value stays visible until it is saved back as an annotation.
+      const value = annotations[key] ?? observedLabels[key] ?? "";
+      if (value) annotationValues[key] = value;
+      delete labelValues[key];
+    }
+    // Surface the legacy comma-separated category value as boolean annotations;
+    // the legacy label itself is left untouched on the data plane.
+    const legacyCategories =
+      annotations[NODE_CATEGORY_LABEL] ??
+      observedLabels[NODE_CATEGORY_LABEL] ??
+      "";
+    for (const rawCategory of legacyCategories.split(",")) {
+      const category = rawCategory.trim();
+      if (category === "cloud" || category === "edge" || category === "robot") {
+        annotationValues[`rlark.io/node-category-${category}`] = "true";
+      }
+    }
+    delete labelValues[NODE_CATEGORY_LABEL];
+    setEditingNode(nodeKey(node));
+    setLabelDraft(labelValues);
+    setAnnotationDraft(annotationValues);
     setNewLabelKey("");
     setNewLabelValue("");
   };
@@ -1012,6 +1100,7 @@ export function AdminPage({
   const cancelEdit = () => {
     setEditingNode(null);
     setLabelDraft({});
+    setAnnotationDraft({});
     setNewLabelKey("");
     setNewLabelValue("");
   };
@@ -1020,51 +1109,61 @@ export function AdminPage({
     setSaving(true);
     setError("");
     try {
-      const labels = { ...labelDraft };
-      const originalLabels =
-        nodes.find((node) => node.metadata.name === nodeName)?.metadata
-          .labels ?? {};
-      const annotations = {
-        ...(nodes.find((node) => node.metadata.name === nodeName)?.metadata
-          .annotations ?? {}),
-      };
-      const removedAnnotationKeys = new Set<string>();
-      NODE_FREE_TEXT_KEYS.forEach((key) => {
-        const value = labels[key]?.trim() ?? "";
-        if (value) annotations[key] = value;
-        else {
-          delete annotations[key];
-          removedAnnotationKeys.add(key);
-        }
-        delete labels[key];
-      });
-      delete annotations["rlark.io/ip-location"];
-      delete annotations["rlark.io/location"];
-      delete labels["rlark.io/location"];
-      const labelPatch: Record<string, string | null> = { ...labels };
-      getRemovedLabelKeys(originalLabels, labels).forEach((key) => {
-        labelPatch[key] = null;
-      });
-      NODE_FREE_TEXT_KEYS.forEach((key) => {
-        labelPatch[key] = null;
-      });
-      const annotationPatch: Record<string, string | null> = {
-        ...annotations,
-      };
-      removedAnnotationKeys.forEach((key) => {
-        annotationPatch[key] = null;
-      });
-      const patch = {
-        metadata: { labels: labelPatch, annotations: annotationPatch },
-      };
-      await nodesApi.patch(nodeName, patch, namespace);
-      setNodes((prev) =>
-        prev.map((n) =>
-          n.metadata.name === nodeName
-            ? { ...n, metadata: { ...n.metadata, labels, annotations } }
-            : n,
-        ),
+      // 删除键必须基于与草稿相同的来源（observedNodeLabels），否则会把
+      // metadata.labels 里的系统标签误判为需要删除。
+      const originalNode = nodes.find(
+        (node) =>
+          node.metadata.name === nodeName &&
+          (node.metadata.namespace ?? "") === namespace,
       );
+      const originalLabels = originalNode ? getNodeAllLabels(originalNode) : {};
+      const originalAnnotations = originalNode?.metadata.annotations ?? {};
+
+      // 管理元数据写入管理面 Node CR 的 Annotation。它与数据面无关，因此先写，
+      // 避免数据面 relay 失败时丢失管理员配置。
+      const annotationPatch: Record<string, string | null> = {};
+      for (const key of NODE_MANAGED_ANNOTATION_KEYS) {
+        const value = (annotationDraft[key] ?? "").trim();
+        if (value) {
+          if (originalAnnotations[key] !== value) annotationPatch[key] = value;
+        } else if (originalAnnotations[key] !== undefined) {
+          annotationPatch[key] = null;
+        }
+      }
+      // 旧版逗号分隔分类已迁移为布尔 Annotation，保存时移除旧注解。
+      if (originalAnnotations[NODE_CATEGORY_LABEL] !== undefined) {
+        annotationPatch[NODE_CATEGORY_LABEL] = null;
+      }
+      if (Object.keys(annotationPatch).length > 0) {
+        await nodesApi.patch(
+          nodeName,
+          { metadata: { annotations: annotationPatch } },
+          namespace,
+        );
+      }
+
+      // 调度标签写入数据面 K8s Node；只发送真正的变更，空补丁会被 Gateway 拒绝。
+      // 管理字段只写 CR Annotation：即使数据面存在同名的历史 Label，也不在这里
+      // 写入或删除，避免管理操作改动数据面标签。
+      const labelPatch: Record<string, string | null> = {};
+      for (const [key, value] of Object.entries(labelDraft)) {
+        if (originalLabels[key] !== value) labelPatch[key] = value;
+      }
+      getRemovedLabelKeys(originalLabels, labelDraft)
+        .filter((key) => !NODE_MANAGED_KEYS.has(key))
+        .forEach((key) => {
+          labelPatch[key] = null;
+        });
+      if (Object.keys(labelPatch).length > 0) {
+        await nodesApi.patchLabels(nodeName, labelPatch, namespace);
+      }
+
+      // 乐观本地更新 — Gateway patch 成功后刷新本地 observedNodeLabels。
+      try {
+        setNodes(await nodesApi.list());
+      } catch {
+        // Non-fatal; the next auto-refresh will pick it up.
+      }
       cancelEdit();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1074,8 +1173,17 @@ export function AdminPage({
   };
 
   const addLabel = () => {
-    if (!newLabelKey.trim()) return;
-    setLabelDraft((prev) => ({ ...prev, [newLabelKey.trim()]: newLabelValue }));
+    const key = newLabelKey.trim();
+    if (!key) return;
+    if (NODE_MANAGED_KEYS.has(key)) {
+      setError(
+        zh
+          ? `${key} 是管理元数据，请使用上方对应字段编辑。`
+          : `${key} is administrator metadata; edit it with the fields above.`,
+      );
+      return;
+    }
+    setLabelDraft((prev) => ({ ...prev, [key]: newLabelValue }));
     setNewLabelKey("");
     setNewLabelValue("");
   };
@@ -1092,35 +1200,51 @@ export function AdminPage({
     setLabelDraft((prev) => ({ ...prev, [key]: value }));
   };
 
+  const updateAnnotation = (key: string, value: string) => {
+    setAnnotationDraft((prev) => ({ ...prev, [key]: value }));
+  };
+
   const toggleCordon = async (node: CRDNode) => {
     const willCordon = !node.spec.unschedulable;
     if (
       !confirm(
         willCordon
           ? zh
-            ? `确认封锁节点“${nodeLabel(node)}”吗？封锁后将不再接收新任务，已运行任务不会被终止。`
-            : `Cordon node "${nodeLabel(node)}"? It will stop accepting new jobs, while running jobs remain active.`
+            ? `确认对节点“${node.metadata.name}”执行暂停调度吗？执行后将停止把新的 RLark 任务调度到该节点，节点上的其他工作负载不受影响，已运行任务也不会被终止。`
+            : `Pause scheduling on node "${node.metadata.name}"? New RLark tasks will stop being scheduled to it. Other workloads on the node are unaffected and running tasks remain active.`
           : zh
-            ? `确认解封节点“${nodeLabel(node)}”并恢复任务调度吗？`
-            : `Uncordon node "${nodeLabel(node)}" and resume scheduling?`,
+            ? `确认对节点“${node.metadata.name}”执行恢复调度吗？仅恢复向该节点调度新任务；被排空停止的任务需先取消驱逐才会恢复。`
+            : `Resume scheduling on node "${node.metadata.name}"? This only allows new tasks to be scheduled to it; tasks stopped by a drain resume only after you cancel the drain.`,
       )
     )
       return;
     setCordoningNode(node.metadata.name);
     setError("");
     try {
-      const patch = { spec: { unschedulable: !node.spec.unschedulable } };
-      await nodesApi.patch(
-        node.metadata.name,
-        patch,
-        node.metadata.namespace ?? "",
-      );
+      if (willCordon) {
+        await nodesApi.patch(
+          node.metadata.name,
+          { spec: { unschedulable: true } },
+          node.metadata.namespace ?? "",
+        );
+      } else {
+        // 恢复调度: uncordon 会置 unschedulable=false 并取消 Drain 操作；但被排空
+        // 停止的任务保持 suspended（node-drain-stopped 标记保留），需运维显式
+        // 启动其 Job 才会恢复运行。
+        await nodesApi.uncordon(
+          node.metadata.name,
+          node.metadata.namespace ?? "",
+        );
+      }
       setNodes((prev) =>
         prev.map((n) =>
           n.metadata.name === node.metadata.name
             ? {
                 ...n,
-                spec: { ...n.spec, unschedulable: !node.spec.unschedulable },
+                spec: {
+                  ...n.spec,
+                  unschedulable: !node.spec.unschedulable,
+                },
               }
             : n,
         ),
@@ -1132,6 +1256,129 @@ export function AdminPage({
     }
   };
 
+  const unmanageNode = async (node: CRDNode) => {
+    if (
+      !confirm(
+        zh
+          ? `确认取消纳管节点"${node.metadata.name}"？该节点的 RLark Node 资源将被删除，agent 不再为其上报状态。此操作不会删除 K8s 节点或其中的运行任务。`
+          : `Unmanage node "${node.metadata.name}"? The RLark Node resource will be removed and the agent will stop reporting status. This will not delete the K8s node or running tasks.`,
+      )
+    )
+      return;
+    setRemovingNode(node.metadata.name);
+    setError("");
+    try {
+      await nodesApi.remove(node.metadata.name, node.metadata.namespace);
+      setNodes((prev) =>
+        prev.filter((n) => n.metadata.name !== node.metadata.name),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRemovingNode(null);
+    }
+  };
+
+  const drainNode = async (node: CRDNode) => {
+    if (
+      !confirm(
+        zh
+          ? `确认对节点"${node.metadata.name}"执行排空？将停止该节点接收新任务，并尝试将现有任务重调度到其他节点。该操作会同时暂停节点调度（Cordon）。`
+          : `Drain node "${node.metadata.name}"? This will stop the node from accepting new tasks and attempt to reschedule running tasks. It will also cordon the node.`,
+      )
+    )
+      return;
+    setDrainingNode(node.metadata.name);
+    setError("");
+    try {
+      const resp = await nodesApi.drain(
+        node.metadata.name,
+        node.metadata.namespace ?? "",
+      );
+      const updated = resp.data;
+      if (updated) {
+        setNodes((prev) =>
+          prev.map((n) =>
+            n.metadata.name === node.metadata.name ? updated : n,
+          ),
+        );
+      } else {
+        // 保守更新本地缓存，让 UI 立即响应
+        setNodes((prev) =>
+          prev.map((n) =>
+            n.metadata.name === node.metadata.name
+              ? {
+                  ...n,
+                  spec: {
+                    ...n.spec,
+                    unschedulable: true,
+                    operations: [
+                      ...(n.spec.operations ?? []),
+                      {
+                        id: `drain-local-${Date.now()}`,
+                        type: "Drain" as const,
+                      },
+                    ],
+                  },
+                }
+              : n,
+          ),
+        );
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDrainingNode(null);
+    }
+  };
+
+  const undrainNode = async (node: CRDNode) => {
+    if (
+      !confirm(
+        zh
+          ? `确认取消节点"${node.metadata.name}"的排空请求？`
+          : `Cancel the drain request for node "${node.metadata.name}"?`,
+      )
+    )
+      return;
+    setDrainingNode(node.metadata.name);
+    setError("");
+    try {
+      const resp = await nodesApi.undrain(
+        node.metadata.name,
+        node.metadata.namespace ?? "",
+      );
+      const updated = resp.data;
+      if (updated) {
+        setNodes((prev) =>
+          prev.map((n) =>
+            n.metadata.name === node.metadata.name ? updated : n,
+          ),
+        );
+      } else {
+        setNodes((prev) =>
+          prev.map((n) =>
+            n.metadata.name === node.metadata.name
+              ? {
+                  ...n,
+                  spec: {
+                    ...n.spec,
+                    operations: (n.spec.operations ?? []).filter(
+                      (op) => op.type !== "Drain",
+                    ),
+                  },
+                }
+              : n,
+          ),
+        );
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDrainingNode(null);
+    }
+  };
+
   const saveBatchMetadata = async () => {
     const selectedNodes = nodes.filter((node) =>
       selectedNodeKeys.has(
@@ -1140,7 +1387,7 @@ export function AdminPage({
     );
     if (selectedNodes.length === 0) return;
     if (batchFields.size === 0) {
-      setError(zh ? "请至少填写一个批量设置字段" : "Enter at least one field");
+      setError(zh ? "请至少启用一个批量设置字段" : "Enable at least one field");
       return;
     }
     setBatchSaving(true);
@@ -1148,81 +1395,51 @@ export function AdminPage({
     try {
       await Promise.all(
         selectedNodes.map(async (node) => {
-          const modelMetadata = updateNodeModelMetadata(node, {
-            gpuModel: batchFields.has("gpu") ? batchGPUModel : undefined,
-            deviceModel: batchFields.has("device")
-              ? batchDeviceModel
-              : undefined,
-          });
-          const { labels, annotations, removedLabelKeys } = modelMetadata;
+          const original = node.metadata.annotations ?? {};
+          const annotations: Record<string, string | null> = {};
           if (batchFields.has("location")) {
-            const value = batchLocation.trim();
-            if (value) annotations["rlark.io/city"] = value;
-            else delete annotations["rlark.io/city"];
-            delete annotations["rlark.io/ip-location"];
-            delete annotations["rlark.io/location"];
-            delete labels["rlark.io/city"];
-            delete labels["rlark.io/location"];
-            removedLabelKeys.add("rlark.io/city");
-            removedLabelKeys.add("rlark.io/location");
+            annotations["rlark.io/city"] = batchLocation.trim() || null;
           }
           if (batchFields.has("categories")) {
-            const categoryUpdate = updateNodeCategoryLabels(
-              labels,
-              batchCategories,
-            );
-            Object.keys(labels).forEach((key) => delete labels[key]);
-            Object.assign(labels, categoryUpdate.labels);
-            categoryUpdate.removedKeys.forEach((key) =>
-              removedLabelKeys.add(key),
-            );
+            const categories = new Set(batchCategories);
+            for (const category of [
+              "cloud",
+              "edge",
+              "robot",
+            ] as NodeCategory[]) {
+              annotations[`rlark.io/node-category-${category}`] =
+                categories.has(category) ? "true" : null;
+            }
+            // 旧版逗号分隔分类注解统一迁移为布尔注解。
+            annotations[NODE_CATEGORY_LABEL] = null;
           }
-          const labelPatch: Record<string, string | null> = { ...labels };
-          removedLabelKeys.forEach((key) => {
-            labelPatch[key] = null;
-          });
-          const annotationPatch: Record<string, string | null> = {
-            ...annotations,
-          };
-          if (batchFields.has("location") && !batchLocation.trim())
-            annotationPatch["rlark.io/city"] = null;
-          modelMetadata.removedAnnotationKeys.forEach((key) => {
-            annotationPatch[key] = null;
-          });
+          if (batchFields.has("gpu")) {
+            annotations["rlark.io/gpu-model"] = batchGPUModel.trim() || null;
+          }
+          if (batchFields.has("device")) {
+            annotations["rlark.io/device-model"] =
+              batchDeviceModel.trim() || null;
+          }
+          // 未启用字段保持原值；仅当原有值存在时才发送删除标记。管理字段只写
+          // 管理面 Node CR 的 Annotation，不触碰数据面标签。
+          const patch: Record<string, string | null> = {};
+          for (const [key, value] of Object.entries(annotations)) {
+            if (value !== null || original[key] !== undefined) {
+              patch[key] = value;
+            }
+          }
+          if (Object.keys(patch).length === 0) return;
           try {
             await nodesApi.patch(
               node.metadata.name,
-              {
-                metadata: { labels: labelPatch, annotations: annotationPatch },
-              },
+              { metadata: { annotations: patch } },
               node.metadata.namespace ?? "",
             );
           } catch (error) {
             throw new Error(`${node.metadata.name}: ${String(error)}`);
           }
-          return { node, labels, annotations };
         }),
-      ).then((updated) => {
-        const updates = new Map(
-          updated.map(({ node, labels, annotations }) => [
-            `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
-            { labels, annotations },
-          ]),
-        );
-        setNodes((current) =>
-          current.map((node) => {
-            const metadata = updates.get(
-              `${node.metadata.namespace ?? ""}/${node.metadata.name}`,
-            );
-            return metadata
-              ? {
-                  ...node,
-                  metadata: { ...node.metadata, ...metadata },
-                }
-              : node;
-          }),
-        );
-      });
+      );
       await fetchNodes(false);
       setSelectedNodeKeys(new Set());
       setBatchOpen(false);
@@ -1247,8 +1464,9 @@ export function AdminPage({
     );
     const mixed = new Set<BatchMetadataField>();
     const commonValue = (field: BatchMetadataField, values: string[]) => {
-      if (values.length > 0 && values.every((value) => value === values[0]))
+      if (values.length > 0 && values.every((value) => value === values[0])) {
         return values[0];
+      }
       mixed.add(field);
       return "";
     };
@@ -1290,11 +1508,11 @@ export function AdminPage({
     if (selectedNodes.length === 0) return;
     const action = unschedulable
       ? zh
-        ? "封锁"
-        : "cordon"
+        ? "暂停调度"
+        : "pause scheduling"
       : zh
-        ? "解封"
-        : "uncordon";
+        ? "恢复调度"
+        : "resume scheduling";
     if (
       !confirm(
         zh
@@ -1340,6 +1558,7 @@ export function AdminPage({
     c,
     editingNode,
     labelDraft,
+    annotationDraft,
     newLabelKey,
     newLabelValue,
     saving,
@@ -1351,6 +1570,7 @@ export function AdminPage({
     onAddLabel: addLabel,
     onRemoveLabel: removeLabel,
     onUpdateLabel: updateLabel,
+    onUpdateAnnotation: updateAnnotation,
     onNewLabelKey: setNewLabelKey,
     onNewLabelValue: setNewLabelValue,
     onDisplayNameSaved: (saved: CRDNode) => setNodes((current) => current.map((n) => (n.metadata.namespace === saved.metadata.namespace && n.metadata.name === saved.metadata.name ? saved : n))),
@@ -1358,6 +1578,20 @@ export function AdminPage({
 
   const selectedNodeObj =
     nodes.find((n) => n.metadata.name === selectedNode) ?? null;
+
+  // Reset the detail-page container's scrollTop only when the selected node
+  // changes. The node detail view is rendered inside an
+  // `overflow: hidden auto` container; browser scroll-restore (and any prior
+  // interaction that left the container scrolled) would otherwise hide the
+  // top action bar (Cordon, Manage labels, Back button) below the viewport.
+  // Do not depend on selectedNodeObj: the periodic refresh replaces the node
+  // objects, and that must not reset the user's scroll position.
+  useEffect(() => {
+    if (!selectedNode) return;
+    const container = document.querySelector(".node-detail-page");
+    if (container) container.scrollTop = 0;
+  }, [selectedNode]);
+
   const nodeOverview = {
     online: nodes.filter((node) => node.status?.phase === "Online").length,
     schedulable: nodes.filter((node) => !node.spec.unschedulable).length,
@@ -1412,18 +1646,18 @@ export function AdminPage({
             onClick={() => updateSelectedScheduling(true)}
           >
             <Ban size={15} />
-            {zh ? "批量封锁" : "Cordon"}
+            {zh ? "批量暂停调度" : "Pause Schedule"}
           </button>
           <button
             className="secondary-button"
             disabled={selectedNodeKeys.size === 0 || batchScheduling}
             onClick={() => updateSelectedScheduling(false)}
           >
-            {zh ? "批量解封" : "Uncordon"}
+            {zh ? "批量恢复调度" : "Resume Schedule"}
           </button>
           <button
             className="primary-button"
-            disabled={selectedNodeKeys.size === 0}
+            disabled={selectedNodeKeys.size === 0 || batchSaving}
             onClick={openBatchEditor}
           >
             <Pencil size={15} />
@@ -1504,8 +1738,8 @@ export function AdminPage({
               </strong>
               <small>
                 {zh
-                  ? "先启用需要修改的字段；未启用字段保持原值。清空已启用字段可删除原值。"
-                  : "Enable only fields to change. Disabled fields stay unchanged; clear an enabled field to remove it."}
+                  ? "先启用需要修改的字段；未启用字段保持原值。清空已启用字段可删除原值，保存后写入节点 CR 的 Annotation。"
+                  : "Enable only the fields to change. Disabled fields stay unchanged; clear an enabled field to remove it. Values are saved as Node CR annotations."}
               </small>
             </div>
             <button
@@ -1637,12 +1871,16 @@ export function AdminPage({
                           aria-pressed={batchCategories.includes(category)}
                           onClick={() =>
                             setBatchCategories((current) =>
-                              current.includes(category) ? [] : [category],
+                              current.includes(category)
+                                ? current.filter((item) => item !== category)
+                                : [...current, category],
                             )
                           }
                         >
                           {zh
-                            ? categoryLabels[category].zh
+                            ? category === "robot"
+                              ? "端真机"
+                              : categoryLabels[category].zh
                             : categoryLabels[category].en}
                         </button>
                       ),
@@ -1650,8 +1888,8 @@ export function AdminPage({
                   </div>
                   <small className="admin-node-batch-hint">
                     {zh
-                      ? "单选。例如 GPU 服务器选择「云算力」，机器人本体选择「端真机」。"
-                      : "Single selection. For example, choose Cloud for GPU servers, Robot for robot devices."}
+                      ? "可多选。例如 GPU 服务器选择「云算力」，机器人本体选择「端真机」。"
+                      : "Multiple selection. For example, choose Cloud for GPU servers and Robot for robot devices."}
                   </small>
                 </>
               )}
@@ -1821,9 +2059,12 @@ export function AdminPage({
           onRefresh={handleRefresh}
           refreshing={refreshing}
           onSelectNode={(name) => onNavigate(name)}
+          nodeWorkloads={nodeWorkloads}
           onToggleScheduling={toggleCordon}
-          removable
-          updatingNode={cordoningNode}
+          updatingNode={cordoningNode ?? removingNode ?? drainingNode}
+          onUnmanageNode={unmanageNode}
+          onDrainNode={drainNode}
+          onUndrainNode={undrainNode}
           selectedNodeKeys={selectedNodeKeys}
           onSelectionChange={setSelectedNodeKeys}
           onSelectFiltered={(keys) =>
@@ -1835,4 +2076,4 @@ export function AdminPage({
     </div>
   );
 }
-import { nodesApi } from "../backend";
+import { nodesApi, podsApi, tasksApi } from "../backend";

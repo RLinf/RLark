@@ -59,6 +59,12 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.ClusterSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterStatus"):
 		return &rlarkiov1alpha1.ClusterStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterUpgradeJob"):
+		return &rlarkiov1alpha1.ClusterUpgradeJobApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterUpgradeJobSpec"):
+		return &rlarkiov1alpha1.ClusterUpgradeJobSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterUpgradeJobStatus"):
+		return &rlarkiov1alpha1.ClusterUpgradeJobStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Domain"):
 		return &rlarkiov1alpha1.DomainApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DomainIPAllocation"):
@@ -85,10 +91,20 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.JobTaskStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("JobTaskTemplate"):
 		return &rlarkiov1alpha1.JobTaskTemplateApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("MaintenanceWindow"):
+		return &rlarkiov1alpha1.MaintenanceWindowApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Node"):
 		return &rlarkiov1alpha1.NodeApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeCapabilitySnapshot"):
+		return &rlarkiov1alpha1.NodeCapabilitySnapshotApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeDeviceCapability"):
+		return &rlarkiov1alpha1.NodeDeviceCapabilityApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeDrainOperationStatus"):
+		return &rlarkiov1alpha1.NodeDrainOperationStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeEvent"):
 		return &rlarkiov1alpha1.NodeEventApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeIdentity"):
+		return &rlarkiov1alpha1.NodeIdentityApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeInfo"):
 		return &rlarkiov1alpha1.NodeInfoApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeJoin"):
@@ -103,12 +119,26 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.NodeJoinStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeJoinTiming"):
 		return &rlarkiov1alpha1.NodeJoinTimingApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeNetworkCapability"):
+		return &rlarkiov1alpha1.NodeNetworkCapabilityApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeOperationRequest"):
+		return &rlarkiov1alpha1.NodeOperationRequestApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeOperationsCapability"):
+		return &rlarkiov1alpha1.NodeOperationsCapabilityApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeRuntimeCapability"):
+		return &rlarkiov1alpha1.NodeRuntimeCapabilityApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeRuntimeReference"):
+		return &rlarkiov1alpha1.NodeRuntimeReferenceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeSpec"):
 		return &rlarkiov1alpha1.NodeSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeStatus"):
 		return &rlarkiov1alpha1.NodeStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeStorageCapability"):
+		return &rlarkiov1alpha1.NodeStorageCapabilityApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeStorageStatus"):
 		return &rlarkiov1alpha1.NodeStorageStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeWorkloadSummary"):
+		return &rlarkiov1alpha1.NodeWorkloadSummaryApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Pod"):
 		return &rlarkiov1alpha1.PodApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PodSpec"):
@@ -121,6 +151,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.RolloutPolicyApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Task"):
 		return &rlarkiov1alpha1.TaskApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TaskDrainRequest"):
+		return &rlarkiov1alpha1.TaskDrainRequestApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TaskDrainStatus"):
+		return &rlarkiov1alpha1.TaskDrainStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskEnvironment"):
 		return &rlarkiov1alpha1.TaskEnvironmentApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskInstanceStatus"):
@@ -137,6 +171,16 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.TaskWorkloadCarrierApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskWorkloadSpec"):
 		return &rlarkiov1alpha1.TaskWorkloadSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("UpgradeJob"):
+		return &rlarkiov1alpha1.UpgradeJobApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("UpgradeJobCondition"):
+		return &rlarkiov1alpha1.UpgradeJobConditionApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("UpgradeJobSpec"):
+		return &rlarkiov1alpha1.UpgradeJobSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("UpgradeJobStatus"):
+		return &rlarkiov1alpha1.UpgradeJobStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("UpgradeStrategy"):
+		return &rlarkiov1alpha1.UpgradeStrategyApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Workflow"):
 		return &rlarkiov1alpha1.WorkflowApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("WorkflowJobStatus"):

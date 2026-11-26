@@ -16,9 +16,12 @@ import (
 	controllerconfig "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
+	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
+	sharedreconcile "github.com/rlinf/rlark/apps/rlark/pkg/reconcile"
 )
 
 const (
@@ -30,12 +33,32 @@ const (
 	drainTimeout        = 30 * time.Minute
 )
 
+// Reason codes this controller attaches both to the Ready condition and to the
+// classified pass. Closed set: they are used as a metric label.
+const (
+	reasonClusterOnline          = "ClusterOnline"
+	reasonClusterCordoned        = "ClusterCordoned"
+	reasonClusterDraining        = "ClusterDraining"
+	reasonClusterDelisted        = "ClusterDelisted"
+	reasonNodeOffline            = "RegisteredNodeOffline"
+	reasonNodeDegraded           = "RegisteredNodeDegraded"
+	reasonNoSchedulableNode      = "NoSchedulableNode"
+	reasonClusterUnavailable     = "ClusterUnavailable"
+	reasonHeartbeatMissing       = "AgentHeartbeatMissingOrExpired"
+	reasonObserveFailed          = "ClusterObserveFailed"
+	reasonAgentNamespaceConflict = "AgentNamespaceConflict"
+)
+
 // Reconciler reconciles Cluster status from the agent heartbeat and registered Nodes.
 type Reconciler struct {
 	client.Client
 	Scheme                  *runtime.Scheme
 	MaxConcurrentReconciles int
 	Now                     func() time.Time
+	// Shell classifies every pass, turns a retry class into a jittered interval
+	// and records the result. The zero value is silent, so a test may leave it
+	// unset.
+	Shell controller.Shell
 }
 
 // +kubebuilder:rbac:groups=rlinf.io,resources=clusters,verbs=get;list;watch
@@ -45,9 +68,22 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=rlinf.io,resources=tasks,verbs=get;list;watch;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;delete
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	return r.Shell.Run(ctx, "cluster", func(ctx context.Context) (controller.Result, error) {
+		return r.reconcile(ctx, req)
+	})
+}
+
+func (r *Reconciler) reconcile(ctx context.Context, req ctrl.Request) (controller.Result, error) {
 	var cluster rlarkv1alpha1.Cluster
 	if err := r.Get(ctx, req.NamespacedName, &cluster); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if apierrors.IsNotFound(err) {
+			return controller.Result{
+				Outcome: sharedreconcile.OutcomeDropped,
+				Reason:  controller.ReasonObjectGone,
+				Retry:   sharedreconcile.RetryDirective{Class: sharedreconcile.RetryNone},
+			}, nil
+		}
+		return controller.Result{Reason: controller.ReasonReconcileFailed}, err
 	}
 
 	if !cluster.DeletionTimestamp.IsZero() {
@@ -56,15 +92,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if !controllerutil.ContainsFinalizer(&cluster, CleanupFinalizer) {
 		controllerutil.AddFinalizer(&cluster, CleanupFinalizer)
 		if err := r.Update(ctx, &cluster); err != nil {
-			return ctrl.Result{}, fmt.Errorf("add Cluster cleanup finalizer: %w", err)
+			return controller.Result{Reason: controller.ReasonReconcileFailed}, fmt.Errorf("add Cluster cleanup finalizer: %w", err)
 		}
-		return ctrl.Result{}, nil
+		// The Update re-drives this controller through its own Cluster watch, so
+		// there is nothing to poll for.
+		return controller.Result{
+			Outcome: sharedreconcile.OutcomeSucceeded,
+			Reason:  controller.ReasonSynced,
+			Retry:   sharedreconcile.RetryDirective{Class: sharedreconcile.RetryNone},
+		}, nil
 	}
 
 	now := r.now()
 	conflict, err := r.agentNamespaceConflict(ctx, &cluster)
 	if err != nil {
-		return ctrl.Result{}, err
+		return controller.Result{Reason: controller.ReasonReconcileFailed}, err
 	}
 	if conflict {
 		return r.reconcileAgentNamespaceConflict(ctx, &cluster, now)
@@ -79,28 +121,36 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	})
 	if !reflect.DeepEqual(cluster.Status.Conditions, beforeValidation.Status.Conditions) {
 		if err := r.Status().Patch(ctx, &cluster, client.MergeFrom(beforeValidation)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("patch Cluster validation status: %w", err)
+			return controller.Result{Reason: controller.ReasonStatusWriteFailed}, fmt.Errorf("patch Cluster validation status: %w", err)
 		}
 	}
 	var drainRequeueAfter *time.Duration
 	if !cluster.Spec.Draining {
-		if err := r.clearDrainTaskMarkers(ctx, &cluster); err != nil {
-			return ctrl.Result{}, err
+		beforeCancel := cluster.DeepCopy()
+		retireDrainCondition(&cluster.Status.Conditions)
+		if !reflect.DeepEqual(cluster.Status.Conditions, beforeCancel.Status.Conditions) {
+			if err := r.Status().Patch(ctx, &cluster, client.MergeFrom(beforeCancel)); err != nil {
+				return controller.Result{Reason: controller.ReasonStatusWriteFailed}, fmt.Errorf("patch cancelled cluster drain status: %w", err)
+			}
 		}
 	}
+	// drainComplete records this pass's drain observation so the phase derivation
+	// below can tell an in-flight drain from a finished one. It stays false when no
+	// drain is requested or the cluster is delisted, where the drain branch is
+	// skipped and the phase is decided by other spec fields.
+	drainComplete := false
 	if cluster.Spec.Draining && !cluster.Spec.Delisted {
-		var complete bool
 		var pendingTasks []string
-		complete, pendingTasks, err = r.drainTasks(ctx, &cluster)
+		drainComplete, pendingTasks, err = r.drainTasks(ctx, &cluster)
 		if err != nil {
-			return ctrl.Result{}, err
+			return controller.Result{Reason: controller.ReasonReconcileFailed}, err
 		}
-		if complete {
+		if drainComplete {
 			before := cluster.DeepCopy()
-			clearDrainCondition(&cluster.Status.Conditions, now)
+			clearDrainCondition(&cluster.Status.Conditions, now, cluster.Generation)
 			if !reflect.DeepEqual(cluster.Status.Conditions, before.Status.Conditions) {
 				if err := r.Status().Patch(ctx, &cluster, client.MergeFrom(before)); err != nil {
-					return ctrl.Result{}, fmt.Errorf("patch completed cluster drain status: %w", err)
+					return controller.Result{Reason: controller.ReasonStatusWriteFailed}, fmt.Errorf("patch completed cluster drain status: %w", err)
 				}
 			}
 		} else {
@@ -110,42 +160,103 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			drainRequeueAfter = &delay
 			if !reflect.DeepEqual(cluster.Status.Conditions, before.Status.Conditions) {
 				if err := r.Status().Patch(ctx, &cluster, client.MergeFrom(before)); err != nil {
-					return ctrl.Result{}, fmt.Errorf("patch cluster drain status: %w", err)
+					return controller.Result{Reason: controller.ReasonStatusWriteFailed}, fmt.Errorf("patch cluster drain status: %w", err)
 				}
 			}
 		}
 	}
 	if cluster.Spec.AgentNamespace == "" {
-		return ctrl.Result{}, fmt.Errorf("cluster agent namespace is empty")
+		return controller.Result{Reason: controller.ReasonReconcileFailed}, fmt.Errorf("cluster agent namespace is empty")
 	}
-	phase, heartbeat, leaseDuration, totalNodes, onlineNodes, err := r.observe(ctx, &cluster, now)
+	phase, heartbeat, summary, err := r.observe(ctx, &cluster, now, drainComplete)
 	if err != nil {
-		return ctrl.Result{}, err
+		return controller.Result{Reason: reasonObserveFailed}, err
+	}
+	if heartbeat.ClockSkew {
+		log.FromContext(ctx).Info("agent heartbeat Lease is dated in the future; honouring it but the agent clock runs ahead", "cluster", cluster.Name)
 	}
 
 	before := cluster.DeepCopy()
+	phaseChanged := phase != before.Status.Phase
 	cluster.Status.Phase = phase
-	cluster.Status.LastHeartbeatTime = heartbeat
-	cluster.Status.TotalNodes = totalNodes
-	cluster.Status.OnlineNodes = onlineNodes
-	readyStatus, reason := clusterReadyCondition(phase)
-	apimeta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
-		Type:               rlarkv1alpha1.ConditionTypeReady,
-		Status:             readyStatus,
-		Reason:             reason,
-		Message:            "Cluster availability is derived from its agent heartbeat Lease and registered Nodes.",
-		LastTransitionTime: metav1.NewTime(now),
+	cluster.Status.ObservedGeneration = cluster.Generation
+	lastHeartbeat := controller.HeartbeatTime(heartbeat)
+	cluster.Status.LastHeartbeatTime = lastHeartbeat
+	if phaseChanged {
+		statusChangeTime := metav1.NewTime(now)
+		cluster.Status.LastStatusChangeTime = &statusChangeTime
+	}
+	cluster.Status.TotalNodes = summary.totalNodes
+	cluster.Status.OnlineNodes = summary.readyNodes
+	cluster.Status.ReadyNodes = summary.readyNodes
+	cluster.Status.DegradedNodes = summary.degradedNodes
+	cluster.Status.DisconnectedNodes = summary.disconnectedNodes
+	cluster.Status.UnschedulableNodes = summary.unschedulableNodes
+	cluster.Status.DominantFailureReason = summary.dominantFailureReason
+	connected := !heartbeat.Expired()
+	connectionReason := rlarkv1alpha1.ConditionReasonLeaseValid
+	switch heartbeat.State {
+	case sharedreconcile.HeartbeatMissing:
+		connectionReason = rlarkv1alpha1.ConditionReasonHeartbeatNeverReceived
+	case sharedreconcile.HeartbeatExpired:
+		connectionReason = rlarkv1alpha1.ConditionReasonLeaseExpired
+	}
+	readyStatus, reason := clusterReadyCondition(phase, summary.dominantFailureReason)
+	// Both conditions are observation-driven: they summarise the heartbeat Lease
+	// and the registered Nodes, neither of which is derived from this Cluster's
+	// Spec. Passing generation 0 keeps them from claiming an ObservedGeneration
+	// they did not compute. Agent connectivity is tracked independently from
+	// node-derived availability so an expired cluster heartbeat stays visible
+	// while registered Nodes still report ready.
+	sharedreconcile.ApplyConditionMutations(&cluster.Status.Conditions, 0, []sharedreconcile.ConditionMutation{
+		{Condition: metav1.Condition{
+			Type:               rlarkv1alpha1.ConditionTypeAgentConnected,
+			Status:             boolCondition(connected),
+			Reason:             connectionReason,
+			Message:            "Agent connectivity is derived from the cluster heartbeat Lease.",
+			LastTransitionTime: metav1.NewTime(now),
+		}},
+		{Condition: metav1.Condition{
+			Type:               rlarkv1alpha1.ConditionTypeReady,
+			Status:             readyStatus,
+			Reason:             reason,
+			Message:            "Cluster availability is derived from registered Node conditions.",
+			LastTransitionTime: metav1.NewTime(now),
+		}},
 	})
-	if phase != before.Status.Phase || !sameTime(heartbeat, before.Status.LastHeartbeatTime) || totalNodes != before.Status.TotalNodes || onlineNodes != before.Status.OnlineNodes || !reflect.DeepEqual(cluster.Status.Conditions, before.Status.Conditions) {
+	if phaseChanged || cluster.Status.ObservedGeneration != before.Status.ObservedGeneration || !sameTime(lastHeartbeat, before.Status.LastHeartbeatTime) || cluster.Status.TotalNodes != before.Status.TotalNodes || cluster.Status.OnlineNodes != before.Status.OnlineNodes || cluster.Status.ReadyNodes != before.Status.ReadyNodes || cluster.Status.DegradedNodes != before.Status.DegradedNodes || cluster.Status.DisconnectedNodes != before.Status.DisconnectedNodes || cluster.Status.UnschedulableNodes != before.Status.UnschedulableNodes || cluster.Status.DominantFailureReason != before.Status.DominantFailureReason || !reflect.DeepEqual(cluster.Status.Conditions, before.Status.Conditions) {
 		if err := r.Status().Patch(ctx, &cluster, client.MergeFrom(before)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("patch cluster status: %w", err)
+			if apierrors.IsConflict(err) {
+				return controller.Result{Reason: controller.ReasonStatusWriteConflict}, err
+			}
+			return controller.Result{Reason: controller.ReasonStatusWriteFailed}, fmt.Errorf("patch cluster status: %w", err)
 		}
 	}
 
+	// A drain is a self-driven operation: the Tasks it stopped have not reported
+	// Stopped yet, so this pass must come back on the drain's own schedule
+	// instead of waiting for the heartbeat deadline.
 	if drainRequeueAfter != nil {
-		return ctrl.Result{RequeueAfter: *drainRequeueAfter}, nil
+		return controller.Result{
+			Outcome: sharedreconcile.OutcomeSucceeded,
+			Reason:  reason,
+			Retry: sharedreconcile.RetryDirective{
+				Class: sharedreconcile.RetryInProgress,
+				After: *drainRequeueAfter,
+			},
+		}, nil
 	}
-	return ctrl.Result{RequeueAfter: nextRequeueAfter(now, heartbeat, leaseDuration)}, nil
+	// Heartbeat expiry produces no event, so the deadline can only be observed
+	// by looking again. The shell jitters the interval so that Clusters sharing
+	// a lease duration do not re-check in lockstep.
+	return controller.Result{
+		Outcome: sharedreconcile.OutcomeSucceeded,
+		Reason:  reason,
+		Retry: sharedreconcile.RetryDirective{
+			Class: sharedreconcile.RetryOnChange,
+			After: controller.NextHeartbeatCheck(now, heartbeat),
+		},
+	}, nil
 }
 
 func (r *Reconciler) agentNamespaceConflict(ctx context.Context, cluster *rlarkv1alpha1.Cluster) (bool, error) {
@@ -162,13 +273,13 @@ func (r *Reconciler) agentNamespaceConflict(ctx context.Context, cluster *rlarkv
 	return false, nil
 }
 
-func (r *Reconciler) reconcileAgentNamespaceConflict(ctx context.Context, cluster *rlarkv1alpha1.Cluster, now time.Time) (ctrl.Result, error) {
+func (r *Reconciler) reconcileAgentNamespaceConflict(ctx context.Context, cluster *rlarkv1alpha1.Cluster, now time.Time) (controller.Result, error) {
 	before := cluster.DeepCopy()
 	cluster.Status.Phase = rlarkv1alpha1.ClusterOffline
 	apimeta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
 		Type:               rlarkv1alpha1.ConditionTypeValidated,
 		Status:             metav1.ConditionFalse,
-		Reason:             "AgentNamespaceConflict",
+		Reason:             reasonAgentNamespaceConflict,
 		Message:            "Another active Cluster claims this agent namespace.",
 		ObservedGeneration: cluster.Generation,
 		LastTransitionTime: metav1.NewTime(now),
@@ -176,36 +287,60 @@ func (r *Reconciler) reconcileAgentNamespaceConflict(ctx context.Context, cluste
 	apimeta.SetStatusCondition(&cluster.Status.Conditions, metav1.Condition{
 		Type:               rlarkv1alpha1.ConditionTypeReady,
 		Status:             metav1.ConditionFalse,
-		Reason:             "AgentNamespaceConflict",
+		Reason:             reasonAgentNamespaceConflict,
 		Message:            "Cluster availability cannot be determined while its agent namespace is claimed by another Cluster.",
 		LastTransitionTime: metav1.NewTime(now),
 	})
 	if !reflect.DeepEqual(cluster.Status, before.Status) {
 		if err := r.Status().Patch(ctx, cluster, client.MergeFrom(before)); err != nil {
-			return ctrl.Result{}, fmt.Errorf("patch Cluster namespace conflict status: %w", err)
+			return controller.Result{Reason: controller.ReasonStatusWriteFailed}, fmt.Errorf("patch Cluster namespace conflict status: %w", err)
 		}
 	}
-	return ctrl.Result{RequeueAfter: time.Minute}, nil
+	// The competing Cluster may be deleted without this controller observing an
+	// event for it, so re-check instead of parking on the conflict forever.
+	return controller.Result{
+		Outcome: sharedreconcile.OutcomeSucceeded,
+		Reason:  reasonAgentNamespaceConflict,
+		Retry: sharedreconcile.RetryDirective{
+			Class: sharedreconcile.RetryOnChange,
+			After: time.Minute,
+		},
+	}, nil
 }
 
-func (r *Reconciler) reconcileDeletion(ctx context.Context, cluster *rlarkv1alpha1.Cluster) (ctrl.Result, error) {
+func (r *Reconciler) reconcileDeletion(ctx context.Context, cluster *rlarkv1alpha1.Cluster) (controller.Result, error) {
 	if !controllerutil.ContainsFinalizer(cluster, CleanupFinalizer) {
-		return ctrl.Result{}, nil
+		return controller.Result{
+			Outcome: sharedreconcile.OutcomeDropped,
+			Reason:  controller.ReasonObjectGone,
+			Retry:   sharedreconcile.RetryDirective{Class: sharedreconcile.RetryNone},
+		}, nil
 	}
 
 	pending, err := r.deleteClusterResources(ctx, cluster)
 	if err != nil {
-		return ctrl.Result{}, err
+		return controller.Result{Reason: controller.ReasonReconcileFailed}, err
 	}
 	if pending {
-		return ctrl.Result{RequeueAfter: cleanupRequeue}, nil
+		return controller.Result{
+			Outcome: sharedreconcile.OutcomeSucceeded,
+			Reason:  controller.ReasonChildCleanupInProgress,
+			Retry: sharedreconcile.RetryDirective{
+				Class: sharedreconcile.RetryInProgress,
+				After: cleanupRequeue,
+			},
+		}, nil
 	}
 
 	controllerutil.RemoveFinalizer(cluster, CleanupFinalizer)
 	if err := r.Update(ctx, cluster); err != nil {
-		return ctrl.Result{}, fmt.Errorf("remove Cluster cleanup finalizer: %w", err)
+		return controller.Result{Reason: controller.ReasonReconcileFailed}, fmt.Errorf("remove Cluster cleanup finalizer: %w", err)
 	}
-	return ctrl.Result{}, nil
+	return controller.Result{
+		Outcome: sharedreconcile.OutcomeSucceeded,
+		Reason:  controller.ReasonSynced,
+		Retry:   sharedreconcile.RetryDirective{Class: sharedreconcile.RetryNone},
+	}, nil
 }
 
 func (r *Reconciler) deleteClusterResources(ctx context.Context, cluster *rlarkv1alpha1.Cluster) (bool, error) {
@@ -260,56 +395,39 @@ func (r *Reconciler) deleteClusterResources(ctx context.Context, cluster *rlarkv
 	return pending, nil
 }
 
-func clusterReadyCondition(phase rlarkv1alpha1.ClusterPhase) (metav1.ConditionStatus, string) {
+func clusterReadyCondition(phase rlarkv1alpha1.ClusterPhase, dominantFailureReason string) (metav1.ConditionStatus, string) {
 	switch phase {
 	case rlarkv1alpha1.ClusterOnline:
-		return metav1.ConditionTrue, "ClusterOnline"
+		return metav1.ConditionTrue, reasonClusterOnline
 	case rlarkv1alpha1.ClusterDelisted:
-		return metav1.ConditionFalse, "ClusterDelisted"
+		return metav1.ConditionFalse, reasonClusterDelisted
 	case rlarkv1alpha1.ClusterCordoned:
-		return metav1.ConditionFalse, "ClusterCordoned"
+		return metav1.ConditionFalse, reasonClusterCordoned
 	case rlarkv1alpha1.ClusterDraining:
-		return metav1.ConditionFalse, "ClusterDraining"
+		return metav1.ConditionFalse, reasonClusterDraining
 	case rlarkv1alpha1.ClusterDowngraded:
-		return metav1.ConditionFalse, "RegisteredNodeOffline"
+		return metav1.ConditionFalse, reasonNodeDegraded
+	case rlarkv1alpha1.ClusterOffline:
+		if dominantFailureReason != "" {
+			return metav1.ConditionFalse, dominantFailureReason
+		}
+		return metav1.ConditionFalse, reasonNoSchedulableNode
 	default:
-		return metav1.ConditionFalse, "AgentHeartbeatMissingOrExpired"
+		return metav1.ConditionFalse, reasonClusterUnavailable
 	}
-}
-
-func (r *Reconciler) clearDrainTaskMarkers(ctx context.Context, cluster *rlarkv1alpha1.Cluster) error {
-	if cluster.Spec.AgentNamespace == "" {
-		return fmt.Errorf("cluster agent namespace is empty")
-	}
-
-	var tasks rlarkv1alpha1.TaskList
-	if err := r.List(ctx, &tasks, client.InNamespace(cluster.Spec.AgentNamespace)); err != nil {
-		return fmt.Errorf("list Tasks in agent namespace: %w", err)
-	}
-	for i := range tasks.Items {
-		task := &tasks.Items[i]
-		stopped := task.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] == "true"
-		drainSuspended := task.Annotations[rlarkv1alpha1.ClusterDrainSuspendedAnnotation] == "true"
-		if !task.DeletionTimestamp.IsZero() || (!stopped && !drainSuspended) {
-			continue
-		}
-		before := task.DeepCopy()
-		delete(task.Annotations, rlarkv1alpha1.ClusterStoppedAnnotation)
-		if drainSuspended {
-			// Only resume Tasks whose suspension was written by the drain; a Task the
-			// user suspended before the drain keeps its own desired state.
-			delete(task.Annotations, rlarkv1alpha1.ClusterDrainSuspendedAnnotation)
-			task.Spec.Suspended = false
-		}
-		if err := r.Patch(ctx, task, client.MergeFrom(before)); err != nil {
-			return fmt.Errorf("clear cluster drain marker from Task %s/%s: %w", task.Namespace, task.Name, err)
-		}
-	}
-	return nil
 }
 
 func taskTerminal(task *rlarkv1alpha1.Task) bool {
 	return task.Status.Phase == rlarkv1alpha1.TaskPhaseSucceeded || task.Status.Phase == rlarkv1alpha1.TaskPhaseFailed
+}
+
+// taskCanHoldWorkload reports whether the Task declares a Runtime. The Job
+// scheduler only ever places Tasks that declare one, so a Task without a Runtime
+// has never held and cannot hold a workload on any Node (for example a Task
+// created before spec.runtime became required). Such an inert Task can never be
+// stopped, so it must not block a cluster drain forever.
+func taskCanHoldWorkload(task *rlarkv1alpha1.Task) bool {
+	return task.Spec.Runtime.Kind != ""
 }
 
 func taskHasJobOwner(task *rlarkv1alpha1.Task) bool {
@@ -335,7 +453,7 @@ func (r *Reconciler) drainTasks(ctx context.Context, cluster *rlarkv1alpha1.Clus
 	pendingTasks := make([]string, 0, len(tasks.Items))
 	for i := range tasks.Items {
 		task := &tasks.Items[i]
-		if !task.DeletionTimestamp.IsZero() || taskTerminal(task) {
+		if !task.DeletionTimestamp.IsZero() || taskTerminal(task) || !taskCanHoldWorkload(task) {
 			continue
 		}
 		if task.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] == "true" {
@@ -366,59 +484,130 @@ func (r *Reconciler) drainTasks(ctx context.Context, cluster *rlarkv1alpha1.Clus
 	return complete, pendingTasks, nil
 }
 
-func (r *Reconciler) observe(ctx context.Context, cluster *rlarkv1alpha1.Cluster, now time.Time) (rlarkv1alpha1.ClusterPhase, *metav1.Time, time.Duration, int32, int32, error) {
-	var nodes rlarkv1alpha1.NodeList
-	if err := r.List(ctx, &nodes, client.InNamespace(cluster.Spec.AgentNamespace)); err != nil {
-		return "", nil, 0, 0, 0, fmt.Errorf("list Nodes in agent namespace: %w", err)
-	}
-
-	var totalNodes, onlineNodes int32
-	for _, node := range nodes.Items {
-		totalNodes++
-		if node.Status.Phase == rlarkv1alpha1.NodeOnline {
-			onlineNodes++
-		}
-	}
-
-	heartbeat, leaseDuration, err := r.lastHeartbeat(ctx, cluster.Spec.AgentNamespace)
-	if err != nil {
-		return "", nil, 0, 0, 0, err
-	}
-	if cluster.Spec.Delisted {
-		return rlarkv1alpha1.ClusterDelisted, heartbeat, leaseDuration, totalNodes, onlineNodes, nil
-	}
-	if cluster.Spec.Draining {
-		return rlarkv1alpha1.ClusterDraining, heartbeat, leaseDuration, totalNodes, onlineNodes, nil
-	}
-	if cluster.Spec.Cordoned {
-		return rlarkv1alpha1.ClusterCordoned, heartbeat, leaseDuration, totalNodes, onlineNodes, nil
-	}
-	if heartbeat == nil || heartbeat.Add(leaseDuration).Before(now) {
-		return rlarkv1alpha1.ClusterOffline, heartbeat, leaseDuration, totalNodes, onlineNodes, nil
-	}
-	if onlineNodes != totalNodes {
-		return rlarkv1alpha1.ClusterDowngraded, heartbeat, leaseDuration, totalNodes, onlineNodes, nil
-	}
-	return rlarkv1alpha1.ClusterOnline, heartbeat, leaseDuration, totalNodes, onlineNodes, nil
+type nodeSummary struct {
+	totalNodes            int32
+	readyNodes            int32
+	degradedNodes         int32
+	disconnectedNodes     int32
+	unschedulableNodes    int32
+	dominantFailureReason string
 }
 
-func (r *Reconciler) lastHeartbeat(ctx context.Context, namespace string) (*metav1.Time, time.Duration, error) {
-	var lease coordinationv1.Lease
-	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: heartbeatLeaseName}, &lease); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, 0, nil
+func conditionStatus(conditions []metav1.Condition, conditionType string) (metav1.ConditionStatus, string) {
+	condition := apimeta.FindStatusCondition(conditions, conditionType)
+	if condition == nil {
+		return metav1.ConditionUnknown, ""
+	}
+	return condition.Status, condition.Reason
+}
+
+func dominantReason(reasons map[string]int) string {
+	var dominant string
+	for reason, count := range reasons {
+		if count > reasons[dominant] || (count == reasons[dominant] && (dominant == "" || reason < dominant)) {
+			dominant = reason
 		}
-		return nil, 0, fmt.Errorf("get agent heartbeat lease: %w", err)
 	}
-	if lease.Spec.RenewTime == nil {
-		return nil, 0, nil
+	return dominant
+}
+
+func summarizeNodes(nodes []rlarkv1alpha1.Node) nodeSummary {
+	summary := nodeSummary{}
+	failureReasons := map[string]int{}
+	for _, node := range nodes {
+		summary.totalNodes++
+		if node.Spec.Unschedulable {
+			summary.unschedulableNodes++
+			continue
+		}
+
+		connected, connectedReason := conditionStatus(node.Status.Conditions, rlarkv1alpha1.ConditionTypeAgentConnected)
+		ready, readyReason := conditionStatus(node.Status.Conditions, rlarkv1alpha1.ConditionTypeReady)
+		degraded, degradedReason := conditionStatus(node.Status.Conditions, rlarkv1alpha1.ConditionTypeDegraded)
+		if connected == metav1.ConditionTrue && ready == metav1.ConditionTrue {
+			summary.readyNodes++
+			if degraded == metav1.ConditionTrue {
+				summary.degradedNodes++
+			}
+			continue
+		}
+		if connected != metav1.ConditionTrue {
+			summary.disconnectedNodes++
+			if connectedReason != "" {
+				failureReasons[connectedReason]++
+			}
+			continue
+		}
+		summary.degradedNodes++
+		if readyReason != "" {
+			failureReasons[readyReason]++
+		} else if degradedReason != "" {
+			failureReasons[degradedReason]++
+		} else {
+			failureReasons["NodeNotReady"]++
+		}
 	}
-	if lease.Spec.LeaseDurationSeconds == nil {
-		return nil, 0, fmt.Errorf("agent heartbeat Lease has no duration")
+	summary.dominantFailureReason = dominantReason(failureReasons)
+	return summary
+}
+
+func (r *Reconciler) observe(ctx context.Context, cluster *rlarkv1alpha1.Cluster, now time.Time, drainComplete bool) (rlarkv1alpha1.ClusterPhase, sharedreconcile.HeartbeatObservation, nodeSummary, error) {
+	var nodes rlarkv1alpha1.NodeList
+	if err := r.List(ctx, &nodes, client.InNamespace(cluster.Spec.AgentNamespace)); err != nil {
+		return "", sharedreconcile.HeartbeatObservation{}, nodeSummary{}, fmt.Errorf("list Nodes in agent namespace: %w", err)
 	}
-	heartbeat := metav1.NewTime(lease.Spec.RenewTime.Time)
-	leaseDuration := time.Duration(*lease.Spec.LeaseDurationSeconds) * time.Second
-	return &heartbeat, leaseDuration, nil
+	summary := summarizeNodes(nodes.Items)
+
+	heartbeat, err := r.observeHeartbeat(ctx, cluster, now)
+	if err != nil {
+		return "", sharedreconcile.HeartbeatObservation{}, nodeSummary{}, err
+	}
+	if cluster.Spec.Delisted {
+		return rlarkv1alpha1.ClusterDelisted, heartbeat, summary, nil
+	}
+	// Draining is a bounded operation, so the phase reports it only while the drain
+	// is still in flight. Once the drain has observed every eligible Task stopped,
+	// fall through to the durable scheduling intent instead of pinning "Draining"
+	// forever; the cordon the drain set remains in Spec, so the cluster reports
+	// Cordoned. This mirrors the Node Controller, which reports a cordoned Node as
+	// Cordoned once its drain operation completes.
+	if cluster.Spec.Draining && !drainComplete {
+		return rlarkv1alpha1.ClusterDraining, heartbeat, summary, nil
+	}
+	if cluster.Spec.Cordoned {
+		return rlarkv1alpha1.ClusterCordoned, heartbeat, summary, nil
+	}
+	if summary.readyNodes == 0 {
+		return rlarkv1alpha1.ClusterOffline, heartbeat, summary, nil
+	}
+	if summary.readyNodes != summary.totalNodes || summary.degradedNodes != 0 || summary.disconnectedNodes != 0 || summary.unschedulableNodes != 0 {
+		return rlarkv1alpha1.ClusterDowngraded, heartbeat, summary, nil
+	}
+	return rlarkv1alpha1.ClusterOnline, heartbeat, summary, nil
+}
+
+// observeHeartbeat classifies the agent heartbeat Lease through the shared
+// primitive so that the Cluster and Node controllers cannot disagree about what
+// the same Lease means.
+func (r *Reconciler) observeHeartbeat(ctx context.Context, cluster *rlarkv1alpha1.Cluster, now time.Time) (sharedreconcile.HeartbeatObservation, error) {
+	var lease coordinationv1.Lease
+	err := r.Get(ctx, client.ObjectKey{Namespace: cluster.Spec.AgentNamespace, Name: heartbeatLeaseName}, &lease)
+	switch {
+	case err == nil:
+		return controller.ObserveLeaseHeartbeat(&lease, cluster.Status.LastHeartbeatTime, now, sharedreconcile.HeartbeatTimeouts{}), nil
+	case apierrors.IsNotFound(err):
+		// A missing Lease is a de-registration signal, not a read failure.
+		return controller.ObserveLeaseHeartbeat(nil, cluster.Status.LastHeartbeatTime, now, sharedreconcile.HeartbeatTimeouts{}), nil
+	default:
+		return sharedreconcile.HeartbeatObservation{}, fmt.Errorf("get agent heartbeat lease: %w", err)
+	}
+}
+
+func boolCondition(value bool) metav1.ConditionStatus {
+	if value {
+		return metav1.ConditionTrue
+	}
+	return metav1.ConditionFalse
 }
 
 func (r *Reconciler) now() time.Time {
@@ -459,19 +648,32 @@ func setDrainCondition(cluster *rlarkv1alpha1.Cluster, now time.Time, pendingTas
 	return &metav1.Time{Time: startedAt}
 }
 
-func clearDrainCondition(conditions *[]metav1.Condition, now time.Time) {
-	condition := apimeta.FindStatusCondition(*conditions, rlarkv1alpha1.ConditionTypeProgressing)
-	if condition == nil || condition.Status != metav1.ConditionTrue || (condition.Reason != "DrainInProgress" && condition.Reason != "DrainTimedOut") {
-		return
-	}
+// clearDrainCondition publishes the completed drain for the observed generation.
+// Completion must be recorded even when no Task ever needed to stop, otherwise a
+// drain of an empty cluster never satisfies consumers that gate on a
+// current-generation DrainComplete condition.
+func clearDrainCondition(conditions *[]metav1.Condition, now time.Time, observedGeneration int64) {
 	apimeta.SetStatusCondition(conditions, metav1.Condition{
 		Type:               rlarkv1alpha1.ConditionTypeProgressing,
 		Status:             metav1.ConditionFalse,
 		Reason:             "DrainComplete",
-		Message:            "All Tasks reported Stopped for their current generation.",
-		ObservedGeneration: condition.ObservedGeneration,
+		Message:            "No Task remains running for its current generation.",
+		ObservedGeneration: observedGeneration,
 		LastTransitionTime: metav1.NewTime(now),
 	})
+}
+
+// retireDrainCondition removes a drain progress condition once draining is
+// switched off. Keeping the condition would leave the Cluster reporting
+// Progressing after the drain was cancelled, and its LastTransitionTime would
+// be picked up as the deadline start of the next drain, which would then report
+// DrainTimedOut immediately.
+func retireDrainCondition(conditions *[]metav1.Condition) {
+	condition := apimeta.FindStatusCondition(*conditions, rlarkv1alpha1.ConditionTypeProgressing)
+	if condition == nil || condition.Reason != "DrainInProgress" && condition.Reason != "DrainTimedOut" {
+		return
+	}
+	apimeta.RemoveStatusCondition(conditions, rlarkv1alpha1.ConditionTypeProgressing)
 }
 
 func nextDrainRequeueAfter(now time.Time, startedAt *metav1.Time) time.Duration {
@@ -491,17 +693,6 @@ func nextDrainRequeueAfter(now time.Time, startedAt *metav1.Time) time.Duration 
 		return remaining
 	}
 	return delay
-}
-
-func nextRequeueAfter(now time.Time, heartbeat *metav1.Time, leaseDuration time.Duration) time.Duration {
-	if heartbeat == nil || leaseDuration <= 0 {
-		return time.Minute
-	}
-	remaining := heartbeat.Add(leaseDuration).Sub(now)
-	if remaining <= 0 {
-		return time.Minute
-	}
-	return remaining
 }
 
 // SetupWithManager registers Cluster, Node, and heartbeat Lease watches.

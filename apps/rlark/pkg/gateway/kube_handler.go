@@ -86,6 +86,18 @@ func (c *kubeClient[T]) accessor() *resourceAccessor {
 	}
 }
 
+// isNamespacedResource reports whether a resource type lives inside a Kubernetes
+// namespace and therefore requires a namespace query parameter for single-object
+// operations (get, update, patch, delete). Resources not listed here are treated
+// as cluster-scoped.
+func isNamespacedResource(resource string) bool {
+	switch resource {
+	case "nodes", "tasks", "pods":
+		return true
+	}
+	return false
+}
+
 // registerAccessors builds the resourceAccessor map for all supported resources.
 func registerAccessors(client versioned.Interface) map[string]*resourceAccessor {
 	return map[string]*resourceAccessor{
@@ -212,6 +224,27 @@ func registerAccessors(client versioned.Interface) map[string]*resourceAccessor 
 			},
 			doDelete: func(ctx context.Context, _, name string, opts metav1.DeleteOptions) error {
 				return client.RlinfV1alpha1().Domains().Delete(ctx, name, opts)
+			},
+		}).accessor(),
+
+		"upgradejobs": (&kubeClient[rlarkiov1alpha1.UpgradeJob]{
+			doList: func(ctx context.Context, _ string, opts metav1.ListOptions) (any, error) {
+				return client.RlinfV1alpha1().UpgradeJobs().List(ctx, opts)
+			},
+			doGet: func(ctx context.Context, _, name string, opts metav1.GetOptions) (*rlarkiov1alpha1.UpgradeJob, error) {
+				return client.RlinfV1alpha1().UpgradeJobs().Get(ctx, name, opts)
+			},
+			doCreate: func(ctx context.Context, _ string, obj *rlarkiov1alpha1.UpgradeJob, opts metav1.CreateOptions) (*rlarkiov1alpha1.UpgradeJob, error) {
+				return client.RlinfV1alpha1().UpgradeJobs().Create(ctx, obj, opts)
+			},
+			doUpdate: func(ctx context.Context, _ string, obj *rlarkiov1alpha1.UpgradeJob, opts metav1.UpdateOptions) (*rlarkiov1alpha1.UpgradeJob, error) {
+				return client.RlinfV1alpha1().UpgradeJobs().Update(ctx, obj, opts)
+			},
+			doPatch: func(ctx context.Context, _, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (*rlarkiov1alpha1.UpgradeJob, error) {
+				return client.RlinfV1alpha1().UpgradeJobs().Patch(ctx, name, pt, data, opts, subresources...)
+			},
+			doDelete: func(ctx context.Context, _, name string, opts metav1.DeleteOptions) error {
+				return client.RlinfV1alpha1().UpgradeJobs().Delete(ctx, name, opts)
 			},
 		}).accessor(),
 	}
@@ -617,6 +650,12 @@ func (g *Gateway) handleGetKube(c *gin.Context, resource string) {
 	name := c.Param("name")
 	namespace := c.Query("namespace")
 
+	if isNamespacedResource(resource) && namespace == "" {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest,
+			"namespace query parameter is required for namespaced resource: "+resource)
+		return
+	}
+
 	result, err := a.get(ctx, namespace, name, metav1.GetOptions{})
 	if err != nil {
 		// Mapped from the Kubernetes reason rather than reported as 404, so that a
@@ -816,7 +855,7 @@ func isTenantResource(resource string) bool {
 	return resource == "workflows" || resource == "jobs" || resource == "tasks"
 }
 
-func (g *Gateway) validateTaskCreateNamespace(ctx context.Context, namespace string) error {
+func (g *Gateway) validateTaskCreateNamespace(ctx context.Context, namespace, lang string) error {
 	clusters, err := g.kubeClient.RlinfV1alpha1().Clusters().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("list Clusters for Task namespace %q: %w", namespace, err)
@@ -826,10 +865,236 @@ func (g *Gateway) validateTaskCreateNamespace(ctx context.Context, namespace str
 			continue
 		}
 		if cluster.Spec.Cordoned || cluster.Spec.Draining || cluster.Spec.Delisted {
-			return fmt.Errorf("cluster %q does not accept new tasks", cluster.Name)
+			return errors.New(localizedMessage(lang,
+				fmt.Sprintf("集群 %q 不接受新任务", cluster.Name),
+				fmt.Sprintf("cluster %q does not accept new tasks", cluster.Name)))
 		}
 	}
 	return nil
+}
+
+// validateTaskUnsuspendNamespace rejects unsuspending a Task whose Cluster is
+// cordoned, draining, or delisted. Unsuspending such a Task would let the data
+// plane resume a workload on a cluster that is being taken offline, bypassing
+// the scheduling-intent boundary that Cordon, Drain, and Delist establish.
+func (g *Gateway) validateTaskUnsuspendNamespace(ctx context.Context, namespace, lang string) error {
+	clusters, err := g.kubeClient.RlinfV1alpha1().Clusters().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("list Clusters for Task namespace %q: %w", namespace, err)
+	}
+	for _, cluster := range clusters.Items {
+		if cluster.Spec.AgentNamespace != namespace {
+			continue
+		}
+		if cluster.Spec.Cordoned || cluster.Spec.Draining || cluster.Spec.Delisted {
+			return errors.New(localizedMessage(lang,
+				fmt.Sprintf("集群 %q 不接受恢复任务", cluster.Name),
+				fmt.Sprintf("cluster %q does not accept unsuspending tasks", cluster.Name)))
+		}
+	}
+	return nil
+}
+
+// validateJobPlacement rejects creating or starting a Job when no Node
+// selected by a task template can accept new workloads. The filter mirrors
+// what the Job controller applies when resolving a Task namespace: cluster
+// health, node schedulability (the Schedulable condition), and node
+// capability (runtime + workload kind). A Job that the controller would
+// never dispatch would otherwise stay Pending forever, so rejecting at the
+// create and start entry points turns that silent wait into an immediate
+// error.
+func (g *Gateway) validateJobPlacement(ctx context.Context, job *rlarkiov1alpha1.Job, lang string) error {
+	clusters, err := g.kubeClient.RlinfV1alpha1().Clusters().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("list Clusters for Job %q: %w", job.Name, err)
+	}
+	clustersByNamespace := make(map[string]*rlarkiov1alpha1.Cluster, len(clusters.Items))
+	for i := range clusters.Items {
+		clustersByNamespace[clusters.Items[i].Spec.AgentNamespace] = &clusters.Items[i]
+	}
+
+	for i := range job.Spec.Tasks {
+		template := &job.Spec.Tasks[i]
+		if len(template.Placement.NodeSelector) == 0 {
+			continue
+		}
+		// List all Nodes and filter client-side using observedNodeLabels plus the
+		// administrator annotations on the management Node CR. metadata.labels on
+		// the CR only carries RLark-owned system labels, so Kubernetes
+		// LabelSelector cannot match data-plane labels or managed annotations such
+		// as gpu-model or rlark.io/node-category-*.
+		nodes, err := g.kubeClient.RlinfV1alpha1().Nodes(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return fmt.Errorf("list Nodes for Job %q: %w", job.Name, err)
+		}
+		selector := template.Placement.NodeSelector
+		filtered := nodes.Items[:0]
+		for j := range nodes.Items {
+			if gatewayNodeMatchesSelector(&nodes.Items[j], selector) {
+				filtered = append(filtered, nodes.Items[j])
+			}
+		}
+		nodes.Items = filtered
+		if len(nodes.Items) == 0 {
+			continue
+		}
+
+		var (
+			blockedNode    string
+			blockedCluster string
+			blockedReason  string // "unavailable" | "unschedulable" | "unsupported"
+			available      bool
+		)
+		for j := range nodes.Items {
+			node := &nodes.Items[j]
+			cluster := clustersByNamespace[node.Namespace]
+			if cluster == nil {
+				if blockedNode == "" {
+					blockedNode = node.Name
+					blockedReason = "nocluster"
+				}
+				continue
+			}
+			if !clusterAcceptsWorkloads(cluster) {
+				if blockedNode == "" {
+					blockedNode = node.Name
+					blockedCluster = cluster.Name
+					blockedReason = "unavailable"
+				}
+				continue
+			}
+			if !nodeReadyForScheduling(node.Status.Conditions) {
+				if blockedNode == "" {
+					blockedNode = node.Name
+					blockedReason = "unschedulable"
+				}
+				continue
+			}
+			if !nodeSupportsJobTask(node, template) {
+				if blockedNode == "" {
+					blockedNode = node.Name
+					blockedReason = "unsupported"
+				}
+				continue
+			}
+			available = true
+			break
+		}
+		if available {
+			continue
+		}
+		switch blockedReason {
+		case "nocluster":
+			return errors.New(localizedMessage(lang,
+				fmt.Sprintf("任务使用的节点 %s 不属于任何可用集群", blockedNode),
+				fmt.Sprintf("node %s used by the job does not belong to an available cluster", blockedNode)))
+		case "unschedulable":
+			return errors.New(localizedMessage(lang,
+				fmt.Sprintf("任务使用的节点 %s 当前不可调度", blockedNode),
+				fmt.Sprintf("node %s used by the job is currently unschedulable", blockedNode)))
+		case "unsupported":
+			return errors.New(localizedMessage(lang,
+				fmt.Sprintf("任务模板 %q 与节点 %s 的运行时能力不匹配", template.Name, blockedNode),
+				fmt.Sprintf("task template %q is not supported by node %s", template.Name, blockedNode)))
+		default: // unavailable
+			return errors.New(localizedMessage(lang,
+				fmt.Sprintf("任务使用的节点 %s 所在集群 %s 不可用或已下架", blockedNode, blockedCluster),
+				fmt.Sprintf("the cluster %s of node %s used by the job is unavailable or delisted", blockedCluster, blockedNode)))
+		}
+	}
+	return nil
+}
+
+// clusterAcceptsWorkloads mirrors the placement filter the Job controller applies
+// when it resolves a Task namespace.
+func clusterAcceptsWorkloads(cluster *rlarkiov1alpha1.Cluster) bool {
+	if !cluster.DeletionTimestamp.IsZero() || cluster.Spec.Cordoned || cluster.Spec.Draining || cluster.Spec.Delisted {
+		return false
+	}
+	return cluster.Status.Phase == rlarkiov1alpha1.ClusterOnline || cluster.Status.Phase == rlarkiov1alpha1.ClusterDowngraded
+}
+
+// gatewayNodeMatchesSelector reports whether a Node's observed labels or
+// administrator-maintained annotations satisfy every entry in selector. Each selector value may be a comma-separated list;
+// the Node matches if its observed label equals any one of the listed values.
+// Uses status.observedNodeLabels rather than metadata.labels because the
+// management Node CR only carries RLark-owned system labels in metadata.labels.
+func gatewayNodeMatchesSelector(node *rlarkiov1alpha1.Node, selector map[string]string) bool {
+	labels := node.Status.ObservedNodeLabels
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	for key, rawValue := range selector {
+		nodeValue, ok := labels[key]
+		if !ok {
+			// Administrator metadata such as rlark.io/node-category-* lives on
+			// the management Node CR as annotations, not on the data plane.
+			nodeValue, ok = node.Annotations[key]
+		}
+		if !ok {
+			return false
+		}
+		values := strings.Split(rawValue, ",")
+		matched := false
+		for _, v := range values {
+			if v == nodeValue {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+// nodeReadyForScheduling reports whether a Node may receive new placement.
+// The Node Controller owns this decision via the Schedulable condition, so the
+// gateway must read that condition rather than re-deriving it.
+func nodeReadyForScheduling(conditions []metav1.Condition) bool {
+	for _, c := range conditions {
+		if c.Type == rlarkiov1alpha1.ConditionTypeSchedulable {
+			return c.Status == metav1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// nodeSupportsJobTask mirrors the runtime + workload-kind filter the Job
+// controller applies in build.go:nodeSupportsTask. Device capacity is not
+// checked here because available capacity changes dynamically and the gateway
+// should not fail creation when the controller would simply select another
+// Node among the same selector matches.
+func nodeSupportsJobTask(node *rlarkiov1alpha1.Node, task *rlarkiov1alpha1.JobTaskTemplate) bool {
+	capabilities := node.Status.CapabilitySnapshot
+	taskRuntime := string(task.Runtime.Kind)
+	taskWorkloadKind := string(task.Workload.Kind)
+	if capabilities.Runtime.Type == "" && len(capabilities.Runtime.WorkloadKinds) == 0 {
+		// Compatibility: an Agent that has not reported a capability snapshot yet
+		// falls back to the declared Node runtime so existing workloads keep
+		// scheduling.
+		var runtimeType string
+		if node.Spec.Runtime.Type != "" {
+			runtimeType = string(node.Spec.Runtime.Type)
+		} else {
+			//nolint:staticcheck // Compatibility: read the deprecated Node field for resources that predate Runtime.Type.
+			runtimeType = string(node.Spec.AgentType)
+		}
+		if runtimeType != "" && runtimeType != taskRuntime {
+			return false
+		}
+		return true
+	}
+	if string(capabilities.Runtime.Type) != taskRuntime {
+		return false
+	}
+	for _, kind := range capabilities.Runtime.WorkloadKinds {
+		if string(kind) == taskWorkloadKind {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Gateway) handleKubeCreate(resource string) gin.HandlerFunc {
@@ -842,6 +1107,12 @@ func (g *Gateway) handleKubeCreate(resource string) gin.HandlerFunc {
 
 		ctx := c.Request.Context()
 		namespace := c.Query("namespace")
+
+		if isNamespacedResource(resource) && namespace == "" {
+			respondError(c, http.StatusBadRequest, CodeInvalidRequest,
+				"namespace query parameter is required for namespaced resource: "+resource)
+			return
+		}
 
 		bodyBytes, err := io.ReadAll(c.Request.Body)
 		if err != nil {
@@ -857,9 +1128,30 @@ func (g *Gateway) handleKubeCreate(resource string) gin.HandlerFunc {
 				respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 				return
 			}
+			// A Job created running starts immediately, so its placement has to be
+			// usable now. A suspended Job is only a template and may be started
+			// later, when the placement is validated again.
+			var job rlarkiov1alpha1.Job
+			if err := json.Unmarshal(bodyBytes, &job); err != nil {
+				respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
+				return
+			}
+			if !job.Spec.Suspended {
+				if err := g.validateJobPlacement(ctx, &job, requestLanguage(c)); err != nil {
+					respondError(c, http.StatusConflict, CodeResourceConflict, err.Error())
+					return
+				}
+			}
+		}
+		if resource == "upgradejobs" {
+			bodyBytes, err = prepareUpgradeJobForCreate(bodyBytes)
+			if err != nil {
+				respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
+				return
+			}
 		}
 		if resource == "tasks" {
-			if err := g.validateTaskCreateNamespace(ctx, namespace); err != nil {
+			if err := g.validateTaskCreateNamespace(ctx, namespace, requestLanguage(c)); err != nil {
 				respondError(c, http.StatusConflict, CodeResourceConflict, err.Error())
 				return
 			}
@@ -932,11 +1224,19 @@ func (g *Gateway) handleKubeUpdate(resource string) gin.HandlerFunc {
 		name := c.Param("name")
 		namespace := c.Query("namespace")
 
+		if isNamespacedResource(resource) && namespace == "" {
+			respondError(c, http.StatusBadRequest, CodeInvalidRequest,
+				"namespace query parameter is required for namespaced resource: "+resource)
+			return
+		}
+
 		bodyBytes, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 			return
 		}
+		var startedJob *rlarkiov1alpha1.Job
+		var startedTask *rlarkiov1alpha1.Task
 		if isTenantResource(resource) {
 			scope, ok := g.tenantScopeFor(c, resource)
 			if !ok {
@@ -962,6 +1262,50 @@ func (g *Gateway) handleKubeUpdate(resource string) gin.HandlerFunc {
 				respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 				return
 			}
+			// Reject unsuspending a Task whose Cluster is cordoned, draining, or
+			// delisted. The existing Task is fetched above for tenant
+			// authorization, so its current Spec.Suspended is authoritative.
+			if resource == "tasks" {
+				existingTask, ok := any(existing).(*rlarkiov1alpha1.Task)
+				if !ok {
+					respondError(c, http.StatusInternalServerError, CodeInternalError, "task is unavailable")
+					return
+				}
+				var incoming rlarkiov1alpha1.Task
+				if err := json.Unmarshal(bodyBytes, &incoming); err != nil {
+					respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
+					return
+				}
+				if existingTask.Spec.Suspended && !incoming.Spec.Suspended {
+					if err := g.validateTaskUnsuspendNamespace(ctx, namespace, requestLanguage(c)); err != nil {
+						respondError(c, http.StatusConflict, CodeResourceConflict, err.Error())
+						return
+					}
+					startedTask = existingTask
+				}
+			}
+			// Reject starting a Job whose selected Nodes belong to unavailable or
+			// delisted Clusters, matching the placement filter the Job controller
+			// applies afterwards.
+			if resource == "jobs" {
+				existingJob, ok := any(existing).(*rlarkiov1alpha1.Job)
+				if !ok {
+					respondError(c, http.StatusInternalServerError, CodeInternalError, "job is unavailable")
+					return
+				}
+				var incoming rlarkiov1alpha1.Job
+				if err := json.Unmarshal(bodyBytes, &incoming); err != nil {
+					respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
+					return
+				}
+				if existingJob.Spec.Suspended && !incoming.Spec.Suspended {
+					if err := g.validateJobPlacement(ctx, &incoming, requestLanguage(c)); err != nil {
+						respondError(c, http.StatusConflict, CodeResourceConflict, err.Error())
+						return
+					}
+					startedJob = existingJob
+				}
+			}
 		}
 
 		if resource == "nodes" && !nodeUpdateAllowed(c, a, namespace, name, bodyBytes) {
@@ -974,6 +1318,29 @@ func (g *Gateway) handleKubeUpdate(resource string) gin.HandlerFunc {
 		if err != nil {
 			respondCreateError(c, err)
 			return
+		}
+		// A Job or Task a cluster or node drain stopped keeps its marker across
+		// uncordon and undrain. An explicit unsuspend is the resume action, so
+		// release the markers once the stored object accepted the new desired state.
+		if startedJob != nil {
+			if err := g.clearClusterDrainStopsForJob(ctx, startedJob); err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+			if err := g.clearNodeDrainStopsForJob(ctx, startedJob); err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+		}
+		if startedTask != nil {
+			if err := clearClusterDrainStop(ctx, g.kubeClient, startedTask); err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+			if err := clearNodeDrainStop(ctx, g.kubeClient, startedTask); err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
 		}
 		c.JSON(http.StatusOK, result)
 	}
@@ -991,6 +1358,12 @@ func (g *Gateway) handleKubePatch(resource string) gin.HandlerFunc {
 		name := c.Param("name")
 		namespace := c.Query("namespace")
 
+		if isNamespacedResource(resource) && namespace == "" {
+			respondError(c, http.StatusBadRequest, CodeInvalidRequest,
+				"namespace query parameter is required for namespaced resource: "+resource)
+			return
+		}
+
 		bodyBytes, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
@@ -999,6 +1372,8 @@ func (g *Gateway) handleKubePatch(resource string) gin.HandlerFunc {
 		if !g.authorizeTenantObjectByName(c, resource, namespace, name) {
 			return
 		}
+		var startedJob *rlarkiov1alpha1.Job
+		var startedTask *rlarkiov1alpha1.Task
 		if isTenantResource(resource) {
 			var patch map[string]any
 			if json.Unmarshal(bodyBytes, &patch) != nil {
@@ -1011,6 +1386,73 @@ func (g *Gateway) handleKubePatch(resource string) gin.HandlerFunc {
 				}
 				if annotations, ok := metadata["annotations"].(map[string]any); ok {
 					delete(annotations, tenant.CreatedByAnnotation)
+				}
+			}
+			// Reject unsuspending a Task whose Cluster is cordoned, draining, or
+			// delisted. A merge patch sets spec.suspended only when the caller
+			// intends to change it; fetch the current Task to distinguish an
+			// actual unsuspend from a no-op write of the existing value.
+			if resource == "tasks" {
+				if spec, ok := patch["spec"].(map[string]any); ok {
+					if suspended, ok := spec["suspended"].(bool); ok && !suspended {
+						existing, getErr := a.get(ctx, namespace, name, metav1.GetOptions{})
+						if getErr != nil {
+							respondKubeError(c, getErr.Error(), getErr)
+							return
+						}
+						existingTask, ok := any(existing).(*rlarkiov1alpha1.Task)
+						if ok && existingTask.Spec.Suspended {
+							if err := g.validateTaskUnsuspendNamespace(ctx, namespace, requestLanguage(c)); err != nil {
+								respondError(c, http.StatusConflict, CodeResourceConflict, err.Error())
+								return
+							}
+							startedTask = existingTask
+						}
+					}
+				}
+			}
+			// Reject starting a Job whose selected Nodes belong to unavailable or
+			// delisted Clusters. Restart is expressed as this patch, so the guard
+			// has to cover it as well as POST /jobs/:name/start.
+			if resource == "jobs" {
+				if spec, ok := patch["spec"].(map[string]any); ok {
+					if suspended, ok := spec["suspended"].(bool); ok && !suspended {
+						existing, getErr := a.get(ctx, namespace, name, metav1.GetOptions{})
+						if getErr != nil {
+							respondKubeError(c, getErr.Error(), getErr)
+							return
+						}
+						existingJob, ok := any(existing).(*rlarkiov1alpha1.Job)
+						if ok {
+							// A Job whose Tasks a cluster or node drain stopped is not
+							// suspended itself, so the markers identify a resume here.
+							stoppedByClusterDrain, checkErr := g.jobHasClusterDrainStops(ctx, existingJob)
+							if checkErr != nil {
+								respondError(c, http.StatusInternalServerError, CodeInternalError, checkErr.Error())
+								return
+							}
+							stoppedByNodeDrain, checkErr := g.jobHasNodeDrainStops(ctx, existingJob)
+							if checkErr != nil {
+								respondError(c, http.StatusInternalServerError, CodeInternalError, checkErr.Error())
+								return
+							}
+							if existingJob.Spec.Suspended || stoppedByClusterDrain || stoppedByNodeDrain {
+								// The patch may change the placement in the same request
+								// that starts the Job, so validate the configuration the
+								// server will store rather than the one it holds now.
+								mergedJob := existingJob.DeepCopy()
+								if err := json.Unmarshal(bodyBytes, mergedJob); err != nil {
+									respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
+									return
+								}
+								if err := g.validateJobPlacement(ctx, mergedJob, requestLanguage(c)); err != nil {
+									respondError(c, http.StatusConflict, CodeResourceConflict, err.Error())
+									return
+								}
+							}
+							startedJob = existingJob
+						}
+					}
 				}
 			}
 			bodyBytes, err = json.Marshal(patch)
@@ -1031,6 +1473,29 @@ func (g *Gateway) handleKubePatch(resource string) gin.HandlerFunc {
 			respondCreateError(c, err)
 			return
 		}
+		// A Job or Task a cluster drain stopped keeps its marker across uncordon.
+		// An explicit unsuspend is the resume action, so release the marker once the
+		// patch accepted the new desired state.
+		if startedJob != nil {
+			if err := g.clearClusterDrainStopsForJob(ctx, startedJob); err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+			if err := g.clearNodeDrainStopsForJob(ctx, startedJob); err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+		}
+		if startedTask != nil {
+			if err := clearClusterDrainStop(ctx, g.kubeClient, startedTask); err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+			if err := clearNodeDrainStop(ctx, g.kubeClient, startedTask); err != nil {
+				respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+				return
+			}
+		}
 		c.JSON(http.StatusOK, result)
 	}
 }
@@ -1046,6 +1511,12 @@ func (g *Gateway) handleKubeDelete(resource string) gin.HandlerFunc {
 		ctx := c.Request.Context()
 		name := c.Param("name")
 		namespace := c.Query("namespace")
+
+		if isNamespacedResource(resource) && namespace == "" {
+			respondError(c, http.StatusBadRequest, CodeInvalidRequest,
+				"namespace query parameter is required for namespaced resource: "+resource)
+			return
+		}
 
 		if !g.authorizeTenantObjectByName(c, resource, namespace, name) {
 			return

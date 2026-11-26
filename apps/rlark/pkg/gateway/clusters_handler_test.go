@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/gin-gonic/gin"
 	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
@@ -155,6 +157,7 @@ func TestClusterLifecycleResponseIncludesClusterNodes(t *testing.T) {
 	cluster := &rlarkv1alpha1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"},
 		Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "rlark-agent-a"},
+		Status:     rlarkv1alpha1.ClusterStatus{TotalNodes: 1, OnlineNodes: 1, ReadyNodes: 1},
 	}
 	node := &rlarkv1alpha1.Node{
 		ObjectMeta: metav1.ObjectMeta{
@@ -326,6 +329,163 @@ func TestUncordonClusterTransition(t *testing.T) {
 	}
 }
 
+func TestUncordonClusterKeepsDrainStoppedTasksStopped(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cluster := &rlarkv1alpha1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a", Generation: 2},
+		Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "rlark-agent-a", Cordoned: true, Draining: true},
+		Status: rlarkv1alpha1.ClusterStatus{Conditions: []metav1.Condition{{
+			Type:               rlarkv1alpha1.ConditionTypeProgressing,
+			Status:             metav1.ConditionFalse,
+			Reason:             "DrainComplete",
+			ObservedGeneration: 2,
+		}}},
+	}
+	evicted := &rlarkv1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: "standalone", Namespace: "rlark-agent-a", Annotations: map[string]string{
+			rlarkv1alpha1.ClusterStoppedAnnotation:        "true",
+			rlarkv1alpha1.ClusterDrainSuspendedAnnotation: "true",
+		}},
+		Spec: rlarkv1alpha1.TaskSpec{Suspended: true},
+	}
+	gateway := &Gateway{kubeClient: clientset.NewSimpleClientset(cluster, evicted)}
+	router := gin.New()
+	router.POST("/clusters/:cluster_id/uncordon", gateway.uncordonCluster)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/clusters/cluster-a/uncordon", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	gotCluster, err := gateway.kubeClient.RlinfV1alpha1().Clusters().Get(context.Background(), "cluster-a", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCluster.Spec.Cordoned || gotCluster.Spec.Draining {
+		t.Fatalf("uncordon must restore scheduling: %#v", gotCluster.Spec)
+	}
+	gotTask, err := gateway.kubeClient.RlinfV1alpha1().Tasks("rlark-agent-a").Get(context.Background(), "standalone", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gotTask.Spec.Suspended {
+		t.Fatal("uncordon must not resume a Task the cluster drain stopped")
+	}
+	if gotTask.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "true" ||
+		gotTask.Annotations[rlarkv1alpha1.ClusterDrainSuspendedAnnotation] != "true" {
+		t.Fatalf("uncordon must keep the drain stop markers: %#v", gotTask.Annotations)
+	}
+}
+
+func TestUndrainClusterReleasesDrainStoppedTasks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cluster := &rlarkv1alpha1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"},
+		Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "rlark-agent-a", Cordoned: true, Draining: true},
+	}
+	drained := &rlarkv1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: "drain-suspended", Namespace: "rlark-agent-a", Annotations: map[string]string{
+			rlarkv1alpha1.ClusterStoppedAnnotation:        "true",
+			rlarkv1alpha1.ClusterDrainSuspendedAnnotation: "true",
+		}},
+		Spec: rlarkv1alpha1.TaskSpec{Suspended: true},
+	}
+	userSuspended := &rlarkv1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: "user-suspended", Namespace: "rlark-agent-a", Annotations: map[string]string{
+			rlarkv1alpha1.ClusterStoppedAnnotation: "true",
+		}},
+		Spec: rlarkv1alpha1.TaskSpec{Suspended: true},
+	}
+	gateway := &Gateway{kubeClient: clientset.NewSimpleClientset(cluster, drained, userSuspended)}
+	router := gin.New()
+	router.POST("/clusters/:cluster_id/undrain", gateway.undrainCluster)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/clusters/cluster-a/undrain", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	gotDrained, err := gateway.kubeClient.RlinfV1alpha1().Tasks("rlark-agent-a").Get(context.Background(), "drain-suspended", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotDrained.Spec.Suspended ||
+		gotDrained.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "" ||
+		gotDrained.Annotations[rlarkv1alpha1.ClusterDrainSuspendedAnnotation] != "" {
+		t.Fatalf("cancelling the drain must resume the Task it suspended: %#v", gotDrained)
+	}
+	gotUser, err := gateway.kubeClient.RlinfV1alpha1().Tasks("rlark-agent-a").Get(context.Background(), "user-suspended", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gotUser.Spec.Suspended || gotUser.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "" {
+		t.Fatalf("cancelling the drain must keep a user suspension: %#v", gotUser)
+	}
+}
+
+func TestClearClusterDrainStopsForJobReleasesOnlyOwnedTasks(t *testing.T) {
+	job := &rlarkv1alpha1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "job-a", Namespace: "tenant-a", UID: types.UID("job-a-uid")},
+	}
+	owned := &rlarkv1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "job-a-worker",
+			Namespace: "rlark-agent-a",
+			Labels:    map[string]string{taskJobLabel: job.Name},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: rlarkv1alpha1.GroupVersion.String(),
+				Kind:       "Job",
+				Name:       job.Name,
+				UID:        job.UID,
+				Controller: ptrBool(true),
+			}},
+			Annotations: map[string]string{rlarkv1alpha1.ClusterStoppedAnnotation: "true"},
+		},
+		Spec: rlarkv1alpha1.TaskSpec{Suspended: true},
+	}
+	otherJobTask := &rlarkv1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "job-b-worker",
+			Namespace: "rlark-agent-a",
+			Labels:    map[string]string{taskJobLabel: "job-b"},
+			Annotations: map[string]string{
+				rlarkv1alpha1.ClusterStoppedAnnotation: "true",
+			},
+		},
+	}
+	gateway := &Gateway{kubeClient: clientset.NewSimpleClientset(owned, otherJobTask)}
+
+	stopped, err := gateway.jobHasClusterDrainStops(context.Background(), job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stopped {
+		t.Fatal("expected the Job to report drain-stopped Tasks")
+	}
+	if err := gateway.clearClusterDrainStopsForJob(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+
+	gotOwned, err := gateway.kubeClient.RlinfV1alpha1().Tasks("rlark-agent-a").Get(context.Background(), owned.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOwned.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "" || !gotOwned.Spec.Suspended {
+		t.Fatalf("owned Task marker not cleared without touching its suspension: %#v", gotOwned)
+	}
+	gotOther, err := gateway.kubeClient.RlinfV1alpha1().Tasks("rlark-agent-a").Get(context.Background(), otherJobTask.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOther.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "true" {
+		t.Fatalf("Task owned by another Job was changed: %#v", gotOther.Annotations)
+	}
+}
+
+func ptrBool(value bool) *bool {
+	return &value
+}
+
 func TestBuildClusterInfoUsesCityMetadata(t *testing.T) {
 	nodes := []rlarkv1alpha1.Node{{
 		ObjectMeta: metav1.ObjectMeta{
@@ -341,7 +501,7 @@ func TestBuildClusterInfoUsesCityMetadata(t *testing.T) {
 		},
 	}}
 
-	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes)
+	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes, 0)
 	if info.Location != "annotation-city" {
 		t.Fatalf("expected annotation city, got %q", info.Location)
 	}
@@ -355,7 +515,7 @@ func TestBuildClusterInfoFallsBackToCityLabel(t *testing.T) {
 		}},
 	}}
 
-	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes)
+	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes, 0)
 	if info.Location != "label-city" {
 		t.Fatalf("expected label city, got %q", info.Location)
 	}
@@ -382,13 +542,76 @@ func TestBuildClusterInfoBooleanCategoryLabel(t *testing.T) {
 		},
 	}
 
-	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes)
+	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes, 0)
 	if info.Type != "Cloud" {
 		t.Fatalf("expected Cloud, got %q (cloud=%d embodied=%d robots=%d)",
 			info.Type, info.CloudNodes, info.EmbodiedNodes, info.Robots)
 	}
 	if info.CloudNodes != 2 {
 		t.Fatalf("expected 2 cloud nodes, got %d", info.CloudNodes)
+	}
+}
+
+// 分类由管理面写入 Node CR 的 Annotation；Annotation 优先于旧 Label 形式。
+func TestBuildClusterInfoBooleanCategoryAnnotation(t *testing.T) {
+	nodes := []rlarkv1alpha1.Node{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					rlarkv1alpha1.LabelClusterID:               "cluster-a",
+					rlarkv1alpha1.LabelNodeCategory + "-cloud": "false",
+				},
+				Annotations: map[string]string{
+					rlarkv1alpha1.LabelNodeCategory + "-cloud": "true",
+				},
+			},
+			Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline},
+		},
+	}
+
+	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes, 0)
+	if info.Type != "Cloud" {
+		t.Fatalf("expected Cloud, got %q (cloud=%d embodied=%d robots=%d)",
+			info.Type, info.CloudNodes, info.EmbodiedNodes, info.Robots)
+	}
+}
+
+// GPU / 设备型号同样由管理面 Annotation 提供；旧 rlark.io/model Label 仅作回退。
+func TestBuildClusterInfoModelsFromAnnotations(t *testing.T) {
+	nodes := []rlarkv1alpha1.Node{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					rlarkv1alpha1.LabelClusterID:               "cluster-a",
+					rlarkv1alpha1.LabelNodeCategory + "-cloud": "true",
+					"rlark.io/model":                           "legacy-gpu",
+				},
+				Annotations: map[string]string{
+					"rlark.io/gpu-model": "A100",
+				},
+			},
+			Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					rlarkv1alpha1.LabelClusterID:               "cluster-a",
+					rlarkv1alpha1.LabelNodeCategory + "-robot": "true",
+				},
+				Annotations: map[string]string{
+					"rlark.io/device-model": "Unitree G1",
+				},
+			},
+			Status: rlarkv1alpha1.NodeStatus{Phase: rlarkv1alpha1.NodeOnline},
+		},
+	}
+
+	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes, 0)
+	if len(info.GPUModels) != 1 || info.GPUModels[0] != "A100" {
+		t.Fatalf("expected GPU models from annotation, got %v", info.GPUModels)
+	}
+	if len(info.RobotModels) != 1 || info.RobotModels[0] != "Unitree G1" {
+		t.Fatalf("expected robot models from annotation, got %v", info.RobotModels)
 	}
 }
 
@@ -400,7 +623,7 @@ func TestBuildClusterInfoUsesClusterStatus(t *testing.T) {
 		Status:     rlarkv1alpha1.ClusterStatus{Phase: rlarkv1alpha1.ClusterDowngraded},
 	}
 
-	info := buildClusterInfo(cluster, nil)
+	info := buildClusterInfo(cluster, nil, 0)
 	if info.Phase != rlarkv1alpha1.ClusterDowngraded {
 		t.Fatalf("expected Downgraded, got %q", info.Phase)
 	}
@@ -427,7 +650,7 @@ func TestBuildClusterInfoMixedCategoryLabelForms(t *testing.T) {
 		},
 	}
 
-	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes)
+	info := buildClusterInfo(rlarkv1alpha1.Cluster{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}}, nodes, 0)
 	if info.Type != "Hybrid" {
 		t.Fatalf("expected Hybrid, got %q (cloud=%d embodied=%d robots=%d)",
 			info.Type, info.CloudNodes, info.EmbodiedNodes, info.Robots)

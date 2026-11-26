@@ -33,12 +33,14 @@ function roleResource(role) {
 
 // 四个业务角色里 Actor/t1/t2 都会被 mapTaskRole 折叠成 "Actor"，
 // Env 折叠成 "Env"，因此 task.role 只剩两个不同取值。
+// 自定义类型会原样写回角色名（见 job-type-and-yaml.test.mjs），这里用 RL 类型
+// 才能覆盖“被折叠”的场景。
 const FOUR_ROLES = ["Actor", "Env", "t1", "t2"];
 
 test("crdToJob 的角色数量按角色名统计，而不是按粗粒度分类", () => {
   const crd = generateJobCRD({
     name: "jo-e89a97ca9a5c46ff",
-    type: "Custom",
+    type: "RL",
     headerRole: "Actor",
     roles: FOUR_ROLES,
     roleResources: Object.fromEntries(

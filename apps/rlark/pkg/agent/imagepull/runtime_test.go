@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/go-logr/logr/testr"
@@ -25,6 +26,28 @@ func TestRuntimeFor(t *testing.T) {
 	for _, c := range cases {
 		if got := RuntimeFor(c.in); got != c.want {
 			t.Errorf("RuntimeFor(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestCandidateImageRefs(t *testing.T) {
+	cases := []struct {
+		image string
+		want  []string
+	}{
+		// Already normalized: only the raw reference is probed.
+		{"docker.io/library/nginx:1.25", []string{"docker.io/library/nginx:1.25"}},
+		// CRI stores the normalized reference; the raw name must be tried first
+		// so an exact match still wins.
+		{"pytorch/pytorch:2.3.0", []string{"pytorch/pytorch:2.3.0", "docker.io/pytorch/pytorch:2.3.0"}},
+		// Implicit ":latest" is added by CRI normalization.
+		{"nginx", []string{"nginx", "docker.io/library/nginx:latest"}},
+		// Unparseable references fall back to the raw value.
+		{"", []string{""}},
+	}
+	for _, c := range cases {
+		if got := candidateImageRefs(c.image); !slices.Equal(got, c.want) {
+			t.Errorf("candidateImageRefs(%q) = %v, want %v", c.image, got, c.want)
 		}
 	}
 }

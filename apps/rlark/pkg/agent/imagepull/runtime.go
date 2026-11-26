@@ -23,6 +23,7 @@ import (
 
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/errdefs"
+	"github.com/distribution/reference"
 	"github.com/go-logr/logr"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -118,6 +119,9 @@ type containerdPuller struct {
 	namespace string
 	log       logr.Logger
 }
+
+// Close releases the process-owned runtime connection after monitoring stops.
+func (p *containerdPuller) Close() error { return p.client.Close() }
 
 func (p *containerdPuller) Pull(ctx context.Context, image string, reporter ProgressReporter) error {
 	// Fast path: image already exists locally.
@@ -284,7 +288,17 @@ func (p *containerdPuller) ImageExists(ctx context.Context, image string) (bool,
 
 // imageExists checks whether the image is present in the containerd image store.
 func (p *containerdPuller) imageExists(ctx context.Context, image string) (bool, error) {
-	_, err := p.client.ImageService().Get(ctx, image)
+	for _, ref := range candidateImageRefs(image) {
+		exists, err := p.imageExistsByRef(ctx, ref)
+		if err != nil || exists {
+			return exists, err
+		}
+	}
+	return false, nil
+}
+
+func (p *containerdPuller) imageExistsByRef(ctx context.Context, ref string) (bool, error) {
+	_, err := p.client.ImageService().Get(ctx, ref)
 	if err != nil {
 		if errdefs.IsNotFound(err) {
 			return false, nil
@@ -292,6 +306,25 @@ func (p *containerdPuller) imageExists(ctx context.Context, image string) (bool,
 		return false, err
 	}
 	return true, nil
+}
+
+// candidateImageRefs returns the references to probe for image existence, in
+// order: the value written in the Task spec first, then the Docker-normalized
+// form that containerd's CRI plugin stores. CRI normalizes the reference
+// before pulling (for example "pytorch/pytorch:2.3.0" becomes
+// "docker.io/pytorch/pytorch:2.3.0"), so probing only the raw value would
+// never observe image creation for names without a registry host or tag and
+// would leave the pull monitor running forever.
+func candidateImageRefs(image string) []string {
+	refs := []string{image}
+	normalized, err := reference.ParseDockerRef(image)
+	if err != nil {
+		return refs
+	}
+	if ref := normalized.String(); ref != image {
+		refs = append(refs, ref)
+	}
+	return refs
 }
 
 // --- docker ---

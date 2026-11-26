@@ -33,6 +33,14 @@ type ClusterListerExpansion interface{}
 // ClusterProvisionLister.
 type ClusterProvisionListerExpansion interface{}
 
+// ClusterUpgradeJobListerExpansion allows custom methods to be added to
+// ClusterUpgradeJobLister.
+type ClusterUpgradeJobListerExpansion interface{}
+
+// ClusterUpgradeJobNamespaceListerExpansion allows custom methods to be added to
+// ClusterUpgradeJobNamespaceLister.
+type ClusterUpgradeJobNamespaceListerExpansion interface{}
+
 // DomainListerExpansion allows custom methods to be added to
 // DomainLister.
 type DomainListerExpansion interface{}
@@ -76,6 +84,10 @@ type TaskListerExpansion interface{}
 // TaskNamespaceListerExpansion allows custom methods to be added to
 // TaskNamespaceLister.
 type TaskNamespaceListerExpansion interface{}
+
+// UpgradeJobListerExpansion allows custom methods to be added to
+// UpgradeJobLister.
+type UpgradeJobListerExpansion interface{}
 
 // WorkflowListerExpansion allows custom methods to be added to
 // WorkflowLister.

@@ -137,7 +137,7 @@ func TestObservePerNodeTaskCountsOnlyInstancesOnReadyNodes(t *testing.T) {
 				Spec:   appsv1.DaemonSetSpec{UpdateStrategy: appsv1.DaemonSetUpdateStrategy{Type: appsv1.OnDeleteDaemonSetStrategyType}},
 				Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: int32(len(test.instances))}}
 			manifest, _ := json.Marshal(object)
-			phase, message, err := kubernetesworkload.ObserveObject(kubernetesworkload.CarrierDaemonSet, manifest, agentruntime.InstanceSnapshot{Instances: test.instances})
+			phase, message, err := kubernetesworkload.ObserveObject(kubernetesworkload.CarrierDaemonSet, agentruntime.Object{Manifest: agentruntime.TypedManifest{Object: manifest}}, agentruntime.InstanceSnapshot{Instances: test.instances})
 			if err != nil {
 				t.Fatal(err)
 			}

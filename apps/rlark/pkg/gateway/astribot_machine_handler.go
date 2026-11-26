@@ -166,7 +166,8 @@ func machineView(object *unstructured.Unstructured, joins map[string]*machineJoi
 	view.IdentityVerified = text("status", "identityVerified")
 	view.IdentityReason = text("status", "identityReason")
 	if nodeJoin, found, _ := unstructured.NestedMap(object.Object, "status", "nodeJoin"); found {
-		view.NodeJoin = &machineNodeJoin{Phase: stringValue(nodeJoin["phase"]), Stage: stringValue(nodeJoin["stage"]), Reason: stringValue(nodeJoin["reason"])}
+		reason := stringValue(nodeJoin["reason"])
+		view.NodeJoin = &machineNodeJoin{Phase: stringValue(nodeJoin["phase"]), Stage: stringValue(nodeJoin["stage"]), Reason: reason}
 	}
 	if view.NodeJoin == nil {
 		if join := joins[object.GetName()]; join != nil {
@@ -263,7 +264,8 @@ func (g *Gateway) machineJoins(ctx context.Context) (map[string]*machineJoin, er
 		phase, stage := string(join.Status.Phase), join.Status.Stage
 		annotations := join.Annotations
 		if machineName != "" {
-			joinOf[machineName] = &machineJoin{Phase: phase, Stage: stage, Reason: annotations["station.rlark.io/join-reason"], MachineType: annotations["station.rlark.io/machine-type"], MachineModel: annotations["station.rlark.io/machine-model"]}
+			reason := annotations["station.rlark.io/join-reason"]
+			joinOf[machineName] = &machineJoin{Phase: phase, Stage: stage, Reason: reason, MachineType: annotations["station.rlark.io/machine-type"], MachineModel: annotations["station.rlark.io/machine-model"]}
 		}
 	}
 	return joinOf, nil

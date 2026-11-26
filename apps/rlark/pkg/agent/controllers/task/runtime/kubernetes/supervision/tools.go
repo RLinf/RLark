@@ -1,7 +1,6 @@
 package supervision
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/kubernetes/podunit"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/fault"
 	executionplan "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/plan"
+	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
 const (
@@ -81,7 +81,7 @@ func applyTools(spec *corev1.PodSpec, image string) error {
 func ensureNamedVolume(spec *corev1.PodSpec, desired corev1.Volume) error {
 	for _, existing := range spec.Volumes {
 		if existing.Name == desired.Name {
-			if !jsonEqual(existing, desired) {
+			if !utils.JSONEqual(existing, desired) {
 				return fault.New(fault.Conflict, "RLark tools volume name is already used by a non-equivalent volume")
 			}
 			return nil
@@ -94,7 +94,7 @@ func ensureNamedVolume(spec *corev1.PodSpec, desired corev1.Volume) error {
 func ensureNamedMount(container *corev1.Container, desired corev1.VolumeMount) error {
 	for _, existing := range container.VolumeMounts {
 		if existing.Name == desired.Name || existing.MountPath == desired.MountPath {
-			if !jsonEqual(existing, desired) {
+			if !utils.JSONEqual(existing, desired) {
 				return fault.New(fault.Conflict, "RLark tools mount conflicts with an existing main-container mount")
 			}
 			return nil
@@ -107,7 +107,7 @@ func ensureNamedMount(container *corev1.Container, desired corev1.VolumeMount) e
 func ensureNamedInitContainer(spec *corev1.PodSpec, desired corev1.Container) error {
 	for _, existing := range append(append([]corev1.Container(nil), spec.InitContainers...), spec.Containers...) {
 		if existing.Name == desired.Name {
-			if !jsonEqual(existing, desired) {
+			if !utils.JSONEqual(existing, desired) {
 				return fault.New(fault.Conflict, "RLark tools init-container name is already used by a non-equivalent container")
 			}
 			return nil
@@ -115,10 +115,4 @@ func ensureNamedInitContainer(spec *corev1.PodSpec, desired corev1.Container) er
 	}
 	spec.InitContainers = append(spec.InitContainers, desired)
 	return nil
-}
-
-func jsonEqual(left, right any) bool {
-	a, _ := json.Marshal(left)
-	b, _ := json.Marshal(right)
-	return string(a) == string(b)
 }

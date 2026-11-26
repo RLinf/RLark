@@ -8,6 +8,7 @@ import {
   ROLE_NAME_MAX_LENGTH,
   selectorToStr,
 } from "../utils/job";
+import { getNodeAllLabels } from "../utils/nodes";
 
 export function NodeSelectorPicker({
   value,
@@ -38,7 +39,9 @@ export function NodeSelectorPicker({
 
   const labelMap: Record<string, Set<string>> = {};
   for (const n of clusterNodes) {
-    const labels = n.metadata.labels ?? {};
+    const labels = getNodeAllLabels(
+      n as Parameters<typeof getNodeAllLabels>[0],
+    );
     for (const [k, v] of Object.entries(labels)) {
       if (!k.startsWith("kubernetes.io/") && !k.startsWith("rlark.io/"))
         continue;
@@ -49,7 +52,9 @@ export function NodeSelectorPicker({
   }
 
   const matchedNodes = clusterNodes.filter((n) => {
-    const labels = n.metadata.labels ?? {};
+    const labels = getNodeAllLabels(
+      n as Parameters<typeof getNodeAllLabels>[0],
+    );
     return Object.entries(selectorMap).every(([k, v]) => {
       const values = v.split(",");
       return labels[k] !== undefined && values.includes(labels[k]);

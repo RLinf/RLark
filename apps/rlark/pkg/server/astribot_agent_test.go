@@ -27,7 +27,7 @@ func TestHeartbeatOnlyForAReadyAgent(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
 		kubeClient := fake.NewSimpleClientset()
-		server := NewServer(Config{})
+		server := NewServer(DefaultConfig())
 		server.kubeClient = kubeClient
 		server.rlarkClient = clientset.NewSimpleClientset()
 		ginContext, _ := gin.CreateTestContext(httptest.NewRecorder())

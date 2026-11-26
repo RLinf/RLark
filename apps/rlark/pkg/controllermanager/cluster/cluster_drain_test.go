@@ -126,95 +126,6 @@ func TestDrainTasksSkipsTerminalTasksAndSuspendsStandaloneTasks(t *testing.T) {
 	}
 }
 
-func TestClearDrainTaskMarkersOnlyClearsTasksInAgentNamespace(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
-	}
-	cluster := &rlarkv1alpha1.Cluster{
-		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"},
-		Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "cluster-a"},
-	}
-	targetTask := drainTestTask("target", "cluster-a")
-	targetTask.Annotations = map[string]string{rlarkv1alpha1.ClusterStoppedAnnotation: "true", "keep": "value"}
-	otherTask := drainTestTask("other", "cluster-b")
-	otherTask.Annotations = map[string]string{rlarkv1alpha1.ClusterStoppedAnnotation: "true"}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, targetTask, otherTask).Build()
-	r := &Reconciler{Client: c, Scheme: scheme}
-
-	if err := r.clearDrainTaskMarkers(context.Background(), cluster); err != nil {
-		t.Fatal(err)
-	}
-
-	var got rlarkv1alpha1.Task
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(targetTask), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "" || got.Annotations["keep"] != "value" {
-		t.Fatalf("target Task drain marker was not cleared safely: %#v", got.Annotations)
-	}
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(otherTask), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "true" {
-		t.Fatalf("Task outside cluster was changed: %#v", got.Annotations)
-	}
-}
-
-func TestClearDrainTaskMarkersResumesOnlyDrainSuspendedStandaloneTasks(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
-	}
-	cluster := &rlarkv1alpha1.Cluster{
-		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"},
-		Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "cluster-a", Draining: true},
-	}
-	drainSuspended := drainTestTask("drain-suspended", "cluster-a")
-	userSuspended := drainTestTask("user-suspended", "cluster-a")
-	userSuspended.Spec.Suspended = true
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, drainSuspended, userSuspended).Build()
-	r := &Reconciler{Client: c, Scheme: scheme}
-
-	if _, _, err := r.drainTasks(context.Background(), cluster); err != nil {
-		t.Fatal(err)
-	}
-
-	var got rlarkv1alpha1.Task
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(drainSuspended), &got); err != nil {
-		t.Fatal(err)
-	}
-	if !got.Spec.Suspended || got.Annotations[rlarkv1alpha1.ClusterDrainSuspendedAnnotation] != "true" {
-		t.Fatalf("drain must record that it suspended the standalone Task: %#v", got)
-	}
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(userSuspended), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Annotations[rlarkv1alpha1.ClusterDrainSuspendedAnnotation] != "" {
-		t.Fatalf("drain must not claim a suspension it did not write: %#v", got.Annotations)
-	}
-
-	cluster.Spec.Draining = false
-	if err := r.clearDrainTaskMarkers(context.Background(), cluster); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(drainSuspended), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Spec.Suspended ||
-		got.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "" ||
-		got.Annotations[rlarkv1alpha1.ClusterDrainSuspendedAnnotation] != "" {
-		t.Fatalf("cancelling the drain must resume the Task it suspended: %#v", got)
-	}
-	if err := c.Get(context.Background(), client.ObjectKeyFromObject(userSuspended), &got); err != nil {
-		t.Fatal(err)
-	}
-	if !got.Spec.Suspended || got.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "" {
-		t.Fatalf("cancelling the drain must keep a user suspension: %#v", got)
-	}
-}
-
 func TestDrainTasksRejectsEmptyAgentNamespace(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
@@ -227,9 +138,6 @@ func TestDrainTasksRejectsEmptyAgentNamespace(t *testing.T) {
 
 	if _, _, err := reconciler.drainTasks(context.Background(), cluster); err == nil {
 		t.Fatal("expected drain to reject an empty agent namespace")
-	}
-	if err := reconciler.clearDrainTaskMarkers(context.Background(), cluster); err == nil {
-		t.Fatal("expected marker cleanup to reject an empty agent namespace")
 	}
 
 	var unchanged rlarkv1alpha1.Task
@@ -244,5 +152,39 @@ func TestDrainTasksRejectsEmptyAgentNamespace(t *testing.T) {
 func drainTestTask(name, namespace string) *rlarkv1alpha1.Task {
 	return &rlarkv1alpha1.Task{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: rlarkv1alpha1.TaskSpec{
+			Runtime: rlarkv1alpha1.TaskRuntimeSpec{Kind: "Kubernetes"},
+		},
+	}
+}
+
+func TestDrainTasksIgnoresTasksThatCannotHoldWorkload(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := rlarkv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	cluster := &rlarkv1alpha1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"},
+		Spec:       rlarkv1alpha1.ClusterSpec{AgentNamespace: "cluster-a", Draining: true},
+	}
+	inert := drainTestTask("legacy", "cluster-a")
+	inert.Spec = rlarkv1alpha1.TaskSpec{}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cluster, inert).Build()
+	r := &Reconciler{Client: c, Scheme: scheme}
+
+	complete, pending, err := r.drainTasks(context.Background(), cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !complete || len(pending) != 0 {
+		t.Fatalf("Task without a Runtime must not block the drain: complete=%t pending=%v", complete, pending)
+	}
+
+	var got rlarkv1alpha1.Task
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(inert), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Annotations[rlarkv1alpha1.ClusterStoppedAnnotation] != "" || got.Spec.Suspended {
+		t.Fatalf("inert Task must not be marked for drain: %#v", got)
 	}
 }

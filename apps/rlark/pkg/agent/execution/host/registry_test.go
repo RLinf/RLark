@@ -36,7 +36,7 @@ func TestImplementationRegistrySelectsExactTriple(t *testing.T) {
 }
 
 func TestImplementationRegistryValidatesAndCopiesDescriptions(t *testing.T) {
-	adapter := registryAdapter{info: workload.TypeInfo{ID: "Job", Version: "v1", SupportedRuntimeKinds: []agentruntime.Kind{"Remote"}, Configuration: workload.ConfigurationContract{Schema: []byte(`{"type":"object"}`)}}}
+	adapter := registryAdapter{info: workload.TypeInfo{ID: "Job", Version: "v1", SupportedRuntimeKinds: []agentruntime.Kind{"Remote"}, Configuration: workload.ConfigurationContract{Schema: []byte(`{"type":"object"}`)}, Capabilities: []agentruntime.Capability{agentruntime.CapabilityWorkloadObservation}, Observations: []workload.ObservationContract{{RuntimeKind: "Remote", Roots: []workload.ObservationRoot{{Version: "v1", Kind: "Job", CarrierType: "job"}}}}}}
 	key := ImplementationKey{WorkloadType: "Job", WorkloadVersion: "v1", RuntimeKind: "Remote"}
 	registry, err := NewImplementationRegistry(context.Background(), []WorkloadRegistration{{Key: key, Adapter: adapter}})
 	if err != nil {
@@ -45,8 +45,9 @@ func TestImplementationRegistryValidatesAndCopiesDescriptions(t *testing.T) {
 	descriptions := registry.Describe()
 	descriptions[0].Info.SupportedRuntimeKinds[0] = "mutated"
 	descriptions[0].Info.Configuration.Schema[0] = 'x'
+	descriptions[0].Info.Observations[0].Roots[0].Kind = "mutated"
 	fresh := registry.Describe()
-	if fresh[0].Info.SupportedRuntimeKinds[0] != "Remote" || fresh[0].Info.Configuration.Schema[0] != '{' {
+	if fresh[0].Info.SupportedRuntimeKinds[0] != "Remote" || fresh[0].Info.Configuration.Schema[0] != '{' || fresh[0].Info.Observations[0].Roots[0].Kind != "Job" {
 		t.Fatalf("registry description was mutable: %#v", fresh)
 	}
 	if _, err := NewImplementationRegistry(context.Background(), []WorkloadRegistration{{Key: key, Adapter: adapter}, {Key: key, Adapter: adapter}}); err == nil {
@@ -55,6 +56,33 @@ func TestImplementationRegistryValidatesAndCopiesDescriptions(t *testing.T) {
 	mismatch := registryAdapter{info: workload.TypeInfo{ID: "Other", Version: "v1", SupportedRuntimeKinds: []agentruntime.Kind{"Remote"}}}
 	if _, err := NewImplementationRegistry(context.Background(), []WorkloadRegistration{{Key: key, Adapter: mismatch}}); err == nil {
 		t.Fatal("Adapter Info mismatch was accepted")
+	}
+}
+
+func TestImplementationRegistryRequiresObservationCapabilityAndContractTogether(t *testing.T) {
+	key := ImplementationKey{WorkloadType: "Job", WorkloadVersion: "v1", RuntimeKind: "Remote"}
+	tests := []workload.TypeInfo{
+		{ID: "Job", Version: "v1", SupportedRuntimeKinds: []agentruntime.Kind{"Remote"}, Capabilities: []agentruntime.Capability{agentruntime.CapabilityWorkloadObservation}},
+		{ID: "Job", Version: "v1", SupportedRuntimeKinds: []agentruntime.Kind{"Remote"}, Observations: []workload.ObservationContract{{RuntimeKind: "Remote", Roots: []workload.ObservationRoot{{Version: "v1", Kind: "Job", CarrierType: "job"}}}}},
+	}
+	for _, info := range tests {
+		if _, err := NewImplementationRegistry(context.Background(), []WorkloadRegistration{{Key: key, Adapter: registryAdapter{info: info}}}); err == nil {
+			t.Fatalf("mismatched observation contract accepted: %#v", info)
+		}
+	}
+}
+
+func TestImplementationRegistryRejectsInvalidObservationRuntimeContracts(t *testing.T) {
+	key := ImplementationKey{WorkloadType: "Job", WorkloadVersion: "v1", RuntimeKind: "Kubernetes"}
+	root := workload.ObservationRoot{Version: "v1", Kind: "Job", CarrierType: "job"}
+	valid := workload.ObservationContract{RuntimeKind: "Kubernetes", Roots: []workload.ObservationRoot{root}}
+	for _, contracts := range [][]workload.ObservationContract{
+		{valid, valid}, {valid, {RuntimeKind: "Other", Roots: []workload.ObservationRoot{root}}}, {{RuntimeKind: "Kubernetes"}},
+	} {
+		adapter := registryAdapter{info: workload.TypeInfo{ID: "Job", Version: "v1", SupportedRuntimeKinds: []agentruntime.Kind{"Kubernetes"}, Capabilities: []agentruntime.Capability{agentruntime.CapabilityWorkloadObservation}, Observations: contracts}}
+		if _, err := NewImplementationRegistry(context.Background(), []WorkloadRegistration{{Key: key, Adapter: adapter}}); err == nil {
+			t.Fatalf("invalid contracts accepted: %+v", contracts)
+		}
 	}
 }
 

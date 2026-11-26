@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # Updates RLark CRDs in the kcp API hosted by the Kubernetes cluster in KUBECONFIG.
-# Usage: KUBECONFIG=/path/to/host.kubeconfig ./update-kcp-crds.sh [kcp-namespace] [kcp-pod]
+# Usage: KUBECONFIG=/path/to/host.kubeconfig ./update-kcp-crds.sh [kcp-namespace] [kcp-service]
 : "${KUBECONFIG:?KUBECONFIG must point to the host Kubernetes kubeconfig}"
 HOST_KUBECONFIG="$KUBECONFIG"
 KCP_NAMESPACE="${1:-rlark-system}"
-KCP_POD="${2:-kcp-0}"
+KCP_SERVICE="${2:-kcp}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
@@ -39,7 +39,7 @@ PY
 )"
 
 kubectl --kubeconfig "$HOST_KUBECONFIG" -n "$KCP_NAMESPACE" \
-  port-forward "pod/$KCP_POD" "$KCP_PORT:6443" >"$PORT_FORWARD_LOG" 2>&1 &
+  port-forward "service/$KCP_SERVICE" "$KCP_PORT:6443" >"$PORT_FORWARD_LOG" 2>&1 &
 PORT_FORWARD_PID=$!
 
 for _ in {1..20}; do

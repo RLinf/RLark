@@ -1,47 +1,34 @@
-export function toYaml(obj: unknown, indent = 0): string {
-  const pad = " ".repeat(indent);
-  if (obj === null || obj === undefined) return "null";
-  if (typeof obj === "string")
-    return /[:\n#{}\[\],&*?|>=%@`]/.test(obj) || obj === ""
-      ? `"${obj.replace(/"/g, '\\"')}"`
-      : obj;
-  if (typeof obj === "number" || typeof obj === "boolean") return String(obj);
-  if (Array.isArray(obj)) {
-    if (obj.length === 0) return "[]";
-    return obj
-      .map((item) => {
-        if (item !== null && typeof item === "object") {
-          const lines = toYaml(item, indent + 2).split("\n");
-          const firstLine = lines[0].replace(/^\s+/, "");
-          const restLines = lines.slice(1).join("\n");
-          return `${pad}- ${firstLine}${restLines ? "\n" + restLines : ""}`;
-        }
-        return `${pad}- ${toYaml(item, indent)}`;
-      })
-      .join("\n");
+import { stringify } from "yaml";
+
+// Kubernetes tooling (kubectl, sigs.k8s.io/yaml) reads YAML 1.1, where plain
+// scalars such as "yes", "1_000", "1:2:3", and "2026-11-23" resolve to a
+// non-string type. Serializing against the same version is what keeps a string
+// the form captured from round-tripping into a bool, int, or timestamp.
+const YAML_VERSION = "1.1";
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// The form models unset fields as undefined, null, "", or an empty map, and a
+// preview that echoed them back would suggest the server receives them. Drop
+// those map entries, including a parent left empty only because every child was
+// dropped. Sequence entries are positional, so they are kept as authored.
+function prune(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(prune);
+  if (!isPlainObject(value)) return value;
+  const kept: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const child = prune(raw);
+    if (child === undefined || child === null || child === "") continue;
+    if (isPlainObject(child) && Object.keys(child).length === 0) continue;
+    kept[key] = child;
   }
-  if (typeof obj === "object") {
-    const entries = Object.entries(obj).filter(
-      ([, v]) => v !== undefined && v !== null && v !== "",
-    );
-    if (entries.length === 0) return "{}";
-    return entries
-      .map(([key, val]) => {
-        if (
-          val !== null &&
-          typeof val === "object" &&
-          !Array.isArray(val) &&
-          Object.keys(val).length === 0
-        )
-          return null;
-        if (val !== null && typeof val === "object") {
-          const inner = toYaml(val, indent + 2);
-          return `${pad}${key}:\n${inner}`;
-        }
-        return `${pad}${key}: ${toYaml(val, indent)}`;
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  return String(obj);
+  return kept;
+}
+
+// The trailing newline the library emits is kept deliberately: stripping it
+// would re-chomp a block scalar whose value ends in a blank line.
+export function toYaml(obj: unknown): string {
+  return stringify(prune(obj), { version: YAML_VERSION });
 }

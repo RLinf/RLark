@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rlark-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: rlark-ui
+spec:
+  replicas: {{ .Values.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: rlark-ui
+  template:
+    metadata:
+      labels:
+        app: rlark-ui
+    spec:
+      {{- include "rlark-control-plane.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: rlark-ui
+          image: {{ .Values.images.ui | quote }}
+          imagePullPolicy: {{ include "rlark-control-plane.imagePullPolicy" . }}
+          ports:
+            - containerPort: 80

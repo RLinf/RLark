@@ -86,7 +86,7 @@ The control plane uses a Kubernetes-compatible management API. Deployment can in
 
 ### Data Plane
 
-Each Kubernetes data plane runs an **Agent** in `cluster`, `node`, or `both` mode:
+Each Kubernetes data plane runs an **Agent** in `cluster` or `node` mode. A manually supervised `cluster` process may add local node services with `--node-startup=embedded`; default `external` leaves them to separate deployment. `managed` is not implemented.
 
 - **Cluster Agent** (typically a Deployment) -- Reconciles control-plane Tasks into local Kubernetes workloads such as Deployments, DaemonSets, and StatefulSets; synchronizes Addons and related delivery resources; and reports observed Pod and Node state.
 - **Node Agent** (typically a DaemonSet) -- Runs node-scoped services including NodeServer routing, network support, image pre-pulling and event reporting, and health/metrics endpoints.
@@ -161,6 +161,7 @@ Details: [Protobuf stubs and the pinned toolchain](apps/rlark/docs/developer-gui
 # Start a Kubernetes cluster agent with credentials issued by the control plane
 ./apps/rlark/bin/agent \
   --mode=cluster \
+  --image=rlark:latest \
   --kubeconfig ~/.kube/config \
   --server-address=https://localhost:8443 \
   --ca-cert /path/to/ca.crt \
@@ -168,7 +169,7 @@ Details: [Protobuf stubs and the pinned toolchain](apps/rlark/docs/developer-gui
   --client-key /path/to/client.key
 ```
 
-Use `--mode=node` or `--mode=both` when node-scoped services are required. Treat each command's `--help`, its config type, and the relevant Makefile as authoritative because flags and component prerequisites evolve.
+Use `--mode=node` or `--mode=cluster --node-startup=embedded --node-name=<local-node>` when node-scoped services are required; the combined legacy role is rejected. Agent supports startup-only v1 YAML via `--config` and effect-free `check-config`/redacted `print-config` subcommands; this is not rlarkadm DeployConfig. Treat each command's `--help`, its config type, and the relevant Makefile as authoritative because flags and component prerequisites evolve.
 
 ### Deployment
 

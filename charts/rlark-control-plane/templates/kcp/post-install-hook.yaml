@@ -1,0 +1,224 @@
+{{- if .Values.kcp.enabled }}
+{{- if ne .Values.managementApi "kubernetes" }}
+# Post-install hook: initialize KCP (install CRDs, create ui-auth secret),
+# then extract admin.kubeconfig into the rlark-kcp-kubeconfig ConfigMap.
+#
+# Uses bitnami/kubectl image (has /bin/sh and kubectl).
+# Connects to the current cluster via in-cluster credentials.
+{{- range $path, $content := .Files.Glob "files/crds/*.yaml" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kcp-crd-{{ trimPrefix "rlinf.io_" (trimSuffix ".yaml" (base $path)) }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-weight": "5"
+data:
+  {{ base $path }}: |
+{{ $content | toString | indent 4 }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kcp-post-install-script
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-weight": "5"
+data:
+  post-install.sh: |
+    #!/bin/sh
+    set -e
+    NS="{{ .Release.Namespace }}"
+
+    # Find the KCP pod
+    echo "Looking for KCP pod..."
+    KCP_POD=""
+    for i in $(seq 1 30); do
+      KCP_POD=$(kubectl -n "$NS" get pod -l app=kcp -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+      if [ -n "$KCP_POD" ]; then
+        READY=$(kubectl -n "$NS" get pod "$KCP_POD" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+        if [ "$READY" = "True" ]; then
+          echo "KCP pod $KCP_POD is ready"
+          break
+        fi
+      fi
+      if [ "$i" -eq 30 ]; then
+        echo "Timeout waiting for KCP pod"
+        exit 1
+      fi
+      sleep 3
+    done
+
+    # Wait for admin.kubeconfig
+    echo "Waiting for admin.kubeconfig..."
+    for i in $(seq 1 30); do
+      if kubectl -n "$NS" exec "$KCP_POD" -- test -s /.kcp/admin.kubeconfig 2>/dev/null; then
+        echo "admin.kubeconfig found"
+        break
+      fi
+      if [ "$i" -eq 30 ]; then
+        echo "Timeout waiting for admin.kubeconfig"
+        exit 1
+      fi
+      sleep 2
+    done
+
+    # Extract admin.kubeconfig
+    echo "Extracting admin.kubeconfig..."
+    kubectl -n "$NS" exec "$KCP_POD" -- cat /.kcp/admin.kubeconfig > /tmp/admin.kubeconfig
+    if [ ! -s /tmp/admin.kubeconfig ]; then
+      echo "Failed to extract admin.kubeconfig"
+      exit 1
+    fi
+
+    # Keep original kubeconfig unchanged (uses KCP Pod IP, same as rlarkadm)
+    echo "Using original kubeconfig with KCP Pod IP"
+
+    kubectl -n "$NS" create configmap rlark-kcp-kubeconfig \
+      --from-file=admin.kubeconfig=/tmp/admin.kubeconfig \
+      --dry-run=client -o yaml | kubectl apply -f -
+    echo "rlark-kcp-kubeconfig ConfigMap created"
+
+    # Install CRDs into KCP
+    echo "Installing CRDs into KCP..."
+    for crd_file in /crds/*.yaml; do
+      crd_name=$(basename "$crd_file")
+      echo "Applying $crd_name..."
+      if ! kubectl -n "$NS" exec -i "$KCP_POD" -- \
+        kubectl --kubeconfig /.kcp/admin.kubeconfig create --validate=false -f - < "$crd_file" 2>/dev/null; then
+        kubectl -n "$NS" exec -i "$KCP_POD" -- \
+          kubectl --kubeconfig /.kcp/admin.kubeconfig replace --validate=false -f - < "$crd_file" 2>/dev/null || true
+      fi
+    done
+
+    # Create ui-auth secret in KCP
+    if ! kubectl -n "$NS" exec "$KCP_POD" -- \
+      kubectl --kubeconfig /.kcp/admin.kubeconfig get secret rlark-ui-auth -n default 2>/dev/null; then
+      echo "Creating ui-auth secret..."
+      ADMIN_PW=$(head -c 64 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9!@#$%^&*()' | head -c 16)
+      USER_PW=$(head -c 64 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9!@#$%^&*()' | head -c 16)
+      SIGNING_KEY=$(head -c 32 /dev/urandom | base64)
+
+      cat > /tmp/ui-auth-secret.yaml <<SECRETEOF
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: rlark-ui-auth
+      namespace: default
+    type: Opaque
+    data:
+      admin-password: $(echo -n "$ADMIN_PW" | base64 | tr -d '\n')
+      user-password: $(echo -n "$USER_PW" | base64 | tr -d '\n')
+      jwt-signing-key: $SIGNING_KEY
+    SECRETEOF
+
+      kubectl -n "$NS" exec -i "$KCP_POD" -- \
+        kubectl --kubeconfig /.kcp/admin.kubeconfig apply --validate=false -f - < /tmp/ui-auth-secret.yaml
+
+      echo ""
+      echo "========================================"
+      echo "Admin password: $ADMIN_PW"
+      echo "User password: $USER_PW"
+      echo "========================================"
+    else
+      echo "ui-auth secret already exists"
+    fi
+
+    echo "KCP post-install completed"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kcp-post-install
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kcp-post-install
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "update", "get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kcp-post-install
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+subjects:
+  - kind: ServiceAccount
+    name: kcp-post-install
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: kcp-post-install
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kcp-post-install
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: kcp-post-install
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-weight": "10"
+spec:
+  template:
+    metadata:
+      labels:
+        app: kcp-post-install
+    spec:
+      serviceAccountName: kcp-post-install
+      restartPolicy: OnFailure
+      containers:
+        - name: post-install
+          image: {{ .Values.hookImage | quote }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - /scripts/post-install.sh
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            {{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
+            - name: crd-{{ trimPrefix "rlinf.io_" (trimSuffix ".yaml" (base $path)) }}
+              mountPath: /crds/{{ base $path }}
+              subPath: {{ base $path }}
+            {{- end }}
+      volumes:
+        - name: script
+          configMap:
+            name: kcp-post-install-script
+        {{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
+        - name: crd-{{ trimPrefix "rlinf.io_" (trimSuffix ".yaml" (base $path)) }}
+          configMap:
+            name: kcp-crd-{{ trimPrefix "rlinf.io_" (trimSuffix ".yaml" (base $path)) }}
+        {{- end }}
+{{- end }}
+{{- end }}

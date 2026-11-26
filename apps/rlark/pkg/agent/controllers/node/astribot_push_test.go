@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -70,7 +71,7 @@ func TestReconcileKeepsTheTenantOfTheManagementNode(t *testing.T) {
 	if err := management.Get(context.Background(), types.NamespacedName{Name: "node-a", Namespace: "cluster-a"}, &node); err != nil {
 		t.Fatal(err)
 	}
-	if node.Labels["rlark.io/tenant-id"] != "default" || node.Labels["example.com/gone"] != "" || node.Labels["rlark.io/enabled"] != "true" {
+	if node.Labels["rlark.io/tenant-id"] != "default" || node.Status.ObservedNodeLabels["example.com/gone"] != "" || node.Labels["rlark.io/enabled"] != "true" {
 		t.Fatalf("labels of the management Node after the report: %v", node.Labels)
 	}
 }
@@ -88,8 +89,7 @@ func TestReconcileKeepsTheDisplayNameOfTheManagementNode(t *testing.T) {
 	}).WithObjects(
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", Labels: map[string]string{"rlark.io/enabled": "true"}}, Spec: corev1.NodeSpec{Unschedulable: true}},
 	).Build()
-	// The operator's name, set through the gateway; the agent type and
-	// schedulability are stale and the report refreshes them.
+	// A report must preserve management-owned Spec and record the local cordon in Status.
 	known := managementNode("node-a", rlarkv1alpha1.NodeOnline)
 	known.Spec = rlarkv1alpha1.NodeSpec{DisplayName: "百度GPU-1", AgentType: rlarkv1alpha1.AgentTypeDocker}
 	management := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&rlarkv1alpha1.Node{}).WithObjects(known).Build()
@@ -103,7 +103,7 @@ func TestReconcileKeepsTheDisplayNameOfTheManagementNode(t *testing.T) {
 	if err := management.Get(context.Background(), types.NamespacedName{Name: "node-a", Namespace: "cluster-a"}, &node); err != nil {
 		t.Fatal(err)
 	}
-	if node.Spec.DisplayName != "百度GPU-1" || node.Spec.AgentType != rlarkv1alpha1.AgentTypeKubernetes || !node.Spec.Unschedulable {
+	if !reflect.DeepEqual(node.Spec, known.Spec) || node.Status.KubernetesCordoned == nil || !*node.Status.KubernetesCordoned {
 		t.Fatalf("spec of the management Node after the report: %+v", node.Spec)
 	}
 }

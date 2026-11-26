@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rlark-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: rlark-server
+spec:
+  replicas: {{ .Values.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: rlark-server
+  template:
+    metadata:
+      labels:
+        app: rlark-server
+    spec:
+      {{- if eq .Values.managementApi "kubernetes" }}
+      serviceAccountName: rlark-server
+      {{- end }}
+      {{- include "rlark-control-plane.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: rlark-server
+          image: {{ .Values.images.server | quote }}
+          imagePullPolicy: {{ include "rlark-control-plane.imagePullPolicy" . }}
+          ports:
+            - containerPort: 8443
+            - containerPort: 8888
+          command:
+            - /usr/local/bin/server
+          args:
+            - --https-port=8443
+            - --unsafe-http-port=8888
+            - --ssh-port=2222
+            - --auto-sign-tls-ca-cert
+            - --tls-domains=localhost,rlark-server,rlark-server.{{ .Release.Namespace }},rlark-server.{{ .Release.Namespace }}.svc
+            {{- if .Values.db }}
+            - --db-config=/etc/rlark/db.yaml
+            {{- end }}
+            {{- include "rlark-control-plane.managementArgs" . | nindent 12 }}
+          env:
+            {{- include "rlark-control-plane.commonEnvs" . | nindent 12 }}
+          volumeMounts:
+            {{- include "rlark-control-plane.managementVolumeMounts" . | nindent 12 }}
+            {{- if .Values.db }}
+            - name: db-config
+              mountPath: /etc/rlark/db.yaml
+              subPath: db.yaml
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- include "rlark-control-plane.managementVolumes" . | nindent 8 }}
+        {{- if .Values.db }}
+        - name: db-config
+          configMap:
+            name: rlark-db-config
+        {{- end }}

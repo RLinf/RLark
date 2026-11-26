@@ -25,14 +25,13 @@ type AstribotConfig struct {
 func defaultAstribotConfig() AstribotConfig {
 	return AstribotConfig{
 		HealthProbeBindAddress: fmt.Sprintf(":%d", constants.AgentProbePort),
-		TaskDaemonSetWorkers:   defaultControllerMaxConcurrentReconciles,
 	}
 }
 
 // setupFlags adds the site's flags and says what the official ones mean here.
 func (c *AstribotConfig) setupFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.HealthProbeBindAddress, "health-probe-bind-address", c.HealthProbeBindAddress, "The address /livez and /readyz bind to.")
-	fs.IntVar(&c.TaskDaemonSetWorkers, "task-daemonset-push-controller-workers", c.TaskDaemonSetWorkers, "Maximum concurrent Task DaemonSet push reconciles")
+	fs.IntVar(&c.TaskDaemonSetWorkers, "task-daemonset-push-controller-workers", c.TaskDaemonSetWorkers, "Override Task Runtime push concurrency for DaemonSets (0 inherits)")
 	fs.StringSliceVar(&c.ManagementNodeLabels, "management-node-labels", c.ManagementNodeLabels, "Node labels, besides RLark's own, that are declared on the management Node and carried to the Kubernetes Node: a key, or a prefix ending in / or - (cluster mode)")
 	fs.Lookup("metrics-bind-address").Usage = "The address the metrics and pprof endpoints bind to."
 	fs.Lookup("image").Usage = "Image of the tools the cluster Agent gives Task Pods (the tools init container, the network sidecar). New Pods get it; a running workload keeps the one it has until its Task changes. Node Agents run the image of the Cluster's spec.nodeAgents.image."
@@ -41,8 +40,8 @@ func (c *AstribotConfig) setupFlags(fs *pflag.FlagSet) {
 
 // apply checks the site's settings and puts the process-wide ones in place.
 func (c AstribotConfig) apply() error {
-	if c.TaskDaemonSetWorkers <= 0 {
-		return fmt.Errorf("validate controller concurrency: task-daemonset-push controller workers must be positive")
+	if c.TaskDaemonSetWorkers < 0 {
+		return fmt.Errorf("validate controller concurrency: task-daemonset-push controller workers must not be negative")
 	}
 	return node.SetManagementOwnedLabels(c.ManagementNodeLabels)
 }

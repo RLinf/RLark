@@ -815,6 +815,9 @@ export function ClusterManagementPage({
               const rate = cluster.totalNodes
                 ? Math.round((cluster.onlineNodes / cluster.totalNodes) * 100)
                 : 0;
+              const drainDisabled = actionPending || cluster.phase !== "Cordoned";
+              const delistOrDeleteDisabled = drainDisabled || cluster.runningJobs !== 0;
+              const noRunningJobs = cluster.runningJobs === 0;
               return (
                 <div
                   key={cluster.id}
@@ -954,9 +957,11 @@ export function ClusterManagementPage({
                               ) : (
                                 <button
                                   type="button"
-                                  disabled={actionPending}
+                                  disabled={drainDisabled || noRunningJobs}
                                   title={
-                                    zh
+                                    cluster.phase === "Cordoned" && noRunningJobs
+                                      ? (zh ? "无运行中任务" : "No running jobs")
+                                      : zh
                                       ? "驱逐任务：停止集群内所有运行中的 RLark 任务"
                                       : "Drain: stop all running RLark tasks in the cluster"
                                   }
@@ -969,7 +974,7 @@ export function ClusterManagementPage({
                               )}
                               <button
                                 type="button"
-                                disabled={actionPending}
+                                disabled={delistOrDeleteDisabled}
                                 title={
                                   zh
                                     ? "下架：集群不再对用户可见"
@@ -983,7 +988,7 @@ export function ClusterManagementPage({
                               </button>
                               <button
                                 type="button"
-                                disabled={actionPending}
+                                disabled={delistOrDeleteDisabled}
                                 className="danger"
                                 title={
                                   zh

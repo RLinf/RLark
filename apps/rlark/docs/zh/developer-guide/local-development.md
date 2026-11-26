@@ -78,13 +78,16 @@ rlark-controller-manager \
 
 ```bash
 rlark-agent \
-  --mode=both \
+  --mode=cluster --node-startup=embedded \
+  --node-name=worker-01 \
   --server-address=https://localhost:8443 \
   --client-cert=/tmp/rlark/agent-certs/cert.pem \
   --client-key=/tmp/rlark/agent-certs/key.pem \
   --ca-cert=/tmp/rlark/agent-certs/ca-cert.pem \
   --image=rlark:latest
 ```
+
+该示例需要两种角色的 Kubernetes/节点依赖及 socket 权限。仅开发 cluster 时省略 `--node-startup` 和 `--node-name`，external 节点部署仍独立。使用 `rlark-agent check-config` 配合同样的配置参数做无 effect 本地校验，见 [启动文件合同](../reference/configuration.md#agent-startup-file-and-validation)。
 
 ## Web UI 开发
 
@@ -196,8 +199,8 @@ localStorage.clear()
 
 ## 保持生成代码同步
 
-修改 CRD 类型后，需要重新生成 CRD 清单、Go Client、Schema 参考和前端
-TypeScript 模型：
+修改 CRD 类型后，需要重新生成 CRD 清单、Go Client、Schema 参考、前端
+TypeScript 模型以及 Helm Chart 内置的 CRD 副本：
 
 ```bash
 # 重新生成全部 CRD 派生产物
@@ -210,8 +213,8 @@ make -C api generate-clients
 始终在 API 和 Web UI 中都测试面向用户的变更。
 
 `make verify-generated` 使用同一套生成器重新生成产物，当签入的 CRD 清单、deepcopy
-函数、类型化 Go Client、前端 TypeScript 模型或 `apps/rlark/docs/reference/crd.md`
-与重新生成的结果不一致、
+函数、类型化 Go Client、前端 TypeScript 模型、`apps/rlark/docs/reference/crd.md`
+或 `charts/rlark-control-plane/files/crds` 中内置的 CRD 副本与重新生成的结果不一致、
 或生成过程产生了未跟踪文件时失败。CI 对每次变更都会执行它，因此推送 API 变更前请先
 在本地运行。
 

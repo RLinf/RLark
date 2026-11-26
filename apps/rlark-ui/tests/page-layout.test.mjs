@@ -24,6 +24,15 @@ test("the overview live job list navigates to the job detail", () => {
   assert.match(overview, /navigate\("jobs", job\.name\)/);
 });
 
+test("the overview omits the production activity card", () => {
+  assert.doesNotMatch(overview, /c\.common\.production/);
+  assert.doesNotMatch(overview, /className="panel activity-panel"/);
+  assert.match(
+    styles,
+    /\.overview-page \.bottom-grid \{[^}]*grid-template-columns: minmax\(0, 1fr\);/,
+  );
+});
+
 test("overview uses the same business worker filter as cluster management", () => {
   assert.match(
     overview,

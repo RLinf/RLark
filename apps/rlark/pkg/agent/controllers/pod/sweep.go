@@ -174,7 +174,14 @@ func (s *OrphanSweeper) currentlyStale(ctx context.Context, observed *rlarkv1alp
 		return &current, false, nil
 	}
 	uid := current.Labels[rlarkv1alpha1.PodLabelLocalPodUID]
-	if uid == "" || current.Spec.PodName == "" || current.Spec.PodNamespace == "" {
+	if uid == "" {
+		gone, err := s.legacyLocalPodGone(ctx, &current)
+		if err != nil {
+			return &current, false, err
+		}
+		return &current, gone, nil
+	}
+	if current.Spec.PodName == "" || current.Spec.PodNamespace == "" {
 		return &current, false, nil
 	}
 	orphan, err := s.taskIdentityGone(ctx, &current)
@@ -190,6 +197,26 @@ func (s *OrphanSweeper) currentlyStale(ctx context.Context, observed *rlarkv1alp
 		return &current, true, nil
 	}
 	return &current, false, err
+}
+
+// legacyLocalPodGone reports whether the local Pod reported by a legacy Pod CR
+// is absent. Legacy Pod CRs predate the local Pod UID label, so an existing
+// local Pod (even with a different UID) is ambiguous and left for operator
+// review; only a missing local Pod is safe to retire.
+func (s *OrphanSweeper) legacyLocalPodGone(ctx context.Context, pod *rlarkv1alpha1.Pod) (bool, error) {
+	if pod.Labels[rlarkv1alpha1.PodLabelAgentScope] != "" || pod.Labels[rlarkv1alpha1.PodLabelLocalPodUID] != "" ||
+		pod.Spec.PodName == "" || pod.Spec.PodNamespace == "" {
+		return false, nil
+	}
+	var local corev1.Pod
+	err := s.c.LocalKubeClient.Get(ctx, types.NamespacedName{Name: pod.Spec.PodName, Namespace: pod.Spec.PodNamespace}, &local)
+	if err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			return true, nil
+		}
+		return false, err
+	}
+	return false, nil
 }
 
 func (s *OrphanSweeper) observeLocalPod(ctx context.Context, local *corev1.Pod) (func(context.Context) error, error) {
@@ -240,7 +267,7 @@ func (s *OrphanSweeper) observeLegacyPods(ctx context.Context) error {
 			}
 			if backfill != nil {
 				if err := backfill(ctx); err != nil {
-					errs = append(errs, fmt.Errorf("backfill legacy management Pod %s: %w", pod.Name, err))
+					errs = append(errs, fmt.Errorf("reconcile legacy management Pod %s: %w", pod.Name, err))
 				}
 			}
 		}
@@ -271,9 +298,11 @@ func (s *OrphanSweeper) taskIdentityGone(ctx context.Context, pod *rlarkv1alpha1
 	return false, nil
 }
 
-// backfillLegacyIdentity adopts only the old UID-named form when the local Pod
-// and current management Task prove a unique identity. Ambiguous legacy
-// objects are deliberately left untouched for operator review.
+// observeLegacyIdentity adopts the old UID-named form when the local Pod and
+// current management Task prove a unique identity. A legacy Pod CR whose local
+// Pod no longer exists is retired through the same stale marking and TTL as
+// canonical Pod CRs. Ambiguous legacy objects are deliberately left untouched
+// for operator review.
 func (s *OrphanSweeper) observeLegacyIdentity(ctx context.Context, pod *rlarkv1alpha1.Pod) (func(context.Context) error, error) {
 	if pod.Labels[rlarkv1alpha1.PodLabelAgentScope] != "" || pod.Labels[rlarkv1alpha1.PodLabelLocalPodUID] != "" ||
 		pod.Spec.PodName == "" || pod.Spec.PodNamespace == "" || pod.Spec.TaskName == "" || pod.Spec.TaskNamespace != s.c.ManagementNamespace {
@@ -282,7 +311,7 @@ func (s *OrphanSweeper) observeLegacyIdentity(ctx context.Context, pod *rlarkv1a
 	var local corev1.Pod
 	if err := s.c.LocalKubeClient.Get(ctx, types.NamespacedName{Name: pod.Spec.PodName, Namespace: pod.Spec.PodNamespace}, &local); err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			return nil, nil
+			return nil, s.markOrDeleteStale(ctx, pod)
 		}
 		return nil, err
 	}

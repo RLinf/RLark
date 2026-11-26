@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
-	"golang.org/x/sync/errgroup"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -71,22 +70,24 @@ func (a *Agent) handleReady(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// startAstribot starts what the agent runs in every mode, in the group of its other components. The group has a
-// context (agent.go): a component that fails stops the others, so the agent exits and its Pod restarts instead of
-// running on (tunnel and lease alive, so the Node shows Online) without that component. Every part this mode runs
-// is not ready until it says so. One probe server and one metrics server serve whichever parts this mode runs.
-func (a *Agent) startAstribot(ctx context.Context, eg *errgroup.Group) {
-	if a.config.Mode == "cluster" || a.config.Mode == "both" {
+// astribotServices initializes readiness gates before tunnel registration and
+// supplies the probe and metrics listeners to the startup supervisor.
+func (a *Agent) astribotServices() []func(context.Context) error {
+	if a.config.Mode == "cluster" {
 		a.ready.set(partClusterWatches, false)
 	}
-	if a.config.Mode == "node" || a.config.Mode == "both" {
+	if a.config.HasNode() {
 		a.ready.set(partNodeWatches, false)
 		a.ready.set(partNodeServer, false)
 	}
-	eg.Go(func() error {
-		return serve(ctx, a.config.HealthProbeBindAddress, a.probeRouter())
-	})
-	eg.Go(func() error {
-		return serve(ctx, a.config.MetricsBindAddress, a.metricsRouter())
-	})
+	return []func(context.Context) error{
+		func(ctx context.Context) error { return serve(ctx, a.config.HealthProbeBindAddress, a.probeRouter()) },
+		func(ctx context.Context) error {
+			if a.config.MetricsBindAddress == "0" {
+				<-ctx.Done()
+				return nil
+			}
+			return serve(ctx, a.config.MetricsBindAddress, a.metricsRouter())
+		},
+	}
 }

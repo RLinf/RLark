@@ -126,7 +126,7 @@ Every copy button in the console shares one clipboard path. Browsers expose the 
 
 ### Closing Form Dialogs
 
-Dialogs that collect input — creating, cloning, editing, or restart-editing a job, creating a workflow, creating or editing a storage class, adding or editing image registry credentials, adding an SSH key, creating a domain, and editing job tags — do not close when you click the dimmed area outside the dialog. Because the console cannot restore discarded input, these dialogs close only through their close button in the upper-right corner or their **Cancel** button; the job, workflow, storage class, and image registry dialogs also close with `Esc`.
+Dialogs that collect input — creating, cloning, editing, or restart-editing a job, creating or editing a storage class, adding or editing image registry credentials, adding an SSH key, creating a domain, and editing job tags — do not close when you click the dimmed area outside the dialog. Because the console cannot restore discarded input, these dialogs close only through their close button in the upper-right corner or their **Cancel** button; the job, storage class, and image registry dialogs also close with `Esc`.
 
 Confirmation dialogs that collect no input, such as job lifecycle actions, job deletion, the restart mode choice, and cluster lifecycle actions, still close when you click outside them.
 

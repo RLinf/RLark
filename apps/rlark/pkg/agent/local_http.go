@@ -7,6 +7,7 @@ import (
 	"net/http/pprof"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -21,16 +22,34 @@ func (a *Agent) runLocalHTTPServer(ctx context.Context) error {
 		Handler: r,
 	}
 
+	logger.Info("Starting local HTTP server")
+	return serveHTTP(ctx, &server, func() error { return server.Serve(a.localListener) })
+}
+
+// serveHTTP joins its shutdown worker even when binding fails. Shutdown has a
+// deadline; force-close remaining connections rather than hanging role join.
+func serveHTTP(ctx context.Context, server *http.Server, serve func() error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		<-ctx.Done()
-		logger.Info("Shutting down local HTTP server")
-		if err := server.Shutdown(context.Background()); err != nil {
-			logger.Error(nil, "Local HTTP server shutdown error", "err", err)
+		shutdownCtx, stop := context.WithTimeout(context.Background(), 3*time.Second)
+		defer stop()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.FromContext(ctx).Error(err, "HTTP shutdown failed; closing remaining connections")
+			if err := server.Close(); err != nil {
+				log.FromContext(ctx).Error(err, "HTTP close failed")
+			}
 		}
 	}()
-
-	logger.Info("Starting local HTTP server")
-	return server.Serve(a.localListener)
+	err := serve()
+	cancel()
+	<-done
+	if err == http.ErrServerClosed {
+		return nil
+	}
+	return err
 }
 
 func (a *Agent) localHTTPRouter() http.Handler {

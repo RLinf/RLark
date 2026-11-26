@@ -40,6 +40,52 @@ func TestProviderGetPreservesKubernetesObject(t *testing.T) {
 	}
 }
 
+func TestProviderGetReportsWorkloadWarningEventsAsObjectConditions(t *testing.T) {
+	scheme := testScheme(t)
+	deployment := managedDeployment()
+	root := corev1.ObjectReference{Kind: "Deployment", Namespace: "runtime", Name: "task", UID: "deployment-uid"}
+	object, err := testProvider(scheme, deployment,
+		workloadEvent("failed-create", corev1.EventTypeWarning, "FailedCreate", `create Pod task-0 failed: spec.nodeSelector: Invalid value: "a,b"`, root),
+		workloadEvent("scaled-up", corev1.EventTypeNormal, "ScalingReplicaSet", "scaled up", root),
+		workloadEvent("other-incarnation", corev1.EventTypeWarning, "FailedCreate", "belongs to a replaced workload", corev1.ObjectReference{Kind: "Deployment", Namespace: "runtime", Name: "task", UID: "stale-deployment-uid"}),
+		workloadEvent("other-kind", corev1.EventTypeWarning, "FailedCreate", "belongs to another kind", corev1.ObjectReference{Kind: "StatefulSet", Namespace: "runtime", Name: "task", UID: "deployment-uid"}),
+	).Get(context.Background(), objectRef(deployment))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []agentruntime.ObjectCondition{{Source: "kubernetes", Scope: "object", Subject: "task", Reason: "FailedCreate", Message: `create Pod task-0 failed: spec.nodeSelector: Invalid value: "a,b"`}}
+	if !reflect.DeepEqual(object.Conditions, want) {
+		t.Fatalf("conditions=%#v, want only the UID-fenced Warning event of this workload root", object.Conditions)
+	}
+}
+
+func TestProviderListManagedRevisionTracksWorkloadWarningEvents(t *testing.T) {
+	scheme := testScheme(t)
+	deployment := managedDeployment()
+	quiet, err := testProvider(scheme, deployment).ListManaged(context.Background(), taskIdentity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	failing, err := testProvider(scheme, deployment, workloadEvent("failed-create", corev1.EventTypeWarning, "FailedCreate", "create Pod task-0 failed", corev1.ObjectReference{Kind: "Deployment", Namespace: "runtime", Name: "task", UID: "deployment-uid"})).
+		ListManaged(context.Background(), taskIdentity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quiet.Revision == failing.Revision {
+		t.Fatalf("revision=%q unchanged after a workload Warning event, observation would go stale", failing.Revision)
+	}
+}
+
+func workloadEvent(name string, eventType string, reason string, message string, involved corev1.ObjectReference) client.Object {
+	return &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Name: name, Namespace: involved.Namespace},
+		InvolvedObject: involved,
+		Type:           eventType,
+		Reason:         reason,
+		Message:        message,
+	}
+}
+
 func TestProviderListManagedReturnsCompleteCompatibleSet(t *testing.T) {
 	scheme := testScheme(t)
 	deployment := managedDeployment()
@@ -249,7 +295,7 @@ func TestProviderListCandidatesRejectsForeignCanonicalAuxiliary(t *testing.T) {
 
 func TestProviderListCandidatesUsesOnlyDeclaredTargetedQueries(t *testing.T) {
 	scheme := testScheme(t)
-	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(managedDeployment()).Build()
+	base := testFakeBuilder(scheme).WithObjects(managedDeployment()).Build()
 	recording := &recordingClient{Client: base}
 	provider := New(recording, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 	query := agentruntime.ManagedObjectQuery{Task: taskIdentity(), Candidates: []agentruntime.ObjectCandidate{
@@ -262,8 +308,11 @@ func TestProviderListCandidatesUsesOnlyDeclaredTargetedQueries(t *testing.T) {
 	if len(recording.gets) != 2 || recording.gets[0] != "*v1.Deployment runtime/task" || recording.gets[1] != "*v1.Service runtime/task-service" {
 		t.Fatalf("gets=%v, want only declared exact candidates", recording.gets)
 	}
-	if len(recording.lists) != 0 {
-		t.Fatalf("lists=%v, want no label-selected compatibility queries", recording.lists)
+	// The only permitted List is the UID-fenced Event query the Provider uses to
+	// observe a workload root's own failures; label-selected compatibility
+	// queries must not appear.
+	if len(recording.lists) != 1 || recording.lists[0] != "*v1.EventList namespace=runtime labels= fields=involvedObject.uid=deployment-uid" {
+		t.Fatalf("lists=%v, want only the UID-fenced workload Event query", recording.lists)
 	}
 }
 
@@ -407,10 +456,7 @@ func TestProviderListInstancesUsesPodUIDEventQueries(t *testing.T) {
 	deployment := managedDeployment()
 	replicaSet := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "task-rs", Namespace: "runtime", UID: "rs-uid", OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: deployment.Name, UID: deployment.UID, Controller: ptr(true)}}}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "owned", Namespace: "runtime", UID: "pod-uid", Labels: map[string]string{"app": "task"}, OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: replicaSet.Name, UID: replicaSet.UID, Controller: ptr(true)}}}}
-	base := fake.NewClientBuilder().WithScheme(scheme).WithObjects(deployment, replicaSet, pod).
-		WithIndex(&corev1.Event{}, "involvedObject.uid", func(object client.Object) []string {
-			return []string{string(object.(*corev1.Event).InvolvedObject.UID)}
-		}).Build()
+	base := testFakeBuilder(scheme).WithObjects(deployment, replicaSet, pod).Build()
 	recording := &recordingClient{Client: base}
 	provider := New(recording, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 	if _, err := provider.ListInstances(context.Background(), agentruntime.InstanceQuery{Task: taskIdentity(), Workloads: []agentruntime.ObjectRef{objectRef(deployment)}}); err != nil {
@@ -449,7 +495,7 @@ func TestProviderListInstancesIgnoresEventsForReplacedPod(t *testing.T) {
 
 func TestProviderApplyCreatesAndSameGenerationDoesNotUpdate(t *testing.T) {
 	scheme := testScheme(t)
-	counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	counting := &countingClient{Client: testFakeBuilder(scheme).Build()}
 	provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 	want := managedDeployment()
 	want.UID, want.ResourceVersion = "", ""
@@ -489,7 +535,7 @@ func TestProviderApplyNormalizesKubernetesDefaultsBeforeComparingTemplate(t *tes
 	if desired.Spec.Template.Spec.RestartPolicy != "" || desired.Spec.Template.Spec.DNSPolicy != "" || desired.Spec.Template.Spec.SchedulerName != "" {
 		t.Fatal("test desired workload unexpectedly contains API defaults")
 	}
-	counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()}
+	counting := &countingClient{Client: testFakeBuilder(scheme).WithObjects(existing).Build()}
 	provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 
 	if _, err := provider.Apply(context.Background(), agentruntime.ApplyRequest{Task: taskIdentity(), Desired: desiredObject(t, desired), Current: ptrRef(objectRef(existing))}); err != nil {
@@ -569,7 +615,7 @@ func TestProviderApplyAdoptsLegacyWithoutChangingTemplate(t *testing.T) {
 	legacy := managedDeployment()
 	legacy.Annotations = nil
 	legacy.Spec.Template.Spec.Containers[0].Image = "running:v1"
-	counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(legacy).Build()}
+	counting := &countingClient{Client: testFakeBuilder(scheme).WithObjects(legacy).Build()}
 	provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 	desired := managedDeployment()
 	desired.Spec.Template.Spec.Containers[0].Image = "desired:v2"
@@ -595,7 +641,7 @@ func TestProviderApplyWritesCanonicalRootRevisionAndRepairsOwnedTemplateDrift(t 
 	existing := managedDeployment()
 	existing.Annotations[kubernetesobjects.ManagementTaskGenerationAnnotation] = "3"
 	existing.Spec.Template.Spec.Containers[0].Image = "running:v1"
-	counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()}
+	counting := &countingClient{Client: testFakeBuilder(scheme).WithObjects(existing).Build()}
 	provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 	desired := existing.DeepCopy()
 	desired.UID, desired.ResourceVersion = "", ""
@@ -630,7 +676,7 @@ func TestProviderApplyRepairsSameGenerationStatefulSetReplicaDrift(t *testing.T)
 	desired := existing.DeepCopy()
 	desired.UID, desired.ResourceVersion = "", ""
 	desired.Spec.Replicas = &one
-	counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()}
+	counting := &countingClient{Client: testFakeBuilder(scheme).WithObjects(existing).Build()}
 	provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 	if _, err := provider.Apply(context.Background(), agentruntime.ApplyRequest{Task: taskIdentity(), Desired: desiredObject(t, desired), Current: ptrRef(objectRefFor(existing, "apps/v1, Kind=StatefulSet"))}); err != nil {
 		t.Fatal(err)
@@ -674,7 +720,7 @@ func TestProviderApplyRepairsSameGenerationCanonicalRevision(t *testing.T) {
 				t.Fatal(err)
 			}
 			templateBefore := existing.Spec.Template.DeepCopy()
-			counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()}
+			counting := &countingClient{Client: testFakeBuilder(scheme).WithObjects(existing).Build()}
 			provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 			desired := existing.DeepCopy()
 			desired.UID, desired.ResourceVersion = "", ""
@@ -721,7 +767,7 @@ func TestProviderApplyDoesNotRepairRevisionForForeignTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := existing.DeepCopy()
-	counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()}
+	counting := &countingClient{Client: testFakeBuilder(scheme).WithObjects(existing).Build()}
 	provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 	desired := managedDeployment()
 	desired.UID, desired.ResourceVersion = "", ""
@@ -744,7 +790,7 @@ func TestProviderApplyDoesNotRepairRevisionForForeignTask(t *testing.T) {
 
 func TestProviderObserverPanicDoesNotChangeApply(t *testing.T) {
 	scheme := testScheme(t)
-	provider := New(fake.NewClientBuilder().WithScheme(scheme).Build(), scheme, func(agentruntime.TaskIdentity) string { return "runtime" }, WithObserver(panicObserver{}))
+	provider := New(testFakeBuilder(scheme).Build(), scheme, func(agentruntime.TaskIdentity) string { return "runtime" }, WithObserver(panicObserver{}))
 	desired := managedDeployment()
 	desired.UID, desired.ResourceVersion = "", ""
 	if _, err := provider.Apply(context.Background(), agentruntime.ApplyRequest{Task: taskIdentity(), Desired: desiredObject(t, desired)}); err != nil {
@@ -824,7 +870,7 @@ const sharedConfigRoleAnnotation = "example.rlark.io/shared-role"
 func TestProviderApplyUpdatesServiceOwnedFields(t *testing.T) {
 	scheme := testScheme(t)
 	existing := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "task-service", Namespace: "runtime", UID: "service-uid", Annotations: managementAnnotations("task-uid"), Labels: map[string]string{"foreign": "kept"}}, Spec: corev1.ServiceSpec{ClusterIP: "None", ClusterIPs: []string{"None"}, Selector: map[string]string{"app": "old"}, Ports: []corev1.ServicePort{{Name: "api", Port: 1, NodePort: 30001}}}}
-	counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()}
+	counting := &countingClient{Client: testFakeBuilder(scheme).WithObjects(existing).Build()}
 	provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 	desired := existing.DeepCopy()
 	desired.UID, desired.ResourceVersion = "", ""
@@ -850,7 +896,7 @@ func TestProviderApplyUpdatesServiceOwnedFields(t *testing.T) {
 func TestProviderApplyServiceDefaultsAreSteadyState(t *testing.T) {
 	scheme := testScheme(t)
 	existing := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "task-service", Namespace: "runtime", UID: "service-uid", Annotations: managementAnnotations("task-uid"), Labels: map[string]string{"app": "task", "foreign": "kept"}}, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.1", ClusterIPs: []string{"10.0.0.1"}, IPFamilies: []corev1.IPFamily{corev1.IPv4Protocol}, IPFamilyPolicy: ptr(corev1.IPFamilyPolicySingleStack), InternalTrafficPolicy: ptr(corev1.ServiceInternalTrafficPolicyCluster), SessionAffinity: corev1.ServiceAffinityNone, Type: corev1.ServiceTypeClusterIP, Selector: map[string]string{"app": "task"}, Ports: []corev1.ServicePort{{Name: "api", Protocol: corev1.ProtocolTCP, Port: 8080, TargetPort: intstr.FromInt32(8080), NodePort: 30001}}}}
-	counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()}
+	counting := &countingClient{Client: testFakeBuilder(scheme).WithObjects(existing).Build()}
 	provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 	desired := existing.DeepCopy()
 	desired.UID, desired.ResourceVersion = "", ""
@@ -896,7 +942,7 @@ func TestProviderApplyAdoptsServiceControlledByProvenRoot(t *testing.T) {
 	scheme := testScheme(t)
 	root := managedDeployment()
 	existing := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "task-service", Namespace: "runtime", UID: "service-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: root.Name, UID: root.UID, Controller: ptr(true)}}}, Spec: corev1.ServiceSpec{ClusterIP: "None", Selector: map[string]string{"app": "task"}}}
-	counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(root, existing).Build()}
+	counting := &countingClient{Client: testFakeBuilder(scheme).WithObjects(root, existing).Build()}
 	provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 	desired := existing.DeepCopy()
 	desired.UID, desired.ResourceVersion = "", ""
@@ -941,7 +987,7 @@ func TestProviderApplyRejectsServiceWithoutProvenController(t *testing.T) {
 func TestProviderDeleteIsIdempotentAndUIDFenced(t *testing.T) {
 	scheme := testScheme(t)
 	deployment := managedDeployment()
-	counting := &countingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(deployment).Build()}
+	counting := &countingClient{Client: testFakeBuilder(scheme).WithObjects(deployment).Build()}
 	provider := New(counting, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 	wrong := objectRef(deployment)
 	wrong.UID = "replacement"
@@ -1017,11 +1063,16 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
+// testFakeBuilder mirrors the Agent manager's field indexes so the Provider can
+// resolve a Kubernetes object's own Events the same way it does in production.
+func testFakeBuilder(scheme *runtime.Scheme) *fake.ClientBuilder {
+	return fake.NewClientBuilder().WithScheme(scheme).WithIndex(&corev1.Event{}, "involvedObject.uid", func(object client.Object) []string {
+		return []string{string(object.(*corev1.Event).InvolvedObject.UID)}
+	})
+}
+
 func testProvider(scheme *runtime.Scheme, objects ...client.Object) *Provider {
-	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).
-		WithIndex(&corev1.Event{}, "involvedObject.uid", func(object client.Object) []string {
-			return []string{string(object.(*corev1.Event).InvolvedObject.UID)}
-		}).Build()
+	client := testFakeBuilder(scheme).WithObjects(objects...).Build()
 	return New(client, scheme, func(agentruntime.TaskIdentity) string { return "runtime" })
 }
 

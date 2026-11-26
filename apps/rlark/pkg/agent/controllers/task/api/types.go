@@ -14,6 +14,8 @@ const (
 	EnvironmentVersionNetworkV1      = "v1"
 	EnvironmentTypeTensorBoard       = "rlinf.io/tensorboard"
 	EnvironmentVersionTensorBoardV1  = "v1"
+	EnvironmentTypeSharedMemory      = "rlinf.io/shared-memory"
+	EnvironmentVersionSharedMemoryV1 = "v1"
 )
 
 // RayRole 表示 Task 在 Ray 集群中的角色。空值表示没有 Ray 角色：Job 没有
@@ -64,4 +66,12 @@ type NetworkEnvironmentParametersV1 struct {
 // TensorBoardEnvironmentParametersV1 是 rlinf.io/tensorboard/v1 的参数合同。
 type TensorBoardEnvironmentParametersV1 struct {
 	LogDir string `json:"logDir"`
+}
+
+// SharedMemoryEnvironmentParametersV1 是 rlinf.io/shared-memory/v1 的参数合同。
+// Size 限制共享内存上限以避免耗尽节点资源。共享内存自动应用到 workload
+// 的每个 regular 执行容器；runtime 自行决定挂载路径和实现机制
+// （Kubernetes 使用 emptyDir+Memory，Docker 使用 --shm-size 等）。
+type SharedMemoryEnvironmentParametersV1 struct {
+	Size string `json:"size"`
 }

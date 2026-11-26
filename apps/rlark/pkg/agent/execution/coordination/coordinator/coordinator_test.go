@@ -618,6 +618,8 @@ func testCoordinator(provider *fakeProvider, adapter *fakeAdapter) *Coordinator 
 	if adapter.capabilities == nil {
 		adapter.capabilities = []agentruntime.Capability{agentruntime.CapabilityReconcileProfiles}
 	}
+	provider.info.Capabilities = append(provider.info.Capabilities, agentruntime.CapabilityCandidateInventory)
+	adapter.capabilities = append(adapter.capabilities, agentruntime.CapabilityWorkloadInventory)
 	return &Coordinator{Runtimes: []RuntimeRegistration{{Info: provider.info, Provider: provider}}, Workloads: []WorkloadRegistration{{Type: "Deployment", Version: "v1", RuntimeKind: provider.info.Kind, Adapter: adapter}}, Resolver: passResolver{}, Binder: passBinder{}}
 }
 

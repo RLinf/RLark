@@ -16,10 +16,11 @@ import (
 // agent keeps as its DaemonSet); the cluster agent on its own ports with a readiness probe; and each
 // control-plane component reaching kcp with its own credential instead of kcp's administrator kubeconfig.
 func init() {
-	components = slices.DeleteFunc(components, func(c types.Component) bool { return c.Name == constants.ComponentAgentNode })
 	for i := range components {
 		c := &components[i]
 		switch c.Name {
+		case constants.ComponentAgentNode:
+			c.EnabledFn = func(*types.DeployConfig) bool { return false }
 		case constants.ComponentAgent:
 			c.Port, c.MetricsPort = constants.AgentProbePort, constants.AgentMetricsPort
 			// Ready once the agent's first watches of the management plane and of its cluster have synced.

@@ -48,6 +48,13 @@ func (c *Client) Info(ctx context.Context) (workload.TypeInfo, error) {
 			result.Capabilities = append(result.Capabilities, converted)
 		}
 	}
+	for _, contract := range info.GetObservations() {
+		converted := workload.ObservationContract{RuntimeKind: agentruntime.Kind(contract.GetRuntimeKind())}
+		for _, root := range contract.GetRoots() {
+			converted.Roots = append(converted.Roots, workload.ObservationRoot{Group: root.GetGroup(), Version: root.GetVersion(), Kind: root.GetKind(), CarrierType: root.GetCarrierType(), InstanceProfile: root.GetInstanceProfile()})
+		}
+		result.Observations = append(result.Observations, converted)
+	}
 	return result, nil
 }
 

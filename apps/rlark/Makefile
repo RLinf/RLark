@@ -80,6 +80,29 @@ vet: ## Run go vet
 test: ## Run tests
 	go test -v -count=1 ./...
 
+##@ envtest
+
+# setup-envtest is pinned to the controller-runtime release branch that matches
+# the controller-runtime version in go.mod, so the downloaded control-plane
+# binaries stay compatible with pkg/envtest.
+# The control-plane archive is fetched from GitHub releases; set HTTPS_PROXY if
+# that host is unreachable from the build environment.
+SETUP_ENVTEST_VERSION ?= release-0.24
+ENVTEST_K8S_VERSION   ?= 1.34.1
+LOCALBIN              := $(CURDIR)/bin
+SETUP_ENVTEST         := $(LOCALBIN)/setup-envtest
+
+.PHONY: setup-envtest test-envtest
+setup-envtest: ## Install setup-envtest and download envtest control-plane binaries into bin/
+	@mkdir -p $(LOCALBIN)
+	@test -x $(SETUP_ENVTEST) || \
+		GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@$(SETUP_ENVTEST_VERSION)
+	@$(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path >/dev/null
+
+test-envtest: setup-envtest ## Run tests against a real API server (envtest); omits -short
+	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
+		go test -v -count=1 ./...
+
 clean: ## Clean Go cache and bin/
 	go clean -cache
 	rm -rf bin/
@@ -105,6 +128,17 @@ docker-push: ## Build rlark image and push to registry
 		--build-arg RUNTIME_BASE_IMAGE=$(RUNTIME_BASE_IMAGE) \
 		-t $(REGISTRY)/rlark:$(IMAGE_TAG) \
 		-f Dockerfile \
+		../..
+
+.PHONY: docker-upgrade-push
+docker-upgrade-push: ## Build rlark-upgrade image and push to registry
+	docker buildx build \
+		--platform $(BUILDX_PLATFORMS) \
+		--push \
+		--build-arg GO_BASE_IMAGE=$(GO_BASE_IMAGE) \
+		--build-arg RUNTIME_BASE_IMAGE=$(RUNTIME_BASE_IMAGE) \
+		-t $(REGISTRY)/rlark-upgrade:$(IMAGE_TAG) \
+		-f Dockerfile.upgrade \
 		../..
 
 ##@ Help

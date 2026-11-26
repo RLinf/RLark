@@ -13,6 +13,10 @@ import (
 )
 
 func (a *Agent) runTunnel(ctx context.Context, role string) error {
+	return a.runRegistrationTunnel(ctx, role, nil)
+}
+
+func (a *Agent) runRegistrationTunnel(ctx context.Context, role string, registered func()) error {
 	logger := log.FromContext(ctx)
 	auth := func(proto, address string) bool {
 		return true
@@ -36,6 +40,21 @@ func (a *Agent) runTunnel(ctx context.Context, role string) error {
 			return err
 		}
 		defer func() { _ = ws.Close() }()
+		// Serve can block in mux.AcceptStream, and session construction can
+		// block in the control handshake. Context cancellation alone cannot
+		// interrupt either transport read: actively close the WebSocket.
+		connectionCtx, stopConnection := context.WithCancel(ctx)
+		closed := make(chan struct{})
+		go func() {
+			defer close(closed)
+			<-connectionCtx.Done()
+			_ = ws.Close()
+		}()
+		defer func() { stopConnection(); <-closed }()
+		// Server completes registration before accepting the WebSocket upgrade.
+		if registered != nil {
+			registered()
+		}
 
 		sessCtx, cancel := context.WithCancel(ctx)
 		defer cancel()

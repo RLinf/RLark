@@ -1,0 +1,41 @@
+RLark Control Plane installed successfully!
+Deployment mode: {{ .Values.managementApi | upper }}
+Namespace: {{ .Release.Namespace }}
+
+Components:
+{{- if .Values.etcd.enabled }}
+  [ ] etcd              Pending   - http://etcd.{{ .Release.Namespace }}.svc:2379
+{{- end }}
+{{- if .Values.kcp.enabled }}
+  [ ] kcp               Pending   - https://kcp.{{ .Release.Namespace }}.svc:6443
+{{- end }}
+  [ ] rlark-server      Pending   - https://rlark-server.{{ .Release.Namespace }}.svc:8443
+  [ ] rlark-gateway     Pending   - http://rlark-gateway.{{ .Release.Namespace }}.svc:8090
+  [ ] rlark-controller-manager  Pending
+{{- if .Values.postgresql.enabled }}
+  [ ] postgresql        Pending   - postgresql.{{ .Release.Namespace }}.svc:5432
+{{- end }}
+  [ ] rlark-ui          Pending   - http://rlark-ui.{{ .Release.Namespace }}.svc:80
+
+Check component status:
+  kubectl get pods -n {{ .Release.Namespace }}
+
+Frontend access:
+  kubectl port-forward -n {{ .Release.Namespace }} svc/rlark-ui 8080:80
+  Then open: http://localhost:8080
+
+{{- if eq .Values.managementApi "kcp" }}
+Admin credentials were generated during post-install.
+To retrieve them:
+  kubectl -n {{ .Release.Namespace }} logs job/kcp-post-install | grep -A4 "Admin password"
+
+Admin console: http://localhost:8080/admin
+{{- end }}
+
+Deploy a data plane:
+  helm install rlark-data-plane ./charts/rlark-data-plane \
+    --namespace {{ .Release.Namespace }} \
+    --set controlPlaneAddress=https://rlark-server.{{ .Release.Namespace }}.svc:8443 \
+    --set certs.caCert="$(cat ca.crt)" \
+    --set certs.agentCert="$(cat agent.crt)" \
+    --set certs.agentKey="$(cat agent.key)"

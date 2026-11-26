@@ -2,6 +2,7 @@ package controllermanager
 
 import (
 	"testing"
+	"time"
 
 	"github.com/spf13/pflag"
 	"k8s.io/client-go/rest"
@@ -54,6 +55,25 @@ func TestControllerConcurrencyValidation(t *testing.T) {
 	config.Domain = 0
 	if err := config.Validate(); err == nil {
 		t.Fatal("expected validation error for zero Domain workers")
+	}
+}
+
+func TestNodeHeartbeatFlagsAndValidation(t *testing.T) {
+	config := DefaultConfig()
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	config.SetupFlags(fs)
+	if err := fs.Parse([]string{"--node-heartbeat-timeout=90s", "--node-heartbeat-grace-period=20s"}); err != nil {
+		t.Fatal(err)
+	}
+	if config.NodeHeartbeatTimeout != 90*time.Second || config.NodeHeartbeatGracePeriod != 20*time.Second {
+		t.Fatalf("node heartbeat config = timeout %s, grace %s", config.NodeHeartbeatTimeout, config.NodeHeartbeatGracePeriod)
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	config.NodeHeartbeatGracePeriod = -time.Second
+	if err := config.Validate(); err == nil {
+		t.Fatal("expected validation error for negative grace period")
 	}
 }
 

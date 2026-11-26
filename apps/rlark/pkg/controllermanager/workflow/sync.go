@@ -16,10 +16,62 @@ import (
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
+	sharedreconcile "github.com/rlinf/rlark/apps/rlark/pkg/reconcile"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
 const workflowLabel = "rlinf.io/workflow"
+
+// jobWorkflowField indexes Jobs by the Workflow they carry evidence for: the
+// canonical workflowLabel and, for Jobs that predate it, the controller
+// OwnerReference. Both forms are proof of ownership, so both must be indexed.
+const jobWorkflowField = "rlinf.io/workflow-owner"
+
+// workflowParentRef is the single ownership identity Jobs are classified
+// against.
+func workflowParentRef(wf *rlarkv1alpha1.Workflow) utils.ParentRef {
+	return utils.ParentRef{
+		UID:        wf.UID,
+		APIVersion: rlarkv1alpha1.GroupVersion.String(),
+		Kind:       "Workflow",
+		Name:       wf.Name,
+		Label:      workflowLabel,
+	}
+}
+
+// indexJobByWorkflow is the field indexer function registered for
+// jobWorkflowField.
+func indexJobByWorkflow(obj client.Object) []string {
+	job, ok := obj.(*rlarkv1alpha1.Job)
+	if !ok {
+		return nil
+	}
+	return utils.ChildIndexKeys(job, rlarkv1alpha1.GroupVersion.String(), "Workflow", workflowLabel)
+}
+
+// listWorkflowJobs returns the Jobs that carry ownership evidence for wf. The
+// lookup goes through jobWorkflowField so the controller does not scan every
+// Job in the cluster. Membership is only narrowed here; ownership still has to
+// be proven by the caller from authoritative metadata.
+func (r *Reconciler) listWorkflowJobs(ctx context.Context, wf *rlarkv1alpha1.Workflow) (rlarkv1alpha1.JobList, error) {
+	var jobs rlarkv1alpha1.JobList
+	if err := r.List(ctx, &jobs, client.MatchingFields{jobWorkflowField: wf.Name}); err != nil {
+		return jobs, fmt.Errorf("list Jobs for Workflow %s: %w", wf.Name, err)
+	}
+	return jobs, nil
+}
+
+// legacyJobNames are the Job names this Workflow could have created before the
+// canonical ownership annotations existed. Child names are derived here rather
+// than reversed from the object, so a Job name is never treated as proof of
+// ownership on its own.
+func legacyJobNames(wf *rlarkv1alpha1.Workflow) []string {
+	names := make([]string, len(wf.Status.Jobs))
+	for i := range wf.Status.Jobs {
+		names[i] = utils.ChildName(wf.Name, wf.Status.Jobs[i].Name)
+	}
+	return names
+}
 
 func (r *Reconciler) syncJobStatuses(
 	ctx context.Context,
@@ -42,10 +94,10 @@ func (r *Reconciler) syncJobStatuses(
 			}
 			return false, fmt.Errorf("get Job %s: %w", jt.Name, err)
 		}
-		if _, _, err := utils.ClassifyChild(&job, wf.UID, rlarkv1alpha1.GroupVersion.String(), "Workflow", workflowLabel, wf.Name, jt.Name); err != nil {
+		if _, err := utils.ClassifyChild(&job, workflowParentRef(wf), jt.Name); err != nil {
 			return false, fmt.Errorf("job %s ownership conflict: %w", job.Name, err)
 		}
-		if utils.SyncStatusEntry(js, string(job.Status.Phase), "") {
+		if utils.SyncStatusEntry(js, job.Status.Phase, "") {
 			changed = true
 		}
 	}
@@ -80,7 +132,7 @@ func (r *Reconciler) reconcileDAG(
 		if err != nil {
 			return false, err
 		}
-		if utils.SyncStatusEntry(js, string(job.Status.Phase), "") {
+		if utils.SyncStatusEntry(js, job.Status.Phase, "") {
 			statusChanged = true
 		}
 	}
@@ -106,19 +158,21 @@ func (r *Reconciler) reconcileJob(
 			return nil, controller.ErrRequeueAfterChildCleanup
 		}
 		if !jobTerminal(&job) {
+			// Only a running Workflow dispatches Jobs, so the desired Spec here
+			// always describes a Job that should run: a Job that an earlier stop
+			// suspended is resumed by the same comparison that reconciles every
+			// other field.
 			desired := buildJob(wf, jt, jobName)
-			marker := string(wf.UID)
-			workflowStopped := wf.Spec.Suspended || job.Annotations[rlarkv1alpha1.WorkflowStoppedByAnnotation] == marker
-			if workflowStopped {
-				desired.Spec.Suspended = true
-				desired.Annotations[rlarkv1alpha1.WorkflowStoppedByAnnotation] = marker
-			}
-			if !reflect.DeepEqual(job.Spec, desired.Spec) ||
-				(workflowStopped && job.Annotations[rlarkv1alpha1.WorkflowStoppedByAnnotation] != marker) {
+			if !reflect.DeepEqual(job.Spec, desired.Spec) {
+				// Patch instead of Update so only the fields this controller
+				// decided to change are submitted. A full replacement would
+				// also resubmit every field the local copy happens to hold,
+				// silently reverting a disjoint concurrent write.
+				before := job.DeepCopy()
 				job.Spec = desired.Spec
 				job.Annotations = utils.MergeAnnotations(job.Annotations, desired.Annotations)
-				if err := r.Update(ctx, &job); err != nil {
-					return nil, fmt.Errorf("update Job %s: %w", jobName, err)
+				if err := r.Patch(ctx, &job, client.MergeFrom(before)); err != nil {
+					return nil, fmt.Errorf("patch Job %s: %w", jobName, err)
 				}
 				logger.Info("Updated Job for workflow", "job", jobName, "workflowJob", jt.Name)
 			}
@@ -155,21 +209,82 @@ func jobTerminal(job *rlarkv1alpha1.Job) bool {
 	return job.Status.Phase == rlarkv1alpha1.JobPhaseSucceeded || job.Status.Phase == rlarkv1alpha1.JobPhaseFailed
 }
 
+// jobStopped reports whether a Job needs no further stopping, either because it
+// reached a terminal phase on its own or because it reports that it stopped.
+func jobStopped(job *rlarkv1alpha1.Job) bool {
+	return jobTerminal(job) || job.Status.Phase == rlarkv1alpha1.JobPhaseStopped
+}
+
+// stopOwnedJobs propagates a suspended Workflow's stop intent to the Jobs it
+// owns and reports whether all of them have come to rest.
+//
+// Suspending a Workflow is a durable desired-state switch, not a request to
+// delete its children: the Jobs are kept so a later resume can pick the run up
+// again, and each one that is still active is asked to suspend itself instead.
+// Because nothing is deleted, this path never waits for child cleanup, so a Job
+// whose Tasks the Agent has not reported as stopped yet cannot stop the
+// Workflow from recording the Spec it observed.
+func (r *Reconciler) stopOwnedJobs(ctx context.Context, wf *rlarkv1alpha1.Workflow) (bool, error) {
+	jobs, err := r.listWorkflowJobs(ctx, wf)
+	if err != nil {
+		return false, err
+	}
+
+	parent := workflowParentRef(wf)
+	legacyNames := legacyJobNames(wf)
+	allStopped := true
+	for i := range jobs.Items {
+		job := &jobs.Items[i]
+		decision, err := utils.ClassifyRemovedChild(job, parent, legacyNames)
+		if err != nil {
+			return false, fmt.Errorf("job %s ownership conflict: %w", job.Name, err)
+		}
+		if !decision.Owned() {
+			continue
+		}
+		if jobStopped(job) {
+			// Already at rest. A Job that reached Succeeded or Failed on its
+			// own keeps that outcome: asking it to suspend afterwards would
+			// only overwrite a finished run's result with a stop.
+			continue
+		}
+		allStopped = false
+		if !job.DeletionTimestamp.IsZero() || job.Spec.Suspended {
+			continue
+		}
+		// Stopping changes exactly one Spec field, so patch it instead of
+		// resubmitting every field this copy happens to hold.
+		before := job.DeepCopy()
+		job.Spec.Suspended = true
+		if err := r.Patch(ctx, job, client.MergeFrom(before)); err != nil {
+			return false, fmt.Errorf("suspend Job %s: %w", job.Name, err)
+		}
+	}
+	return allStopped, nil
+}
+
 func (r *Reconciler) ensureJobOwnership(ctx context.Context, wf *rlarkv1alpha1.Workflow, template string, job *rlarkv1alpha1.Job) error {
-	owned, legacy, err := utils.ClassifyChild(job, wf.UID, rlarkv1alpha1.GroupVersion.String(), "Workflow", workflowLabel, wf.Name, template)
-	if err != nil || !owned {
+	decision, err := utils.ClassifyChild(job, workflowParentRef(wf), template)
+	if err != nil {
 		return fmt.Errorf("job %s ownership conflict: %w", job.Name, err)
 	}
-	if !legacy {
+	if !decision.Legacy() {
 		return nil
 	}
+	before := job.DeepCopy()
+	// Backfill the Workflow label as well, so the adopted Job stays
+	// discoverable by the label selector the prune path lists with.
+	if job.Labels == nil {
+		job.Labels = map[string]string{}
+	}
+	job.Labels[workflowLabel] = wf.Name
 	job.Annotations = utils.MergeAnnotations(job.Annotations, map[string]string{
 		utils.ParentUIDAnnotation: string(wf.UID), utils.ChildTemplateAnnotation: template,
 	})
 	if err := ctrl.SetControllerReference(wf, job, r.Scheme); err != nil {
 		return fmt.Errorf("adopt Job %s: %w", job.Name, err)
 	}
-	if err := r.Update(ctx, job); err != nil {
+	if err := r.Patch(ctx, job, client.MergeFrom(before)); err != nil {
 		return fmt.Errorf("adopt Job %s: %w", job.Name, err)
 	}
 	return nil
@@ -186,26 +301,30 @@ func (r *Reconciler) reconcileWithStateMachine(
 	if !wf.Spec.Suspended {
 		if _, err := newDAG(wf.Spec.JobTemplates); err != nil {
 			logger.Error(err, "invalid Workflow DAG")
-			return markWorkflowInvalid(wf, err.Error()), nil
+			changed := markWorkflowInvalid(wf, err.Error())
+			if markWorkflowProgress(wf) {
+				changed = true
+			}
+			return changed, nil
 		}
 	}
 
 	f := newWorkflowStateMachine()
 	f.SetState(string(wf.Status.Phase))
 
-	oldTemplates := make([]string, len(wf.Status.Jobs))
-	for i := range wf.Status.Jobs {
-		oldTemplates[i] = wf.Status.Jobs[i].Name
-	}
+	legacyNames := legacyJobNames(wf)
 	changed := syncJobStatusSnapshot(wf)
 	if !wf.Spec.Suspended && markWorkflowValid(wf) {
 		changed = true
 	}
-	waiting, err := r.pruneJobsWithTemplates(ctx, wf, oldTemplates)
+	waiting, err := r.pruneJobsWithTemplates(ctx, wf, legacyNames)
 	if err != nil {
 		return false, err
 	}
 	if waiting {
+		if markWorkflowProgress(wf) {
+			changed = true
+		}
 		return changed, controller.ErrRequeueAfterChildCleanup
 	}
 
@@ -230,6 +349,9 @@ func (r *Reconciler) reconcileWithStateMachine(
 		}
 		wf.Status.Jobs = nil
 		changed = true
+		if markWorkflowProgress(wf) {
+			changed = true
+		}
 		return changed, nil
 	}
 
@@ -248,26 +370,30 @@ func (r *Reconciler) reconcileWithStateMachine(
 		changed = true
 	}
 	if wf.Spec.Suspended {
-		waiting, err := r.deleteOwnedJobs(ctx, wf)
+		allStopped, err := r.stopOwnedJobs(ctx, wf)
 		if err != nil {
 			return false, err
 		}
-		if waiting {
-			return changed, controller.ErrRequeueAfterChildCleanup
-		}
-		if markJobStatusesStopped(wf) {
-			changed = true
-		}
-		if f.Can(EventAllJobsStopped) {
-			if err := f.Event(ctx, EventAllJobsStopped, wf); err != nil {
-				return false, err
+		if allStopped {
+			// Every remaining Job status without a terminal phase belongs to a
+			// template that never produced a Job, so it has nothing left to run.
+			if markJobStatusesStopped(wf) {
+				changed = true
 			}
+			if f.Can(EventAllJobsStopped) {
+				if err := f.Event(ctx, EventAllJobsStopped, wf); err != nil {
+					return false, err
+				}
+				changed = true
+			}
+		}
+		if markWorkflowProgress(wf) {
 			changed = true
 		}
 		return changed, nil
 	}
 
-	if !wf.Spec.Suspended && wf.Status.Phase == rlarkv1alpha1.WorkflowPhaseRunning {
+	if wf.Status.Phase == rlarkv1alpha1.WorkflowPhaseRunning {
 		dagChanged, err := r.reconcileDAG(ctx, wf, log.FromContext(ctx))
 		if err != nil {
 			return false, err
@@ -282,6 +408,10 @@ func (r *Reconciler) reconcileWithStateMachine(
 		if err := f.Event(ctx, event, wf); err != nil {
 			return false, err
 		}
+		changed = true
+	}
+
+	if markWorkflowProgress(wf) {
 		changed = true
 	}
 
@@ -337,6 +467,68 @@ func markWorkflowValid(wf *rlarkv1alpha1.Workflow) bool {
 	})
 }
 
+// workflowConditionProgressing is the type of the condition recording that the
+// controller is still driving the Workflow towards its spec.
+const workflowConditionProgressing = rlarkv1alpha1.ConditionTypeProgressing
+
+// Reason values for the Workflow Progressing condition. Each names the action
+// the controller is currently taking, not the state it is in.
+const (
+	workflowReasonAwaitingJobs = "AwaitingJobs"
+	workflowReasonJobsRunning  = "JobsRunning"
+	workflowReasonStoppingJobs = "StoppingJobs"
+)
+
+// workflowProgress returns the reason and message describing what the
+// controller is currently driving, or two empty strings once the Workflow has
+// settled. "Settled" means the Workflow reached a terminal phase or completed
+// the stop its spec asked for; in both cases there is no action left to report.
+func workflowProgress(wf *rlarkv1alpha1.Workflow) (string, string) {
+	if wf.Spec.Suspended {
+		if wf.Status.Phase == rlarkv1alpha1.WorkflowPhaseStopped {
+			return "", ""
+		}
+		return workflowReasonStoppingJobs, "The Workflow is suspended and its Jobs are being stopped."
+	}
+
+	switch wf.Status.Phase {
+	case rlarkv1alpha1.WorkflowPhaseSucceeded, rlarkv1alpha1.WorkflowPhaseFailed:
+		return "", ""
+	case rlarkv1alpha1.WorkflowPhaseStopping:
+		return workflowReasonStoppingJobs, "The Workflow is stopping the Jobs left over from its previous run."
+	case rlarkv1alpha1.WorkflowPhaseRunning:
+		return workflowReasonJobsRunning, "The Workflow is walking its Job DAG and its Jobs are running."
+	default:
+		return workflowReasonAwaitingJobs, "The Workflow is waiting for its first Jobs to be created and start."
+	}
+}
+
+// markWorkflowProgress publishes the Progressing condition, or withdraws it
+// once the Workflow has settled. Withdrawing rather than setting Status=False
+// keeps "not progressing" distinguishable from "progress failed": the latter
+// is reported by Validated=False or by the terminal phase, and collapsing both
+// into one condition value would lose that distinction.
+func markWorkflowProgress(wf *rlarkv1alpha1.Workflow) bool {
+	reason, message := workflowProgress(wf)
+	if reason == "" {
+		return sharedreconcile.ApplyConditionMutations(&wf.Status.Conditions, wf.Generation,
+			[]sharedreconcile.ConditionMutation{{
+				Condition: metav1.Condition{Type: workflowConditionProgressing},
+				Remove:    true,
+			}})
+	}
+	return sharedreconcile.ApplyConditionMutations(&wf.Status.Conditions, wf.Generation,
+		[]sharedreconcile.ConditionMutation{{
+			Condition: metav1.Condition{
+				Type:               workflowConditionProgressing,
+				Status:             metav1.ConditionTrue,
+				Reason:             reason,
+				Message:            message,
+				ObservedGeneration: wf.Generation,
+			},
+		}})
+}
+
 func markJobStatusesStopped(wf *rlarkv1alpha1.Workflow) bool {
 	changed := syncJobStatusSnapshot(wf)
 	for i := range wf.Status.Jobs {
@@ -352,34 +544,34 @@ func markJobStatusesStopped(wf *rlarkv1alpha1.Workflow) bool {
 }
 
 func (r *Reconciler) pruneJobs(ctx context.Context, wf *rlarkv1alpha1.Workflow) (bool, error) {
-	oldTemplates := make([]string, len(wf.Status.Jobs))
-	for i := range wf.Status.Jobs {
-		oldTemplates[i] = wf.Status.Jobs[i].Name
-	}
-	return r.pruneJobsWithTemplates(ctx, wf, oldTemplates)
+	return r.pruneJobsWithTemplates(ctx, wf, legacyJobNames(wf))
 }
 
-func (r *Reconciler) pruneJobsWithTemplates(ctx context.Context, wf *rlarkv1alpha1.Workflow, oldTemplates []string) (bool, error) {
+func (r *Reconciler) pruneJobsWithTemplates(ctx context.Context, wf *rlarkv1alpha1.Workflow, legacyNames []string) (bool, error) {
 	desired := make(map[string]string, len(wf.Spec.JobTemplates))
 	for _, template := range wf.Spec.JobTemplates {
 		desired[utils.ChildName(wf.Name, template.Name)] = template.Name
 	}
-	var jobs rlarkv1alpha1.JobList
-	if err := r.List(ctx, &jobs, client.MatchingLabels{workflowLabel: wf.Name}); err != nil {
-		return false, fmt.Errorf("list Jobs for Workflow %s: %w", wf.Name, err)
+	jobs, err := r.listWorkflowJobs(ctx, wf)
+	if err != nil {
+		return false, err
 	}
+	parent := workflowParentRef(wf)
 	waiting := false
 	for i := range jobs.Items {
 		job := &jobs.Items[i]
 		template, keep := desired[job.Name]
 		if keep {
-			if _, _, err := utils.ClassifyChild(job, wf.UID, rlarkv1alpha1.GroupVersion.String(), "Workflow", workflowLabel, wf.Name, template); err != nil {
+			if _, err := utils.ClassifyChild(job, parent, template); err != nil {
 				return false, fmt.Errorf("job %s ownership conflict: %w", job.Name, err)
 			}
 			continue
 		}
-		owned, _ := utils.ClassifyRemovedChild(job, wf.UID, rlarkv1alpha1.GroupVersion.String(), "Workflow", workflowLabel, wf.Name, oldTemplates)
-		if owned {
+		decision, err := utils.ClassifyRemovedChild(job, parent, legacyNames)
+		if err != nil {
+			return false, fmt.Errorf("job %s ownership conflict: %w", job.Name, err)
+		}
+		if decision.Owned() {
 			waiting = true
 			if err := r.Delete(ctx, job); client.IgnoreNotFound(err) != nil {
 				return false, fmt.Errorf("prune Job %s: %w", job.Name, err)

@@ -78,6 +78,27 @@ func TestDesiredAndPeriodicRequireFullReconcile(t *testing.T) {
 	}
 }
 
+func TestRootlessRuntimeHintInvalidatesQueuedAndLaterRootEvidence(t *testing.T) {
+	for _, deletedFirst := range []bool{false, true} {
+		a := NewAccumulator(Config{})
+		key := Key{Namespace: "management", Name: "task"}
+		live := Trigger{Key: key, Kind: RuntimeState, ObjectUID: "uid", Generation: 1, RuntimeID: "kubernetes", Root: root("root")}
+		deleted := live
+		deleted.Root = nil
+		if deletedFirst {
+			a.Merge(deleted)
+			a.Merge(live)
+		} else {
+			a.Merge(live)
+			a.Merge(deleted)
+		}
+		set, ok := a.Take(key)
+		if !ok || !set.FullReconcileRequired || len(set.Roots) != 0 {
+			t.Fatalf("set=%+v", set)
+		}
+	}
+}
+
 func TestAccumulatorWakeupFailureRetainsPendingHints(t *testing.T) {
 	accumulator := NewAccumulator(Config{})
 	key := Key{Namespace: "management", Name: "task"}

@@ -1,3 +1,5 @@
+import { AdminNodeRowMenu } from "../../components/NodeResourceBrowser";
+import { nodeSchedulingState } from "../../utils/nodeState";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Ban, ChevronRight, Info, LayoutGrid, LockOpen, Trash2 } from "lucide-react";
 import type { Phase } from "../../data";
@@ -52,6 +54,9 @@ export function NodeResourceBrowser({
   onToggleScheduling,
   removable,
   updatingNode,
+  onUnmanageNode,
+  onDrainNode,
+  onUndrainNode,
   initialCategory = "all",
   initialQuery = "",
   selectedNodeKeys,
@@ -71,6 +76,9 @@ export function NodeResourceBrowser({
   // Each row can remove its node; the list is refreshed once it is gone.
   removable?: boolean;
   updatingNode?: string | null;
+  onUnmanageNode?: (node: CRDNode) => void;
+  onDrainNode?: (node: CRDNode) => void;
+  onUndrainNode?: (node: CRDNode) => void;
   initialCategory?: CategoryFilter;
   initialQuery?: string;
   selectedNodeKeys?: Set<string>;
@@ -202,15 +210,15 @@ export function NodeResourceBrowser({
   const selectable = Boolean(selectedNodeKeys && onSelectionChange);
   const nodeKey = (node: CRDNode) =>
     `${node.metadata.namespace ?? ""}/${node.metadata.name}`;
-  const filteredKeys = filteredNodes.map(nodeKey);
-  const allFilteredSelected =
-    filteredKeys.length > 0 &&
-    filteredKeys.every((key) => selectedNodeKeys?.has(key));
-  const toggleAllFiltered = () => {
+  const pagedKeys = pagedNodes.map(nodeKey);
+  const allPageSelected =
+    pagedKeys.length > 0 &&
+    pagedKeys.every((key) => selectedNodeKeys?.has(key));
+  const togglePage = () => {
     if (!selectedNodeKeys || !onSelectionChange) return;
     const next = new Set(selectedNodeKeys);
-    filteredKeys.forEach((key) =>
-      allFilteredSelected ? next.delete(key) : next.add(key),
+    pagedKeys.forEach((key) =>
+      allPageSelected ? next.delete(key) : next.add(key),
     );
     onSelectionChange(next);
   };
@@ -338,16 +346,16 @@ export function NodeResourceBrowser({
               <label className="node-batch-select-all">
                 <input
                   type="checkbox"
-                  checked={allFilteredSelected}
-                  onChange={toggleAllFiltered}
+                  checked={allPageSelected}
+                  onChange={togglePage}
                 />
-                {zh ? "全选筛选结果" : "Select filtered"}
+                {zh ? "全选当前页" : "Select this page"}
               </label>
               <button
                 type="button"
                 className="plain-button"
-                onClick={() => onSelectFiltered?.(filteredKeys)}
-                disabled={filteredKeys.length === 0}
+                onClick={() => onSelectFiltered?.(pagedKeys)}
+                disabled={pagedKeys.length === 0}
               >
                 {zh ? "全选" : "Select all"}
               </button>
@@ -594,6 +602,19 @@ export function NodeResourceBrowser({
                             ? "可调度"
                             : "Schedulable"}
                       </span>
+                      {onUnmanageNode && onDrainNode && onUndrainNode ? (
+                        <AdminNodeRowMenu
+                          node={node}
+                          schedulingKind={nodeSchedulingState(node).kind}
+                          updating={updatingNode === node.metadata.name || removalActive}
+                          zh={zh}
+                          runningJobs={node.status?.activeWorkloads?.rlarkManaged ?? 0}
+                          onToggleScheduling={() => onToggleScheduling(node)}
+                          onDrain={() => onDrainNode(node)}
+                          onUndrain={() => onUndrainNode(node)}
+                          onUnmanage={() => onUnmanageNode(node)}
+                        />
+                      ) : (
                       <button
                         type="button"
                         className={
@@ -624,6 +645,7 @@ export function NodeResourceBrowser({
                               ? "封锁"
                               : "Cordon"}
                       </button>
+                      )}
                       {removable && removalEntry && (removalActive || removalFailed) ? (
                         <span className="node-removal-actions">
                           <button type="button" className="secondary-button node-scheduling-button" onClick={(event) => { event.stopPropagation(); openDrawer(nodeClusterID, node.metadata.name); }}>{zh ? "查看进度" : "View progress"}</button>

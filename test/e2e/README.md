@@ -39,7 +39,9 @@ Product deployment inputs such as images, namespaces, feature settings, and
 upgrade versions are declared and validated by the scenario that needs them.
 They are not global framework configuration. `RLARK_SMOKE_IMAGE`,
 `RLARK_SMOKE_UI_IMAGE`, `RLARK_SMOKE_RLARKADM`, and `RLARK_SMOKE_TIMEOUT`
-belong only to the smoke scenario.
+belong only to the smoke scenario. `RLARK_NODE_PRESSURE_IMAGE`,
+`RLARK_NODE_PRESSURE_UI_IMAGE`, `RLARK_NODE_PRESSURE_RLARKADM`, and
+`RLARK_NODE_PRESSURE_TIMEOUT` belong only to the node pressure scenario.
 
 ## Running
 
@@ -64,6 +66,23 @@ When building, `RLARK_SMOKE_GO_BASE_IMAGE`,
 `RLARK_SMOKE_RUNTIME_BASE_IMAGE`, and `RLARK_SMOKE_UI_BASE_IMAGE` select the
 three base images. This supports restricted registries without embedding a
 registry address in the repository.
+
+Run the node pressure lifecycle:
+
+```bash
+make test-e2e-rlark-node-pressure
+```
+
+This scenario deploys the control plane only and does not start a data plane
+Agent. It creates a synthetic Node in a dedicated namespace, injects
+`status.diskPressure=true` through the status subresource, and maintains the
+`node-heartbeat-<node-name>` Lease that normally comes from the Agent. It then
+verifies the node conditions the control plane derives from disk pressure
+(`ResourcePressure`, `StorageReady`, `Ready`, `Degraded`, and phase `Degraded`).
+No files are written to fill a disk. Evidence is written to
+`node-pressure.txt`. `RLARK_NODE_PRESSURE_TIMEOUT` defaults to `20m`. For
+quicker local runs, set `RLARK_NODE_PRESSURE_BUILD_IMAGES=false` to reuse
+existing `rlark-e2e/rlark:local` and `rlark-e2e/rlark-ui:local` images.
 
 The scenario runner owns the lifecycle: `Provision`, product `Prepare`,
 `Execute`, product `Collect`, infrastructure `Collect`, product `Cleanup`, then

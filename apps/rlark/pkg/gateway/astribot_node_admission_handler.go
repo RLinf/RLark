@@ -239,11 +239,12 @@ func nodeAdmissionView(object *unstructured.Unstructured, now time.Time) nodeAdm
 		value, _, _ := unstructured.NestedString(object.Object, fields...)
 		return value
 	}
+	reason := text("status", "reason")
 	view := nodeAdmission{
 		ClusterID: text("spec", "clusterID"), NodeName: object.GetName(), Site: text("spec", "site"),
 		Address: text("spec", "address"), Uplink: text("spec", "uplink", "gateway"), NodeClass: text("spec", "nodeClass"), ExpiresAt: text("spec", "expiresAt"),
 		IssuedBy: text("spec", "issuedBy"), IssuedAt: text("spec", "issuedAt"), RedeemedAt: text("spec", "redeemedAt"), PublicKey: text("spec", "publicKey"),
-		TunnelAddress: text("status", "address"), Reason: text("status", "reason"),
+		TunnelAddress: text("status", "address"), Reason: reason,
 	}
 	view.SSHLogin, view.SSHHostKey = object.GetAnnotations()[nodeAdmissionSSHLoginAnnotation], object.GetAnnotations()[nodeAdmissionSSHHostKeyAnnotation]
 	view.SelfHealed, view.JoinTokenAt = object.GetAnnotations()[nodeAdmissionSelfHealedAnnotation], object.GetAnnotations()[nodeAdmissionJoinTokenAnnotation]
