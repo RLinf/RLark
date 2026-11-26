@@ -52,8 +52,8 @@ cert:
 
 kubernetes:
   kubeconfig: ~/.kube/config
-  agent-image: rlark:latest
-  image: rlark:latest
+  agent-image: ghcr.io/rlinf/rlark:v0.1.0
+  image: ghcr.io/rlinf/rlark:v0.1.0
 ```
 
 Replace `kubernetes.kubeconfig` with a kubeconfig that can deploy to the target cluster and set available Agent and RLark tools images. `kubernetes.image` supplies mandatory Task tools and optional network/SSH facilities; the Kubernetes cluster Agent rejects an empty/blank value at startup. Setting `kubernetes.agent-image` alone does not supply the tools image. See [Configuration Reference](../reference/configuration.md) for all accepted keys.

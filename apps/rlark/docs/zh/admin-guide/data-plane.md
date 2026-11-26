@@ -52,8 +52,8 @@ cert:
 
 kubernetes:
   kubeconfig: ~/.kube/config
-  agent-image: rlark:latest
-  image: rlark:latest
+  agent-image: ghcr.io/rlinf/rlark:v0.1.0
+  image: ghcr.io/rlinf/rlark:v0.1.0
 ```
 
 将 `kubernetes.kubeconfig` 替换为可向目标集群部署资源的 kubeconfig，并设置可用的 Agent 和 RLark tools 镜像。`kubernetes.image` 提供必需 Task tools 及可选网络/SSH 功能；Kubernetes cluster Agent 会在启动时拒绝为空或纯空白的值。仅设置 `kubernetes.agent-image` 不会提供 tools 镜像。所有可用字段参见[配置参考](../reference/configuration.md)。
