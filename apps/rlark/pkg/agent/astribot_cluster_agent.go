@@ -77,36 +77,38 @@ func astribotManagementOptions(clusterID string, options ctrl.Options) ctrl.Opti
 	return options
 }
 
-// startAstribot adds our controllers and runs the cluster agent's managers together.
+// prepareAstribot installs site controllers and prepares supervised manager startup.
 //
 // The agent is ready once the first watches of both sides have synced. The
 // watches the controllers hold are asked for here, before the managers
 // start, so that "every informer has synced" cannot be true while a
 // controller has yet to ask for its own. A watch that does not sync in time
 // stops its manager, and with it the agent.
-func (c *clusterAgent) startAstribot(ctx context.Context, mm, localManager ctrl.Manager, lm interface {
+func (c *clusterAgent) prepareAstribot(ctx context.Context, mm, localManager ctrl.Manager, lm interface {
 	Start(ctx context.Context) error
 	Add(manager.Runnable) error
-}, mclient, local client.Client, clusterID, agentType string) error {
+}, mclient, local client.Client, clusterID, agentType string) (func(context.Context) error, error) {
 	if err := c.setupAstribotControllers(mm, localManager, lm, mclient, local, clusterID, agentType); err != nil {
-		return err
+		return nil, err
 	}
 	for _, object := range []client.Object{&rlarkv1alpha1.Cluster{}, &rlarkv1alpha1.Task{}, &rlarkv1alpha1.Node{}, &rlarkv1alpha1.Pod{}, &rlarkv1alpha1.Addon{}} {
 		if _, err := mm.GetCache().GetInformer(ctx, object, cache.BlockUntilSynced(false)); err != nil {
-			return fmt.Errorf("watch %T of the management plane: %w", object, err)
+			return nil, fmt.Errorf("watch %T of the management plane: %w", object, err)
 		}
 	}
 	for _, object := range []client.Object{&corev1.Node{}, &corev1.Pod{}, &appsv1.DaemonSet{}} {
 		if _, err := localManager.GetCache().GetInformer(ctx, object, cache.BlockUntilSynced(false)); err != nil {
-			return fmt.Errorf("watch %T of the cluster: %w", object, err)
+			return nil, fmt.Errorf("watch %T of the cluster: %w", object, err)
 		}
 	}
-	return startTogether(ctx, mm.Start, lm.Start, func(ctx context.Context) error {
-		if mm.GetCache().WaitForCacheSync(ctx) && localManager.GetCache().WaitForCacheSync(ctx) {
-			log.FromContext(ctx).WithName("clusterAgent").Info("the first watches of the management plane and of the cluster have synced; the agent is ready")
-			c.a.ready.set(partClusterWatches, true)
-		}
-		<-ctx.Done()
-		return nil
-	})
+	return func(ctx context.Context) error {
+		return startTogether(ctx, mm.Start, lm.Start, func(ctx context.Context) error {
+			if mm.GetCache().WaitForCacheSync(ctx) && localManager.GetCache().WaitForCacheSync(ctx) {
+				log.FromContext(ctx).WithName("clusterAgent").Info("the first watches of the management plane and of the cluster have synced; the agent is ready")
+				c.a.ready.set(partClusterWatches, true)
+			}
+			<-ctx.Done()
+			return nil
+		})
+	}, nil
 }

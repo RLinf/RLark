@@ -43,13 +43,15 @@ type TaskStatusApplyConfiguration struct {
 	// joining) is listed with the message "node not ready" and does not hold
 	// the Task back. No instance ever fails the Task, so nodes joining,
 	// leaving or going down never fail the Job.
-	Instances        []TaskInstanceStatusApplyConfiguration `json:"instances,omitempty"`
-	Conditions       []v1.ConditionApplyConfiguration       `json:"conditions,omitempty"`
-	StartTime        *metav1.Time                           `json:"startTime,omitempty"`
-	CompletionTime   *metav1.Time                           `json:"completionTime,omitempty"`
-	Message          *string                                `json:"message,omitempty"`
-	RetryCount       *int32                                 `json:"retryCount,omitempty"`
-	TensorBoardProxy *string                                `json:"tensorBoardProxy,omitempty"`
+	Instances []TaskInstanceStatusApplyConfiguration `json:"instances,omitempty"`
+	// DrainRequests is the bounded current observation written by the Task Host.
+	DrainRequests    []TaskDrainStatusApplyConfiguration `json:"drainRequests,omitempty"`
+	Conditions       []v1.ConditionApplyConfiguration    `json:"conditions,omitempty"`
+	StartTime        *metav1.Time                        `json:"startTime,omitempty"`
+	CompletionTime   *metav1.Time                        `json:"completionTime,omitempty"`
+	Message          *string                             `json:"message,omitempty"`
+	RetryCount       *int32                              `json:"retryCount,omitempty"`
+	TensorBoardProxy *string                             `json:"tensorBoardProxy,omitempty"`
 	// PullProgress 由数据面节点上的 image pull monitor 上报，仅在 Pod 处于
 	// ContainerCreating（尚未 Running）期间由 cluster-agent 聚合写入。Pod 进入
 	// Running 后被清空。供前端展示镜像拉取进度/速度。
@@ -101,6 +103,19 @@ func (b *TaskStatusApplyConfiguration) WithInstances(values ...*TaskInstanceStat
 			panic("nil value passed to WithInstances")
 		}
 		b.Instances = append(b.Instances, *values[i])
+	}
+	return b
+}
+
+// WithDrainRequests adds the given value to the DrainRequests field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the DrainRequests field.
+func (b *TaskStatusApplyConfiguration) WithDrainRequests(values ...*TaskDrainStatusApplyConfiguration) *TaskStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithDrainRequests")
+		}
+		b.DrainRequests = append(b.DrainRequests, *values[i])
 	}
 	return b
 }

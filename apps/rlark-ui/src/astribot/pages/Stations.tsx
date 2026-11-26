@@ -324,7 +324,7 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
       power={{ pending: power.pending, press: (action, label) => powerPress(item, action, label) }}
       deleting={deletePending === key}
       admissionPending={admissionPending?.key === key ? admissionPending.kind : ""}
-      onClose={() => closePanel(item)}
+      onDismiss={() => closePanel(item)}
       onDelete={() => void removeRecord(item)}
       onReissue={() => void actAdmission(item, "reissue")}
       onRevoke={() => void actAdmission(item, "revoke")}

@@ -2,19 +2,19 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
-	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/rlinf/rlark/api/kubeclients/clientset/versioned"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
-	"github.com/rlinf/rlark/apps/rlark/pkg/common"
 	"github.com/rlinf/rlark/apps/rlark/pkg/server"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
@@ -63,23 +63,13 @@ func (a *Agent) startDrain() {
 func (a *Agent) init(ctx context.Context) error {
 	_ = ctx
 	var err error
-	if err := validateTaskRuntimeResyncPeriod(a.config.Mode, a.config.TaskRuntimeResyncPeriod); err != nil {
-		return err
-	}
-	if err := a.config.ControllerConcurrency.Validate(); err != nil {
-		return fmt.Errorf("validate controller concurrency: %w", err)
-	}
+	a.config.AgentType = strings.ToLower(a.config.AgentType)
+	a.config.Execution.Image = a.config.Image
 	if err := a.config.AstribotConfig.apply(); err != nil {
 		return err
 	}
-	if a.config.PodOrphanSweepInterval <= 0 {
-		return fmt.Errorf("pod orphan sweep interval must be positive")
-	}
-	if a.config.PodOrphanSweepPageSize <= 0 {
-		return fmt.Errorf("pod orphan sweep page size must be positive")
-	}
-	if a.config.PodStaleTTL <= 0 {
-		return fmt.Errorf("pod stale TTL must be positive")
+	if err := a.config.Validate(); err != nil {
+		return fmt.Errorf("validate agent config: %w", err)
 	}
 	// Initialize server client
 	a.serverClient, err = server.NewClientFromConfig(a.config.ClientConfig)
@@ -97,7 +87,7 @@ func (a *Agent) init(ctx context.Context) error {
 		return fmt.Errorf("create management API client: %w", err)
 	}
 
-	switch rlarkv1alpha1.AgentType(a.config.AgentType) {
+	switch a.config.RuntimeKind() {
 	case rlarkv1alpha1.AgentTypeKubernetes:
 		// Initialize Kubernetes client
 		a.localKubeConfig, err = a.config.KubeClientConfig.BuildRestConfig()
@@ -127,7 +117,9 @@ func (a *Agent) init(ctx context.Context) error {
 	}
 
 	// Initialize local listener and dialer
-	a.localListener, a.localDialer = utils.NetPipeWithBuffer(65536)
+	// Successful private dials must reach HTTP Accept; queued buffered peers
+	// are not tracked or closed by http.Server during shutdown.
+	a.localListener, a.localDialer = utils.NetPipe()
 
 	return nil
 }
@@ -144,6 +136,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.init(ctx); err != nil {
 		return err
 	}
+	defer func() { _ = a.localListener.Close() }() // Process-owned in-memory listener; no persistent state is removed.
+	if err := a.localPreflight(ctx); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	a.drainMu.Lock()
 	a.drain = cancel
@@ -156,38 +152,29 @@ func (a *Agent) Run(ctx context.Context) error {
 		cancel()
 	}()
 
-	eg, ctx := errgroup.WithContext(ctx)
-	a.startAstribot(ctx, eg)
-
-	// Run tunnel for all modes
-	eg.Go(func() error {
-		role := ""
-		if a.config.Mode == "node" {
-			role = "node-agent:" + common.NodeName("-")
+	services := a.astribotServices()
+	tunnels := tunnelRoles(a.config)
+	err := runWithRegistration(ctx, func(ctx context.Context, registered func()) error {
+		return a.runRegistrationTunnel(ctx, tunnels[0], registered)
+	}, func(ctx context.Context) ([]func(context.Context) error, error) {
+		if err := a.managementPreflight(ctx); err != nil {
+			return nil, err
 		}
-		return a.runTunnel(ctx, role)
+		roles, err := buildRoles(ctx, a.config, &clusterAgent{a: a}, &nodeAgent{a: a})
+		if err != nil {
+			return nil, err
+		}
+		components := append([]func(context.Context) error{a.runLocalHTTPServer}, services...)
+		components = append(components, roles...)
+		for _, role := range tunnels[1:] {
+			components = append(components, func(ctx context.Context) error { return a.runTunnel(ctx, role) })
+		}
+		return components, nil
 	})
-
-	// Run local HTTP server for all modes
-	eg.Go(func() error {
-		return a.runLocalHTTPServer(ctx)
-	})
-
-	// Run cluster agent (controller manager) based on mode
-	if a.config.Mode == "cluster" || a.config.Mode == "both" {
-		eg.Go(func() error {
-			return (&clusterAgent{a: a}).Run(ctx)
-		})
-	}
-
-	// Run node agent based on mode
-	if a.config.Mode == "node" || a.config.Mode == "both" {
-		eg.Go(func() error {
-			return (&nodeAgent{a: a}).Run(ctx)
-		})
-	}
-
-	if err := eg.Wait(); err != nil {
+	if err != nil {
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return nil
+		}
 		return fmt.Errorf("agent run error: %w", err)
 	}
 	return nil

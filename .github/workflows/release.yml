@@ -6,6 +6,36 @@ on:
       - "v*"
 
 jobs:
+  # =============================================== prepare release metadata ===========================================
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
+      image_prefix: ${{ steps.meta.outputs.image_prefix }}
+    steps:
+      - name: Resolve release metadata
+        id: meta
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -eu
+          # A SemVer pre-release is identified by a hyphen in the version string
+          # (e.g. v0.1.0-rc.1). Anything without a hyphen is a stable release.
+          if [ "${REF_NAME#*-}" != "${REF_NAME}" ]; then
+            is_prerelease=true
+          else
+            is_prerelease=false
+          fi
+          # GHCR requires an all-lowercase repository path.
+          image_prefix="$(printf '%s' "${REPO_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          echo "is_prerelease=${is_prerelease}" >> "$GITHUB_OUTPUT"
+          echo "image_prefix=${image_prefix}" >> "$GITHUB_OUTPUT"
+          echo "=== Release metadata ==="
+          echo "tag:           ${REF_NAME}"
+          echo "is_prerelease: ${is_prerelease}"
+          echo "image_prefix:  ${image_prefix}"
+
   # =============================================== build binaries ====================================================
   build-binaries:
     runs-on: ubuntu-latest
@@ -46,7 +76,11 @@ jobs:
 
   # =============================================== build & push docker images =========================================
   build-push-images:
+    needs: [prepare]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -67,7 +101,7 @@ jobs:
           context: .
           file: ./apps/rlark/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository }}/rlark:${{ github.ref_name }},ghcr.io/${{ github.repository }}/rlark:latest
+          tags: ${{ needs.prepare.outputs.is_prerelease == 'true' && format('ghcr.io/{0}/rlark:{1}', needs.prepare.outputs.image_prefix, github.ref_name) || format('ghcr.io/{0}/rlark:{1},ghcr.io/{0}/rlark:latest', needs.prepare.outputs.image_prefix, github.ref_name) }}
           platforms: linux/amd64,linux/arm64
           provenance: true
           sbom: true
@@ -77,8 +111,19 @@ jobs:
       - name: Verify rlark image metadata
         run: |
           echo "=== Verifying rlark image ==="
-          echo "Image: ghcr.io/${{ github.repository }}/rlark:${{ github.ref_name }}"
-          docker buildx imagetools inspect ghcr.io/${{ github.repository }}/rlark:${{ github.ref_name }} || echo "Image inspection skipped (not pulled)"
+          echo "Image: ghcr.io/${{ needs.prepare.outputs.image_prefix }}/rlark:${{ github.ref_name }}"
+          docker buildx imagetools inspect ghcr.io/${{ needs.prepare.outputs.image_prefix }}/rlark:${{ github.ref_name }} || echo "Image inspection skipped (not pulled)"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: apps/rlark-ui/package-lock.json
+
+      - name: Build rlark-ui static files
+        working-directory: apps/rlark-ui
+        run: npm ci && npm run build
 
       - name: Build and push rlark-ui image
         uses: docker/build-push-action@v6
@@ -86,7 +131,7 @@ jobs:
           context: .
           file: ./apps/rlark-ui/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository }}/rlark-ui:${{ github.ref_name }},ghcr.io/${{ github.repository }}/rlark-ui:latest
+          tags: ${{ needs.prepare.outputs.is_prerelease == 'true' && format('ghcr.io/{0}/rlark-ui:{1}', needs.prepare.outputs.image_prefix, github.ref_name) || format('ghcr.io/{0}/rlark-ui:{1},ghcr.io/{0}/rlark-ui:latest', needs.prepare.outputs.image_prefix, github.ref_name) }}
           platforms: linux/amd64,linux/arm64
           provenance: true
           sbom: true
@@ -96,8 +141,8 @@ jobs:
       - name: Verify rlark-ui image metadata
         run: |
           echo "=== Verifying rlark-ui image ==="
-          echo "Image: ghcr.io/${{ github.repository }}/rlark-ui:${{ github.ref_name }}"
-          docker buildx imagetools inspect ghcr.io/${{ github.repository }}/rlark-ui:${{ github.ref_name }} || echo "Image inspection skipped (not pulled)"
+          echo "Image: ghcr.io/${{ needs.prepare.outputs.image_prefix }}/rlark-ui:${{ github.ref_name }}"
+          docker buildx imagetools inspect ghcr.io/${{ needs.prepare.outputs.image_prefix }}/rlark-ui:${{ github.ref_name }} || echo "Image inspection skipped (not pulled)"
 
       - name: Build and push embodied-runtime image
         uses: docker/build-push-action@v6
@@ -105,7 +150,7 @@ jobs:
           context: .
           file: ./apps/embodied-runtime/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository }}/embodied-runtime:${{ github.ref_name }},ghcr.io/${{ github.repository }}/embodied-runtime:latest
+          tags: ${{ needs.prepare.outputs.is_prerelease == 'true' && format('ghcr.io/{0}/embodied-runtime:{1}', needs.prepare.outputs.image_prefix, github.ref_name) || format('ghcr.io/{0}/embodied-runtime:{1},ghcr.io/{0}/embodied-runtime:latest', needs.prepare.outputs.image_prefix, github.ref_name) }}
           platforms: linux/amd64,linux/arm64
           provenance: true
           sbom: true
@@ -115,12 +160,12 @@ jobs:
       - name: Verify embodied-runtime image metadata
         run: |
           echo "=== Verifying embodied-runtime image ==="
-          echo "Image: ghcr.io/${{ github.repository }}/embodied-runtime:${{ github.ref_name }}"
-          docker buildx imagetools inspect ghcr.io/${{ github.repository }}/embodied-runtime:${{ github.ref_name }} || echo "Image inspection skipped (not pulled)"
+          echo "Image: ghcr.io/${{ needs.prepare.outputs.image_prefix }}/embodied-runtime:${{ github.ref_name }}"
+          docker buildx imagetools inspect ghcr.io/${{ needs.prepare.outputs.image_prefix }}/embodied-runtime:${{ github.ref_name }} || echo "Image inspection skipped (not pulled)"
 
   # =============================================== create github release ==============================================
   create-release:
-    needs: [build-binaries, build-push-images]
+    needs: [prepare, build-binaries, build-push-images]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -130,27 +175,77 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download all artifacts
+      # Restricted to the binary artifacts on purpose: docker/build-push-action
+      # also uploads *.dockerbuild build records, which are not release assets.
+      - name: Download binary artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: binaries-*
           path: dist/
           merge-multiple: true
 
       - name: Generate checksums
         run: cd dist && sha256sum *.tar.gz > checksums.txt
 
-      - name: Generate CHANGELOG
+      # Best-effort only: the public history squashes each internal sync into a
+      # single commit, so git-cliff can rarely produce a useful changelog here.
+      # It is kept purely as a fallback and must never fail the release.
+      - name: Generate CHANGELOG with git-cliff
+        id: git_cliff
+        continue-on-error: true
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
           args: --latest --strip all
         env:
-          OUTPUT: dist/CHANGELOG.md
+          OUTPUT: git-cliff-changelog.md
+
+      - name: Resolve release notes
+        id: release_notes
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eu
+          version="${REF_NAME#v}"
+          notes_file="release-notes.md"
+          cliff_file="git-cliff-changelog.md"
+          : > "${notes_file}"
+
+          # Primary source: the hand-written CHANGELOG.md section for this tag.
+          # Section heading format: "## [<version>] - YYYY-MM-DD".
+          # Plain string comparison is used so dots in the version need no escaping.
+          if [ -f CHANGELOG.md ]; then
+            awk -v heading="## [${version}]" '
+              index($0, heading) == 1 { capture = 1; print; next }
+              capture && index($0, "## [") == 1 { exit }
+              capture { print }
+            ' CHANGELOG.md > "${notes_file}"
+          fi
+
+          if [ -s "${notes_file}" ]; then
+            echo "source=changelog" >> "$GITHUB_OUTPUT"
+            echo "Release notes taken from CHANGELOG.md section '## [${version}]'."
+          elif [ -s "${cliff_file}" ]; then
+            cat "${cliff_file}" > "${notes_file}"
+            echo "source=git-cliff" >> "$GITHUB_OUTPUT"
+            echo "CHANGELOG.md section not found; falling back to git-cliff output."
+          else
+            printf 'Release %s\n\nSee the commit history for the changes in this release.\n' "${REF_NAME}" > "${notes_file}"
+            echo "source=fallback" >> "$GITHUB_OUTPUT"
+            echo "Neither CHANGELOG.md section nor git-cliff output available; using minimal fallback notes."
+          fi
+
+          echo "notes_file=${notes_file}" >> "$GITHUB_OUTPUT"
+          echo "=== Release notes body ==="
+          cat "${notes_file}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
-          files: dist/*
-          body_path: dist/CHANGELOG.md
-          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          body_path: ${{ steps.release_notes.outputs.notes_file }}
+          generate_release_notes: false
+          prerelease: ${{ needs.prepare.outputs.is_prerelease == 'true' }}

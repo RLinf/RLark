@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,6 +26,7 @@ import (
 	executionplan "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/plan"
 	executionprocess "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/process"
 	agentruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
+	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
 const (
@@ -195,8 +197,10 @@ func addSecret(request environment.HandlerRequest, name string, key []byte) erro
 		ReconcileProfile: kubernetesobjects.SecretReconcileProfile,
 	})
 	for i := range request.Plan.Objects {
-		if request.Plan.Objects[i].LogicalName != SecretLogicalName && containsConsumerObject(request.Binding.Consumers, request.Plan.Objects[i].LogicalName) {
-			if !contains(request.Plan.Objects[i].DependsOn, SecretLogicalName) {
+		if request.Plan.Objects[i].LogicalName != SecretLogicalName && slices.ContainsFunc(request.Binding.Consumers, func(c environment.ResolvedConsumer) bool {
+			return c.ObjectName == request.Plan.Objects[i].LogicalName
+		}) {
+			if !slices.Contains(request.Plan.Objects[i].DependsOn, SecretLogicalName) {
 				request.Plan.Objects[i].DependsOn = append(request.Plan.Objects[i].DependsOn, SecretLogicalName)
 			}
 		}
@@ -225,7 +229,7 @@ func mountSecret(spec *corev1.PodSpec, secretName string) error {
 	desiredVolume := corev1.Volume{Name: VolumeName, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: secretName, Items: []corev1.KeyToPath{{Key: SecretDataKey, Path: SecretDataKey}}}}}
 	for _, volume := range spec.Volumes {
 		if volume.Name == VolumeName {
-			if !jsonEqual(volume, desiredVolume) {
+			if !utils.JSONEqual(volume, desiredVolume) {
 				return fault.New(fault.Conflict, "workload SSH volume name is already used by a non-equivalent volume")
 			}
 			goto mount
@@ -240,7 +244,7 @@ mount:
 		desiredMount := corev1.VolumeMount{Name: VolumeName, MountPath: MountPath, ReadOnly: true}
 		for _, existing := range spec.Containers[i].VolumeMounts {
 			if existing.Name == VolumeName || existing.MountPath == MountPath {
-				if !jsonEqual(existing, desiredMount) {
+				if !utils.JSONEqual(existing, desiredMount) {
 					return fault.New(fault.Conflict, "workload SSH mount conflicts with an existing main-container mount")
 				}
 				return nil
@@ -316,25 +320,4 @@ func profileRevision(value []byte) string {
 }
 func incarnationOwnership(task agentruntime.TaskIdentity) agentruntime.ResourceOwnership {
 	return agentruntime.ResourceOwnership{Scope: agentruntime.IdentityTaskIncarnation, OwnerKey: task.ObjectUID}
-}
-func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-func containsConsumerObject(consumers []environment.ResolvedConsumer, name string) bool {
-	for _, consumer := range consumers {
-		if consumer.ObjectName == name {
-			return true
-		}
-	}
-	return false
-}
-func jsonEqual(left, right any) bool {
-	a, _ := json.Marshal(left)
-	b, _ := json.Marshal(right)
-	return string(a) == string(b)
 }

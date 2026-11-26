@@ -206,7 +206,7 @@ func (s *Server) handleProxyConnect(ctx *gin.Context) {
 		// its cluster or node reads Offline until it connects anew as ready.
 		if ctx.Request.Header.Get(apis.RemoteDialerReadyHeader) == "true" {
 			role := ctx.Request.Header.Get(apis.RemoteDialerRoleHeader)
-			if err := s.startAgentBroadcaster(ctx.Request.Context(), agentID, role, uuid.NewString()); err != nil {
+			if err := s.startAgentHeartbeat(ctx.Request.Context(), agentID, role, uuid.NewString()); err != nil {
 				logger.Error(err, "Start agent broadcaster failed", "agentID", agentID)
 				ctx.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("start agent broadcaster failed: %v", err)})
 				return

@@ -90,6 +90,14 @@ export interface ICluster {
    * ClusterStatus reports the controller's current observation of a data-plane cluster.
    */
   "status"?: {
+    /**
+     * Conditions records the structured conclusions of the Cluster controller,
+     * which is their only writer. Ready and Degraded are independent dimensions:
+     * a cluster that lost part of its capacity reports Ready=True together with
+     * Degraded=True. They are observation-driven and therefore carry no
+     * per-condition ObservedGeneration; use the status-level ObservedGeneration
+     * above to tell whether they already reflect the latest Spec.
+     */
     "conditions"?: Array<{
       /**
        * lastTransitionTime is the last time the condition transitioned from one status to another.
@@ -124,7 +132,34 @@ export interface ICluster {
        */
       "type": string;
     }>;
+    /**
+     * DegradedNodes is the number of connected Nodes that are not ready or report Degraded=True.
+     */
+    "degradedNodes"?: number;
+    /**
+     * DisconnectedNodes is the number of Nodes whose AgentConnected condition is not True.
+     */
+    "disconnectedNodes"?: number;
+    /**
+     * DominantFailureReason is the most frequent reason among unavailable candidate Nodes.
+     */
+    "dominantFailureReason"?: string;
     "lastHeartbeatTime"?: string;
+    /**
+     * LastStatusChangeTime is the time Phase last changed. It carries the same
+     * semantics as the identically named field on NodeStatus and distinguishes
+     * "has stayed in this phase for a long time" from "just flipped".
+     */
+    "lastStatusChangeTime"?: string;
+    /**
+     * ObservedGeneration is the metadata.generation observed by the Cluster
+     * controller the last time it finished a reconciliation. ClusterSpec's
+     * cordoned / draining are Spec-driven switches, so consumers must compare
+     * this field with metadata.generation to tell whether phase and conditions
+     * already reflect the latest Spec. It is a controller contract, not an API
+     * server guarantee.
+     */
+    "observedGeneration"?: number;
     "onlineNodes"?: number;
     /**
      * ClusterPhase summarizes the current lifecycle state of a data-plane cluster.
@@ -132,7 +167,17 @@ export interface ICluster {
      * enum marker, regenerating the CRD manifests, and updating the documentation.
      */
     "phase"?: "Online" | "Offline" | "Downgraded" | "Cordoned" | "Draining" | "Delisted";
+    /**
+     * ReadyNodes is the number of connected Nodes with Ready=True that are not
+     * cordoned by spec.unschedulable. A ready Node under resource pressure is
+     * still counted here even though it is excluded from new placement.
+     */
+    "readyNodes"?: number;
     "totalNodes"?: number;
+    /**
+     * UnschedulableNodes is the number of Nodes with spec.unschedulable=true.
+     */
+    "unschedulableNodes"?: number;
   };
 }
 

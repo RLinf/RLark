@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,12 +13,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
+	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
+	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
 
 type countingClient struct {
@@ -64,7 +68,8 @@ func newTestClientBuilder(t *testing.T) *fake.ClientBuilder {
 				return nil
 			}
 			return []string{pod.Spec.Domain}
-		})
+		}).
+		WithIndex(&rlarkv1alpha1.DomainPeer{}, domainPeerDomainField, indexDomainPeerByDomain)
 }
 
 func validCertPEM(t *testing.T) (string, string) {
@@ -126,6 +131,17 @@ func makeDomainPeer(name, namespace, certPEM, keyPEM string) *rlarkv1alpha1.Doma
 			Cert: certPEM,
 			Key:  keyPEM,
 		},
+	}
+}
+
+// adoptDomainPeer gives peer the canonical ownership metadata the controller
+// writes, so a fixture can represent a peer that has already converged. It
+// goes through the production path instead of restating the metadata shape.
+func adoptDomainPeer(t *testing.T, domain *rlarkv1alpha1.Domain, peer *rlarkv1alpha1.DomainPeer) {
+	t.Helper()
+	r := &Reconciler{Scheme: newTestScheme(t)}
+	if _, err := r.setPeerOwnership(domain, peer); err != nil {
+		t.Fatalf("failed to set DomainPeer ownership: %v", err)
 	}
 }
 
@@ -191,12 +207,19 @@ func TestReconcileRejectsInvalidCIDRWithoutRequeue(t *testing.T) {
 		WithObjects(domain).
 		WithStatusSubresource(&rlarkv1alpha1.Domain{}).
 		Build()
-	r := &Reconciler{Client: cl, Scheme: scheme}
+	recorder := record.NewFakeRecorder(10)
+	r := &Reconciler{Client: cl, Scheme: scheme, Shell: controller.NewShell(nil, recorder)}
 
 	// An invalid Spec is not repairable by retrying, so Reconcile must not return
 	// an error (which would trigger an unbounded requeue loop).
-	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: domainName}}); err != nil {
+	result, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: domainName}})
+	if err != nil {
 		t.Fatalf("reconcile of invalid CIDR returned error: %v", err)
+	}
+	// Nor may it poll: only a Spec edit can unblock this object, and that edit
+	// arrives as a watch event.
+	if result.RequeueAfter != 0 {
+		t.Fatalf("RequeueAfter = %v, want 0 for a blocked object", result.RequeueAfter)
 	}
 
 	var updated rlarkv1alpha1.Domain
@@ -206,9 +229,22 @@ func TestReconcileRejectsInvalidCIDRWithoutRequeue(t *testing.T) {
 	cond := apimeta.FindStatusCondition(updated.Status.Conditions, rlarkv1alpha1.ConditionTypeValidated)
 	if cond == nil {
 		t.Fatalf("invalid CIDR left no Validated condition: %#v", updated.Status.Conditions)
+		return
 	}
 	if cond.Status != metav1.ConditionFalse || cond.Reason != domainReasonCIDRInvalid {
 		t.Fatalf("Validated condition = %s / %s, want False / %s", cond.Status, cond.Reason, domainReasonCIDRInvalid)
+	}
+
+	// A condition is only visible to someone who already thought to inspect the
+	// object. The event is what surfaces an operator-fixable Spec error in
+	// `kubectl describe` and in cluster event streams.
+	select {
+	case ev := <-recorder.Events:
+		if !strings.Contains(ev, "Warning") || !strings.Contains(ev, domainReasonCIDRInvalid) {
+			t.Fatalf("event = %q, want a Warning carrying %s", ev, domainReasonCIDRInvalid)
+		}
+	default:
+		t.Fatal("invalid CIDR emitted no event")
 	}
 }
 
@@ -219,7 +255,9 @@ func TestReconcileSkipsUnchangedDomainAndPeerUpdates(t *testing.T) {
 	)
 	certPEM, keyPEM := validCertPEM(t)
 	domain := &rlarkv1alpha1.Domain{
-		ObjectMeta: metav1.ObjectMeta{Name: domainName},
+		// Already claimed, so the only writes this pass could make are the
+		// redundant ones under test.
+		ObjectMeta: metav1.ObjectMeta{Name: domainName, UID: "domain-uid", Finalizers: []string{CleanupFinalizer}},
 		Spec:       rlarkv1alpha1.DomainSpec{CIDR: "10.244.0.0/29"},
 		Status: rlarkv1alpha1.DomainStatus{
 			IPAllocations: []rlarkv1alpha1.DomainIPAllocation{{
@@ -246,6 +284,9 @@ func TestReconcileSkipsUnchangedDomainAndPeerUpdates(t *testing.T) {
 		IP:              "10.244.0.1",
 		LocalIP:         "10.0.0.1",
 	}}
+	// The peer has already been adopted, so the only writes left for this
+	// reconcile would be redundant ones.
+	adoptDomainPeer(t, domain, peer)
 	scheme := newTestScheme(t)
 	wrapped := &countingClient{Client: newTestClientBuilder(t).
 		WithObjects(domain, pod, peer).
@@ -258,6 +299,71 @@ func TestReconcileSkipsUnchangedDomainAndPeerUpdates(t *testing.T) {
 	}
 	if wrapped.statusUpdates != 0 || wrapped.updates != 0 {
 		t.Fatalf("unchanged Domain caused writes: status=%d peers=%d", wrapped.statusUpdates, wrapped.updates)
+	}
+}
+
+// A DomainPeer written before ownership metadata existed carries no label,
+// no parent UID and no OwnerReference. Adopting it is a one-shot convergence:
+// the controller must stamp the metadata once and then stay quiet, otherwise
+// every resync would rewrite the peer forever.
+func TestReconcileAdoptsLegacyDomainPeerExactlyOnce(t *testing.T) {
+	const (
+		domainName = "test-domain"
+		namespace  = "cluster-a"
+	)
+	certPEM, keyPEM := validCertPEM(t)
+	domain := &rlarkv1alpha1.Domain{
+		// Already claimed, so the adoption below is the only write counted.
+		ObjectMeta: metav1.ObjectMeta{Name: domainName, UID: "domain-uid", Finalizers: []string{CleanupFinalizer}},
+		Spec:       rlarkv1alpha1.DomainSpec{CIDR: "10.244.0.0/29"},
+		Status: rlarkv1alpha1.DomainStatus{
+			Conditions: []metav1.Condition{{
+				Type:   rlarkv1alpha1.ConditionTypeValidated,
+				Status: metav1.ConditionTrue,
+				Reason: domainReasonCIDRValid,
+			}},
+		},
+	}
+	peer := makeDomainPeer(domainName, namespace, certPEM, keyPEM)
+	peer.Spec.PrefixLen = 29
+	// The Domain only reconciles peers for namespaces that still have Pods, so
+	// the Pod is what keeps this peer in scope.
+	pod := makePod("uid-a", namespace, domainName, "rlark-system", "pod-a", "node-a", "10.0.0.1", rlarkv1alpha1.PodPhaseRunning)
+	scheme := newTestScheme(t)
+	wrapped := &countingClient{Client: newTestClientBuilder(t).
+		WithObjects(domain, pod, peer).
+		WithStatusSubresource(&rlarkv1alpha1.Domain{}).
+		Build()}
+	r := &Reconciler{Client: wrapped, Scheme: scheme}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: domainName}}
+
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if wrapped.updates != 1 {
+		t.Fatalf("legacy DomainPeer adoption caused %d writes, want exactly 1", wrapped.updates)
+	}
+
+	var adopted rlarkv1alpha1.DomainPeer
+	if err := wrapped.Get(context.Background(), client.ObjectKeyFromObject(peer), &adopted); err != nil {
+		t.Fatalf("failed to get DomainPeer after adoption: %v", err)
+	}
+	if adopted.Labels[domainPeerLabel] != domainName {
+		t.Fatalf("adopted DomainPeer label = %q, want %q", adopted.Labels[domainPeerLabel], domainName)
+	}
+	if adopted.Annotations[utils.ParentUIDAnnotation] != string(domain.UID) {
+		t.Fatalf("adopted DomainPeer parent UID = %q, want %q", adopted.Annotations[utils.ParentUIDAnnotation], domain.UID)
+	}
+	if owner := metav1.GetControllerOf(&adopted); owner == nil || owner.UID != domain.UID {
+		t.Fatalf("adopted DomainPeer has no controller reference to the Domain: %#v", owner)
+	}
+
+	wrapped.updates = 0
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if wrapped.updates != 0 {
+		t.Fatalf("already adopted DomainPeer was rewritten %d times", wrapped.updates)
 	}
 }
 

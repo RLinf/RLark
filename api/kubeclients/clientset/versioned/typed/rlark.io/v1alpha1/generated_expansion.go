@@ -23,6 +23,8 @@ type ClusterExpansion interface{}
 
 type ClusterProvisionExpansion interface{}
 
+type ClusterUpgradeJobExpansion interface{}
+
 type DomainExpansion interface{}
 
 type DomainPeerExpansion interface{}
@@ -36,5 +38,7 @@ type NodeJoinExpansion interface{}
 type PodExpansion interface{}
 
 type TaskExpansion interface{}
+
+type UpgradeJobExpansion interface{}
 
 type WorkflowExpansion interface{}

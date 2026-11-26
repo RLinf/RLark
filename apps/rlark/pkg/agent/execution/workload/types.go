@@ -18,6 +18,27 @@ type ConfigurationContract struct {
 	Schema  json.RawMessage
 }
 
+// ObservationContract declares the bounded Runtime roots whose changes may
+// wake reconciliation for one Adapter implementation. Runtime-specific
+// consumers validate and interpret each root.
+type ObservationContract struct {
+	RuntimeKind agentruntime.Kind
+	Roots       []ObservationRoot
+}
+
+// ObservationRoot identifies one Runtime root kind and the carrier selector it
+// represents. Group, Version, and Kind use Kubernetes GVK semantics when the
+// RuntimeKind is Kubernetes.
+type ObservationRoot struct {
+	Group       string
+	Version     string
+	Kind        string
+	CarrierType string
+	// InstanceProfile selects a trusted Runtime-owned secondary-watch contract.
+	// Empty means root-only observation, never automatic instance discovery.
+	InstanceProfile string
+}
+
 // TypeInfo advertises a Workload Adapter and the Runtime kinds it supports.
 type TypeInfo struct {
 	ID                    TypeID
@@ -25,6 +46,7 @@ type TypeInfo struct {
 	SupportedRuntimeKinds []agentruntime.Kind
 	Configuration         ConfigurationContract
 	Capabilities          []agentruntime.Capability
+	Observations          []ObservationContract
 }
 
 // CompileRequest supplies the immutable Task snapshot, including the complete

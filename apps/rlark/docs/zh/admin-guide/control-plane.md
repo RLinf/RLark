@@ -40,12 +40,12 @@ kind: DeployConfig
 plane: control
 kubernetes:
   kubeconfig: ~/.kube/config
-  gateway-image: rlark:latest
-  controller-manager-image: rlark:latest
-  server-image: rlark:latest
+  gateway-image: ghcr.io/rlinf/rlark:v0.1.0
+  controller-manager-image: ghcr.io/rlinf/rlark:v0.1.0
+  server-image: ghcr.io/rlinf/rlark:v0.1.0
   kcp-image: kcp:v0.30.0
   postgresql-image: postgres:15
-  ui-image: rlark-ui:latest
+  ui-image: ghcr.io/rlinf/rlark-ui:v0.1.0
   storage:
     type: pvc
     storage-class: ""
@@ -111,3 +111,5 @@ curl --fail http://localhost:8080/
 ```
 
 Gateway 没有专用健康路由，请通过 Deployment 就绪状态和日志检查。
+
+Controller Manager 的 `/healthz` 只报告进程存活，不探测任何外部依赖；`/readyz` 在 informer 缓存同步完成前会失败。因此「存活但未就绪」的 Controller Manager 是正在预热缓存，而不是出现故障。

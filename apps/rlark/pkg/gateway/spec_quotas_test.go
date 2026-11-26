@@ -51,6 +51,7 @@ func TestValidateSpecQuotasRejectsTooManyTags(t *testing.T) {
 	err := validateSpecQuotas("jobs", jobBodyWithTags(t, tags))
 	if err == nil {
 		t.Fatal("validateSpecQuotas() accepted more tags than the limit")
+		return
 	}
 	if err.field != "spec.tags" {
 		t.Fatalf("field = %q, want %q", err.field, "spec.tags")
@@ -69,6 +70,7 @@ func TestValidateSpecQuotasRejectsLongKey(t *testing.T) {
 	err := validateSpecQuotas("tasks", jobBodyWithTags(t, tags))
 	if err == nil {
 		t.Fatal("validateSpecQuotas() accepted a key longer than the limit")
+		return
 	}
 	if err.field != "spec.tags[1].key" {
 		t.Fatalf("field = %q, want %q", err.field, "spec.tags[1].key")
@@ -87,6 +89,7 @@ func TestValidateSpecQuotasCountsKeyLengthInCharacters(t *testing.T) {
 	err := validateSpecQuotas("jobs", jobBodyWithTags(t, tags))
 	if err == nil {
 		t.Fatal("validateSpecQuotas() accepted a key longer than the limit")
+		return
 	}
 	if err.actual != maxJobTagKeyLength+1 {
 		t.Fatalf("actual = %d, want %d", err.actual, maxJobTagKeyLength+1)
@@ -103,6 +106,7 @@ func TestValidateSpecQuotasRejectsTooManyValues(t *testing.T) {
 	err := validateSpecQuotas("jobs", jobBodyWithTags(t, tags))
 	if err == nil {
 		t.Fatal("validateSpecQuotas() accepted more values than the limit")
+		return
 	}
 	if err.field != "spec.tags[0].values" {
 		t.Fatalf("field = %q, want %q", err.field, "spec.tags[0].values")
@@ -118,6 +122,7 @@ func TestValidateSpecQuotasRejectsLongValue(t *testing.T) {
 	err := validateSpecQuotas("jobs", jobBodyWithTags(t, tags))
 	if err == nil {
 		t.Fatal("validateSpecQuotas() accepted a value longer than the limit")
+		return
 	}
 	if err.field != "spec.tags[0].values[1]" {
 		t.Fatalf("field = %q, want %q", err.field, "spec.tags[0].values[1]")
@@ -144,6 +149,7 @@ func TestValidateSpecQuotasReachesWorkflowJobTemplates(t *testing.T) {
 	quotaErr := validateSpecQuotas("workflows", body)
 	if quotaErr == nil {
 		t.Fatal("validateSpecQuotas() ignored the tags nested in a job template")
+		return
 	}
 	if quotaErr.field != "spec.jobTemplates[1].spec.tags" {
 		t.Fatalf("field = %q, want %q", quotaErr.field, "spec.jobTemplates[1].spec.tags")

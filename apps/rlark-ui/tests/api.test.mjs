@@ -36,6 +36,7 @@ test("request attaches the JWT and preserves headers", async () => {
   globalThis.fetch = async (_input, init) => {
     assert.equal(init.headers.get("Authorization"), "Bearer jwt-token");
     assert.equal(init.headers.get("Content-Type"), "application/json");
+    assert.equal(init.headers.get("Accept-Language"), "zh");
     return new Response(null, { status: 200 });
   };
 
@@ -83,7 +84,7 @@ test("request reports the detail of canonical and legacy error bodies", async ()
     );
     assert.ok(error instanceof ApiError);
     assert.equal(error.status, 409);
-    assert.equal(error.message, "HTTP 409: public key already exists");
+    assert.equal(error.message, "public key already exists");
     assert.equal(errorMessage(error.body), "public key already exists");
   }
 });
@@ -98,7 +99,7 @@ test("request falls back to the raw body when it carries no detail", async () =>
     () => null,
     (reason) => reason,
   );
-  assert.equal(error.message, "HTTP 502: upstream failure");
+  assert.equal(error.message, "upstream failure");
   assert.equal(errorMessage(error.body), "");
 });
 

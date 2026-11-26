@@ -23,6 +23,7 @@ const (
 	CapabilityClaimedWorkloadRecovery Capability = "ClaimedWorkloadRecovery"
 	CapabilityIncarnationAdoption     Capability = "IncarnationAdoption"
 	CapabilityReconcileProfiles       Capability = "ReconcileProfiles"
+	CapabilityWorkloadObservation     Capability = "WorkloadObservationContract"
 )
 
 // LogicalTaskID identifies a Task across Kubernetes object incarnations.
@@ -249,10 +250,23 @@ type ObjectRef struct {
 	LogicalTask LogicalTaskID
 }
 
+// ObjectCondition reports one current, structured fact about a Runtime object
+// that the object's own manifest does not express. Runtimes whose controllers
+// report failures only out-of-band, such as a Kubernetes StatefulSet that never
+// populates status conditions, surface them here.
+type ObjectCondition struct {
+	Source  string
+	Scope   string
+	Subject string
+	Reason  string
+	Message string
+}
+
 // Object contains a current Runtime object reference and manifest.
 type Object struct {
-	Ref      ObjectRef
-	Manifest TypedManifest
+	Ref        ObjectRef
+	Manifest   TypedManifest
+	Conditions []ObjectCondition
 }
 
 // ObjectSnapshot is a complete, revisioned view of objects managed for a Task.

@@ -13,6 +13,7 @@ const expectedKinds = [
   "Addon",
   "Cluster",
   "ClusterProvision",
+  "ClusterUpgradeJob",
   "Domain",
   "DomainPeer",
   "Job",
@@ -20,6 +21,7 @@ const expectedKinds = [
   "NodeJoin",
   "Pod",
   "Task",
+  "UpgradeJob",
   "Workflow",
 ];
 

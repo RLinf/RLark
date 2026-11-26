@@ -4,6 +4,8 @@
 
 ## 兼容范围
 
+[Agent 启动合同](../reference/configuration.md#agent-startup-file-and-validation) 在启动边界将环境/文件/CLI 解析为 typed 配置。规范 `kubernetes` 映射现有 `Kubernetes` AgentType、Provider Kind 与 claimant 作用域，不得将持久 Runtime selector 转为小写。cluster+external 与 cluster+embedded 使用相同单 Kubernetes Task 装配，并注入可信执行配置。node-only 没有 Task 装配/assignment controller；embedded 节点服务独立于 cluster 选主，在共享 cancel/join 边界下运行。不增加 Runtime registry、热切换或 Docker/Raw Driver。未来共享 control/assignment 协议、稳定节点身份与本地执行/持久边界留给 MR 5/7/8，不从启动枚举识别推断支持。
+
 Kubernetes 是唯一受支持的 workload 运行时。Docker 和 Raw 字段只是 API 骨架，不能执行 workload。该执行边界属于内部实现，不定义 CRD、生成客户端、REST 接口、CLI 参数、配置、Status Schema、Finalizer、Annotation key 或生成的 Kubernetes 对象结构。
 
 Kubernetes 兼容契约包括固定 workload namespace、legacy workload 收养、claimant identity 格式、原地模板修改、SSH key 注入、跨 Domain 网络 sidecar 注入和清理顺序。Task 被 claim 时会冻结 workload 与 carrier selector；已 claim Task 修改任一 selector 都会在不产生 Runtime effect 的情况下被拒绝，调用方必须删除并以新 UID 重建 Task。存储采用原生 PodTemplate 语义：`persistentVolumeClaim.claimName` 引用已有外部 PVC，而 `ephemeral.volumeClaimTemplate` 创建的 PVC 由 Kubernetes 随 Pod 管理。
@@ -13,6 +15,28 @@ Host 将已 claim Runtime 视为不可变。已 claim Task 的 `spec.runtime.kin
 只有 Task 正在删除，或者当前 Agent 能够执行该 Task 时，Host 才会接管没有 claimant annotation 的 legacy cleanup finalizer。对于未删除且 selector 指向其他 Agent 的 Task，Host 保持对象不动：不补 claimant metadata、不写 Status、不调用 Executor，也不清理 Runtime。这样可以防止模糊的 legacy metadata 被解释为跨 Agent cleanup 授权。
 
 ## 实现布局
+
+### 启动字段消费审计
+
+| 输入组 | 当前消费者 / 边界 |
+| --- | --- |
+| mode、node-startup、agent-type | Agent 监督与角色选择；显式 typed 映射保留 eligibility/claimant Kind |
+| Server 地址、TLS 凭据/信任根 | 公共 Server 客户端、管理 API 与角色独立 tunnel；管理范围来自证书 namespace，不来自 kube-namespace 或节点名 |
+| kubeconfig/master/in-cluster、QPS/burst/timeout | 共享本地 Kubernetes 客户端配置；cluster direct/cache 客户端和代理，节点事件/预拉取读取 |
+| image、tensorboard-image、restartable-init-containers | cluster 单 typed Task 装配输入；启动时冻结，不从 Task 或每轮环境读取 |
+| controller workers、Task resync、Pod sweep/TTL | cluster 控制器；历史共享 flag 在 node-only 仍接受但不使用 |
+| node-name、NodeServer socket/drain、SSH/direct route、kubelet 目录 | node/embedded 本机服务；配置名称不是认证证明 |
+| image-pull-enabled、containerd socket/namespace | node/embedded 预拉取器；不启用 Docker workload Driver |
+| metrics 监听地址 | cluster manager 或独立节点；embedded 节点使用独立地址 |
+| leader-election、key、参与者 ID | 仅解析的历史配置，当前 Agent manager 未消费；安装器输出不证明选主生效，本次不引入选主行为 |
+
+embedded 两种角色使用同一本地 API 与同一证书派生作用域，保留现有共享协调行为，不建立未来多节点 Docker/Raw owner/fencing 协议。角色监督在致命错误时取消/join，不在进程退出时回放清理命令或释放持久 workload ownership。
+
+`startup.go` 分离本地 preflight、bootstrap 注册和管理 preflight。本地读取在连接前执行；`runWithRegistration` 监督首个角色 tunnel，等待 WebSocket 升级成功（Server 升级前注册 namespace/ServiceAccount/RBAC）。随后管理读取在期限内重试权限传播相关拒绝/资源缺失及 API 不可用，再执行 `buildRoles`。本地检查、注册等待和管理检查各有 30 秒 deadline。全部业务角色完成 Build/Setup 后才启动 worker；bootstrap tunnel 全程受监督。cluster Build 安装控制器，不启动 manager。node Build 准备有作用域的 informer 依赖，不启动 watch 或打开 Runtime 连接；Run 注册 handler，在另一个 30 秒 deadline 内同步 informer。准备失败关闭/join tunnel，不回滚注册对象。测试通过可注入角色/tunnel 和 HTTP-backed typed API 客户端覆盖首次注册、权限延迟传播、持续拒绝、注册/构建失败、取消和恢复。任何角色都不受另一角色的选主状态门控。
+
+Tunnel 取消时主动关闭 WebSocket，解除空闲 mux accept 和传输 I/O 阻塞，不依赖 `Serve` 自行观察 context 取消。每次连接退出都会等待该连接的取消 worker 结束。真实 WebSocket/remotedialer 测试覆盖管理 preflight 超时、角色 Build 失败后的空闲 tunnel 回收，以及对端无响应时的取消。
+
+cluster 角色还在 Build 阶段安装 `ClusterUpgradeJob` pull 控制器，使用规范 API Runtime kind（`Kubernetes`）和证书派生的管理作用域。管理 preflight 在 cluster/external 与 cluster/embedded 下检查该资源，node-only 不检查。Server 在 bootstrap 握手成功前注册其读取/status 权限。基于 DeployConfig 的升级是独立 rollout 机制，不是 Agent 启动文件热加载或 managed 节点组合。
 
 Runtime-neutral 合同与编排统一位于 `pkg/agent/execution`：
 
@@ -69,8 +93,19 @@ Agent 会在启动装配阶段拒绝该注册。Kubernetes 当前只注册一个
 对象，等待实现支持或 Spec 恢复；implementation 可用性不能被解释为销毁运行中 workload
 的授权。Task 删除和显式 Lifecycle cleanup 会选择 claim 中冻结的 Runtime 与 Workload
 implementation，并在不依赖当前 Workload Spec 的情况下按 Task identity 执行 cleanup，
-因此在 API 降级或只完成部分迁移的更新后仍可恢复这些清理流程。完整的 per-Runtime
-Bundle/Factory 仍属于后续装配工作，本文不会把它描述为已经存在。
+因此在 API 降级或只完成部分迁移的更新后仍可恢复这些清理流程。
+
+### 单 Runtime Task 装配
+
+Build 在 metadata/RBAC preflight 前拒绝为空或纯空白的可信 RLark 镜像（`Execution.Image`，由 `--image` 提供）和 TensorBoard 镜像。RLark 镜像既提供必需 tools，也用于可选网络/SSH 功能；不新增隐式默认值。底层独立构造入口仅为内部/测试接缝，不是生产装配 API。Observation controller 名称仅在单个 runner 内保证唯一，scope hash 为六字节（48 位）。Setup 只防止同一 assembly 实例重复安装，不防止不同实例重复安装；同一 scope 同时安装多个 assembly 不属于当前生产支持的组合。避免预占进程全局名称可保证失败或未安装的 Build 能重新构造。
+
+`BuildKubernetesTaskAssembly` 是 Kubernetes Task 的生产接线入口。它装配一个默认 `kubernetes` Runtime，复用已有 Host Bundle 和共享 implementation registry，并在返回可用组件包前构建 scoped observation runner 和管理 Task resync。可信镜像与 restartable-init-container 设置在 Agent 启动边界解析一次，再以 typed 值传入；Build 不读取环境变量。Client、Scheme、RESTMapper 是借用依赖，REST 配置会复制，运行期间不得重配这些依赖。
+
+Build 可在 30 秒 context deadline 内查询 metadata、REST mapping 和观察权限。Self-access review 是授权查询，不是 workload 写入。Build 不向 manager 注册 runnable，不启动 LIST/WATCH worker，不写 Task claim/Status，也不创建或删除 workload。Unmanaged observer 在观察组内校验名称，不在构造阶段占用不可撤销的进程全局 controller 名称，因此未安装的构建不会阻塞后续 Build。
+
+`Setup` 只在两个 manager 启动前执行一次：将 Task pull controller 和 resync 安装到管理 manager，将单个 observation runner 安装到 local manager。Manager 注册不是可撤销事务；任何 Setup 错误都中止 Agent startup，必须丢弃失败的 assembly/manager 并重启 Agent，不能运行部分安装的配置。重复 Setup 会被拒绝。Manager 和 Agent errgroup 负责启动、context 取消和等待 worker 退出，不另设 assembly Stop 或动态 Runtime registry。停止 Agent 不删除 workload，也不释放 Task finalizer。观察/调谐失败保留现有重试恢复语义，权威直连与 scoped-cache 读取路径保持不变。
+
+Factory 只负责 Task 执行接线，不接管 node-agent、网络、Node/Pod 上报或其他 Agent controller。单 Runtime 装配不意味着每个物理 Node 都对应一个 Cluster，也不要求每个 Host 的 backend 在本机运行。当前相同管理 namespace/Agent Kind 的 Kubernetes Task 执行副本必须连接同一数据面集群；不同 Kubernetes 执行环境需要不同逻辑 Agent 管理范围。这是部署前提，不是自动 backend 身份校验。Docker/Raw 和节点 assignment 仍未实现，Factory 或测试 fixture 不声明其支持。Claimant、ownership、cleanup、Task API 和协议格式保持不变。
 
 Deployment 和 StatefulSet 是单个 Ray Adapter 注册内的 carrier 选择，
 不是 Workload 选择入口。
@@ -145,6 +180,10 @@ cleanup，因为此时已无法证明 Task UID 和 claimed identity。
 - 声明式 workload SSH requirement；Secret 交付和 Pod template mount 由 Environment 层负责；
 - 渲染选中的 Deployment 或 StatefulSet workload，再由 Coordinator 和 Runtime Provider 应用。
 
+Workload 自有模板修改会在渲染前归一化节点放置。`spec.placement.nodeSelector` 是 Kubernetes label selector，因此单值仍直接留在 Pod template 的 `spec.nodeSelector` 中。逗号分隔的值表达的是候选节点列表，而它不是合法的 Kubernetes label value：继续留在 `spec.nodeSelector` 会让 apiserver 直接拒绝整个 Deployment 或 StatefulSet，Task 将停在 Pending 且没有可诊断的原因。因此该修改会移除模板上当前所有逗号分隔值的键——包括兼容解码阶段从 Task placement 合并进来的值——并追加一个 required `nodeAffinity` term，其 `matchExpressions` 为每个键生成一条 `In` requirement，取值两端空白会被裁剪。键按字典序排序以保证期望对象幂等；多个键共用同一个 term，从而保持 `nodeSelector` 跨键的 `AND` 语义。`rlark.io/enabled=true` 始终保留在 `spec.nodeSelector` 中。
+
+语义观察还会上报那些没有被表达成 workload status condition 的 carrier 级失败。Deployment 会在 `status.conditions` 中发布 `ReplicaFailure`，但 StatefulSet 控制器不发布任何 condition：`FailedCreate`、`FailedUpdate`、`FailedDelete` 只以 workload root 上的 Warning Event 形式存在，于是 Pod 始终无法创建的 Task 会停在 Pending 且没有任何上报原因。因此 Kubernetes Runtime Provider 会采集投递给所观测对象 UID 的 Warning Event，并把它们作为带类型的 `ObjectCondition` 条目上报在观测到的 Runtime 对象上；Event 集合参与观测快照的 revision 计算，因此新的失败 Event 会触发一次状态上报。Workload Adapter 只投影上述已知的异常 reason，并且只在自身 carrier 观测仍为 Pending 时，把它投影成 `Failed` 的 Task phase，message 为 `workload <name>: <detail>`。已经通过自身 status 表达失败的 carrier 保持原有观测；workload 恢复后会通过其正常观测状态离开 Pending，而不会被过期 Event 一直锁住。
+
 旧 `Operations` Adapter 仅作为有测试覆盖的兼容端口保留；生产装配使用 Ray-on-Kubernetes Adapter，不会调用其中的 `ApplyWorkload` 方法。
 
 Task 的 domain 非空时，内置 Adapter 会生成一个 `CrossDomain` Network requirement，并只授权主 carrier 上一个精确 PodTemplate target。生产 Kubernetes Resolver 从 Agent 配置选择包含共享 Agent image 的不可变可信 profile。Network Handler 只修改 Binder 拥有的 Plan 副本，始终以 restartable init container 形式注入 `rlark-network-sidecar`，同时注入 `/var/run/rlark` NodeServer socket volume/mount 以及所需的 privileged/`NET_ADMIN` 配置。等价声明保持幂等；container 或 volume 同名但不等价时会阻止执行。缺少 image 时也会阻止 Task，而不会静默创建缺少所请求跨 Domain 网络的 workload。DomainPeer 路由和 NodeServer SSH relay 凭据仍属于数据面状态，绝不进入 Task binding 或 binding revision。
@@ -174,6 +213,10 @@ SSH Handler 声明一个归当前 Task incarnation 独占的 opaque Secret，让
 Task 请求 `rlinf.io/tensorboard/v1` 且 `parameters.logDir` 非空时，Environment Handler 会生成单独的辅助服务 requirement。这是一项有意的行为变化。旧 TensorBoard mutation 只从 Ray 初始化流程调用，因此受已识别的 Ray head 或 worker role 门控。新的 Environment requirement 只取决于显式、非空的 `logDir`，并适用于任意内置 Kubernetes carrier。TensorBoard Handler 从 `RLARK_TENSORBOARD_IMAGE` 选择可信 image；该变量未设置或为空时回退到历史值 `rlinf/tensorboard:2.15.1-rc1`。在经过校验的 typed Agent 配置接管该值前，环境变量只是过渡装配方式；Task 和 Adapter 不能选择任意镜像。
 
 若 main container 已有 volume mount 覆盖所请求的绝对目录，则 Handler 复用该 mount；否则创建历史 EmptyDir，并把 TensorBoard 声明为 restartable init sidecar。等价声明保持幂等；名称、mount path 冲突或相对 TensorBoard 目录都会在 Provider 观测或 effect 前 fail-closed。虽然 Kubernetes Resolver 会组合三者，Tools、TensorBoard 和 Network 仍分别使用独立 Handler 与 profile。
+
+Task 请求 `rlinf.io/shared-memory/v1` 且 `parameters.size` 为正数时，Environment Handler 会向授权 PodTemplate target 的每个 regular container 注入一个 memory-backed EmptyDir 卷（名为 `rlark-dev-shm`），挂载到 `/dev/shm`。重复声明 shared-memory 会在 Provider effect 前被拒绝。`size` 参数是文件系统容量上限（`emptyDir.sizeLimit`），不是内存预留；同一 Pod 内的所有 regular 容器共享一个卷和容量上限，不同 Pod 之间不共享。实际共享内存使用计入容器内存消耗，可能触发 OOM，因此 workload 必须配置合理的 memory `requests`/`limits`。当前仅 Kubernetes runtime 实现此能力。
+
+Handler 是幂等的：已存在的 `rlark-dev-shm` 卷和挂载仅在语义等价时被接受。等价要求相同卷名、挂载路径、可写访问、无子路径。带 `readOnly: true` 或非空 `subPath`/`subPathExpr` 的挂载不等价，会 fail-closed 并返回冲突错误，因为只读或子路径挂载会静默改变共享内存语义。当前仅 Kubernetes runtime 实现此能力；代码注释中提到的 Docker runtime 是未来实现示例，不是已支持功能。
 
 旧版 `RLARK_ENABLE_UNSAFE_TASK_PRIVILEGES=true` mutation 在 Workload 编译期间、Environment binding 之前执行。因此它只作用于 Adapter 产出的 Pod template 中当时已有的 container 和 init container，不会统一提升后续由 Environment Handler 注入的 container 权限。该顺序不会移除 Environment 功能所需的权限：可信 Network profile 会为 `rlark-network-sidecar` 显式声明 privileged/`NET_ADMIN`，Tools 和 TensorBoard 则使用各自 Handler 声明的 security context。后续 Environment Handler 不得把该 unsafe 开关视为隐式请求特权的授权来源。
 
@@ -225,7 +268,7 @@ Kubernetes reconcile profile 通过 Runtime-owned 的不可变 registry 执行�
 
 Kubernetes Provider 根据声明的 GVK 解析对象。对于注入 Scheme 已注册的 GVK，它保留 typed object；对于其他可发现 GVK，则使用 Kubernetes unstructured object 与 list，因此通用 exact-object CRUD 和 Adapter-directed inventory 不再受 builtin carrier kind 限制。更新前仍必须注册 reconcile profile，并由其验证 object contract；dynamic decoding 不表示任意 CRD 自动支持 builtin workload profile。
 
-`WorkloadUnit` 与 mutation 授权相互独立。Adapter 把每个 Pod-like unit 声明为 `PodTemplate` 或直接 `Pod`，同时给出所属逻辑对象和 typed static locator。binding 会先校验和投影这些声明，运行 Environment handler，再调用所选 Runtime 拥有的无 effect `runtime.UnitLowerer`。中立接口只接收单个 `runtime.DesiredObject`，不接收 Workload Plan；Kubernetes 实现归属 `controllers/task/runtime/kubernetes`。lowerer 可以根据可信 Runtime version 或 capability 改造最终已声明 unit，但不得执行 Runtime I/O、不得依赖 Workload 或 Environment 包，并且输出仍受 final Plan validation 约束。最终 `DesiredObject` 会保留只读、对象相对的 `RuntimeUnit` metadata，使本地 Runtime Provider 无需扫描 manifest、也无需获得 Environment target 权限即可识别 Pod 语义。Provider 仍只应用最终 manifest，不能把 unit 当成隐藏 mutation 授权。当前远程 Workload Adapter 和 Runtime Provider protobuf 尚不承载 unit；两个 transport 对非空 unit 都会明确拒绝，而不是静默丢弃。Wire 支持需要使用 pinned protobuf toolchain 做 additive、capability-negotiated 协议升级。
+`WorkloadUnit` 与 mutation 授权独立。Adapter 声明 `PodTemplate` 或直接 `Pod` unit、所属逻辑对象和 typed static locator。Binding 校验/投影声明，运行 Environment handler，再调用 Runtime-owned 无 effect `runtime.UnitLowerer`。中立接口接收单个 `runtime.DesiredObject`，不接收 Workload Plan；Kubernetes 实现位于 `controllers/task/runtime/kubernetes`。Lowering 可按可信 Runtime 差异调整声明的 unit，但不执行 Runtime I/O、不依赖 Workload/Environment 包，且受 final validation 约束。`DesiredObject` 保留只读、对象相对的 `RuntimeUnit` metadata；Provider 仍只应用最终 manifest，不获得隐藏 mutation 权限。协议 major version 2 已承载 Workload/Runtime unit 和 process，并有内存往返测试。Wire 表达不代表 backend 支持；所选 Binder/assembler/lowerer 仍拒绝不支持的必需语义。
 
 Resolver 和 Binder 必须在 Coordinator 读取 Provider 快照或执行 Provider effect 前完整成功。Binder 只能修改 Plan 的 deep copy，不执行 management 或 Runtime I/O，失败时不能返回可部分 Apply 的 Plan。因此 Provider 只接收最终 Runtime-ready object，不推断 network、SSH 或其他 Environment 业务语义。
 
@@ -243,7 +286,11 @@ make proto-execution
 
 生成依赖固定版本的工具链：请先执行 `make protoc-install`，详见 [Protobuf 产物与固定版本工具链](local-development.md#protobuf)。
 
-Transport adapter 位于 `execution/runtime/transport/grpc` 和 `execution/workload/transport/grpc`。客户端分别实现内部 `runtime.Provider` 和 `workload.Adapter` 接口；服务端将内部实现通过生成 SDK 暴露。Workload Adapter 会接收规范化的 typed `WorkloadConfiguration`：公共 Pod 模板、不透明 workload parameters，以及一个携带不透明参数的版本化 carrier envelope。Workload identity 由 `WorkloadSelector` 承载，carrier identity 还会冻结到 `CarrierSelector`；transport conversion 要求 selector 与 configuration envelope 一致。Adapter 独立负责严格校验 workload 和 carrier 参数，并生成一个完整 Plan。现有 protobuf `TaskSnapshot.configuration` 仍是 JSON `TypedValue`，因此本次 JSON 结构变化无需修改 protobuf schema。Environment 通过各自有序的 envelope 单独解析；系统不再提供通用 extension 列表、Runtime-native 配置逃生口或 compile 后 object patch 阶段。protobuf 消息不会成为内部领域模型。协议 major version 2 会传输完整 Plan 合同，包括 Environment requirement、mutation target、Workload 与 Runtime unit、process declaration 和 binding revision；同时通过 capability 广告 Workload inventory、Runtime candidate inventory、owned-field projection、旧 claim Workload 恢复、有证据的 Task-incarnation 收养和 typed reconcile profile。当前 Coordinator 会在使用收养声明和 reconcile profile 时校验对应 capability。较早的 inventory、projection 和 claimed-recovery 标志会被传输和广告，但这些路径尚未统一通过 capability negotiation 完成组合选择；Core 同时依赖所需 Go interface，并在执行时校验声明。消费者不能把每个已广告标志理解为所有组合都已经完成协商。两类 transport adapter 都已通过内存 gRPC 往返测试，但默认 Task 控制器配置尚未选择远程实现。
+Transport adapter 位于 `execution/runtime/transport/grpc` 和 `execution/workload/transport/grpc`。Client 实现内部 Provider/Adapter 接口，server 通过生成 SDK 暴露。Adapter 接收 canonical `WorkloadConfiguration`：公共 Pod 模板、不透明 workload parameters 和版本化 carrier envelope。`WorkloadSelector`、冻结的 `CarrierSelector` 必须与 configuration envelope 一致。Adapter 严格校验自身参数并输出完整 Plan。`TaskSnapshot.configuration` 仍为 JSON `TypedValue`，Environment envelope 单独解析。不提供通用 extension 列表、Runtime-native 逃生口或 compile 后 patch 阶段，protobuf 消息不是内部领域模型。
+
+协议 major version 2 承载 Environment requirement、mutation target、Workload/Runtime unit、process declaration 和 binding revision，广告 inventory、projection、legacy recovery、adoption 和 reconcile-profile capability。Coordinator 按 [装配 admission](#admission-conformance) 校验 inventory 声明/接口，以及请求使用的 projection/adoption/profile capability。Legacy recovery 和 transport 检查保留已有合同，不意味着统一版本协商平台。两类 transport 有内存 gRPC 往返测试，但默认 Task controller 配置不选择远程实现。
+
+本文 unit/process wire 描述修正了此前滞后的文档；本次装配/准入改动没有引入协议 v2，也没有修改 protobuf/transport 实现。既有依据包括 `workload/transport/grpc/convert_test.go` 的 `TestPlanRoundTripPreservesExecutionDeclarations`、`TestExecutablePlanRoundTripPreservesBindingRevisionAndRuntimeUnits`，以及两个 transport 的 `TestClientServerRoundTrip` 测试。
 
 传输适配器会将稳定的 execution fault 映射为 gRPC status code，并在客户端还原，以支持通过 `errors.Is` 分类处理。`execution/transport/grpc` 中的可选 interceptor 为其他 execution 服务提供相同的映射。当前协议不包含请求关联和分布式 tracing；只有端到端 tracing 真正实现时才会增加 request ID。
 
@@ -301,7 +348,7 @@ status intent，不得直接 patch Task。Status intent 区分“未提供字段
 reconciliation 产生的 intent 会先做 UID/generation fencing，再按优先级合并，并在
 lifecycle 允许时统一写入。
 
-Kubernetes 执行路径在有界的进程内 accumulator 中合并 desired-state、Runtime-state 和 periodic hint。饱和会显式报告，不会静默驱逐其他 Task；watch replay 与周期 resync 用于恢复丢失的 hint。Runtime push controller 不再直接观测 root 或写 Task Status。Verified fast observation 会有意绕过 Host keyed lock 和 Lifecycle hook：它只能读取 Runtime 状态，并执行一次带 UID/generation fence 的 workload Status 写入。若某个 effect 要求每轮调谐都执行，则不能只把它加入 Lifecycle hook；还必须扩展或禁用 fast-path gate。
+Kubernetes 执行路径在有界的进程内 accumulator 中合并 desired-state、Runtime-state 和 periodic hint。每个可信 Workload Adapter 通过 `Info` 结果声明有限的 Runtime observation contract；Kubernetes contract 包含可能产生 Runtime-state hint 的 namespaced root GVK 及 carrier identity。远程 Adapter 通过 `GetInfo` 传输相同元数据，并且必须声明 `WorkloadObservationContract` protocol capability；该 capability 必须与注册 Runtime kind 的非空 contract 同时存在。Agent 启动时通过 REST mapping 校验每个 GVK：本地 Scheme 已注册的 GVK 使用 typed watch，没有编译 Go 类型但已映射的 CRD 使用绑定该 GVK 的 `Unstructured` watch；它不会发现或观察任意集群资源。内置 Ray Adapter 只声明 Deployment 和 StatefulSet；重复、不完整、cluster-scoped 或无法映射的 registration 会导致启动失败。Unstructured root 与 typed root 使用相同的 metadata、ownership、carrier 和 UID 校验；声明 observation 不会授权修改 root 或其 Status。饱和会显式报告，不会静默驱逐其他 Task；watch replay 与周期 resync 用于恢复丢失的 hint。Runtime push controller 会重新读取已注册 root，验证其 canonical Task identity、ownership 与 carrier 后入队 hint；它不直接观测 root 或写 Task Status。Verified fast observation 会有意绕过 Host keyed lock 和 Lifecycle hook：它只能读取 Runtime 状态，并执行一次带 UID/generation fence 的 workload Status 写入。若某个 effect 要求每轮调谐都执行，则不能只把它加入 Lifecycle hook；还必须扩展或禁用 fast-path gate。
 
 共享的 cluster-Agent resync 启动后立即执行首轮，通过分页扫描分配给同一 Host 或符合该 Host 条件的 management Task，每轮预算上限为 10,000 个 Task。扫描器与调谐共享 Host claim 和 eligibility 规则，而不是重复实现：有效 claim 必须包含 Agent finalizer；已 claim Task 即使 selector 漂移或进入删除流程，仍属于其 owning Host。后续扫描使用 `--task-runtime-resync-period` 的 80%–120% 抖动间隔；默认值为 `15m`，`0` 表示禁用，负值会在启动时被拒绝。Management API 的临时 List 失败会记录日志并在下一周期重试，不会终止 Agent；trigger bridge 背压按轮汇总，也不会阻止后续 Task 和分页被访问。扫描只产生 periodic 完整调谐 hint，不把进程内扫描进度当作期望状态。
 
@@ -312,6 +359,57 @@ Binding revision 是标准化的 `sha256:` digest，输入包括 binding kind/na
 受限 material 机制仅存在于 Binder 本地，是通用且不可序列化的能力。可信 `MaterialProvider` 接收 Task identity 和 resolved binding identity，并返回不透明的 `MaterialLease`。声明 semantic write intent 时 `HandlerRequest.Materials` 始终为 nil；只有配置了有效 Provider 时，它在 `Apply` 阶段才为非 nil，因此需要 material 的 handler 必须将 nil 视为能力不可用。框架会在每个 handler 成功、报错或 panic 后关闭所有 lease。实现不得保留、记录、序列化、哈希或暴露 lease bytes，error 也必须脱敏。Environment core 刻意不定义 SSH key 名称、注入模式或兼容 profile；这些语义由 controller-owned Kubernetes SSH package 负责。Coordinator 生产装配可以基于已经解码的 `TaskSnapshot` 构造 per-Task Binder；该 factory 不得执行外部 I/O，得到的 material provider 只作用于本次 evaluation，不能跨 Task 共享。`HandlerRequest.Task` 携带与 resolved environment 相同的显式 identity，使 Handler 能声明有 ownership 的对象，而无需从 manifest 重建身份。
 
 正常 pull reconciliation 不会仅因为 Task 已处于 `Running` 就停止。后续 Task generation 仍会重新编译并计算 diff，使 replicas、镜像和 Pod template 等受支持变更通过同一 Coordinator 路径收敛。Generation metadata 是顺序 fence，并不能证明 Runtime 状态仍与期望状态一致：即使 Task generation 未变化，完整调谐也会修复 controller-owned replicas 和 Pod template 字段的带外漂移；这些字段及 canonical metadata 已一致时仍保持零写入。旧 workload 首次接管以及在 adopted generation 内的重复调谐仍只处理 metadata，避免 Agent 升级静默触发 Pod rollout；后续 Task generation 才开始收敛期望字段。
+
+### Kubernetes observation 注册合同
+
+普通 Pod 和已注册 root 的 hint 读取使用独立 scoped cache，错误或缺少 informer 时不自动回退直连（`ReaderFailOnMissingInformer: true`）。Owner-chain intermediary 有意使用直连 reader：它们只有 get 权限，不建立 watch/informer。Root 使用与 watch 相同的 typed/unstructured prototype；owner-chain 已取得的 root 直接复用于 hint 身份校验，不重复读取。Cache 观察是最终一致的 hint，不是权威证据；每个 owner-reference UID 必须匹配观察对象，过期不匹配时不发送 hint，由 replay/resync 修复遗漏的唤醒。Root 删除确认仍使用直连 root 读取检查替代对象，cache 的 `NotFound` 不证明权威缺失。Host/Coordinator 的观察和执行读取保持不变。
+
+每个 push reconciler 按值持有经过验证的 `KubernetesObservationScope`。Namespace、Task 和 Runtime 校验无条件执行，hint 使用该 scope 的 Runtime ID，不提供默认 ID 回退。非法 scope 在构造时被拒绝。旧 `AsKubePushReconcilers` 入口不再提供 Task reconciler，生产 source 只能由 scoped factory 装配。
+
+Secondary Pod 事件（创建、更新、删除/tombstone 和 generic replay）仅在 Pod 携带非空 `rlark.io/management-task-name` 注解时入队。这保留了旧路径的成本过滤：无关 Pod 不入队，也不触发 owner-chain API 读取。Live Pod 重新读取后、解析 owner 前会再次检查。更新事件检查新旧 metadata，安全处理标记的添加或移除。该标记不是授权或 ownership 证据；发送 hint 前仍须校验 root/Task identity、UID、Runtime 和 carrier。该过滤不缩小 namespace-scoped LIST/WATCH 本身的范围。
+
+Adapter 的 `Info().Observations` 按 Runtime kind 对 root 分组。每个 root 包含 `group`、`version`、`kind`、`carrier_type` 和可选的 `instance_profile`（对应 protobuf `ObservationRoot` 字段）。非空 contract 必须同时声明 `WorkloadObservationContract`；重复的 Runtime-kind contract 或未声明支持的 Runtime kind 会被拒绝。Instance profile 为空表示**只观察 root**。非空 profile 必须由可信、注入的 Kubernetes Runtime registry 解释，不能作为 Adapter 提供的任意 discovery 指令。
+
+内置 profile 为：
+
+| Profile | Secondary source 及经过校验的 controller-owner 路径 |
+| --- | --- |
+| `rlinf.io/kubernetes-direct-controller/v1` | Pod → 已注册 root；也可用于 namespaced CRD root |
+| `rlinf.io/kubernetes-replicaset-controller/v1` | Pod → ReplicaSet → Deployment；仅适用于 apps/v1 Deployment root |
+
+Ray 为 Deployment 声明 ReplicaSet profile，为 StatefulSet 声明 direct profile，不注册 DaemonSet。每一跳都通过重新读取对象，校验精确 API version、kind 和 controller-reference UID。Owner 不存在、UID 过期或版本不符时不发送 hint；临时读取错误返回限速观察队列重试。Pod 创建、更新和删除均可唤醒观察，不需要在 `base.Controller` 增加 workload-specific switch。新的 owner 路径归 Runtime profile registry，phase 投影仍归 Adapter。
+
+`BuildKubernetesTaskAssembly` 使用可信 `KubernetesObservationScope` 配置构造观察器：一个 Runtime ID、一个本地 workload namespace 和一个 management Task namespace。Scope 不是 tenant identity，远程 Adapter metadata 无权指定它。生产仍使用既有默认 `kubernetes` Runtime 和 `rlark-system` workload namespace；完整多 Runtime 执行及 per-tenant placement 仍属于独立装配工作。不同观察 factory 使用独立的 namespace-scoped cache 和 Runtime 校验。LIST/WATCH 请求本身受 namespace 限制，root/Pod/owner 读取及 management Task 查找也不能跨越配置边界。既有集群级 Node/Pod 上报 cache 独立于 Task 观察，不会因此变为 namespace-only。
+
+Factory 先完成所有 root/dependency mapping 和 profile 校验，再通过 `SelfSubjectAccessReview` 检查 root 的 `get/list/watch`、按需 Pod 的 `get/list/watch` 和 intermediary 的 `get` 权限。Intermediary 使用直接读取，不会被隐式加入 cache。拒绝、不确定授权、mapping 错误或 API 失败均导致启动中止；access review 共用 30 秒 deadline。Observer 不自动授予或生成 RBAC，也不请求 root `/status` 写权限。运维必须配置对应 Role/ClusterRole，以及创建 self-access review 的权限（通常由 Kubernetes 默认 basic-user 授权提供）。所有 source 构建完成后才向 manager 添加单个 runnable。任何 setup 错误都会在 manager 启动前中止装配；cache/worker 失败会取消整个观察组，context 取消时全部 source 随之关闭。
+
+Root 删除/tombstone 事件只在可重试队列中保留 root 和 Task identity。消费时重新检查当前 Task UID、Runtime 和 carrier，并确认没有替代 root。通过校验的删除事件发送不含 root 的 Runtime hint，强制完整 pull 调谐，并使已合并的 fast-path evidence 失效。删除事件不授权 watcher 执行 cleanup 或写 Status。事件仍可能在重启期间丢失，因此初始 watch replay 和周期 Task resync 仍是恢复合同。缺少 UID 的 legacy 删除 metadata 不可信，只能依赖 resync。
+
+注册 GVK **不等于**任意 CRD 已可执行：仍需要兼容 Adapter、经过校验的 Runtime profile/capability、显式 RBAC、placement 和 ownership 合同。支持 gRPC 观察 metadata 不代表默认 Agent 已能从配置选择远程 Adapter。
+
+## 装配 admission 与恢复 conformance
+
+Task Status 发布使用带 resourceVersion 前置条件的 merge patch（乐观锁）。并发 Spec、metadata 或 Status 变化产生冲突；Host 必须重新读取并计算准入，不能在 writer 内将旧 intent 换到新版本后重试。只有 compare-and-swap 发布成功后返回的版本才能供后续 claim patch 使用。新 claim 后的权威读取必须仍匹配 claim 响应的 UID/版本及 ownership，且未进入删除；否则本轮在 lifecycle/Provider effect 前以冲突退出。这保证管理 API 内顺序写入的围栏，不是跨管理 API 和 Runtime Provider 的事务。
+
+Build 校验必需的 inventory 组合：Adapter 声明 `WorkloadInventory` 并实现 `InventoryAdapter`；Provider 声明 `RuntimeCandidateInventory` 并实现 `InventoryProvider`。Coordinator evaluation 和 identity-only cleanup 在使用 inventory 前执行相同校验。仅存在方法不等于支持对应协议能力。
+
+正常执行在 lifecycle 写入（包括 image-pull-secret 创建）前通过 Host Bundle 的无 effect admission hook。新 Task 在 claim 前校验；已有 claim 先检查 ownership/冻结 selector。`Coordinator.AdmitTask` 编译、解析、绑定当前输入并校验 inventory 声明，但不列出/观察 workload，也不调用 Apply/Delete，因此待修复的旧 workload 观察结果不会阻塞 admission。执行仍重新读取 Runtime 状态；admission 不是缓存决策，会重复编译/binding 和短期 material lease。
+
+Host 独占 Spec 驱动的 `ExecutionAdmitted` Condition。永久性 invalid-argument/precondition 拒绝发布 `False`、Reason `ExecutionAdmissionFailed`、契约说明（不直接发布任意 transport 错误或 cause 文本）和当前 `ObservedGeneration`，随后返回 `Blocked` / `RetryOnChange`，不返回错误。Phase、已观察 Node、其他 Condition 和已有 claim/workload 保持不变。准入通过发布 `True` / `ExecutionAdmissionSucceeded`，仅表示配置可准入，不代表 workload Ready。领取 claim 或执行前必须成功发布状态；状态发布失败及 API/transport 失败仍返回可重试错误并保留错误链。重复结果不 patch 未变化的 Status。相关输入变化和已有周期 resync 会重新检查准入。Condition-only 写入仅更新各 Condition 的 generation，保留顶层 `status.observedGeneration`：新 generation 被拒绝后，保留的 Running Phase 仍可识别为陈旧。仅报告工作负载/生命周期结论（Phase 或 observed payload）的 Intent 才推进顶层 generation，即使观测值未变化。完成暂停、按 identity 执行 Drain/Stopped reset 时移除此 Condition，不能因跳过编译就报告准入成功。删除不增加准入状态发布前置条件。
+
+| 必需功能 | 校验边界 |
+| --- | --- |
+| Inventory | 双端对应声明与接口在调用 inventory 前均存在 |
+| Owned-field projection | 双端声明 `OwnedFieldProjection`；共享资源必须有显式 `OwnedFields`，不得降级为 whole-object 写入 |
+| Incarnation adoption | inventory **或 desired ownership** 请求 adoption 时，双端声明 `IncarnationAdoption`；仍须证明 ownership |
+| Reconcile profile | 使用时双端声明 `ReconcileProfiles`；profile/version/manifest 兼容性仍由已有 typed validator 负责 |
+| Units、processes、Environment | 已有 Binder、必需 assembler/lowerer 和 handler validator 在 lifecycle/Provider effect 前拒绝不支持的必需语义 |
+| Observation | 已有 capability/metadata 配对、可信 profile、mapping、scope 和授权检查不变 |
+| 旧 claim Workload 恢复 | 普通执行不要求该可选功能；已有 Provider ownership/revision 恢复和远程 transport 检查不变，不新增 adoption 策略 |
+
+删除/暂停保留 identity-only cleanup，不编译当前执行配置。Kubernetes Node Drain 清理和 Stopped-to-Pending 重置也绕过编译。Spec 非法时不释放已有 claim。历史 claimant-less adoption/recovery/cleanup、claimant 格式和 finalizer ownership 不变。不新增协议或统一版本协商平台；未知可选声明不能授权未知必需语义。
+
+`execution/host/conformance_test.go` 使用真实 BindingPlanBinder 和 backend-owned typed store，贯通实际 Host → CoordinatorExecutor → Coordinator → fake Provider。只有管理 Task API 使用 Kubernetes fake client。测试覆盖 claim/create/no-op、suspend/resume、延迟清理/finalizer、部分写入/响应丢失、保留双 store 后重建、backend 不可用、claim/Status 冲突、UID 替换、过期 intent、丢失/乱序/饱和 hint、串行与 in-flight cancellation。不支持的 capability/语义测试断言 lifecycle/Provider 写入为零。Channel/scanner 和 verified observation fence 保留 Kubernetes 专项回归。这些是内存恢复测试，不是真实集群验收，也不代表 Docker/Raw 支持。
 
 ## 当前能力矩阵
 

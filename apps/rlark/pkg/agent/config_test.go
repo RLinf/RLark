@@ -10,8 +10,7 @@ import (
 
 func TestDefaultControllerConcurrency(t *testing.T) {
 	got := DefaultConfig().ControllerConcurrency
-	if got.TaskPull != 8 || got.AddonPull != 8 || got.TaskDeployment != 8 ||
-		got.TaskStatefulSet != 8 || got.NodePush != 8 || got.PodPush != 8 {
+	if got.TaskPull != 8 || got.AddonPull != 8 || got.TaskRuntimePush != 8 || got.NodePush != 8 || got.PodPush != 8 {
 		t.Fatalf("default controller concurrency = %+v, want all 8", got)
 	}
 	if err := got.Validate(); err != nil {
@@ -55,9 +54,6 @@ func TestTaskRuntimeResyncValidationAppliesOnlyToClusterModes(t *testing.T) {
 	if err := validateTaskRuntimeResyncPeriod("cluster", -time.Second); err == nil {
 		t.Fatal("cluster mode accepted a negative Task Runtime resync period")
 	}
-	if err := validateTaskRuntimeResyncPeriod("both", -time.Second); err == nil {
-		t.Fatal("both mode accepted a negative Task Runtime resync period")
-	}
 	if err := validateTaskRuntimeResyncPeriod("node", -time.Second); err != nil {
 		t.Fatalf("node-only mode rejected an unused Task Runtime resync period: %v", err)
 	}
@@ -70,16 +66,15 @@ func TestControllerConcurrencyFlags(t *testing.T) {
 	if err := fs.Parse([]string{
 		"--task-pull-controller-workers=1",
 		"--addon-pull-controller-workers=2",
-		"--task-deployment-push-controller-workers=3",
-		"--task-statefulset-push-controller-workers=4",
-		"--node-push-controller-workers=5",
-		"--pod-push-controller-workers=6",
+		"--task-runtime-push-controller-workers=3",
+		"--node-push-controller-workers=4",
+		"--pod-push-controller-workers=5",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	want := ControllerConcurrencyConfig{
-		TaskPull: 1, AddonPull: 2, TaskDeployment: 3,
-		TaskStatefulSet: 4, NodePush: 5, PodPush: 6,
+		TaskPull: 1, AddonPull: 2, TaskRuntimePush: 3,
+		NodePush: 4, PodPush: 5,
 	}
 	if config.ControllerConcurrency != want {
 		t.Fatalf("controller concurrency = %+v, want %+v", config.ControllerConcurrency, want)

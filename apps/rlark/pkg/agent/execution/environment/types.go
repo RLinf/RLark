@@ -23,6 +23,10 @@ const (
 	RequirementConfig RequirementKind = "Config"
 	// RequirementAuxiliaryService identifies an auxiliary workload service binding.
 	RequirementAuxiliaryService RequirementKind = "AuxiliaryService"
+	// RequirementSharedMemory identifies a shared-memory (/dev/shm) capability.
+	// Handlers translate this requirement into runtime-specific mechanisms
+	// (e.g. emptyDir with medium=Memory on Kubernetes, --shm-size on Docker).
+	RequirementSharedMemory RequirementKind = "SharedMemory"
 )
 
 // ResolvedConsumer identifies one concrete, validated mutation target selected

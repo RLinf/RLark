@@ -62,13 +62,46 @@ test("new placement defaults to manual node selection", () => {
   assert.match(pickerSource, /useState<Mode>\(placementMode \?\? "manual"\)/);
 });
 
+test("unavailable nodes stay hidden until the toggle shows them as disabled cards", () => {
+  // 默认隐藏不可用节点；勾选“查看不可用节点”后才渲染为不可选中的卡片，
+  // 网格过滤必须同时保留“可用但空闲量不足即隐藏”的既有规则。
+  assert.match(
+    pickerSource,
+    /const \[showUnavailable, setShowUnavailable\] = useState\(false\)/,
+  );
+  assert.match(
+    pickerSource,
+    /if \(!isSelectable\(resource\)\) return showUnavailable;\s*return !resource\.configured \|\| resource\.free >= resourceAmount;/,
+  );
+  // 自动放置与手动选择共用同一个后端 Schedulable 判定，只有不可用节点被禁用。
+  assert.match(
+    pickerSource,
+    /const isAvailable = \(resource: NodeResource\) =>\s*nodeAvailabilityState\(resource\.node\)\.kind !== "unavailable"/,
+  );
+  assert.match(pickerSource, /const isSelectable = isAvailable/);
+  assert.match(pickerSource, /const disabled = availability\.kind === "unavailable"/);
+  assert.match(pickerSource, /查看不可用节点（\$\{unavailableCount\}）/);
+  assert.match(pickerSource, /Show unavailable nodes \(\$\{unavailableCount\}\)/);
+  assert.match(pickerSource, /aria-disabled=\{disabled\}/);
+  assert.match(
+    pickerSource,
+    /<CircleAlert\s+size=\{13\}\s+className="node-availability-info"/,
+  );
+  assert.doesNotMatch(pickerSource, /node-offline-info-wrap/);
+  assert.doesNotMatch(pickerSource, /<Info\s/);
+  assert.match(
+    pickerSource,
+    /node-availability-info-tooltip[\s\S]*role="tooltip"/,
+  );
+});
+
 test("per-worker summary punctuates by locale instead of reusing a full-width colon", () => {
   assert.match(pickerSource, /zh \? "单 Worker：" : "Per worker: "/);
   assert.doesNotMatch(pickerSource, /"Per worker"\}：/);
 });
 
 test("node cards keep long node names readable", () => {
-  assert.match(pickerSource, /title=\{name\}/);
+  assert.match(pickerSource, /title=\{reasonText \? `\$\{name\} · \$\{reasonText\}` : name\}/);
   assert.match(pickerSource, /className="placement-node-meta"/);
   assert.match(pickerSource, /className="placement-node-state"/);
 });

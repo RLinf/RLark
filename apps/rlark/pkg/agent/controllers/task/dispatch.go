@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 
-	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -82,7 +81,7 @@ func (c *Controller) dispatch(ctx context.Context, key types.NamespacedName, hin
 	}
 	intent := host.IntentForTask(fast.task, rlarkv1alpha1.TaskPhase(observed.Observation.Phase), observed.Observation.Message, observedRootInstanceNodes(observed), host.StatusPriorityWorkload)
 	if fast.task.Spec.Placement.PerNode {
-		intent.Instances = perNodeInstances(observed.Instances)
+		intent.Observed.Instances = perNodeInstances(observed.Instances)
 	}
 	if err := c.status.WriteStatus(ctx, fast.task, intent); err != nil {
 		return host.Result{Outcome: host.OutcomeRetrying, Retry: host.RetryDirective{Class: host.RetryConflict}}, err
@@ -149,17 +148,14 @@ func (c *Controller) fastCandidate(ctx context.Context, key types.NamespacedName
 }
 
 func (c *Controller) executionRootObject(ctx context.Context, ref agentruntime.ObjectRef) (client.Object, error) {
-	var object client.Object
-	switch ref.ID {
-	case "apps/v1, Kind=Deployment":
-		object = &appsv1.Deployment{}
-	case "apps/v1, Kind=DaemonSet":
-		object = &appsv1.DaemonSet{}
-	case "apps/v1, Kind=StatefulSet":
-		object = &appsv1.StatefulSet{}
-	default:
-		return nil, fmt.Errorf("unsupported execution root %q", ref.ID)
+	if c.observationScope != nil && (ref.Namespace != c.observationScope.Namespace || ref.RuntimeID != c.observationScope.RuntimeID) {
+		return nil, fmt.Errorf("execution root is outside observation scope")
 	}
+	observation, found := c.observationsByID[ref.ID]
+	if !found {
+		return nil, fmt.Errorf("unregistered execution root %q", ref.ID)
+	}
+	object := observation.newObject()
 	if err := c.LocalKubeClient.Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, object); err != nil {
 		return nil, err
 	}

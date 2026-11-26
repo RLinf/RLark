@@ -71,6 +71,7 @@ func TestKCPWorkloadStrategy(t *testing.T) {
 			}
 			if kcp == nil {
 				t.Fatal("kcp component not found")
+				return
 			}
 			if kcp.WorkloadKind != tt.wantKind {
 				t.Fatalf("WorkloadKind = %q, want %q", kcp.WorkloadKind, tt.wantKind)
@@ -203,6 +204,66 @@ func TestManagementAPIRBACAllowsControlPlaneResources(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestNodeAgentUsesDedicatedRBAC(t *testing.T) {
+	cfg := &types.DeployConfig{
+		Plane:      types.PlaneData,
+		Kubernetes: &types.KubernetesEnv{},
+	}
+
+	for _, c := range components {
+		if c.Name != constants.ComponentAgentNode {
+			continue
+		}
+
+		ds := DaemonSet(cfg, &c)
+		if got := ds.Spec.Template.Spec.NodeSelector; !mapsEqual(got, map[string]string{"rlark.io/enabled": "true"}) {
+			t.Fatalf("node-agent node selector = %#v, want %#v", got, map[string]string{"rlark.io/enabled": "true"})
+		}
+		if got := ds.Spec.Template.Spec.ServiceAccountName; got != constants.ComponentAgentNode {
+			t.Fatalf("node-agent service account = %q, want %q", got, constants.ComponentAgentNode)
+		}
+		container := ds.Spec.Template.Spec.Containers[0]
+		if container.LivenessProbe != nil {
+			t.Fatalf("node-agent liveness probe = %#v, want nil", container.LivenessProbe)
+		}
+		if container.ReadinessProbe == nil || container.ReadinessProbe.HTTPGet == nil || container.ReadinessProbe.HTTPGet.Path != "/readyz" {
+			t.Fatalf("node-agent readiness probe = %#v", container.ReadinessProbe)
+		}
+
+		sa, role, binding := RBAC(cfg, &c)
+		if sa == nil || role == nil || binding == nil {
+			t.Fatal("node-agent RBAC is incomplete")
+			return
+		}
+		if sa.Name != constants.ComponentAgentNode || role.Name != constants.ComponentAgentNode || binding.Name != constants.ComponentAgentNode {
+			t.Fatalf("node-agent RBAC names = %q, %q, %q, want %q", sa.Name, role.Name, binding.Name, constants.ComponentAgentNode)
+		}
+
+		want := map[string][]string{
+			"nodes":  {"get"},
+			"events": {"list", "watch"},
+		}
+		if len(role.Rules) != len(want) {
+			t.Fatalf("node-agent RBAC rules = %#v, want %d rules", role.Rules, len(want))
+		}
+		for resource, verbs := range want {
+			found := false
+			for _, rule := range role.Rules {
+				if slices.Equal(rule.APIGroups, []string{""}) && slices.Equal(rule.Resources, []string{resource}) && slices.Equal(rule.Verbs, verbs) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("missing node-agent RBAC rule for %s with verbs %v", resource, verbs)
+			}
+		}
+		return
+	}
+
+	t.Fatal("node-agent component not found")
 }
 
 func TestKubernetesWorkloadsUseImagePullSecrets(t *testing.T) {
@@ -401,6 +462,7 @@ func TestPostgresqlStorage(t *testing.T) {
 			}
 			if postgresql == nil {
 				t.Fatal("postgresql component not found")
+				return
 			}
 
 			dep := Deployment(cfg, postgresql)

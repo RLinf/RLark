@@ -42,7 +42,7 @@ fmt-web: ## Format web UI (prettier)
 
 ##@ Go targets
 
-.PHONY: build test-go test-web test-e2e test-e2e-rlark go-tidy
+.PHONY: build test-go test-web test-e2e test-e2e-rlark test-e2e-rlark-node-pressure go-tidy
 
 build: ## Build all binaries (apps/rlark)
 	$(MAKE) -C apps/rlark build $(MAKEOVERRIDES)
@@ -59,10 +59,13 @@ test-web: ## Run web UI unit tests with coverage
 	npm ci --prefix apps/rlark-ui
 	npm run test:coverage --prefix apps/rlark-ui
 
-test-e2e: test-e2e-rlark ## Run all implemented end-to-end suites
+test-e2e: test-e2e-rlark test-e2e-rlark-node-pressure ## Run all implemented end-to-end suites
 
 test-e2e-rlark: ## Provision Kind, deploy RLark, run smoke tests, collect evidence, and clean up
 	$(MAKE) -C test/e2e test-rlark $(MAKEOVERRIDES)
+
+test-e2e-rlark-node-pressure: ## Provision Kind, deploy RLark, verify control-plane node pressure derivation, and clean up
+	$(MAKE) -C test/e2e test-rlark-node-pressure $(MAKEOVERRIDES)
 
 go-tidy: ## Run go mod tidy on all workspace modules
 	@for dir in $$( $(GREP) '^\t\./' go.work | sed 's/^\t//' ); do \
@@ -72,12 +75,15 @@ go-tidy: ## Run go mod tidy on all workspace modules
 
 ##@ Code generation
 
-.PHONY: generate generate-crd generate-crd-schema-docs generate-web-models verify-generated proto proto-embodied-runtime proto-execution protoc-install proto-breaking verify-proto-generated
+.PHONY: generate generate-crd generate-crd-chart generate-crd-schema-docs generate-web-models verify-generated proto proto-embodied-runtime proto-execution protoc-install proto-breaking verify-proto-generated
 
-generate: generate-crd-schema-docs generate-web-models ## Generate CRD manifests, clients, docs, and web models
+generate: generate-crd-chart generate-crd-schema-docs generate-web-models ## Generate CRD manifests, clients, docs, web models, and bundled chart copies
 
 generate-crd: ## Generate CRD manifests and clients
 	$(MAKE) -C api generate-crd $(MAKEOVERRIDES)
+
+generate-crd-chart: generate-crd ## Sync the CRD copies bundled in the Helm chart
+	cp api/config/crd/bases/*.yaml charts/rlark-control-plane/files/crds/
 
 generate-crd-schema-docs: generate-crd ## Generate CRD schema reference docs
 	go run ./apps/rlark/cmd/crd-api-docgen api/config/crd/bases apps/rlark/docs/reference/crd.md
@@ -86,16 +92,16 @@ generate-web-models: generate-crd ## Generate TypeScript models from CRD manifes
 	npm ci --prefix apps/rlark-ui
 	npm run generate:crd-models --prefix apps/rlark-ui
 
-GENERATED_PATHS = api/config/crd/bases api/kubeclients 'api/rlark.io/**/zz_generated.deepcopy.go' apps/rlark/docs/reference/crd.md apps/rlark-ui/src/generated/rlark
+GENERATED_PATHS = api/config/crd/bases api/kubeclients 'api/rlark.io/**/zz_generated.deepcopy.go' apps/rlark/docs/reference/crd.md apps/rlark-ui/src/generated/rlark charts/rlark-control-plane/files/crds
 
 verify-generated: ## Fail if generated code/manifests/docs are out of date
 	@$(MAKE) generate $(MAKEOVERRIDES)
 	@if ! git diff --exit-code --stat -- $(GENERATED_PATHS); then \
 		echo ""; \
 		echo "ERROR: generated artifacts are out of date."; \
-		echo "The CRD manifests, deepcopy funcs, typed Go/TypeScript clients, or CRD reference docs"; \
-		echo "do not match the Go types in api/rlark.io/. Run 'make generate' and"; \
-		echo "commit the result."; \
+		echo "The CRD manifests, deepcopy funcs, typed Go/TypeScript clients, CRD reference docs,"; \
+		echo "or the CRD copies bundled in the Helm chart do not match the Go types in"; \
+		echo "api/rlark.io/. Run 'make generate' and commit the result."; \
 		exit 1; \
 	fi
 	@if [ -n "$$(git ls-files --others --exclude-standard -- $(GENERATED_PATHS))" ]; then \

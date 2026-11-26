@@ -1,0 +1,22 @@
+RLark Data Plane installed successfully!
+Namespace: {{ .Release.Namespace }}
+
+Components:
+{{- if .Values.agent.enabled }}
+  [ ] rlark-agent        Pending   - Deployment ({{ .Values.agent.replicas }} replicas)
+{{- end }}
+{{- if .Values.agentNode.enabled }}
+  [ ] rlark-agent-node   Pending   - DaemonSet
+{{- end }}
+
+Control Plane: {{ .Values.controlPlaneAddress }}
+SSH Address:   {{ include "rlark-data-plane.sshServerAddress" . }}
+
+Check component status:
+  kubectl get pods -n {{ .Release.Namespace }}
+
+Verify agent connection:
+  kubectl -n {{ .Release.Namespace }} logs deployment/rlark-agent
+
+Enable nodes for the node agent:
+  kubectl label node <node-name> rlark.io/enabled=true

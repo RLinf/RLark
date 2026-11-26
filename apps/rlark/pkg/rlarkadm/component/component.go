@@ -638,7 +638,7 @@ var components = []types.Component{
 	},
 	{
 		Name: constants.ComponentAgentNode, Port: 8081, Plane: types.PlaneData, WorkloadKind: "DaemonSet",
-		HealthCheckFn:  health.ModeHealthCheck(types.Component{Name: constants.ComponentAgentNode}),
+		HealthCheckFn:  health.ModeHealthCheck(types.Component{Name: constants.ComponentAgentNode, WorkloadKind: "DaemonSet"}),
 		ServiceAccount: constants.ComponentAgentNode,
 		ProbeFn: func(cfg *types.DeployConfig) (*corev1.Probe, *corev1.Probe) {
 			readiness := &corev1.Probe{
@@ -744,7 +744,7 @@ var components = []types.Component{
 		WorkloadKind:    "StatefulSet",
 		MetricsPort:     constants.EtcdMetricsPort,
 		EnabledFn:       func(cfg *types.DeployConfig) bool { return !cfg.UsesKubernetesManagementAPI() && etcdEnabled(cfg) },
-		HealthCheckFn:   health.ModeHealthCheck(types.Component{Name: constants.ComponentEtcd}),
+		HealthCheckFn:   health.ModeHealthCheck(types.Component{Name: constants.ComponentEtcd, WorkloadKind: "StatefulSet"}),
 		ImageFn: func(cfg *types.DeployConfig) string {
 			return imageByMode(cfg, func(k *types.KubernetesEnv) string { return k.EtcdImage }, func(d *types.DockerEnv) string { return d.EtcdImage })
 		},
@@ -832,6 +832,7 @@ var components = []types.Component{
 		MetricsPort:   8080,
 		Dependencies:  []string{constants.ComponentEtcd},
 		HealthCheckFn: health.ModeHealthCheck(types.Component{Name: constants.ComponentKCP}),
+		PostDeployFn:  PostDeployKCP,
 		ImageFn: func(cfg *types.DeployConfig) string {
 			return imageByMode(cfg, func(k *types.KubernetesEnv) string { return k.KCPImage }, func(d *types.DockerEnv) string { return d.KCPImage })
 		},

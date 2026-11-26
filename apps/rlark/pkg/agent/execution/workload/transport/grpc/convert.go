@@ -379,17 +379,19 @@ func toWireCapability(capability agentruntime.Capability) commonv1.ProtocolCapab
 		agentruntime.CapabilityClaimedWorkloadRecovery: commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_CLAIMED_WORKLOAD_RECOVERY,
 		agentruntime.CapabilityIncarnationAdoption:     commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_INCARNATION_ADOPTION,
 		agentruntime.CapabilityReconcileProfiles:       commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_RECONCILE_PROFILES,
+		agentruntime.CapabilityWorkloadObservation:     commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_WORKLOAD_OBSERVATION_CONTRACT,
 	}[capability]
 }
 
 func fromWireCapability(capability commonv1.ProtocolCapability) (agentruntime.Capability, error) {
 	result, ok := map[commonv1.ProtocolCapability]agentruntime.Capability{
-		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_WORKLOAD_INVENTORY:          agentruntime.CapabilityWorkloadInventory,
-		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_RUNTIME_CANDIDATE_INVENTORY: agentruntime.CapabilityCandidateInventory,
-		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_OWNED_FIELD_PROJECTION:      agentruntime.CapabilityOwnedFieldProjection,
-		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_CLAIMED_WORKLOAD_RECOVERY:   agentruntime.CapabilityClaimedWorkloadRecovery,
-		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_INCARNATION_ADOPTION:        agentruntime.CapabilityIncarnationAdoption,
-		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_RECONCILE_PROFILES:          agentruntime.CapabilityReconcileProfiles,
+		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_WORKLOAD_INVENTORY:            agentruntime.CapabilityWorkloadInventory,
+		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_RUNTIME_CANDIDATE_INVENTORY:   agentruntime.CapabilityCandidateInventory,
+		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_OWNED_FIELD_PROJECTION:        agentruntime.CapabilityOwnedFieldProjection,
+		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_CLAIMED_WORKLOAD_RECOVERY:     agentruntime.CapabilityClaimedWorkloadRecovery,
+		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_INCARNATION_ADOPTION:          agentruntime.CapabilityIncarnationAdoption,
+		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_RECONCILE_PROFILES:            agentruntime.CapabilityReconcileProfiles,
+		commonv1.ProtocolCapability_PROTOCOL_CAPABILITY_WORKLOAD_OBSERVATION_CONTRACT: agentruntime.CapabilityWorkloadObservation,
 	}[capability]
 	if !ok {
 		return "", fmt.Errorf("unknown protocol capability %d", capability)
@@ -454,7 +456,32 @@ func validateJSONValue(value *commonv1.TypedValue) error {
 func toWireObjectSnapshot(snapshot agentruntime.ObjectSnapshot) *commonv1.ObjectSnapshot {
 	result := &commonv1.ObjectSnapshot{Revision: snapshot.Revision}
 	for _, object := range snapshot.Objects {
-		result.Objects = append(result.Objects, &commonv1.RuntimeObject{Reference: toWireObjectRef(object.Ref), Manifest: toWireValue(object.Manifest.Type, object.Manifest.Object)})
+		result.Objects = append(result.Objects, &commonv1.RuntimeObject{Reference: toWireObjectRef(object.Ref), Manifest: toWireValue(object.Manifest.Type, object.Manifest.Object), Conditions: toWireObjectConditions(object.Conditions)})
+	}
+	return result
+}
+
+func toWireObjectConditions(conditions []agentruntime.ObjectCondition) []*commonv1.ObjectCondition {
+	if len(conditions) == 0 {
+		return nil
+	}
+	result := make([]*commonv1.ObjectCondition, 0, len(conditions))
+	for _, condition := range conditions {
+		result = append(result, &commonv1.ObjectCondition{Source: condition.Source, Scope: condition.Scope, Subject: condition.Subject, Reason: condition.Reason, Message: condition.Message})
+	}
+	return result
+}
+
+func fromWireObjectConditions(conditions []*commonv1.ObjectCondition) []agentruntime.ObjectCondition {
+	if len(conditions) == 0 {
+		return nil
+	}
+	result := make([]agentruntime.ObjectCondition, 0, len(conditions))
+	for _, condition := range conditions {
+		if condition == nil {
+			continue
+		}
+		result = append(result, agentruntime.ObjectCondition{Source: condition.GetSource(), Scope: condition.GetScope(), Subject: condition.GetSubject(), Reason: condition.GetReason(), Message: condition.GetMessage()})
 	}
 	return result
 }
@@ -474,7 +501,7 @@ func fromWireObjectSnapshot(snapshot *commonv1.ObjectSnapshot) (agentruntime.Obj
 		if err != nil {
 			return agentruntime.ObjectSnapshot{}, err
 		}
-		result.Objects = append(result.Objects, agentruntime.Object{Ref: ref, Manifest: agentruntime.TypedManifest{Type: fromWireType(object.GetManifest().GetType()), Object: append([]byte(nil), object.GetManifest().GetValue()...)}})
+		result.Objects = append(result.Objects, agentruntime.Object{Ref: ref, Manifest: agentruntime.TypedManifest{Type: fromWireType(object.GetManifest().GetType()), Object: append([]byte(nil), object.GetManifest().GetValue()...)}, Conditions: fromWireObjectConditions(object.GetConditions())})
 	}
 	return result, nil
 }

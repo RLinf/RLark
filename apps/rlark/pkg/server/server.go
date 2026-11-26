@@ -89,6 +89,9 @@ func NewServer(config Config) *Server {
 
 // Run runs the component.
 func (s *Server) Run(ctx context.Context) error {
+	if err := s.config.Validate(); err != nil {
+		return fmt.Errorf("validate server config: %w", err)
+	}
 	if err := s.init(ctx); err != nil {
 		return err
 	}

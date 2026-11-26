@@ -87,6 +87,45 @@ const (
 	TaskPhaseStopped   TaskPhase = "Stopped"
 )
 
+// TaskDrainRequest identifies a Node Drain operation that must stop this Task
+// before the Node can be cordoned. The operation ID and Kubernetes Node UID
+// fence retries and replacement Nodes; Node Agents own these requests.
+//
+// A request is a projection of the Node's current Drain operation, not a
+// durable user intent: the Node Agent removes it once the corresponding
+// operation is no longer present in the Node's Spec. Undrain and recover
+// therefore release stopped Tasks. Removing the operation does not schedule
+// the Task onto another Node; the Task restarts and normal Kubernetes
+// scheduling places it.
+type TaskDrainRequest struct {
+	OperationID string `json:"operationID"`
+	NodeUID     string `json:"nodeUID"`
+	NodeName    string `json:"nodeName"`
+}
+
+// TaskDrainState is the current observation of a Task Drain request.
+//
+// WaitingForReschedule means the Task root workload has stopped because of a
+// Node Drain. Automatic rescheduling by a dedicated component is not
+// implemented; the Task resumes only after the Node Drain operation is removed
+// (undrain or recover) and the Node Agent releases the request.
+// +kubebuilder:validation:Enum=WaitingForReschedule;Blocked
+type TaskDrainState string
+
+const (
+	TaskDrainStateWaitingForReschedule TaskDrainState = "WaitingForReschedule"
+	TaskDrainStateBlocked              TaskDrainState = "Blocked"
+)
+
+// TaskDrainStatus reports the Task Host's observation of a Node Drain request.
+type TaskDrainStatus struct {
+	OperationID        string         `json:"operationID"`
+	NodeUID            string         `json:"nodeUID"`
+	State              TaskDrainState `json:"state"`
+	Reason             string         `json:"reason,omitempty"`
+	ObservedGeneration int64          `json:"observedGeneration,omitempty"`
+}
+
 type TaskSpec struct {
 	Role           TaskRole          `json:"role"`
 	DownstreamName string            `json:"downstreamName,omitempty"`
@@ -96,6 +135,13 @@ type TaskSpec struct {
 	Workload       TaskWorkloadSpec  `json:"workload"`
 	Environments   []TaskEnvironment `json:"environments,omitempty"`
 	Tags           []JobTag          `json:"tags,omitempty"`
+	// DrainRequests are one-shot Node-agent-owned requests to stop this Task's
+	// root workload during Node Drain. The Node Agent reconciles them from the
+	// Node's current Drain operations and removes an entry when its operation is
+	// no longer present, including after undrain and recover.
+	// +listType=map
+	// +listMapKey=operationID
+	DrainRequests []TaskDrainRequest `json:"drainRequests,omitempty"`
 }
 
 type TaskStatus struct {
@@ -117,6 +163,10 @@ type TaskStatus struct {
 	// the Task back. No instance ever fails the Task, so nodes joining,
 	// leaving or going down never fail the Job.
 	Instances []TaskInstanceStatus `json:"instances,omitempty"`
+	// DrainRequests is the bounded current observation written by the Task Host.
+	// +listType=map
+	// +listMapKey=operationID
+	DrainRequests []TaskDrainStatus `json:"drainRequests,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	Conditions       []metav1.Condition `json:"conditions,omitempty"`

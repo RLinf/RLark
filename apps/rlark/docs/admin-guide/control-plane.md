@@ -40,12 +40,12 @@ kind: DeployConfig
 plane: control
 kubernetes:
   kubeconfig: ~/.kube/config
-  gateway-image: rlark:latest
-  controller-manager-image: rlark:latest
-  server-image: rlark:latest
+  gateway-image: ghcr.io/rlinf/rlark:v0.1.0
+  controller-manager-image: ghcr.io/rlinf/rlark:v0.1.0
+  server-image: ghcr.io/rlinf/rlark:v0.1.0
   kcp-image: kcp:v0.30.0
   postgresql-image: postgres:15
-  ui-image: rlark-ui:latest
+  ui-image: ghcr.io/rlinf/rlark-ui:v0.1.0
   storage:
     type: pvc
     storage-class: ""
@@ -111,3 +111,5 @@ curl --fail http://localhost:8080/
 ```
 
 Gateway has no dedicated health route; use its Deployment readiness and logs.
+
+For Controller Manager, `/healthz` only reports process liveness and never probes external dependencies, while `/readyz` fails until the informer caches have synced. A Controller Manager that is live but not ready is still warming its caches, not broken.

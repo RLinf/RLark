@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rlark-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: rlark-controller-manager
+spec:
+  replicas: {{ .Values.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: rlark-controller-manager
+  template:
+    metadata:
+      labels:
+        app: rlark-controller-manager
+    spec:
+      {{- if eq .Values.managementApi "kubernetes" }}
+      serviceAccountName: rlark-controller-manager
+      {{- end }}
+      {{- include "rlark-control-plane.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: rlark-controller-manager
+          image: {{ .Values.images.controllerManager | quote }}
+          imagePullPolicy: {{ include "rlark-control-plane.imagePullPolicy" . }}
+          ports:
+            - containerPort: 8080
+            - containerPort: 8081
+          command:
+            - /usr/local/bin/controller-manager
+          args:
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8081
+            {{- if gt (int .Values.replicas) 1 }}
+            - --leader-election=true
+            {{- else }}
+            - --leader-election=false
+            {{- end }}
+            {{- if .Values.db }}
+            - --db-config=/etc/rlark/db.yaml
+            {{- end }}
+            {{- include "rlark-control-plane.managementArgs" . | nindent 12 }}
+          env:
+            {{- include "rlark-control-plane.commonEnvs" . | nindent 12 }}
+          volumeMounts:
+            {{- include "rlark-control-plane.managementVolumeMounts" . | nindent 12 }}
+            {{- if .Values.db }}
+            - name: db-config
+              mountPath: /etc/rlark/db.yaml
+              subPath: db.yaml
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- include "rlark-control-plane.managementVolumes" . | nindent 8 }}
+        {{- if .Values.db }}
+        - name: db-config
+          configMap:
+            name: rlark-db-config
+        {{- end }}

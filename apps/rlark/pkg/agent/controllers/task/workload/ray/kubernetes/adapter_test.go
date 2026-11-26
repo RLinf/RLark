@@ -99,6 +99,85 @@ func TestRayKubernetesAdaptersCompileLegacyWorkloadWithoutResourceDrift(t *testi
 	}
 }
 
+func TestRayKubernetesAdapterExcludesUnschedulableNodes(t *testing.T) {
+	task := compileTask(kubernetesworkload.CarrierDeployment)
+	snapshot, err := compatibility.DecodeTask(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := kubernetesworkload.NewAdapter(
+		workload.TypeID(taskapi.WorkloadTypeRay),
+		namespace,
+	).Compile(context.Background(), workload.CompileRequest{
+		Task:    snapshot,
+		Runtime: agentruntime.Info{Kind: compatibility.RuntimeKindKubernetes},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary := findObject(t, plan.Objects, "workload")
+	var deployment appsv1.Deployment
+	if err := json.Unmarshal(primary.Manifest.Object, &deployment); err != nil {
+		t.Fatal(err)
+	}
+	terms := deployment.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	want := corev1.NodeSelectorRequirement{
+		Key:      "rlark.io/unschedulable",
+		Operator: corev1.NodeSelectorOpNotIn,
+		Values:   []string{"true"},
+	}
+	for _, term := range terms {
+		for _, expression := range term.MatchExpressions {
+			if reflect.DeepEqual(expression, want) {
+				return
+			}
+		}
+	}
+	t.Fatalf("node affinity does not exclude rlark.io/unschedulable=true nodes: %#v", terms)
+}
+
+func TestRayKubernetesAdapterMergesUnschedulableExclusionIntoExistingNodeSelectorTerms(t *testing.T) {
+	task := compileTask(kubernetesworkload.CarrierDeployment)
+	zone := corev1.NodeSelectorRequirement{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"edge"}}
+	task.Spec.Workload.Template.Spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{zone}}},
+		},
+	}}
+	snapshot, err := compatibility.DecodeTask(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace).Compile(
+		context.Background(),
+		workload.CompileRequest{Task: snapshot, Runtime: agentruntime.Info{Kind: compatibility.RuntimeKindKubernetes}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary := findObject(t, plan.Objects, "workload")
+	var deployment appsv1.Deployment
+	if err := json.Unmarshal(primary.Manifest.Object, &deployment); err != nil {
+		t.Fatal(err)
+	}
+	terms := deployment.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	if len(terms) != 1 {
+		t.Fatalf("unschedulable exclusion must not add an independent OR term: %#v", terms)
+	}
+	var foundZone, foundUnschedulable bool
+	for _, expression := range terms[0].MatchExpressions {
+		if reflect.DeepEqual(expression, zone) {
+			foundZone = true
+		}
+		if expression.Key == "rlark.io/unschedulable" && expression.Operator == corev1.NodeSelectorOpNotIn {
+			foundUnschedulable = true
+		}
+	}
+	if !foundZone || !foundUnschedulable {
+		t.Fatalf("existing NodeSelectorTerm was not preserved and merged: %#v", terms[0].MatchExpressions)
+	}
+}
+
 func TestRayKubernetesAdapterCompileIsStable(t *testing.T) {
 	task := compileTask(kubernetesworkload.CarrierDeployment)
 	snapshot, _ := compatibility.DecodeTask(task)
@@ -456,11 +535,12 @@ func TestRayKubernetesAdapterObserveUsesProjectedContainerNameAndFailedSchedulin
 func TestObserveStatusMatrixMatchesLegacyReducers(t *testing.T) {
 	one, zero := int32(1), int32(0)
 	tests := []struct {
-		name    string
-		kind    string
-		object  any
-		phase   rlarkv1alpha1.TaskPhase
-		message string
+		name       string
+		kind       string
+		object     any
+		conditions []agentruntime.ObjectCondition
+		phase      rlarkv1alpha1.TaskPhase
+		message    string
 	}{
 		{name: "deployment stopped", kind: kubernetesworkload.CarrierDeployment, object: &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Replicas: &zero}}, phase: rlarkv1alpha1.TaskPhaseStopped},
 		{name: "deployment unobserved", kind: kubernetesworkload.CarrierDeployment, object: &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.DeploymentSpec{Replicas: &one}, Status: appsv1.DeploymentStatus{ObservedGeneration: 1}}, phase: rlarkv1alpha1.TaskPhasePending},
@@ -469,6 +549,27 @@ func TestObserveStatusMatrixMatchesLegacyReducers(t *testing.T) {
 		{name: "statefulset stopped", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{Spec: appsv1.StatefulSetSpec{Replicas: &zero}}, phase: rlarkv1alpha1.TaskPhaseStopped},
 		{name: "statefulset revision pending", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1, CurrentReplicas: 1, CurrentRevision: "old", UpdateRevision: "new"}}, phase: rlarkv1alpha1.TaskPhasePending},
 		{name: "statefulset ready", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1, CurrentReplicas: 1, CurrentRevision: "new", UpdateRevision: "new"}}, phase: rlarkv1alpha1.TaskPhaseRunning},
+		{name: "statefulset unobserved", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 1}}, phase: rlarkv1alpha1.TaskPhasePending},
+		{name: "statefulset replica failure condition", kind: kubernetesworkload.CarrierStatefulSet, object: &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 2, Conditions: []appsv1.StatefulSetCondition{{Type: "ReplicaFailure", Status: corev1.ConditionTrue, Message: "replica"}}}}, phase: rlarkv1alpha1.TaskPhaseFailed, message: "replica"},
+		{
+			name: "statefulset failed create event", kind: kubernetesworkload.CarrierStatefulSet,
+			object:     &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "task-actor", Generation: 1}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 1}},
+			conditions: []agentruntime.ObjectCondition{{Source: "kubernetes", Scope: "object", Subject: "task-actor", Reason: "FailedCreate", Message: `create Pod task-actor-0 failed: spec.nodeSelector: Invalid value: "a,b"`}},
+			phase:      rlarkv1alpha1.TaskPhaseFailed,
+			message:    `workload task-actor: create Pod task-actor-0 failed: spec.nodeSelector: Invalid value: "a,b"`,
+		},
+		{
+			name: "statefulset running ignores object condition", kind: kubernetesworkload.CarrierStatefulSet,
+			object:     &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "task-actor", Generation: 2}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 2, UpdatedReplicas: 1, ReadyReplicas: 1, CurrentReplicas: 1, CurrentRevision: "new", UpdateRevision: "new"}},
+			conditions: []agentruntime.ObjectCondition{{Source: "kubernetes", Scope: "object", Subject: "task-actor", Reason: "FailedCreate", Message: "stale"}},
+			phase:      rlarkv1alpha1.TaskPhaseRunning,
+		},
+		{
+			name: "statefulset ignores unrecognized object condition", kind: kubernetesworkload.CarrierStatefulSet,
+			object:     &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "task-actor", Generation: 1}, Spec: appsv1.StatefulSetSpec{Replicas: &one}, Status: appsv1.StatefulSetStatus{ObservedGeneration: 1}},
+			conditions: []agentruntime.ObjectCondition{{Source: "kubernetes", Scope: "object", Subject: "task-actor", Reason: "RecreatingFailedPod", Message: "retrying"}},
+			phase:      rlarkv1alpha1.TaskPhasePending,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -476,7 +577,8 @@ func TestObserveStatusMatrixMatchesLegacyReducers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			phase, message, err := kubernetesworkload.ObserveObject(test.kind, manifest, agentruntime.InstanceSnapshot{})
+			object := agentruntime.Object{Manifest: agentruntime.TypedManifest{Object: manifest}, Conditions: test.conditions}
+			phase, message, err := kubernetesworkload.ObserveObject(test.kind, object, agentruntime.InstanceSnapshot{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -558,4 +660,59 @@ func findObject(t *testing.T, objects []agentruntime.DesiredObject, name string)
 func jsonEqual(left, right []byte) bool {
 	var a, b any
 	return json.Unmarshal(left, &a) == nil && json.Unmarshal(right, &b) == nil && reflect.DeepEqual(a, b)
+}
+
+func TestApplyTemplateMutationsKeepsMultiValuePlacementOnlyInNodeAffinity(t *testing.T) {
+	task := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "default", UID: "task-uid"}}
+	task.Spec.Placement.NodeSelector = map[string]string{"kubernetes.io/hostname": "node-a, node-b", "zone": "edge"}
+	template := &corev1.PodTemplateSpec{}
+	kubernetesworkload.ApplyTemplateMutations(template, task)
+	if _, found := template.Spec.NodeSelector["kubernetes.io/hostname"]; found {
+		t.Fatalf("nodeSelector=%v still carries a comma separated value the API server rejects", template.Spec.NodeSelector)
+	}
+	if template.Spec.NodeSelector["zone"] != "edge" || template.Spec.NodeSelector["rlark.io/enabled"] != "true" {
+		t.Fatalf("nodeSelector=%v, want single-value placement and the Runtime label preserved", template.Spec.NodeSelector)
+	}
+	assertHostnameExpressedOnce(t, template)
+}
+
+func TestApplyTemplateMutationsNormalizesMultiValueSelectorAlreadyOnTemplate(t *testing.T) {
+	// The compatibility decode merges Task placement into the Pod template
+	// before compilation, so the Adapter sees the comma separated value on the
+	// template with an empty placement on the synthesized Task.
+	task := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "default", UID: "task-uid"}}
+	template := &corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/hostname": "node-a, node-b", "zone": "edge"}}}
+	kubernetesworkload.ApplyTemplateMutations(template, task)
+	if _, found := template.Spec.NodeSelector["kubernetes.io/hostname"]; found {
+		t.Fatalf("nodeSelector=%v still carries a comma separated value the API server rejects", template.Spec.NodeSelector)
+	}
+	if template.Spec.NodeSelector["zone"] != "edge" || template.Spec.NodeSelector["rlark.io/enabled"] != "true" {
+		t.Fatalf("nodeSelector=%v, want single-value selector and the Runtime label preserved", template.Spec.NodeSelector)
+	}
+	assertHostnameExpressedOnce(t, template)
+}
+
+// assertHostnameExpressedOnce checks that the multi-value hostname selector is
+// expressed exactly once as a single In requirement. It tolerates unrelated
+// requirements merged into the same term, such as the unschedulable exclusion.
+func assertHostnameExpressedOnce(t *testing.T, template *corev1.PodTemplateSpec) {
+	t.Helper()
+	terms := template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	if len(terms) != 1 {
+		t.Fatalf("nodeAffinity terms=%#v, want the multi-value selector expressed in a single term", terms)
+	}
+	want := corev1.NodeSelectorRequirement{Key: "kubernetes.io/hostname", Operator: corev1.NodeSelectorOpIn, Values: []string{"node-a", "node-b"}}
+	var found int
+	for _, expression := range terms[0].MatchExpressions {
+		if expression.Key != want.Key {
+			continue
+		}
+		found++
+		if !reflect.DeepEqual(expression, want) {
+			t.Fatalf("hostname requirement=%#v, want %#v", expression, want)
+		}
+	}
+	if found != 1 {
+		t.Fatalf("hostname requirement appears %d times in %#v, want exactly once", found, terms[0].MatchExpressions)
+	}
 }

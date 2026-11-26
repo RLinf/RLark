@@ -117,9 +117,10 @@ export const stationsApi = {
   // Hold-to-move to a pose (初始姿势 is home; administrator or operator): hold about every 200 ms while the button is
   // held, stop when it is let go; the robot stops by itself 0.5 s after the last hold. A refusal is an ApiError of
   // status 409 whose body is RobotPoseRefusal; 502 when the vendor's web server failed or the robot is not reached.
-  robotPose(node: string, namespace: string, action: "hold" | "stop", pose: RobotPose = "home") {
+  robotPose(node: string, namespace: string, action: "hold" | "stop", pose: RobotPose = "home", signal?: AbortSignal) {
     return requestJson<RobotPoseAnswer>(withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/robot-pose`, { namespace }), {
       method: "POST",
+      signal,
       body: { pose, action },
     });
   },

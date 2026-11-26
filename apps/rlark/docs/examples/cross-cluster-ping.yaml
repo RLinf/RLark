@@ -1,18 +1,27 @@
-# Cross-cluster ping test Job
-# The controller-manager will create Task resources from this Job.
-# Task names are derived as {jobName}-{taskName}:
-#   cross-cluster-ping-server → cluster-1 (server)
-#   cross-cluster-ping-client → cluster-2 (client)
-# Task namespace is resolved from placement.nodeSelector:
-# rlark.io/cluster-id → node's namespace.
+# Cross-cluster network test Jobs.
+#
+# The Kubernetes runtime only supports the "rlinf.io/ray" workload, and the Job
+# controller always rewrites workload.parameters so that the main container runs
+# "rlark-tools ray-launcher" as its primary process. A user "command" in the Pod
+# template is therefore replaced, and the image must ship the Ray CLI, bash and
+# python. Put the workload command in workload.parameters.run.inline instead;
+# the Ray head runs it after the cluster is ready.
+#
+# Only the Ray head executes run.inline, and a head waits for
+# parameters.totalNodes nodes to join its own Ray cluster. Two single-task Jobs
+# are therefore used so each side is an independent single-node Ray head: this
+# test exercises cross-cluster Pod networking, not Ray cluster formation.
+#
+# The controller-manager creates one Task per Job task, named {jobName}-{taskName}.
+# The Task namespace is resolved from placement.nodeSelector "rlark.io/cluster-id".
 apiVersion: rlinf.io/v1alpha1
 kind: Job
 metadata:
-  name: cross-cluster-ping
+  name: cross-cluster-server
 spec:
   domain: cross-cluster-net-test
   tasks:
-  - name: server
+  - name: app
     head: true
     role: Actor
     placement:
@@ -24,7 +33,12 @@ spec:
       kind: rlinf.io/ray
       version: v1
       parameters:
-        role: head
+        run:
+          inline: |
+            mkdir -p /tmp/www
+            echo 'hello from server' > /tmp/www/index.html
+            cd /tmp/www
+            exec python -m http.server 8000
       carrier:
         type: rlinf.io/kubernetes-deployment
         version: v1
@@ -35,14 +49,22 @@ spec:
           hostPID: true
           restartPolicy: Always
           containers:
-          - name: server
-            image: localhost:5555/busybox:latest
+          - name: main
+            image: localhost:5555/ray:quickstart
             imagePullPolicy: IfNotPresent
-            command: ["sh", "-c", "while true; do echo -e 'HTTP/1.1 200 OK\r\nContent-Length: 17\r\nConnection: close\r\n\r\nhello from server' | nc -l -p 8000; done"]
             ports:
             - containerPort: 8000
-  - name: client
-    role: Head
+---
+apiVersion: rlinf.io/v1alpha1
+kind: Job
+metadata:
+  name: cross-cluster-client
+spec:
+  domain: cross-cluster-net-test
+  tasks:
+  - name: app
+    head: true
+    role: Actor
     placement:
       nodeSelector:
         rlark.io/cluster-id: rlark-agent-my-cluster-2
@@ -51,9 +73,6 @@ spec:
     workload:
       kind: rlinf.io/ray
       version: v1
-      parameters:
-        role: worker
-        headTaskName: cross-cluster-ping-server
       carrier:
         type: rlinf.io/kubernetes-deployment
         version: v1
@@ -64,7 +83,6 @@ spec:
           hostPID: true
           restartPolicy: Always
           containers:
-          - name: client
-            image: localhost:5555/busybox:latest
+          - name: main
+            image: localhost:5555/ray:quickstart
             imagePullPolicy: IfNotPresent
-            command: ["sleep", "infinity"]

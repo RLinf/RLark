@@ -605,6 +605,7 @@
 
 .overview-page .bottom-grid {
   flex: 0 0 auto;
+  grid-template-columns: minmax(0, 1fr);
   min-height: auto;
 }
 

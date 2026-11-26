@@ -441,3 +441,8 @@ export const controlledRobot = (node: CRDNode): ControlledRobot => ({
   namespace: node.metadata.namespace ?? "",
   labels: node.metadata.labels,
 });
+
+export function hasRegisteredRobotClass(machine: Machine, classes: MachineList["classes"]): boolean {
+  return machine.machine_type === "Robot"
+    && Boolean(machine.node_class && Object.prototype.hasOwnProperty.call(classes, machine.node_class));
+}

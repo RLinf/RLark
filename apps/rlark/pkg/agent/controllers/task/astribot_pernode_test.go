@@ -18,6 +18,7 @@ import (
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/base"
 	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"
+	kubernetesruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/runtime/kubernetes"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/host"
 	agentruntime "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/runtime"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
@@ -56,8 +57,8 @@ func perNodePod(daemonSet *appsv1.DaemonSet, node string, ready bool, waiting st
 }
 
 // TestPerNodeTaskFollowsItsNodes runs a per-node Task through the Agent: the
-// pull reconcile renders a DaemonSet, and each DaemonSet change the push
-// controller sees is projected into the Task's phase and per-node instances as
+// pull reconcile renders a DaemonSet, and each change the scoped Runtime
+// observer sees is projected into the Task's phase and per-node instances as
 // nodes join, switch off, fail and leave. Only instances on Ready nodes count
 // toward the phase, and the Task is never Failed.
 func TestPerNodeTaskFollowsItsNodes(t *testing.T) {
@@ -77,11 +78,26 @@ func TestPerNodeTaskFollowsItsNodes(t *testing.T) {
 		WithIndex(&corev1.Event{}, "involvedObject.uid", func(object client.Object) []string {
 			return []string{string(object.(*corev1.Event).InvolvedObject.UID)}
 		}).Build()
-	execution, err := NewKubernetesExecutionCoordinator(local, "rlark:test")
+	execution, err := newTestKubernetesExecutionCoordinator(local, "rlark:test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	controller := newHostedTestController(t, base.Controller{AgentType: string(rlarkv1alpha1.AgentTypeKubernetes), ManagementNamespace: "cluster", ManagementClient: management, LocalKubeClient: local}, execution)
+	var observer *pushRuntimeReconciler
+	for _, observation := range controller.observations {
+		if observation.GVK.Kind != "DaemonSet" {
+			continue
+		}
+		observer, err = newPushRuntimeReconciler(controller, observation, KubernetesObservationScope{
+			RuntimeID: kubernetesruntime.DefaultID, Namespace: tenant.DefaultNamespace, ManagementNamespace: task.Namespace,
+		}, local)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if observer == nil {
+		t.Fatal("DaemonSet observation is not registered")
+	}
 	pull := &pullReconciler{c: controller}
 	key := client.ObjectKeyFromObject(task)
 	if _, err := pull.Reconcile(context.Background(), reconcile.Request{NamespacedName: key}); err != nil {
@@ -93,6 +109,17 @@ func TestPerNodeTaskFollowsItsNodes(t *testing.T) {
 	}
 	if daemonSet.Spec.Template.Spec.NodeSelector["rlark.io/node-category"] != "robot" || daemonSet.Spec.UpdateStrategy.Type != appsv1.OnDeleteDaemonSetStrategyType || daemonSet.Annotations[rlarkv1alpha1.RolloutAnnotation] != "{}" {
 		t.Fatalf("rendered DaemonSet spec=%#v", daemonSet.Spec)
+	}
+
+	stale := daemonSet.DeepCopy()
+	stale.Annotations[ManagementTaskUIDAnnotation] = "previous-task-uid"
+	if _, err := observer.enqueueRoot(context.Background(), stale); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-controller.triggers.events:
+		t.Fatal("a previous Task incarnation enqueued a current Task")
+	default:
 	}
 
 	// observe stands in for the kubelets and the DaemonSet controller: it sets
@@ -140,7 +167,7 @@ func TestPerNodeTaskFollowsItsNodes(t *testing.T) {
 		if err := local.Status().Update(context.Background(), &daemonSet); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := (&pushDaemonSetReconciler{c: controller}).Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(existing)}); err != nil {
+		if _, err := observer.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(existing)}); err != nil {
 			t.Fatal(err)
 		}
 		select {

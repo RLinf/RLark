@@ -18,13 +18,13 @@ kubernetes:
   kubeconfig: ~/.kube/config # kubeconfig for the target cluster
   # 使用目标 Kubernetes API 存储 RLark 资源且不部署 kcp/etcd：
   # management-api: kubernetes
-  gateway-image: rlark:latest
-  controller-manager-image: rlark:latest
-  server-image: rlark:latest
+  gateway-image: ghcr.io/rlinf/rlark:v0.1.0
+  controller-manager-image: ghcr.io/rlinf/rlark:v0.1.0
+  server-image: ghcr.io/rlinf/rlark:v0.1.0
   kcp-image: kcp:v0.30.0
   # etcd-image: etcd:3.5.15-0
   postgresql-image: postgres:15
-  ui-image: rlark-ui:latest
+  ui-image: ghcr.io/rlinf/rlark-ui:v0.1.0
 
   # 组件镜像拉取策略：Always | IfNotPresent | Never，默认 Always
   #image-pull-policy: IfNotPresent

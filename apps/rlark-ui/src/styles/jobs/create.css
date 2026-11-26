@@ -1000,6 +1000,48 @@
   line-height: 1.45;
 }
 
+.placement-node-grid-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.placement-node-grid-head .placement-manual-hint {
+  flex: 1 1 auto;
+}
+
+.placement-node-grid-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.placement-node-grid-toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* .modal-body label 的 display:grid 优先级更高，会把复选框和文字拆成两行；
+   用更高优先级选择器恢复同一行布局，并还原复选框自身尺寸。 */
+.modal-body .placement-node-grid-toggle {
+  display: inline-flex;
+}
+
+.modal-body .placement-node-grid-toggle input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  flex: 0 0 17px;
+}
+
 .placement-node-grid {
   position: relative;
   display: grid;
@@ -1084,6 +1126,7 @@
 }
 
 .placement-node-state {
+  position: relative;
   flex: none;
   justify-content: flex-end;
   gap: 6px;
@@ -1124,13 +1167,17 @@
   box-shadow: inset 0 0 0 1px #7650df;
   background: #f5f2ff;
 }
-.placement-node-card:disabled {
+.placement-node-card[aria-disabled="true"] {
   opacity: 1;
   cursor: not-allowed;
 }
 .placement-node-card.unavailable {
   border-color: rgba(214, 77, 104, 0.3);
   background: rgba(214, 77, 104, 0.06);
+}
+.placement-node-card.degraded {
+  border-color: rgba(217, 119, 6, 0.32);
+  background: rgba(245, 158, 11, 0.07);
 }
 .placement-node-card small {
   overflow: hidden;
@@ -1154,8 +1201,22 @@
   color: #d64d68;
   font-weight: 700;
 }
+.placement-node-card.degraded em {
+  color: #b45309;
+  font-weight: 700;
+}
 .placement-node-state > svg {
   color: #d64d68;
+}
+.placement-node-card.degraded .placement-node-state > svg {
+  color: #b45309;
+}
+.placement-node-card .node-availability-info-tooltip {
+  display: grid;
+  gap: 3px;
+  color: var(--panel);
+  font-size: 12px;
+  white-space: normal;
 }
 .placement-node-check {
   justify-content: center;
@@ -1278,6 +1339,9 @@
 }
 .theme-dark .placement-node-card.unavailable {
   background: rgba(214, 77, 104, 0.1);
+}
+.theme-dark .placement-node-card.degraded {
+  background: rgba(245, 158, 11, 0.12);
 }
 .theme-dark .placement-node-card,
 .theme-dark .placement-readonly-control strong {

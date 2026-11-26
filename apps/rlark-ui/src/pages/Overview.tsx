@@ -8,7 +8,7 @@ import {
   Server,
   Workflow,
 } from "lucide-react";
-import { activity, type Cluster, type Job, type Phase } from "../data";
+import { type Cluster, type Job, type Phase } from "../data";
 import type { Copy } from "../i18n";
 import type { CRDNode, Page, ResourceRow } from "../types";
 import { useAutoRefresh } from "../hooks";
@@ -20,7 +20,6 @@ import {
   getNodeGPUModel,
   hasNodeCategory,
   isBusinessWorkerNode,
-  nodeStatusReasonLabel,
 } from "../utils/nodes";
 import {
   MetricCard,
@@ -268,12 +267,11 @@ export function Overview({
             ) : (
               robotNodes.slice(0, 6).map((n) => {
                 const phase = (n.status?.phase ?? "Offline") as Phase;
+                const labels = n.status?.observedNodeLabels ?? {};
                 const model =
                   getNodeDeviceModel(n) ||
-                  n.metadata.labels?.["node.kubernetes.io/instance-type"] ||
+                  labels["node.kubernetes.io/instance-type"] ||
                   "—";
-                const reason =
-                  nodeStatusReasonLabel(n.status?.reason, isZh) || "—";
                 return (
                   <div key={n.metadata.name}>
                     <span className={"node-status-ring " + phase.toLowerCase()}>
@@ -284,7 +282,7 @@ export function Overview({
                         <NodeName node={n} />
                       </strong>
                       <small>
-                        {model} · {reason}
+                        {model}
                       </small>
                     </div>
                     <StatusBadge phase={phase} copy={c} />
@@ -340,37 +338,6 @@ export function Overview({
                   </span>
                   <ChevronRight size={17} />
                 </button>
-              ))
-            )}
-          </div>
-        </div>
-        <div className="panel activity-panel">
-          <div className="panel-title">
-            <div>
-              <span>{c.overview.recent}</span>
-              <h3>{c.common.production}</h3>
-            </div>
-          </div>
-          <div className="activity-list">
-            {activity.length === 0 ? (
-              <p
-                className="muted"
-                style={{ padding: "16px 0", textAlign: "center" }}
-              >
-                {isZh ? "暂无活动" : "No recent activity"}
-              </p>
-            ) : (
-              activity.map((item, i) => (
-                <div key={i}>
-                  <span className={"activity-dot " + item.type}>
-                    <i />
-                  </span>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <small>{item.meta}</small>
-                  </div>
-                  <time>{item.time}</time>
-                </div>
               ))
             )}
           </div>

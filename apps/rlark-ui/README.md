@@ -51,11 +51,11 @@ The frontend uses exactly one data mode so pages never mix mock and backend data
 - Naming：主页面标题统一使用管理语义，例如“节点管理”“任务管理”“工作流管理”；总览页不额外展示数据模式卡片
 - Overview header：总览页复用其他一级页面的标准页头高度与间距，包含分类小标题、主标题和一句简介
 
-管理员应通过管理端节点页面在 KCP Node CR 上维护 `rlark.io/city`、`rlark.io/gpu-model`、`rlark.io/device-model` Annotation 及 `rlark.io/node-category-*` Label；这些业务元数据不依赖数据面 Kubernetes Node Annotation。
+管理员应通过管理端节点页面在 KCP Node CR 上维护 `rlark.io/city`、`rlark.io/gpu-model`、`rlark.io/device-model` 及 `rlark.io/node-category-*` Annotation；这些业务元数据不依赖数据面 Kubernetes Node Annotation。
 
 设备数量不应手工标注：GPU 容量由 NVIDIA Device Plugin 注册，具身设备容量由 embodied-runtime Device Plugin 以 `rlinf.io/device` 或 `rlinf.io/device-<model>` 资源注册。`status.used` 表示活跃 Pod 声明的资源请求量，不等同于 metrics-server 提供的实时硬件利用率。
 
-Administrators maintain city, category, GPU-model, and device-model metadata on the KCP Node CR through the Admin node page. The Agent preserves these fields while reporting data-plane Kubernetes state. Device counts must come from the NVIDIA or embodied-runtime Device Plugin rather than manual labels. The Agent reports active Pod requests as `status.used`; this is scheduler reservation data, not live hardware utilization from metrics-server. Disk is the exception: the Agent reads kubelet Stats Summary and reports real capacity, used, and available bytes for nodefs and any dedicated imagefs. Node details display those values in binary GiB, and both the disk card and job Worker node column warn when usage reaches 90% or kubelet reports `DiskPressure=True`. In Mock mode, this warning is available on node `gpu-cloud-01` and the actor Worker of job `robot-policy-training`.
+Administrators maintain city, category (`rlark.io/node-category-*` annotations), GPU-model, and device-model metadata on the KCP Node CR through the Admin node page. The Agent preserves these fields while reporting data-plane Kubernetes state. Device counts must come from the NVIDIA or embodied-runtime Device Plugin rather than manual labels. The Agent reports active Pod requests as `status.used`; this is scheduler reservation data, not live hardware utilization from metrics-server. Disk is the exception: the Agent reads kubelet Stats Summary and reports real capacity, used, and available bytes for nodefs and any dedicated imagefs. Node details display those values in binary GiB, and both the disk card and job Worker node column warn when usage reaches 90% or kubelet reports `DiskPressure=True`. In Mock mode, this warning is available on node `gpu-cloud-01` and the actor Worker of job `robot-policy-training`.
 
 The primary Cluster, Node, Job, Storage, and SSH Key lists support ascending and descending sorting by clicking their column headers. Sorting is applied before pagination.
 

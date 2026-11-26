@@ -9,7 +9,6 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	taskapi "github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/api"
@@ -24,30 +23,31 @@ const perNodeReplicas = 0
 // its phase or its cluster's state: a node that is offline or cordoned is
 // still in the class, and its going away must not move the Task.
 func (r *Reconciler) resolvePerNodeNamespace(ctx context.Context, t *rlarkv1alpha1.JobTaskTemplate) (string, error) {
-	selector := labels.NewSelector()
 	for key, value := range t.Placement.NodeSelector {
-		requirement, err := labels.NewRequirement(key, selection.In, strings.Split(value, ","))
+		_, err := labels.NewRequirement(key, selection.In, strings.Split(value, ","))
 		if err != nil {
 			return "", fmt.Errorf("nodeSelector of per-node Task template %q: %w", t.Name, err)
 		}
-		selector = selector.Add(*requirement)
 	}
 	var nodeList rlarkv1alpha1.NodeList
-	if err := r.List(ctx, &nodeList, &client.ListOptions{LabelSelector: selector}); err != nil {
+	if err := r.List(ctx, &nodeList); err != nil {
 		return "", fmt.Errorf("list Nodes matching selector for Task template %q: %w", t.Name, err)
 	}
 	namespaces := map[string]struct{}{}
 	for _, node := range nodeList.Items {
-		namespaces[node.Namespace] = struct{}{}
+		if nodeMatchesSelector(&node, t.Placement.NodeSelector) {
+			namespaces[node.Namespace] = struct{}{}
+		}
 	}
 	switch len(namespaces) {
 	case 0:
 		return "", fmt.Errorf("no Nodes match selector for per-node Task template %q", t.Name)
 	case 1:
-		return nodeList.Items[0].Namespace, nil
-	default:
-		return "", fmt.Errorf("selector of per-node Task template %q matches Nodes of %d clusters; a per-node Task runs in one cluster, so narrow its nodeSelector to one", t.Name, len(namespaces))
+		for namespace := range namespaces {
+			return namespace, nil
+		}
 	}
+	return "", fmt.Errorf("selector of per-node Task template %q matches Nodes of %d clusters; a per-node Task runs in one cluster, so narrow its nodeSelector to one", t.Name, len(namespaces))
 }
 
 // validatePerNodeTemplate checks a template's per-node placement against its carrier.

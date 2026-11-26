@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rlark-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: rlark-ui
+spec:
+  selector:
+    app: rlark-ui
+  ports:
+    - name: client
+      port: 80
+      targetPort: 80

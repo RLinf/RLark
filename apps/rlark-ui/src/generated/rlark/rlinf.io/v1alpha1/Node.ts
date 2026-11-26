@@ -22,17 +22,116 @@ export interface INode {
    */
   "kind": "Node";
   "metadata"?: IObjectMeta;
+  /**
+   * NodeSpec contains only management-owned durable desired state. Agents must not
+   * write this section; administrative APIs own Unschedulable and Operations.
+   */
   "spec"?: {
+    /**
+     * AgentType is a reserved compatibility field for the Node access form.
+     *
+     * Deprecated: use Runtime.Type for new integrations. This field must remain in
+     * the API and generated CRD while non-Kubernetes runtime implementations are
+     * incomplete, so existing resources and clients retain their declared intent.
+     */
     "agentType"?: "Kubernetes" | "Docker" | "Raw";
     /**
-     * DisplayName is the operator's name; metadata.name stays the Kubernetes Node name that Jobs, Stations and SiteNetwork key on.
+     * DisplayName is the operator's name; metadata.name remains the node identity.
      */
     "displayName"?: string;
+    /**
+     * Identity is set by the management API or control plane when the Node is registered.
+     */
+    "identity"?: {
+      /**
+       * Domain is the owning Domain identifier.
+       */
+      "domain"?: string;
+      /**
+       * ID is the stable RLark business identity of the Node.
+       */
+      "id"?: string;
+      /**
+       * Owner is the management principal or controller that owns the Node.
+       */
+      "owner"?: string;
+      /**
+       * Tenant is the owning tenant identifier, independent of Kubernetes namespace placement.
+       */
+      "tenant"?: string;
+    };
+    /**
+     * Operations contains uniquely identified one-shot maintenance or drain requests.
+     */
+    "operations"?: Array<{
+      /**
+       * ID is a stable operation identifier supplied by the requester. It is
+       * required and must be non-empty: an operation without an identity cannot be
+       * tracked, reported, or retried idempotently, so it is rejected at the API
+       * boundary rather than dropped by each consumer.
+       */
+      "id": string;
+      /**
+       * Type selects the requested one-shot operation.
+       */
+      "type": "Drain" | "EnterMaintenance";
+    }>;
+    /**
+     * Runtime is the management-selected runtime reference for this Node.
+     */
+    "runtime"?: {
+      /**
+       * Name identifies the runtime instance or provider configuration.
+       */
+      "name"?: string;
+      /**
+       * Type identifies the configured runtime implementation.
+       */
+      "type"?: "Kubernetes" | "Docker" | "Raw";
+    };
+    /**
+     * Unschedulable durably blocks placement of new workloads without stopping existing ones.
+     */
     "unschedulable"?: boolean;
   };
+  /**
+   * NodeStatus separates Agent-observed facts from Node Controller-derived lifecycle
+   * conclusions. Job and scheduler components consume this status read-only.
+   *
+   * NodeStatus has two writers, and each one writes a disjoint set of fields:
+   *
+   *   - The control-plane Node Controller owns Phase, Conditions, DrainOperations,
+   *     LastHeartbeatTime and LastStatusChangeTime. They are its conclusions about
+   *     the Agent heartbeat Lease and the facts reported by the data plane.
+   *   - The data-plane node-agent owns NodeInfo, Addresses, DiskPressure, Storage,
+   *     Capacity, Allocatable, Used, CapabilitySnapshot, ActiveWorkloads,
+   *     ObservedNodeLabels, PullProgress and Events. They are Node-local observations.
+   *
+   * Both writers Patch the status with client.MergeFrom (no optimistic lock), so
+   * concurrent writes merge deterministically and do not depend on write order.
+   * That only holds while the ownership above is respected: a new field must be
+   * assigned to exactly one writer and must never be written by both.
+   */
   "status"?: {
     /**
-     * Addresses 是节点地址列表（InternalIP / Hostname 等）。
+     * ActiveWorkloads is the Agent-observed bounded summary of current workloads.
+     */
+    "activeWorkloads"?: {
+      "pending"?: number;
+      /**
+       * RLarkManaged is the count of Pods on this Node that are managed by RLark
+       * (identified by the RLark task-management annotations). Agent populates it
+       * so that controllers can distinguish "Agent hasn't scanned the node yet"
+       * from "the node genuinely has zero RLark-managed workloads", which matters
+       * for deciding whether a Node Drain operation can complete.
+       */
+      "rlarkManaged"?: number;
+      "running"?: number;
+      "stopping"?: number;
+      "total"?: number;
+    };
+    /**
+     * Addresses are Agent-observed node addresses.
      */
     "addresses"?: Array<{
       /**
@@ -45,20 +144,84 @@ export interface INode {
       "type": string;
     }>;
     /**
-     * ResourceList is a set of (resource name, quantity) pairs.
+     * Allocatable is the Kubernetes Node's scheduler-declared capacity after system reservations.
+     * Schedulers use this value, together with Used, for placement decisions.
      */
     "allocatable"?: {
       [key: string]: number | string;
     };
     /**
-     * ResourceList is a set of (resource name, quantity) pairs.
+     * CapabilitySnapshot is the Agent-observed structured capability declaration.
+     * Transient capability availability is reported by readiness Conditions.
+     */
+    "capabilitySnapshot"?: {
+      "devices"?: Array<{
+        /**
+         * Available is allocatable capacity less than non-terminal Pod resource requests.
+         */
+        "available"?: number;
+        /**
+         * Category is the Kubernetes extended resource name, for example "nvidia.com/gpu".
+         */
+        "category": string;
+        /**
+         * Count is the capacity reported by the Kubernetes Node.
+         */
+        "count"?: number;
+      }>;
+      /**
+       * NodeNetworkCapability describes Node-local networking features supported by the runtime.
+       */
+      "network"?: {
+        "crossCluster"?: boolean;
+        "hostNetwork"?: boolean;
+        "serviceExposure"?: boolean;
+      };
+      /**
+       * NodeOperationsCapability is reserved for operations whose support is observed locally.
+       */
+      "operations"?: {
+        "exec"?: boolean;
+        "logs"?: boolean;
+        "terminal"?: boolean;
+      };
+      /**
+       * NodeRuntimeCapability describes the runtime and workload kinds the Agent can run.
+       */
+      "runtime"?: {
+        /**
+         * Type identifies the runtime implementation.
+         */
+        "type"?: "Kubernetes" | "Docker" | "Raw";
+        /**
+         * Version is the runtime implementation version.
+         */
+        "version"?: string;
+        /**
+         * WorkloadKinds lists the workload kinds supported by this runtime.
+         */
+        "workloadKinds"?: Array<string>;
+      };
+      /**
+       * NodeStorageCapability is reserved for storage support observed locally on the Node.
+       */
+      "storage"?: {
+        "storageClasses"?: Array<string>;
+        "volumeTypes"?: Array<string>;
+      };
+    };
+    /**
+     * Capacity is the Kubernetes Node's physical resource inventory. It is an informational upper bound,
+     * not the schedulable capacity.
      */
     "capacity"?: {
       [key: string]: number | string;
     };
     /**
-     * Conditions 记录节点的结构化状态结论，当前仅包含 ConditionTypeReady。
-     * 它由观测（而非 Spec）驱动，因此不填写 ObservedGeneration。
+     * Conditions are calculated only by the Node Controller from desired state and Agent facts.
+     * They are observation-driven and therefore carry no per-condition
+     * ObservedGeneration; use the status-level ObservedGeneration to tell whether
+     * they already reflect the latest Spec.
      */
     "conditions"?: Array<{
       /**
@@ -94,12 +257,21 @@ export interface INode {
        */
       "type": string;
     }>;
+    /**
+     * DiskPressure is the raw kubelet observation used by the Node Controller to derive ResourcePressure.
+     */
     "diskPressure"?: boolean;
     /**
-     * Events 由数据面 node-agent 上报节点相关 Kubernetes Event（如 DiskPressure
-     * 等 Warning 事件及镜像拉取/调度相关事件）。控制面 Task reconciler 在 Task
-     * 处于 Pending 期间聚合各节点事件到 Task.status.events，供前端展示。
-     * 条目数量由 node-agent 侧裁剪（最多保留 50 条）。
+     * DrainOperations is the Node Controller's bounded summary of requested drain operations.
+     */
+    "drainOperations"?: Array<{
+      "blocked"?: number;
+      "completed"?: boolean;
+      "operationID": string;
+      "waiting"?: number;
+    }>;
+    /**
+     * Events is a bounded node-agent-reported diagnostic event summary.
      */
     "events"?: Array<{
       "count"?: number;
@@ -112,30 +284,62 @@ export interface INode {
       "type": string;
     }>;
     /**
-     * LastHeartbeatTime 是控制面 Node Reconciler 从 Agent Lease 读取到的最近一次
-     * 心跳续约时间；数据面不写入本字段。
+     * KubernetesCordoned is the raw observation of the local Kubernetes Node's
+     * spec.unschedulable reported by the Agent. RLark does not manage that field:
+     * a cordoned Kubernetes Node conceals placement from every Pod, not only RLark
+     * workloads, so the Agent reports the observation and the Node Controller
+     * derives the KubernetesCordoned condition from it without changing RLark's own
+     * placement decision. Absence means the Agent has not reported the value.
+     */
+    "kubernetesCordoned"?: boolean;
+    /**
+     * KubernetesNodeUID is the Agent-observed UID of the local Kubernetes Node object.
+     * It identifies one Node incarnation and is used to correlate Node Drain requests.
+     */
+    "kubernetesNodeUID"?: string;
+    /**
+     * KubernetesReady is the raw Kubernetes Node Ready observation reported by the Agent.
+     */
+    "kubernetesReady"?: boolean;
+    /**
+     * LastHeartbeatTime is the Agent heartbeat renewal the Node Controller read
+     * from the coordination Lease. It is republished through the control-plane
+     * clock so that it stays comparable across Nodes, and it only ever moves
+     * forward. Agents must not write it.
      */
     "lastHeartbeatTime"?: string;
     /**
-     * LastStatusChangeTime 是 Phase 最近一次发生变化的时间，与 LastHeartbeatTime
-     * 同由控制面 Node Reconciler 写入，用于区分「长时间保持同一状态」与「刚刚翻转」。
+     * LastStatusChangeTime is the latest time an Agent-observed or controller-derived state changed.
      */
     "lastStatusChangeTime"?: string;
     /**
-     * NodeInfo 是节点基础信息，由数据面 Agent 上报；控制面不写入本字段。
+     * NodeInfo is Agent-reported operating system, architecture, Agent, and runtime version information.
      */
     "nodeInfo"?: {
       "agentVersion"?: string;
       "architecture"?: string;
       "kernelVersion"?: string;
       "operatingSystem"?: string;
+      "runtimeVersion"?: string;
     };
     /**
-     * Phase 是节点连通性聚合阶段，由数据面 node-agent 上报。
+     * ObservedNodeLabels is the Agent-observed label dictionary read from the
+     * local Kubernetes Node object. It is the user-facing source of truth for
+     * what labels are actually present on the data-plane Node. RLark currently
+     * writes only RLark-owned system labels (rlark.io/\*) to metadata.labels on
+     * the management Node CR; other labels found there are not the data-plane
+     * label set. Frontends and operator consoles should display
+     * ObservedNodeLabels, not metadata.labels.
      */
-    "phase"?: "Online" | "Offline";
+    "observedNodeLabels"?: {
+      [key: string]: string;
+    };
     /**
-     * PullProgress 是节点上正在进行的镜像拉取进度，由 node-agent 上报。
+     * Phase is a concise lifecycle summary calculated only by the Node Controller.
+     */
+    "phase"?: "Registering" | "Online" | "Degraded" | "Offline" | "Cordoned" | "Draining";
+    /**
+     * PullProgress is node-agent-reported progress for in-flight image pulls.
      */
     "pullProgress"?: Array<{
       "downloaded": number;
@@ -146,13 +350,7 @@ export interface INode {
       "total": number;
     }>;
     /**
-     * Reason 是 Phase 的机器可读原因（CamelCase），与 Conditions 中
-     * ConditionTypeReady 的 Reason 同源，供列表视图直接展示。
-     * 该字段与 Conditions 均由数据面 node-agent 独占写入。
-     */
-    "reason"?: string;
-    /**
-     * NodeStorageStatus reports kubelet filesystem usage in bytes.
+     * Storage is a bounded monitoring snapshot and must not be used for placement or capacity decisions.
      */
     "storage"?: {
       "availableBytes"?: number;
@@ -160,7 +358,8 @@ export interface INode {
       "usedBytes"?: number;
     };
     /**
-     * ResourceList is a set of (resource name, quantity) pairs.
+     * Used is the sum of non-terminal Pod resource requests already allocated for scheduling.
+     * It is not actual runtime utilization.
      */
     "used"?: {
       [key: string]: number | string;

@@ -1,0 +1,33 @@
+{{- if eq .Values.managementApi "kubernetes" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rlark-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: rlark-controller-manager
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rlark-controller-manager
+  labels:
+    app: rlark-controller-manager
+rules:
+  {{- include "rlark-control-plane.managementRBACRules" . | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rlark-controller-manager
+  labels:
+    app: rlark-controller-manager
+subjects:
+  - kind: ServiceAccount
+    name: rlark-controller-manager
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: rlark-controller-manager
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

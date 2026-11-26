@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,7 +24,8 @@ import (
 // node agent
 // 节点级别的 Agent，主要负责节点和控制面之间的通信和管理.
 type nodeAgent struct {
-	a *Agent
+	a     *Agent
+	start func(context.Context) error
 }
 
 // nodeProgressPatcher implements imagepull.ProgressPatcher using the
@@ -97,8 +100,8 @@ func (p *nodeEventsPatcher) PatchNodeEvents(ctx context.Context, nodeName, names
 	return err
 }
 
-// Run runs the component.
-func (n *nodeAgent) Run(ctx context.Context) error {
+// Build prepares node dependencies without starting informers or local services.
+func (n *nodeAgent) Build(ctx context.Context) error {
 	logger := log.FromContext(ctx).WithName("nodeAgent")
 
 	factory := externalversions.NewSharedInformerFactoryWithOptions(
@@ -111,100 +114,120 @@ func (n *nodeAgent) Run(ctx context.Context) error {
 	managementPodInformer := factory.Rlinf().V1alpha1().Pods().Informer()
 	managementPodLister := factory.Rlinf().V1alpha1().Pods().Lister()
 
-	// Set up the image pre-puller. Event handlers must be registered before
-	// factory.Start so the initial list is not missed.
-	var taskInformer cache.SharedIndexInformer
-	var imgPuller *imagepull.Puller
-	agentType := rlarkv1alpha1.AgentType(n.a.config.AgentType)
-	socket, pull, err := n.runtimeSocket(ctx, agentType)
-	if err != nil {
-		return err
-	}
-	if pull {
-		rt := imagepull.NewImagePuller(
-			imagepull.RuntimeFor(agentType),
-			socket,
-			n.a.config.ContainerdNamespace,
-			logger,
-		)
-		if rt == nil {
-			// NewImagePuller returns nil when the container runtime client
-			// cannot be created (e.g. containerd socket unavailable); skip
-			// the puller so workers never dereference a nil runtime.
-			logger.Info("image pre-pull disabled: container runtime client unavailable", "agentType", agentType)
-		} else {
-			taskInformer = factory.Rlinf().V1alpha1().Tasks().Informer()
-			patcher := newNodeProgressPatcher(n.a.managementClient)
-			imgPuller = imagepull.NewPuller(imagepull.PullerConfig{
-				Runtime:             rt,
-				AgentType:           agentType,
-				NodeName:            n.a.config.NodeName,
-				LocalKube:           n.a.localKubeClient,
-				ProgressPatcher:     patcher,
-				ManagementNamespace: n.a.config.ClientConfig.ServerNamespace,
-			}, taskInformer, logger)
-			logger.Info("image pre-pull enabled", "agentType", agentType, "nodeName", n.a.config.NodeName, "socket", socket)
+	n.start = func(ctx context.Context) error {
+		ctx, cancel := context.WithCancel(ctx)
+		defer func() { cancel(); factory.Shutdown() }()
+		// Set up the image pre-puller. Event handlers must be registered before
+		// factory.Start so the initial list is not missed.
+		var taskInformer cache.SharedIndexInformer
+		var imgPuller *imagepull.Puller
+		agentType := n.a.config.RuntimeKind()
+		socket, pull, err := n.runtimeSocket(ctx, agentType)
+		if err != nil {
+			return err
 		}
-	} else {
-		logger.Info("image pre-pull disabled", "agentType", agentType, "enabled", n.a.config.ImagePullEnabled)
-	}
+		if pull {
+			rt := imagepull.NewImagePuller(
+				imagepull.RuntimeFor(agentType),
+				socket,
+				n.a.config.ContainerdNamespace,
+				logger,
+			)
+			if closer, ok := rt.(io.Closer); ok {
+				defer func() {
+					if err := closer.Close(); err != nil {
+						logger.Error(err, "close image monitoring runtime")
+					}
+				}()
+			}
+			if rt == nil {
+				// NewImagePuller returns nil when the container runtime client
+				// cannot be created (e.g. containerd socket unavailable); skip
+				// the puller so workers never dereference a nil runtime.
+				logger.Info("image pre-pull disabled: container runtime client unavailable", "agentType", agentType)
+			} else {
+				taskInformer = factory.Rlinf().V1alpha1().Tasks().Informer()
+				patcher := newNodeProgressPatcher(n.a.managementClient)
+				imgPuller = imagepull.NewPuller(imagepull.PullerConfig{
+					Runtime:             rt,
+					AgentType:           agentType,
+					NodeName:            n.a.config.NodeName,
+					LocalKube:           n.a.localKubeClient,
+					ProgressPatcher:     patcher,
+					ManagementNamespace: n.a.config.ClientConfig.ServerNamespace,
+				}, taskInformer, logger)
+				logger.Info("image pre-pull enabled", "agentType", agentType, "nodeName", n.a.config.NodeName)
+			}
+		} else {
+			logger.Info("image pre-pull disabled", "agentType", agentType, "enabled", n.a.config.ImagePullEnabled)
+		}
 
-	factory.Start(ctx.Done())
+		factory.Start(ctx.Done())
+		informers := []cache.SharedIndexInformer{domainPeerInformer, managementPodInformer}
+		if taskInformer != nil {
+			informers = append(informers, taskInformer)
+		}
+		if err := n.waitForFirstSync(ctx, informers); err != nil {
+			return err
+		}
+		networkAdapter := container.NewContainerNetworkAdapter(
+			n.a.config.ClientConfig.ServerNamespace,
+			domainPeerLister,
+			managementPodLister,
+			n.a.config.RLarkServerSSHAddress,
+			n.a.config.RLarkServerSSHHostKey,
+			n.a.config.SSHMaxConnectionsPerDomain,
+			n.a.config.EnableSameClusterDirect,
+			n.a.config.EnableCrossClusterDirect,
+			n.a.config.KubeletDir,
+		)
+		defer func() { _ = networkAdapter.Close() }()
+		nodeserver := nodeserver.NewNodeServer(
+			n.a.config.NodeServerConfig,
+			networkAdapter.GetContainerNetworkCred,
+			networkAdapter.GetContainerNetworkDial,
+			networkAdapter.GetContainerNetworkDomainHosts,
+			container.MarshalContainerNetworkCred,
+			container.UnmarshalContainerNetworkCred,
+		)
 
-	// Wait for caches to sync before serving.
-	informers := []cache.SharedIndexInformer{domainPeerInformer, managementPodInformer}
-	if taskInformer != nil {
-		informers = append(informers, taskInformer)
-	}
-	if err := n.waitForFirstSync(ctx, informers); err != nil {
-		return err
-	}
-
-	networkAdapter := container.NewContainerNetworkAdapter(
-		n.a.config.ClientConfig.ServerNamespace,
-		domainPeerLister,
-		managementPodLister,
-		n.a.config.RLarkServerSSHAddress,
-		n.a.config.RLarkServerSSHHostKey,
-		n.a.config.SSHMaxConnectionsPerDomain,
-		n.a.config.EnableSameClusterDirect,
-		n.a.config.EnableCrossClusterDirect,
-		n.a.config.KubeletDir,
-	)
-	defer func() { _ = networkAdapter.Close() }()
-	nodeserver := nodeserver.NewNodeServer(
-		n.a.config.NodeServerConfig,
-		networkAdapter.GetContainerNetworkCred,
-		networkAdapter.GetContainerNetworkDial,
-		networkAdapter.GetContainerNetworkDomainHosts,
-		container.MarshalContainerNetworkCred,
-		container.UnmarshalContainerNetworkCred,
-	)
-
-	eg, ctx := n.startAstribot(ctx)
-	eg.Go(func() error {
-		return nodeserver.Run(ctx, n.a)
-	})
-	if imgPuller != nil {
+		eg, nodeCtx := n.startAstribot(ctx)
 		eg.Go(func() error {
-			return imgPuller.Run(ctx)
+			return nodeserver.Run(nodeCtx, n.a)
 		})
+		if n.a.config.Mode == "cluster" && n.a.config.NodeMetricsBindAddress != "0" {
+			eg.Go(func() error { return serve(nodeCtx, n.a.config.NodeMetricsBindAddress, n.a.healthRouter()) })
+		}
+		if imgPuller != nil {
+			eg.Go(func() error {
+				return imgPuller.Run(nodeCtx)
+			})
+		}
+		// node events watcher: surfaces DiskPressure and other Warning events
+		// (plus Pulling/Scheduling Normal events) to Node.status.events so the
+		// control plane can show them on Pending Tasks. Best-effort: the watcher
+		// logs and skips on misconfiguration rather than failing node-agent
+		// startup, mirroring the image-puller behavior.
+		eventsWatcher := nodeevents.NewWatcher(nodeevents.Config{
+			NodeName:  n.a.config.NodeName,
+			Namespace: n.a.config.ClientConfig.ServerNamespace,
+			LocalKube: n.a.localKubeClient,
+			Patcher:   newNodeEventsPatcher(n.a.managementClient),
+		}, logger)
+		eg.Go(func() error {
+			return eventsWatcher.Run(nodeCtx)
+		})
+		return eg.Wait()
 	}
-	// node events watcher: surfaces DiskPressure and other Warning events
-	// (plus Pulling/Scheduling Normal events) to Node.status.events so the
-	// control plane can show them on Pending Tasks. Best-effort: the watcher
-	// logs and skips on misconfiguration rather than failing node-agent
-	// startup, mirroring the image-puller behavior.
-	eventsWatcher := nodeevents.NewWatcher(nodeevents.Config{
-		NodeName:  n.a.config.NodeName,
-		Namespace: n.a.config.ClientConfig.ServerNamespace,
-		LocalKube: n.a.localKubeClient,
-		Patcher:   newNodeEventsPatcher(n.a.managementClient),
-	}, logger)
-	eg.Go(func() error {
-		return eventsWatcher.Run(ctx)
-	})
-	return eg.Wait()
+	return nil
+}
+
+// Run starts an already built node role.
+func (n *nodeAgent) Run(ctx context.Context) error {
+	if n.start == nil {
+		return fmt.Errorf("node role must be built before starting")
+	}
+	return n.start(ctx)
 }
 
 // waitForCacheSync blocks until all informers have synced or ctx is cancelled.

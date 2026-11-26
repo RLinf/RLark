@@ -17,6 +17,7 @@ enum ProtocolCapability {
   PROTOCOL_CAPABILITY_CLAIMED_WORKLOAD_RECOVERY = 4;
   PROTOCOL_CAPABILITY_INCARNATION_ADOPTION = 5;
   PROTOCOL_CAPABILITY_RECONCILE_PROFILES = 6;
+  PROTOCOL_CAPABILITY_WORKLOAD_OBSERVATION_CONTRACT = 7;
 }
 
 message TypeReference {
@@ -66,6 +67,15 @@ message ObjectReference {
 message RuntimeObject {
   ObjectReference reference = 1;
   TypedValue manifest = 2;
+  repeated ObjectCondition conditions = 3;
+}
+
+message ObjectCondition {
+  string source = 1;
+  string scope = 2;
+  string subject = 3;
+  string reason = 4;
+  string message = 5;
 }
 
 message ObjectSnapshot {

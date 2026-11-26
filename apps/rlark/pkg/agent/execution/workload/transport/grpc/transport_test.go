@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"reflect"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -31,7 +32,7 @@ type adapter struct {
 }
 
 func (*adapter) Info(context.Context) (workload.TypeInfo, error) {
-	return workload.TypeInfo{ID: "PyTorchJob", Version: "v1", SupportedRuntimeKinds: []agentruntime.Kind{"Kubernetes"}, Configuration: workload.ConfigurationContract{Version: "v1", Schema: []byte(`{"type":"object"}`)}, Capabilities: []agentruntime.Capability{agentruntime.CapabilityWorkloadInventory, agentruntime.CapabilityOwnedFieldProjection}}, nil
+	return workload.TypeInfo{ID: "PyTorchJob", Version: "v1", SupportedRuntimeKinds: []agentruntime.Kind{"Kubernetes"}, Configuration: workload.ConfigurationContract{Version: "v1", Schema: []byte(`{"type":"object"}`)}, Capabilities: []agentruntime.Capability{agentruntime.CapabilityWorkloadInventory, agentruntime.CapabilityOwnedFieldProjection, agentruntime.CapabilityWorkloadObservation}, Observations: []workload.ObservationContract{{RuntimeKind: "Kubernetes", Roots: []workload.ObservationRoot{{Group: "batch.example.io", Version: "v1", Kind: "PyTorchJob", CarrierType: "example.io/pytorch-job", InstanceProfile: "example.io/direct-owner/v1"}}}}}, nil
 }
 func (a *adapter) Compile(_ context.Context, request workload.CompileRequest) (executionplan.Plan, error) {
 	if a.err != nil {
@@ -75,8 +76,12 @@ func TestClientServerRoundTrip(t *testing.T) {
 	if err != nil || info.ID != "PyTorchJob" {
 		t.Fatalf("Info()=%#v, %v", info, err)
 	}
-	if len(info.Capabilities) != 2 {
+	if len(info.Capabilities) != 3 || len(info.Observations) != 1 || len(info.Observations[0].Roots) != 1 || info.Observations[0].Roots[0].Kind != "PyTorchJob" {
 		t.Fatalf("Info capabilities=%v", info.Capabilities)
+	}
+	expected, err := implementation.Info(ctx)
+	if err != nil || !reflect.DeepEqual(info.Observations, expected.Observations) {
+		t.Fatalf("observation round-trip=%#v expected=%#v error=%v", info.Observations, expected.Observations, err)
 	}
 	task := coordination.TaskSnapshot{
 		Identity: agentruntime.TaskIdentity{

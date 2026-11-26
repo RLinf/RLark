@@ -1,0 +1,242 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: nodejoins.rlinf.io
+spec:
+  group: rlinf.io
+  names:
+    kind: NodeJoin
+    listKind: NodeJoinList
+    plural: nodejoins
+    singular: nodejoin
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.clusterID
+      name: Cluster
+      type: string
+    - jsonPath: .spec.nodeName
+      name: Node
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.stage
+      name: Stage
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          NodeJoin is the joining of a machine to a cluster over SSH: the record the
+          console shows while the Gateway joins it and where it stopped. Its name is
+          <cluster>.<node>; label rlark.io/cluster holds the cluster.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              NodeJoinSpec is the machine the Gateway joins to a cluster over SSH. The
+              machine's password is never part of it: it is given with the request that
+              starts or retries the join, and lives only while that runs.
+            properties:
+              clusterID:
+                minLength: 1
+                type: string
+              machine:
+                description: NodeJoinMachine is the SSH address and account of the
+                  machine.
+                properties:
+                  address:
+                    minLength: 1
+                    type: string
+                  port:
+                    default: 22
+                    format: int32
+                    type: integer
+                  tunnelEndpoint:
+                    description: |-
+                      TunnelEndpoint is the IPv4 ip:port other sites dial for the machine's
+                      tunnel, when it joins through one: empty, the address at port 51820.
+                    maxLength: 21
+                    type: string
+                  user:
+                    minLength: 1
+                    type: string
+                required:
+                - address
+                - user
+                type: object
+              nodeName:
+                description: 'NodeName is the node''s name: the one asked for, or
+                  the machine''s host name.'
+                minLength: 1
+                type: string
+              requestedBy:
+                description: RequestedBy is the user who asked for the join.
+                type: string
+            required:
+            - clusterID
+            - machine
+            - nodeName
+            type: object
+          status:
+            description: NodeJoinStatus is how the join went, stage by stage.
+            properties:
+              facts:
+                description: |-
+                  NodeJoinFacts are what the stages found and chose; later stages, and a
+                  retry, go on from them.
+                properties:
+                  admissionIssuedAt:
+                    description: AdmissionIssuedAt is when the join's code was given
+                      out.
+                    format: date-time
+                    type: string
+                  bundleSHA256:
+                    description: BundleSHA256 is the sha256 of the installer the machine
+                      holds.
+                    type: string
+                  declaredGeneration:
+                    description: DeclaredGeneration is the SiteNetwork's generation
+                      the declaration wrote.
+                    format: int64
+                    type: integer
+                  declaredHub:
+                    description: DeclaredHub says this join declared the machine a
+                      hub in the SiteNetwork.
+                    type: boolean
+                  diskFree:
+                    type: string
+                  gpus:
+                    items:
+                      description: ClusterProvisionGPU is one model of GPU on the
+                        machine.
+                      properties:
+                        count:
+                          format: int32
+                          type: integer
+                        model:
+                          type: string
+                      required:
+                      - count
+                      - model
+                      type: object
+                    type: array
+                  kernel:
+                    type: string
+                  os:
+                    type: string
+                  privateAddress:
+                    type: string
+                  publicKey:
+                    description: PublicKey is the machine's tunnel key, made on the
+                      machine.
+                    type: string
+                  route:
+                    description: NodeJoinRoute is how a machine reaches Station API
+                      for its code.
+                    enum:
+                    - direct
+                    - tunnel
+                    - tunnel-up
+                    type: string
+                  timings:
+                    description: Timings are the moments of the join's steps, in order.
+                    items:
+                      description: NodeJoinTiming is when one step of the join was
+                        seen.
+                      properties:
+                        at:
+                          format: date-time
+                          type: string
+                        event:
+                          type: string
+                      required:
+                      - at
+                      - event
+                      type: object
+                    type: array
+                  tunnelAddress:
+                    type: string
+                type: object
+              hostKey:
+                description: |-
+                  HostKey is the SHA256 fingerprint the machine showed the first time;
+                  every later connection must show the same.
+                type: string
+              phase:
+                description: ClusterProvisionPhase is where the making of a cluster
+                  stands.
+                enum:
+                - Running
+                - Succeeded
+                - Failed
+                type: string
+              stage:
+                description: Stage is the stage running, or the one the join stopped
+                  at.
+                type: string
+              stages:
+                items:
+                  description: ClusterProvisionStage is one stage, as it went.
+                  properties:
+                    finishedAt:
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message is why the stage stopped, or the last line
+                        of its progress.
+                      type: string
+                    name:
+                      type: string
+                    readback:
+                      description: Readback is what was read back once the stage had
+                        done its work.
+                      type: string
+                    startedAt:
+                      format: date-time
+                      type: string
+                    state:
+                      description: ClusterProvisionStageState is where one stage stands.
+                      enum:
+                      - Pending
+                      - Running
+                      - Done
+                      - Skipped
+                      - Failed
+                      type: string
+                  required:
+                  - name
+                  - state
+                  type: object
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

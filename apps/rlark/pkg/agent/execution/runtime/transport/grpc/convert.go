@@ -72,7 +72,32 @@ func toWireValue(kind agentruntime.ObjectKind, value []byte) *commonv1.TypedValu
 }
 
 func toWireObject(object agentruntime.Object) *commonv1.RuntimeObject {
-	return &commonv1.RuntimeObject{Reference: toWireObjectRef(object.Ref), Manifest: toWireValue(object.Manifest.Type, object.Manifest.Object)}
+	return &commonv1.RuntimeObject{Reference: toWireObjectRef(object.Ref), Manifest: toWireValue(object.Manifest.Type, object.Manifest.Object), Conditions: toWireObjectConditions(object.Conditions)}
+}
+
+func toWireObjectConditions(conditions []agentruntime.ObjectCondition) []*commonv1.ObjectCondition {
+	if len(conditions) == 0 {
+		return nil
+	}
+	result := make([]*commonv1.ObjectCondition, 0, len(conditions))
+	for _, condition := range conditions {
+		result = append(result, &commonv1.ObjectCondition{Source: condition.Source, Scope: condition.Scope, Subject: condition.Subject, Reason: condition.Reason, Message: condition.Message})
+	}
+	return result
+}
+
+func fromWireObjectConditions(conditions []*commonv1.ObjectCondition) []agentruntime.ObjectCondition {
+	if len(conditions) == 0 {
+		return nil
+	}
+	result := make([]agentruntime.ObjectCondition, 0, len(conditions))
+	for _, condition := range conditions {
+		if condition == nil {
+			continue
+		}
+		result = append(result, agentruntime.ObjectCondition{Source: condition.GetSource(), Scope: condition.GetScope(), Subject: condition.GetSubject(), Reason: condition.GetReason(), Message: condition.GetMessage()})
+	}
+	return result
 }
 
 func fromWireObject(object *commonv1.RuntimeObject) (agentruntime.Object, error) {
@@ -90,7 +115,7 @@ func fromWireObject(object *commonv1.RuntimeObject) (agentruntime.Object, error)
 	if err := validateJSONValue(manifest); err != nil {
 		return agentruntime.Object{}, fmt.Errorf("runtime object manifest: %w", err)
 	}
-	return agentruntime.Object{Ref: ref, Manifest: agentruntime.TypedManifest{Type: fromWireType(manifest.GetType()), Object: append([]byte(nil), manifest.GetValue()...)}}, nil
+	return agentruntime.Object{Ref: ref, Manifest: agentruntime.TypedManifest{Type: fromWireType(manifest.GetType()), Object: append([]byte(nil), manifest.GetValue()...)}, Conditions: fromWireObjectConditions(object.GetConditions())}, nil
 }
 
 func toWireDesired(object agentruntime.DesiredObject) *commonv1.DesiredRuntimeObject {

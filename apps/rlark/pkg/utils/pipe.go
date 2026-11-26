@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	// StreamDrainTimeout is the read deadline applied while waiting for the
-	// opposite copy direction to finish after one direction has completed.
+	// StreamDrainTimeout bounds connection drain after one direction completes,
+	// falling back to stream closure when read deadlines are unsupported.
+	// It is not a timeout for ongoing bidirectional traffic.
 	StreamDrainTimeout = 60 * time.Second
 )
 
@@ -49,6 +50,8 @@ func setStreamDrainDeadline(dst io.ReadWriteCloser, direction string, logger *lo
 		if err := srd.SetReadDeadline(time.Now().Add(StreamDrainTimeout)); err != nil && logger != nil {
 			logger.V(1).Info("[PIPE] set the other side read deadline", "dir", direction, "err", err)
 		}
+	} else if logger != nil {
+		logger.V(1).Info("[PIPE] stream does not support read deadlines; drain relies on half-close and peer completion", "dir", direction)
 	}
 }
 
@@ -83,9 +86,15 @@ func relayStream(dst, src io.ReadWriteCloser, direction string, wg *sync.WaitGro
 // RelayConnections copies data bidirectionally between two network connections.
 // After either direction finishes, it sets read deadlines on both connections
 // and waits for the opposite direction without half-closing either connection.
+// If a connection cannot enforce a deadline, a joined timer closes only these
+// stream connections at the same drain deadline, not their shared transport.
 // Returned errors correspond to conn1 to conn2 and conn2 to conn1,
 // respectively. Optional names identify the connections in returned errors.
 func RelayConnections(conn1, conn2 net.Conn, names ...string) (error, error) {
+	return relayConnectionsWithDrainTimeout(conn1, conn2, StreamDrainTimeout, names...)
+}
+
+func relayConnectionsWithDrainTimeout(conn1, conn2 net.Conn, drainTimeout time.Duration, names ...string) (error, error) {
 	name1, name2 := "origin", "remote"
 	if len(names) >= 2 {
 		name1, name2 = names[0], names[1]
@@ -105,8 +114,24 @@ func RelayConnections(conn1, conn2 net.Conn, names ...string) (error, error) {
 		sigch <- struct{}{}
 	}()
 	<-sigch
-	_ = conn1.SetReadDeadline(time.Now().Add(StreamDrainTimeout))
-	_ = conn2.SetReadDeadline(time.Now().Add(StreamDrainTimeout))
+	deadline := time.Now().Add(drainTimeout)
+	deadline1 := conn1.SetReadDeadline(deadline)
+	deadline2 := conn2.SetReadDeadline(deadline)
+	if deadline1 != nil || deadline2 != nil {
+		// A net.Conn wrapper may expose deadlines which its SSH channel cannot
+		// enforce. Close only the streams, never the multiplexed session.
+		joined := make(chan struct{})
+		timer := time.AfterFunc(time.Until(deadline), func() {
+			defer close(joined)
+			_ = conn1.Close()
+			_ = conn2.Close()
+		})
+		defer func() {
+			if !timer.Stop() {
+				<-joined
+			}
+		}()
+	}
 	<-sigch
 	return errors[0], errors[1]
 }

@@ -97,5 +97,14 @@ func newWorkflowStateMachine() *fsm.FSM {
 			now := metav1.Now()
 			wf.Status.EndTime = &now
 		},
+		// Stopped is a terminal phase just like Succeeded and Failed, so it
+		// must record an end time. The archive controller measures its TTL
+		// from this timestamp; leaving it unset makes a stopped Workflow
+		// eligible for immediate archival instead of after the TTL.
+		"enter_" + string(rlarkv1alpha1.WorkflowPhaseStopped): func(ctx context.Context, e *fsm.Event) {
+			wf := e.Args[0].(*rlarkv1alpha1.Workflow)
+			now := metav1.Now()
+			wf.Status.EndTime = &now
+		},
 	})
 }

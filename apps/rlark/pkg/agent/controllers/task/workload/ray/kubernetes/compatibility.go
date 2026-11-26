@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -63,6 +64,7 @@ func ApplyTemplateMutations(template *corev1.PodTemplateSpec, task *rlarkv1alpha
 	applyTaskIdentityAnnotations(template, task)
 	ensureLabels(template, task.Name)
 	applyNodeSelector(&template.Spec, task.Spec.Placement.NodeSelector)
+	applyUnschedulableNodeExclusion(&template.Spec)
 	applyAntiAffinity(template)
 	if os.Getenv(UnsafeTaskPrivilegesEnv) != "true" {
 		return
@@ -168,32 +170,103 @@ func applyAntiAffinity(template *corev1.PodTemplateSpec) {
 	template.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution = append(template.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution, corev1.PodAffinityTerm{TopologyKey: "kubernetes.io/hostname", LabelSelector: &metav1.LabelSelector{MatchLabels: template.Labels}})
 }
 
+func applyUnschedulableNodeExclusion(podSpec *corev1.PodSpec) {
+	if podSpec.Affinity == nil {
+		podSpec.Affinity = &corev1.Affinity{}
+	}
+	if podSpec.Affinity.NodeAffinity == nil {
+		podSpec.Affinity.NodeAffinity = &corev1.NodeAffinity{}
+	}
+	selector := podSpec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	created := false
+	if selector == nil {
+		selector = &corev1.NodeSelector{}
+		podSpec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = selector
+		created = true
+	}
+	requirement := corev1.NodeSelectorRequirement{
+		Key:      "rlark.io/unschedulable",
+		Operator: corev1.NodeSelectorOpNotIn,
+		Values:   []string{"true"},
+	}
+	if len(selector.NodeSelectorTerms) == 0 {
+		if created {
+			selector.NodeSelectorTerms = []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{requirement}}}
+		}
+		return
+	}
+	// Required node affinity terms are ORed. Adding an independent term would
+	// bypass any existing constraint, so merge the requirement into every term.
+	for i := range selector.NodeSelectorTerms {
+		term := &selector.NodeSelectorTerms[i]
+		if hasNodeSelectorRequirement(*term, requirement) {
+			continue
+		}
+		term.MatchExpressions = append(term.MatchExpressions, requirement)
+	}
+}
+
+func hasNodeSelectorRequirement(term corev1.NodeSelectorTerm, requirement corev1.NodeSelectorRequirement) bool {
+	for _, existing := range term.MatchExpressions {
+		if existing.Key != requirement.Key || existing.Operator != requirement.Operator || len(existing.Values) != len(requirement.Values) {
+			continue
+		}
+		matched := true
+		for i := range existing.Values {
+			if existing.Values[i] != requirement.Values[i] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
 func applyNodeSelector(podSpec *corev1.PodSpec, selector map[string]string) {
 	if podSpec.NodeSelector == nil {
 		podSpec.NodeSelector = map[string]string{}
 	}
 	podSpec.NodeSelector["rlark.io/enabled"] = "true"
 	for key, value := range selector {
-		if strings.Contains(value, ",") {
-			values := strings.Split(value, ",")
-			for i := range values {
-				values[i] = strings.TrimSpace(values[i])
-			}
-			if podSpec.Affinity == nil {
-				podSpec.Affinity = &corev1.Affinity{}
-			}
-			if podSpec.Affinity.NodeAffinity == nil {
-				podSpec.Affinity.NodeAffinity = &corev1.NodeAffinity{}
-			}
-			if podSpec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
-				podSpec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &corev1.NodeSelector{}
-			}
-			podSpec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = append(
-				podSpec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms,
-				corev1.NodeSelectorTerm{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: key, Operator: corev1.NodeSelectorOpIn, Values: values}}},
-			)
-			continue
-		}
 		podSpec.NodeSelector[key] = value
 	}
+	// A multi-value placement selector can only be expressed through
+	// nodeAffinity: a comma separated value is not a valid Kubernetes label
+	// value, so leaving it in NodeSelector makes the API server reject the
+	// whole Pod template. Normalize every such key currently on the template,
+	// because the compatibility decode may already have merged the Task
+	// placement into it before this mutation runs.
+	keys := make([]string, 0, len(podSpec.NodeSelector))
+	for key, value := range podSpec.NodeSelector {
+		if strings.Contains(value, ",") {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return
+	}
+	sort.Strings(keys)
+	requirements := make([]corev1.NodeSelectorRequirement, 0, len(keys))
+	for _, key := range keys {
+		values := strings.Split(podSpec.NodeSelector[key], ",")
+		for i := range values {
+			values[i] = strings.TrimSpace(values[i])
+		}
+		requirements = append(requirements, corev1.NodeSelectorRequirement{Key: key, Operator: corev1.NodeSelectorOpIn, Values: values})
+		delete(podSpec.NodeSelector, key)
+	}
+	if podSpec.Affinity == nil {
+		podSpec.Affinity = &corev1.Affinity{}
+	}
+	if podSpec.Affinity.NodeAffinity == nil {
+		podSpec.Affinity.NodeAffinity = &corev1.NodeAffinity{}
+	}
+	if podSpec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		podSpec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &corev1.NodeSelector{}
+	}
+	required := podSpec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	required.NodeSelectorTerms = append(required.NodeSelectorTerms, corev1.NodeSelectorTerm{MatchExpressions: requirements})
 }

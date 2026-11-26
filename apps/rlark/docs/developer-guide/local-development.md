@@ -79,13 +79,16 @@ rlark-controller-manager \
 
 ```bash
 rlark-agent \
-  --mode=both \
+  --mode=cluster --node-startup=embedded \
+  --node-name=worker-01 \
   --server-address=https://localhost:8443 \
   --client-cert=/tmp/rlark/agent-certs/cert.pem \
   --client-key=/tmp/rlark/agent-certs/key.pem \
   --ca-cert=/tmp/rlark/agent-certs/ca-cert.pem \
   --image=rlark:latest
 ```
+
+This example requires both roles' Kubernetes/node dependencies and socket permissions. For cluster-only development omit `--node-startup` and `--node-name`; external node deployment remains separate. Use `rlark-agent check-config` with the same configuration flags for effect-free local checks; see the [startup file contract](../reference/configuration.md#agent-startup-file-and-validation).
 
 ## Web UI Development
 
@@ -198,7 +201,8 @@ localStorage.clear()
 ## Keeping Generated Code in Sync
 
 After changing CRD types, regenerate the CRD manifests, Go clients, schema
-reference, and frontend TypeScript models:
+reference, frontend TypeScript models, and the CRD copies bundled in the Helm
+chart:
 
 ```bash
 # Regenerate all CRD-derived artifacts
@@ -212,8 +216,9 @@ Always test user-facing changes in both the API and Web UI.
 
 `make verify-generated` runs the same generators and fails when the committed
 CRD manifests, deepcopy functions, typed Go clients, frontend TypeScript models,
-or `apps/rlark/docs/reference/crd.md` differ from the regenerated output, or when
-generation produces untracked files.
+`apps/rlark/docs/reference/crd.md`, or the CRD copies bundled in
+`charts/rlark-control-plane/files/crds` differ from the regenerated output, or
+when generation produces untracked files.
 CI runs it on every change, so run it locally before pushing API changes.
 
 Frontend models are generated from the checked-in manifests in

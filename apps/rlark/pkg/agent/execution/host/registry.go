@@ -41,6 +41,21 @@ func NewImplementationRegistry(ctx context.Context, registrations []WorkloadRegi
 		if info.ID != registration.Key.WorkloadType || info.Version != registration.Key.WorkloadVersion || !slices.Contains(info.SupportedRuntimeKinds, registration.Key.RuntimeKind) {
 			return nil, fmt.Errorf("implementation %v does not match Adapter info type=%q version=%q Runtime kinds=%v", registration.Key, info.ID, info.Version, info.SupportedRuntimeKinds)
 		}
+		hasObservationCapability := slices.Contains(info.Capabilities, agentruntime.CapabilityWorkloadObservation)
+		hasRuntimeObservation := false
+		observedRuntimeKinds := make(map[agentruntime.Kind]bool, len(info.Observations))
+		for _, contract := range info.Observations {
+			if !hasObservationCapability || !slices.Contains(info.SupportedRuntimeKinds, contract.RuntimeKind) || observedRuntimeKinds[contract.RuntimeKind] || len(contract.Roots) == 0 {
+				return nil, fmt.Errorf("implementation %v has an invalid or duplicate observation Runtime contract", registration.Key)
+			}
+			observedRuntimeKinds[contract.RuntimeKind] = true
+			if contract.RuntimeKind == registration.Key.RuntimeKind && len(contract.Roots) > 0 {
+				hasRuntimeObservation = true
+			}
+		}
+		if hasObservationCapability != hasRuntimeObservation {
+			return nil, fmt.Errorf("implementation %v observation capability and Runtime contract must be declared together", registration.Key)
+		}
 		registry.adapters[registration.Key] = registration.Adapter
 		registry.descriptors = append(registry.descriptors, ImplementationDescriptor{Key: registration.Key, Info: cloneTypeInfo(info)})
 	}
@@ -81,5 +96,11 @@ func cloneTypeInfo(info workload.TypeInfo) workload.TypeInfo {
 	result := info
 	result.SupportedRuntimeKinds = slices.Clone(info.SupportedRuntimeKinds)
 	result.Configuration.Schema = slices.Clone(info.Configuration.Schema)
+	result.Capabilities = slices.Clone(info.Capabilities)
+	result.Observations = make([]workload.ObservationContract, len(info.Observations))
+	for i, contract := range info.Observations {
+		result.Observations[i] = contract
+		result.Observations[i].Roots = slices.Clone(contract.Roots)
+	}
 	return result
 }

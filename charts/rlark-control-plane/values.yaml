@@ -1,0 +1,71 @@
+# RLark Control Plane Helm Chart Values
+
+global:
+  imagePullPolicy: Always
+  imagePullSecrets: []
+  storage:
+    type: emptyDir        # emptyDir | hostPath | pvc
+    hostPath: ""
+    storageClass: ""
+    size: 10Gi
+    nodeSelector: {}
+
+# Management API mode: kcp | kubernetes
+# kcp: deploy kcp + etcd as the management API server (default)
+# kubernetes: use the target cluster's Kubernetes API directly, no kcp/etcd deployed
+managementApi: kcp
+
+# Component images. RLark's own images default to the local `make docker-build-*`
+# tags; override them with your registry when installing from a remote registry.
+images:
+  gateway: rlark:latest
+  controllerManager: rlark:latest
+  server: rlark:latest
+  kcp: ghcr.io/kcp-dev/kcp:v0.30.0
+  etcd: registry.k8s.io/etcd:3.5.15-0
+  postgresql: postgres:15
+  ui: rlark-ui:latest
+
+# Image for the KCP post-install hook Job (needs kubectl to connect to the current cluster)
+hookImage: bitnami/kubectl:1.33.1
+
+# Global default replica count (per component)
+replicas: 1
+
+# External database configuration; null = no external DB
+db: null
+# db:
+#   host: postgresql
+#   port: 5432
+#   database: rlark
+#   user: rlark
+#   password: rlark123
+
+kcp:
+  # Enabled by default; auto-disabled when managementApi=kubernetes
+  enabled: true
+  # KCP is currently limited to 1 replica; >1 is rejected by rlarkadm
+  replicas: 1
+  # Component-specific storage override (same schema as global.storage)
+  storage: {}
+
+etcd:
+  # Enabled: deploy etcd cluster for KCP
+  enabled: true
+  # External etcd address; empty = deploy embedded etcd
+  address: ""
+  replicas: 3
+  storage:
+    type: hostPath
+    hostPath: /data/rlark/etcd
+
+postgresql:
+  # Disabled: no database configured
+  enabled: false
+  replicas: 1
+  storage: {}
+
+server: {}
+gateway: {}
+controllerManager: {}
+ui: {}

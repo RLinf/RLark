@@ -1,0 +1,58 @@
+{{- if .Values.agent.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rlark-agent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: rlark-agent
+spec:
+  replicas: {{ .Values.agent.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: rlark-agent
+  template:
+    metadata:
+      labels:
+        app: rlark-agent
+    spec:
+      serviceAccountName: rlark-agent
+      {{- include "rlark-data-plane.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: rlark-agent
+          image: {{ .Values.image | quote }}
+          imagePullPolicy: {{ include "rlark-data-plane.imagePullPolicy" . }}
+          ports:
+            - containerPort: 8081
+          command:
+            - /usr/local/bin/agent
+          args:
+            - --server-address={{ required "controlPlaneAddress is required" .Values.controlPlaneAddress }}
+            - --agent-type=kubernetes
+            - --client-cert=/etc/rlark/certs/tls.crt
+            - --client-key=/etc/rlark/certs/tls.key
+            - --ca-cert=/etc/rlark/certs/ca.crt
+            {{- if gt (int .Values.agent.replicas) 1 }}
+            - --leader-election=true
+            {{- else }}
+            - --leader-election=false
+            {{- end }}
+            - --mode=cluster
+            {{- if .Values.image }}
+            - --image={{ .Values.image }}
+            {{- end }}
+            - --in-cluster
+            {{- if .Values.insecureSkipTLSVerify }}
+            - --insecure-skip-tls-verify
+            {{- end }}
+          env:
+            {{- include "rlark-data-plane.commonEnvs" . | nindent 12 }}
+          volumeMounts:
+            - name: cert
+              mountPath: /etc/rlark/certs
+              readOnly: true
+      volumes:
+        - name: cert
+          secret:
+            secretName: rlark-agent-cert
+{{- end }}

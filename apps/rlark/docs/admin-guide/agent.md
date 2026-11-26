@@ -29,12 +29,12 @@ cert:
   agent-key: /path/to/agent-key.pem
 kubernetes:
   kubeconfig: ~/.kube/config
-  agent-image: rlark:latest
-  image: rlark:latest
+  agent-image: ghcr.io/rlinf/rlark:v0.1.0
+  image: ghcr.io/rlinf/rlark:v0.1.0
   # containerd-socket: /run/k3s/containerd/containerd.sock
 ```
 
-The three certificate fields accept either inline PEM or an existing file path. `kubernetes.image` is optional; when set, it enables the network sidecar and SSH support. Label every Node that should run the node Agent before installation:
+The three certificate fields accept either inline PEM or an existing file path. Set a non-empty RLark tools/sidecar image using `kubernetes.image`; Kubernetes cluster-mode Task assembly rejects a missing image at startup. This shared image field can also serve as the component-image fallback, but `kubernetes.agent-image` alone does not supply the Task tools image. Label every Node that should run the node Agent before installation:
 
 ```bash
 kubectl label node <node-name> rlark.io/enabled=true
@@ -49,7 +49,37 @@ rlarkadm install -f deploy-data-plane.yaml
 
 Do not combine cluster and node modes in one Deployment for a multi-node Kubernetes data plane. `rlarkadm` creates the correct Deployment and DaemonSet, certificate Secret, RBAC, socket mounts, and container-runtime mount.
 
+For a manually supervised local process, `--mode=cluster --node-startup=embedded` adds this machine's node services, not remote deployment. Supply both roles' dependencies and `--node-name`; cluster metrics use `:8081`, embedded node health/metrics/pprof use `:8082` by default. Both roles share the certificate-derived management scope and local Kubernetes API, but retain separate cluster and `node-agent:<node-name>` tunnel roles. Node startup is not gated by cluster leadership. Any fatal role error cancels and joins the whole process (including HTTP shutdown and node informers); stopping does not delete workloads or release Task finalizers. Embedded health reflects local node readiness, not a proof that every cluster controller is ready. Avoid also starting another node agent on the same machine/socket. The legacy combined mode is removed; external remains default and `managed` is not implemented. This is not a new HA/backend-identity guarantee: replicas must still use the same Kubernetes data plane.
+
+Agent supports a startup-only `--config` file and the `check-config` and redacted `print-config` subcommands. These do not accept DeployConfig; see [startup schema, environment compatibility and validation](../reference/configuration.md#agent-startup-file-and-validation). Invalid initial configuration fails before clients/workers. Correct it and restart; no file reload or managed rollout is available in MR 4.1.
+
+Normal startup checks local Kubernetes `/version` and, for node/embedded, local Node existence under a 30-second deadline. It then starts a supervised bootstrap tunnel and waits up to 30 seconds for its WebSocket handshake: Server completes first registration (management namespace, ServiceAccount and RBAC) before accepting the upgrade. Only then does a separate 30-second management preflight read Tasks for cluster and DomainPeers/Pods (plus Tasks when pre-pull is enabled) for node/embedded. Forbidden/NotFound and API timeout/unavailability are retried within that deadline to allow registration permissions to propagate; persistent denial still fails closed. All selected roles finish Build/Setup before business workers and the local proxy HTTP server start. Embedded adds its node-role tunnel after preparation, without duplicating the bootstrap cluster tunnel. Node informer initial sync has its own 30-second deadline. Registration, preflight or Build failure cancels and joins the bootstrap tunnel; registered management objects are not rolled back. Restore access/configuration and restart to recover. These checks do not replace future-operation authorization or prove backend identity.
+
+Shutdown and failed listener startup close/join NodeServer's private in-memory HTTP service as well as its socket cancellation worker. At shutdown, private HTTP admission, keepalive connections, and host watches stop before waiting for workload connections to drain; concurrent stop calls are safe. Private dials wait for HTTP acceptance instead of accumulating unaccepted buffered peers. The image monitor closes its process-owned containerd connection after workers stop. Existing connection drain timeout and workload ownership semantics are unchanged.
+
+For bidirectional connection relays, the 60-second drain budget starts only after one copy direction ends; it does not limit ongoing traffic. If a connection rejects read deadlines (for example, an SSH channel), expiry closes only the two relayed stream connections, not the shared SSH session or unrelated channels. If both directions finish earlier, the fallback timer is canceled or joined before the relay returns. This does not change the separate NodeServer workload drain budget or provide an upgrade continuity guarantee.
+
+Agent's internal proxy HTTP listener also uses unbuffered Pipe admission so pending dials cannot leave unaccepted peers behind on shutdown. Its existing HTTP shutdown budget remains three seconds, followed by forced connection closure if graceful shutdown times out; the shutdown worker is joined even when serving fails.
+
+NodeServer's private HTTP dial waits at most 30 seconds for acceptance, matching the remote dial timeout. This bounds connection admission only, not established traffic or host watches.
+
+The separate `RelayStreams` helper used by SSH services does not have this forced-close fallback. When a stream does not implement read deadlines, it emits a verbosity-1 diagnostic with the copy direction; drain still relies on available half-close operations and peer completion. This diagnostic does not impose a shutdown bound.
+
 `rlarkadm` assigns the node Agent a dedicated `rlark-agent-node` ServiceAccount. Its local-cluster RBAC is limited to reading the current Node and listing/watching Node events; it does not inherit the cluster Agent's resource-management permissions.
+
+Cluster startup (external or embedded) also requires management `ClusterUpgradeJob` read access. This dependency is checked after bootstrap registration under the management preflight deadline; persistent denial or a missing CRD prevents business workers from starting. Node-only startup does not require this resource. Upgrade controller setup belongs to cluster Build and starts only with its manager.
+
+### Task Runtime startup and shutdown
+
+Inspect admission through the management API, for example `kubectl --kubeconfig <management-kubeconfig> get tasks.rlinf.io <task-name> -n <management-namespace> -o yaml`. `status.conditions[type=ExecutionAdmitted]` reports permanent rejection as `False` / `ExecutionAdmissionFailed`, with the reason detail and observed generation. Correct the Task configuration or restore required Agent capabilities; relevant changes and periodic resync retry admission without ordinary error backoff. Passing admission changes the Condition to `True`, not workload Ready. Rejection does not change Phase or destroy existing workloads/claims; deletion and suspension still perform identity-only cleanup. Completed suspension/reset removes the admission Condition. Transient API/transport or Status publication failures remain retryable errors.
+
+The assembled Runtime checks inventory advertisements/interfaces at startup. Normal Task execution also validates compiled/bound requirements before lifecycle/workload writes; unsupported required Environment, units, projections or profiles fail closed without claiming a new Task. Invalid configuration does not release existing claims. Deletion/suspension and Node Drain cleanup still use ownership-proven inventory, not current Spec compilation. See [admission and recovery boundaries](../developer-guide/runtime-provider.md#assembly-admission-and-recovery-conformance).
+
+The Kubernetes cluster Agent builds one complete Task execution assembly before installing its pull, observation and resync components. Invalid dependencies, observation mappings or denied/indeterminate observation permissions abort startup before managers run. Installation failures are fatal too: restart with corrected configuration rather than running a partially installed Agent. Build's metadata/permission preflight has a 30-second deadline and starts no workload watches or writes.
+
+Task execution replicas sharing a management namespace and Agent Kind must connect to the same Kubernetes data plane. Do not use the same logical Agent scope for different kubeconfigs pointing to different clusters; backend identity is not automatically checked. Node Agents remain separate node services, not independent Task owners.
+
+On shutdown, manager context cancellation stops and joins Task observation workers together with the other manager-owned components. Shutdown itself does not delete Task workloads or release finalizers; the next Agent resumes reconciliation from management Tasks and current Runtime state. This assembly change adds no flags, Task schema changes, or Docker/Raw workload support.
 
 ### Verification
 
@@ -74,7 +104,7 @@ The Server maintains the cluster Agent's `heartbeat` Lease in the registered clu
 
 A registered Node without its dedicated Lease is marked `Offline` with `NodeAgentLeaseMissing`; a cluster Agent heartbeat never makes such a Node online. This means a Node must run `rlark-agent-node` and retain a live tunnel to be online, even when the cluster Agent remains connected.
 
-The Nodes and Clusters views display the connection state, the node Lease-derived last heartbeat, and the last connection-state transition time. Agents renew heartbeat Leases every 15 seconds, and the default Lease duration is 45 seconds; a Node is marked `Offline` when its node Lease expires. The cluster detail view keeps every cluster Node visible, including offline and non-worker Nodes; an information control next to an offline status shows the last online time.
+The Nodes and Clusters views display the connection state, the node Lease-derived last heartbeat, and the last connection-state transition time. Agents renew heartbeat Leases every 15 seconds, and the default Lease duration is 45 seconds; a Node is marked `Offline` when its node Lease expires. A reconnecting Agent resumes renewal immediately, so a completed Agent restart does not wait for the previous Lease to expire before the Node becomes online again. The cluster detail view keeps every cluster Node visible, including offline and non-worker Nodes; an information control next to an offline status shows the last online time.
 
 ### Verification Checklist
 
@@ -118,21 +148,27 @@ A legacy cluster that has not reconnected is not guessed or synthesized. Keep it
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--mode` | `cluster` | `cluster`, `node`, or `both`; Kubernetes `rlarkadm` uses separate cluster/node workloads |
-| `--agent-type` | `Kubernetes` | Agent type selector. Only Kubernetes has a workload execution path; Docker and Raw are scaffolding and cannot execute Tasks |
+| `--mode` | `cluster` | `cluster` or `node`; Kubernetes `rlarkadm` uses separate workloads; local composition uses `--node-startup=embedded` |
+| `--agent-type` | `kubernetes` | Case-insensitive startup selector mapped to unchanged API Kind; Docker/Raw explicitly unsupported |
 | `--server-address` | `https://localhost:8443` | Server HTTPS/WSS address |
 | `--metrics-bind-address` | `:8081` | Metrics listen address |
-| `--image` | `""` | Network sidecar and SSH image |
-| `--leader-election` | `false` | Leader election; `rlarkadm` enables it for the cluster Agent when replicas require it |
-| `--task-runtime-resync-period` | `15m` | Base period for the bounded cluster-mode Task Runtime repair scan; intervals use 80–120% jitter, `0` disables it, and negative values are invalid in `cluster`/`both` mode; node-only mode accepts the shared flag but does not run the scanner |
-| `--enable-cross-cluster-direct` | `true` | Permit direct cross-cluster Pod routes |
+| `--image` | `""` | RLark tools/network/SSH image; non-empty required by Kubernetes cluster-mode Task assembly |
+| `--leader-election` | `false` | Legacy accepted flag; installer may set it, but current Agent managers do not consume it or enforce leadership |
+| `--task-runtime-resync-period` | `15m` | Base period for the bounded cluster-mode Task Runtime repair scan; intervals use 80–120% jitter, `0` disables it, and negative values are invalid in cluster mode; node-only mode accepts the shared flag but does not run the scanner |
+| `--enable-cross-cluster-direct` | `true` | Not implemented; cross-cluster traffic always uses the SSH relay |
 | `--containerd-socket` | `/run/containerd/containerd.sock` | Node Agent containerd socket |
 
 See [Configuration Reference](../reference/configuration.md#rlark-agent) for the complete list.
 
-The Runtime/Workload coordinator is the production writer for Deployment and StatefulSet Tasks. It executes ordered Runtime operations. Runtime push controllers only enqueue reconciliation hints; verified targeted observation and Task Status updates run through the pull controller.
+The Runtime/Workload coordinator is the production writer for Deployment and StatefulSet Tasks. It executes ordered Runtime operations. The Agent creates Runtime push controllers from the trusted workload-root registry; they only enqueue reconciliation hints, while verified targeted observation and Task Status updates run through the pull controller. `--task-runtime-push-controller-workers` configures concurrency for each registered root watch.
 
-The Ray-on-Kubernetes Workload Adapter supports Deployment and StatefulSet carriers.
+Task root and secondary Pod watches use a dedicated cache restricted to the historical workload namespace `rlark-system`. This does not restrict the separate cluster-wide Node/Pod reporting controllers. Before observer startup, the Agent checks root `get/list/watch`, Pod `get/list/watch` for the declared instance profiles, and ReplicaSet `get` for the Deployment profile via `SelfSubjectAccessReview` (30-second preflight timeout). Denied, indeterminate, or failed reviews stop startup; they are not interpreted as empty inventory. The credentials must also permit creating self-access reviews. If startup fails, repair the applicable RBAC or API availability and restart; no partial Task observer starts. Runtime roots never require `/status` write permission for observation. Root deletion with verified Task UID requests full pull reconciliation; missing legacy UID metadata relies on periodic resync.
+
+**Worker flag upgrade/rollback:** remove `--task-deployment-push-controller-workers` and `--task-statefulset-push-controller-workers` from deployment arguments and use `--task-runtime-push-controller-workers` (default `8`). Old names are not aliases and are rejected. If their values differed, choose an explicit shared concurrency budget; using the larger value preserves the previous upper per-root allowance, but may increase total concurrency. When rolling back to an Agent that predates the shared flag, restore its two supported flags. Do not run old and new Agents concurrently as workload/Task Status writers.
+
+The Ray-on-Kubernetes Workload Adapter supports Deployment and StatefulSet. Astribot Tasks with `placement.perNode` use a DaemonSet. The same scoped observer watches the DaemonSet and its controlled Pods. Preflight also checks `list/watch` permissions for Pod Events in `rlark-system`. Mount, attachment, and scheduling warnings trigger a fresh observation after the observer checks the Pod UID. A positive `--task-daemonset-push-controller-workers` overrides concurrency for DaemonSet observation only. Zero inherits the shared setting.
+
+Full reconciliation and targeted observation publish `status.instances` through the same Task status writer. The writer rejects stale Task UIDs and generations, clears the snapshot when the Task stops or has no instances, and preserves it on condition-only updates. When no containerd socket is supplied, the Node Agent reads the socket declared by its own Node. Astribot uses port 10381 for metrics by default and a separate readiness listener.
 
 The cluster Agent runs one repair scan immediately after startup and repeats it at the configured jittered interval. Each scan pages through management Tasks assigned or eligible for the same Host with a 10,000-Task budget and emits full-reconciliation hints; it does not mutate Tasks or Runtime objects directly. Transient management API list failures are logged and retried in a later round without stopping the Agent. Trigger-bridge pressure is summarized but does not stop the scan from visiting later Tasks and pages. Disabling the scan removes this recovery path for lost watch events and should be done only when another operational mechanism guarantees convergence.
 

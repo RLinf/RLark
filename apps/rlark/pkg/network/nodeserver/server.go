@@ -68,16 +68,24 @@ func NewNodeServer[C PodCred](
 	}
 }
 
-func (s *NodeServer[C]) startLocalService(ctx context.Context) error {
-	l, d := utils.NetPipeWithBuffer(65536)
+func (s *NodeServer[C]) startLocalService() func() {
+	// Unbuffered admission ensures every successful dial reaches HTTP Accept.
+	// Buffered peers are not tracked by http.Server.Close and can leak on stop.
+	l, d := utils.NetPipe()
 	s.localServiceDialer = d
 	r := s.localServiceRouter()
 
 	srv := http.Server{Handler: r}
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		_ = srv.Serve(l)
 	}()
-	return nil
+	return sync.OnceFunc(func() {
+		_ = srv.Close() // This private in-memory server is process-owned, not a workload.
+		_ = l.Close()
+		<-done
+	})
 }
 
 func (s *NodeServer[C]) localServiceRouter() http.Handler {
@@ -93,9 +101,8 @@ func (s *NodeServer[C]) localServiceRouter() http.Handler {
 // marks the lifecycle ready only after all dependencies have initialized.
 func (s *NodeServer[C]) Run(ctx context.Context, lifecycle Lifecycle) error {
 	logger := log.FromContext(ctx)
-	if err := s.startLocalService(ctx); err != nil {
-		return fmt.Errorf("start local service: %w", err)
-	}
+	stopLocalService := s.startLocalService()
+	defer stopLocalService()
 	l, instanceAddress, err := s.config.Listen()
 	if err != nil {
 		return err
@@ -103,28 +110,36 @@ func (s *NodeServer[C]) Run(ctx context.Context, lifecycle Lifecycle) error {
 	defer func() {
 		lifecycle.SetReady(false)
 		_ = l.Close()
+		stopLocalService()
 		s.config.CleanupSocket(instanceAddress)
 	}()
 	if err := s.config.Publish(instanceAddress); err != nil {
 		return err
 	}
 	lifecycle.SetReady(true)
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	watchDone := make(chan struct{})
 	go func() {
-		<-ctx.Done()
+		defer close(watchDone)
+		<-watchCtx.Done()
 		lifecycle.SetReady(false)
 		_ = l.Close()
+		stopLocalService()
 	}()
+	defer func() { stopWatch(); <-watchDone }()
 
 	logger.Info("Node server listening", "address", instanceAddress, "stableAddress", s.config.UnixSocketAddress)
 
 	for {
 		select {
 		case <-ctx.Done():
+			stopLocalService()
 			return s.drainConnections(logger)
 		default:
 			conn, err := l.Accept()
 			if err != nil {
 				if ctx.Err() != nil {
+					stopLocalService()
 					return s.drainConnections(logger)
 				}
 				return err
@@ -243,7 +258,9 @@ func (s *NodeServer[C]) handleConnection(ctx context.Context, conn *utils.WrapCo
 			Net:  "pod",
 			Name: credName,
 		})
-		conn2, err = s.localServiceDialer(ctx)
+		dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		conn2, err = s.localServiceDialer(dialCtx)
+		cancel()
 		if err != nil {
 			logger.Error(nil, "Failed to connect to local service", "err", err)
 			return

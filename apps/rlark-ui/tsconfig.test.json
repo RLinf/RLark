@@ -21,7 +21,10 @@
     "src/utils/jobPhase.ts",
     "src/utils/nodeBatchMetadata.ts",
     "src/utils/nodeResources.ts",
+    "src/utils/nodeState.ts",
     "src/utils/nodeVisibility.ts",
+    "src/utils/nodeWorkloads.ts",
+    "src/utils/pullProgress.ts",
     "src/utils/resourceAvailability.ts",
     "src/utils/route.ts",
     "src/utils/sshKeys.ts",
@@ -34,6 +37,7 @@
     "src/astribot/components/NodeName.tsx",
     "src/astribot/components/ClusterName.tsx",
     "src/astribot/components/NodeLinks.tsx",
-    "src/astribot/components/NodeNetworkAddresses.tsx"
+    "src/astribot/components/NodeNetworkAddresses.tsx",
+    "src/utils/yaml.ts"
   ]
 }

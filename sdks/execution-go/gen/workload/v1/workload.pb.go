@@ -134,6 +134,7 @@ type WorkloadTypeInfo struct {
 	Configuration         *ConfigurationContract  `protobuf:"bytes,4,opt,name=configuration,proto3" json:"configuration,omitempty"`
 	ProtocolVersion       *v1.ProtocolVersion     `protobuf:"bytes,5,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
 	Capabilities          []v1.ProtocolCapability `protobuf:"varint,6,rep,packed,name=capabilities,proto3,enum=rlark.execution.common.v1.ProtocolCapability" json:"capabilities,omitempty"`
+	Observations          []*ObservationContract  `protobuf:"bytes,7,rep,name=observations,proto3" json:"observations,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -210,6 +211,142 @@ func (x *WorkloadTypeInfo) GetCapabilities() []v1.ProtocolCapability {
 	return nil
 }
 
+func (x *WorkloadTypeInfo) GetObservations() []*ObservationContract {
+	if x != nil {
+		return x.Observations
+	}
+	return nil
+}
+
+type ObservationContract struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RuntimeKind   string                 `protobuf:"bytes,1,opt,name=runtime_kind,json=runtimeKind,proto3" json:"runtime_kind,omitempty"`
+	Roots         []*ObservationRoot     `protobuf:"bytes,2,rep,name=roots,proto3" json:"roots,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ObservationContract) Reset() {
+	*x = ObservationContract{}
+	mi := &file_workload_v1_workload_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObservationContract) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObservationContract) ProtoMessage() {}
+
+func (x *ObservationContract) ProtoReflect() protoreflect.Message {
+	mi := &file_workload_v1_workload_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObservationContract.ProtoReflect.Descriptor instead.
+func (*ObservationContract) Descriptor() ([]byte, []int) {
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ObservationContract) GetRuntimeKind() string {
+	if x != nil {
+		return x.RuntimeKind
+	}
+	return ""
+}
+
+func (x *ObservationContract) GetRoots() []*ObservationRoot {
+	if x != nil {
+		return x.Roots
+	}
+	return nil
+}
+
+type ObservationRoot struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Group       string                 `protobuf:"bytes,1,opt,name=group,proto3" json:"group,omitempty"`
+	Version     string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
+	Kind        string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
+	CarrierType string                 `protobuf:"bytes,4,opt,name=carrier_type,json=carrierType,proto3" json:"carrier_type,omitempty"`
+	// Empty means root-only; non-empty selects a trusted Runtime-owned profile.
+	InstanceProfile string `protobuf:"bytes,5,opt,name=instance_profile,json=instanceProfile,proto3" json:"instance_profile,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ObservationRoot) Reset() {
+	*x = ObservationRoot{}
+	mi := &file_workload_v1_workload_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObservationRoot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObservationRoot) ProtoMessage() {}
+
+func (x *ObservationRoot) ProtoReflect() protoreflect.Message {
+	mi := &file_workload_v1_workload_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObservationRoot.ProtoReflect.Descriptor instead.
+func (*ObservationRoot) Descriptor() ([]byte, []int) {
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ObservationRoot) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *ObservationRoot) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *ObservationRoot) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *ObservationRoot) GetCarrierType() string {
+	if x != nil {
+		return x.CarrierType
+	}
+	return ""
+}
+
+func (x *ObservationRoot) GetInstanceProfile() string {
+	if x != nil {
+		return x.InstanceProfile
+	}
+	return ""
+}
+
 type GetInfoResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Info          *WorkloadTypeInfo      `protobuf:"bytes,1,opt,name=info,proto3" json:"info,omitempty"`
@@ -219,7 +356,7 @@ type GetInfoResponse struct {
 
 func (x *GetInfoResponse) Reset() {
 	*x = GetInfoResponse{}
-	mi := &file_workload_v1_workload_proto_msgTypes[3]
+	mi := &file_workload_v1_workload_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -231,7 +368,7 @@ func (x *GetInfoResponse) String() string {
 func (*GetInfoResponse) ProtoMessage() {}
 
 func (x *GetInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[3]
+	mi := &file_workload_v1_workload_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -244,7 +381,7 @@ func (x *GetInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetInfoResponse.ProtoReflect.Descriptor instead.
 func (*GetInfoResponse) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{3}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GetInfoResponse) GetInfo() *WorkloadTypeInfo {
@@ -264,7 +401,7 @@ type RuntimeInfo struct {
 
 func (x *RuntimeInfo) Reset() {
 	*x = RuntimeInfo{}
-	mi := &file_workload_v1_workload_proto_msgTypes[4]
+	mi := &file_workload_v1_workload_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -276,7 +413,7 @@ func (x *RuntimeInfo) String() string {
 func (*RuntimeInfo) ProtoMessage() {}
 
 func (x *RuntimeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[4]
+	mi := &file_workload_v1_workload_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -289,7 +426,7 @@ func (x *RuntimeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RuntimeInfo.ProtoReflect.Descriptor instead.
 func (*RuntimeInfo) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{4}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RuntimeInfo) GetId() string {
@@ -324,7 +461,7 @@ type TaskSnapshot struct {
 
 func (x *TaskSnapshot) Reset() {
 	*x = TaskSnapshot{}
-	mi := &file_workload_v1_workload_proto_msgTypes[5]
+	mi := &file_workload_v1_workload_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -336,7 +473,7 @@ func (x *TaskSnapshot) String() string {
 func (*TaskSnapshot) ProtoMessage() {}
 
 func (x *TaskSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[5]
+	mi := &file_workload_v1_workload_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -349,7 +486,7 @@ func (x *TaskSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskSnapshot.ProtoReflect.Descriptor instead.
 func (*TaskSnapshot) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{5}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *TaskSnapshot) GetIdentity() *v1.TaskIdentity {
@@ -418,7 +555,7 @@ type InstanceDiscoveryPlan struct {
 
 func (x *InstanceDiscoveryPlan) Reset() {
 	*x = InstanceDiscoveryPlan{}
-	mi := &file_workload_v1_workload_proto_msgTypes[6]
+	mi := &file_workload_v1_workload_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -430,7 +567,7 @@ func (x *InstanceDiscoveryPlan) String() string {
 func (*InstanceDiscoveryPlan) ProtoMessage() {}
 
 func (x *InstanceDiscoveryPlan) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[6]
+	mi := &file_workload_v1_workload_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -443,7 +580,7 @@ func (x *InstanceDiscoveryPlan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstanceDiscoveryPlan.ProtoReflect.Descriptor instead.
 func (*InstanceDiscoveryPlan) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{6}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *InstanceDiscoveryPlan) GetRoots() []string {
@@ -478,7 +615,7 @@ type WorkloadPlan struct {
 
 func (x *WorkloadPlan) Reset() {
 	*x = WorkloadPlan{}
-	mi := &file_workload_v1_workload_proto_msgTypes[7]
+	mi := &file_workload_v1_workload_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -490,7 +627,7 @@ func (x *WorkloadPlan) String() string {
 func (*WorkloadPlan) ProtoMessage() {}
 
 func (x *WorkloadPlan) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[7]
+	mi := &file_workload_v1_workload_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -503,7 +640,7 @@ func (x *WorkloadPlan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkloadPlan.ProtoReflect.Descriptor instead.
 func (*WorkloadPlan) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{7}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *WorkloadPlan) GetAdapterId() string {
@@ -589,7 +726,7 @@ type MutationTarget struct {
 
 func (x *MutationTarget) Reset() {
 	*x = MutationTarget{}
-	mi := &file_workload_v1_workload_proto_msgTypes[8]
+	mi := &file_workload_v1_workload_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -601,7 +738,7 @@ func (x *MutationTarget) String() string {
 func (*MutationTarget) ProtoMessage() {}
 
 func (x *MutationTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[8]
+	mi := &file_workload_v1_workload_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -614,7 +751,7 @@ func (x *MutationTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MutationTarget.ProtoReflect.Descriptor instead.
 func (*MutationTarget) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{8}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *MutationTarget) GetName() string {
@@ -665,7 +802,7 @@ type WorkloadUnit struct {
 
 func (x *WorkloadUnit) Reset() {
 	*x = WorkloadUnit{}
-	mi := &file_workload_v1_workload_proto_msgTypes[9]
+	mi := &file_workload_v1_workload_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -677,7 +814,7 @@ func (x *WorkloadUnit) String() string {
 func (*WorkloadUnit) ProtoMessage() {}
 
 func (x *WorkloadUnit) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[9]
+	mi := &file_workload_v1_workload_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -690,7 +827,7 @@ func (x *WorkloadUnit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkloadUnit.ProtoReflect.Descriptor instead.
 func (*WorkloadUnit) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{9}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *WorkloadUnit) GetName() string {
@@ -745,7 +882,7 @@ type ProcessDeclaration struct {
 
 func (x *ProcessDeclaration) Reset() {
 	*x = ProcessDeclaration{}
-	mi := &file_workload_v1_workload_proto_msgTypes[10]
+	mi := &file_workload_v1_workload_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -757,7 +894,7 @@ func (x *ProcessDeclaration) String() string {
 func (*ProcessDeclaration) ProtoMessage() {}
 
 func (x *ProcessDeclaration) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[10]
+	mi := &file_workload_v1_workload_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -770,7 +907,7 @@ func (x *ProcessDeclaration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProcessDeclaration.ProtoReflect.Descriptor instead.
 func (*ProcessDeclaration) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{10}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ProcessDeclaration) GetName() string {
@@ -847,7 +984,7 @@ type PlanDigests struct {
 
 func (x *PlanDigests) Reset() {
 	*x = PlanDigests{}
-	mi := &file_workload_v1_workload_proto_msgTypes[11]
+	mi := &file_workload_v1_workload_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -859,7 +996,7 @@ func (x *PlanDigests) String() string {
 func (*PlanDigests) ProtoMessage() {}
 
 func (x *PlanDigests) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[11]
+	mi := &file_workload_v1_workload_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -872,7 +1009,7 @@ func (x *PlanDigests) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanDigests.ProtoReflect.Descriptor instead.
 func (*PlanDigests) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{11}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *PlanDigests) GetCompiledHash() string {
@@ -908,7 +1045,7 @@ type ExecutablePlan struct {
 
 func (x *ExecutablePlan) Reset() {
 	*x = ExecutablePlan{}
-	mi := &file_workload_v1_workload_proto_msgTypes[12]
+	mi := &file_workload_v1_workload_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -920,7 +1057,7 @@ func (x *ExecutablePlan) String() string {
 func (*ExecutablePlan) ProtoMessage() {}
 
 func (x *ExecutablePlan) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[12]
+	mi := &file_workload_v1_workload_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -933,7 +1070,7 @@ func (x *ExecutablePlan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutablePlan.ProtoReflect.Descriptor instead.
 func (*ExecutablePlan) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{12}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ExecutablePlan) GetDigests() *PlanDigests {
@@ -974,7 +1111,7 @@ type CompileRequest struct {
 
 func (x *CompileRequest) Reset() {
 	*x = CompileRequest{}
-	mi := &file_workload_v1_workload_proto_msgTypes[13]
+	mi := &file_workload_v1_workload_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -986,7 +1123,7 @@ func (x *CompileRequest) String() string {
 func (*CompileRequest) ProtoMessage() {}
 
 func (x *CompileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[13]
+	mi := &file_workload_v1_workload_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -999,7 +1136,7 @@ func (x *CompileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompileRequest.ProtoReflect.Descriptor instead.
 func (*CompileRequest) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{13}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CompileRequest) GetTask() *TaskSnapshot {
@@ -1025,7 +1162,7 @@ type CompileResponse struct {
 
 func (x *CompileResponse) Reset() {
 	*x = CompileResponse{}
-	mi := &file_workload_v1_workload_proto_msgTypes[14]
+	mi := &file_workload_v1_workload_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1037,7 +1174,7 @@ func (x *CompileResponse) String() string {
 func (*CompileResponse) ProtoMessage() {}
 
 func (x *CompileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[14]
+	mi := &file_workload_v1_workload_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1050,7 +1187,7 @@ func (x *CompileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompileResponse.ProtoReflect.Descriptor instead.
 func (*CompileResponse) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{14}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *CompileResponse) GetPlan() *WorkloadPlan {
@@ -1072,7 +1209,7 @@ type ObserveRequest struct {
 
 func (x *ObserveRequest) Reset() {
 	*x = ObserveRequest{}
-	mi := &file_workload_v1_workload_proto_msgTypes[15]
+	mi := &file_workload_v1_workload_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1084,7 +1221,7 @@ func (x *ObserveRequest) String() string {
 func (*ObserveRequest) ProtoMessage() {}
 
 func (x *ObserveRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[15]
+	mi := &file_workload_v1_workload_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1097,7 +1234,7 @@ func (x *ObserveRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ObserveRequest.ProtoReflect.Descriptor instead.
 func (*ObserveRequest) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{15}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ObserveRequest) GetTask() *TaskSnapshot {
@@ -1139,7 +1276,7 @@ type Observation struct {
 
 func (x *Observation) Reset() {
 	*x = Observation{}
-	mi := &file_workload_v1_workload_proto_msgTypes[16]
+	mi := &file_workload_v1_workload_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1151,7 +1288,7 @@ func (x *Observation) String() string {
 func (*Observation) ProtoMessage() {}
 
 func (x *Observation) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[16]
+	mi := &file_workload_v1_workload_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1164,7 +1301,7 @@ func (x *Observation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Observation.ProtoReflect.Descriptor instead.
 func (*Observation) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{16}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Observation) GetPhase() string {
@@ -1197,7 +1334,7 @@ type ObserveResponse struct {
 
 func (x *ObserveResponse) Reset() {
 	*x = ObserveResponse{}
-	mi := &file_workload_v1_workload_proto_msgTypes[17]
+	mi := &file_workload_v1_workload_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1209,7 +1346,7 @@ func (x *ObserveResponse) String() string {
 func (*ObserveResponse) ProtoMessage() {}
 
 func (x *ObserveResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[17]
+	mi := &file_workload_v1_workload_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1222,7 +1359,7 @@ func (x *ObserveResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ObserveResponse.ProtoReflect.Descriptor instead.
 func (*ObserveResponse) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{17}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ObserveResponse) GetObservation() *Observation {
@@ -1242,7 +1379,7 @@ type InventoryRequest struct {
 
 func (x *InventoryRequest) Reset() {
 	*x = InventoryRequest{}
-	mi := &file_workload_v1_workload_proto_msgTypes[18]
+	mi := &file_workload_v1_workload_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1254,7 +1391,7 @@ func (x *InventoryRequest) String() string {
 func (*InventoryRequest) ProtoMessage() {}
 
 func (x *InventoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[18]
+	mi := &file_workload_v1_workload_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1267,7 +1404,7 @@ func (x *InventoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InventoryRequest.ProtoReflect.Descriptor instead.
 func (*InventoryRequest) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{18}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *InventoryRequest) GetTask() *v1.TaskIdentity {
@@ -1293,7 +1430,7 @@ type InventoryResponse struct {
 
 func (x *InventoryResponse) Reset() {
 	*x = InventoryResponse{}
-	mi := &file_workload_v1_workload_proto_msgTypes[19]
+	mi := &file_workload_v1_workload_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1305,7 +1442,7 @@ func (x *InventoryResponse) String() string {
 func (*InventoryResponse) ProtoMessage() {}
 
 func (x *InventoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_workload_v1_workload_proto_msgTypes[19]
+	mi := &file_workload_v1_workload_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1318,7 +1455,7 @@ func (x *InventoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InventoryResponse.ProtoReflect.Descriptor instead.
 func (*InventoryResponse) Descriptor() ([]byte, []int) {
-	return file_workload_v1_workload_proto_rawDescGZIP(), []int{19}
+	return file_workload_v1_workload_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *InventoryResponse) GetCandidates() []*v1.RuntimeObjectCandidate {
@@ -1338,14 +1475,24 @@ const file_workload_v1_workload_proto_rawDesc = "" +
 	"\x15ConfigurationContract\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x16\n" +
 	"\x06schema\x18\x02 \x01(\fR\x06schema\x12.\n" +
-	"\x13schema_content_type\x18\x03 \x01(\tR\x11schemaContentType\"\xf8\x02\n" +
+	"\x13schema_content_type\x18\x03 \x01(\tR\x11schemaContentType\"\xce\x03\n" +
 	"\x10WorkloadTypeInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x126\n" +
 	"\x17supported_runtime_kinds\x18\x03 \x03(\tR\x15supportedRuntimeKinds\x12X\n" +
 	"\rconfiguration\x18\x04 \x01(\v22.rlark.execution.workload.v1.ConfigurationContractR\rconfiguration\x12U\n" +
 	"\x10protocol_version\x18\x05 \x01(\v2*.rlark.execution.common.v1.ProtocolVersionR\x0fprotocolVersion\x12Q\n" +
-	"\fcapabilities\x18\x06 \x03(\x0e2-.rlark.execution.common.v1.ProtocolCapabilityR\fcapabilities\"T\n" +
+	"\fcapabilities\x18\x06 \x03(\x0e2-.rlark.execution.common.v1.ProtocolCapabilityR\fcapabilities\x12T\n" +
+	"\fobservations\x18\a \x03(\v20.rlark.execution.workload.v1.ObservationContractR\fobservations\"|\n" +
+	"\x13ObservationContract\x12!\n" +
+	"\fruntime_kind\x18\x01 \x01(\tR\vruntimeKind\x12B\n" +
+	"\x05roots\x18\x02 \x03(\v2,.rlark.execution.workload.v1.ObservationRootR\x05roots\"\xa3\x01\n" +
+	"\x0fObservationRoot\x12\x14\n" +
+	"\x05group\x18\x01 \x01(\tR\x05group\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12\x12\n" +
+	"\x04kind\x18\x03 \x01(\tR\x04kind\x12!\n" +
+	"\fcarrier_type\x18\x04 \x01(\tR\vcarrierType\x12)\n" +
+	"\x10instance_profile\x18\x05 \x01(\tR\x0finstanceProfile\"T\n" +
 	"\x0fGetInfoResponse\x12A\n" +
 	"\x04info\x18\x01 \x01(\v2-.rlark.execution.workload.v1.WorkloadTypeInfoR\x04info\"1\n" +
 	"\vRuntimeInfo\x12\x0e\n" +
@@ -1453,86 +1600,90 @@ func file_workload_v1_workload_proto_rawDescGZIP() []byte {
 	return file_workload_v1_workload_proto_rawDescData
 }
 
-var file_workload_v1_workload_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_workload_v1_workload_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_workload_v1_workload_proto_goTypes = []any{
 	(*GetInfoRequest)(nil),            // 0: rlark.execution.workload.v1.GetInfoRequest
 	(*ConfigurationContract)(nil),     // 1: rlark.execution.workload.v1.ConfigurationContract
 	(*WorkloadTypeInfo)(nil),          // 2: rlark.execution.workload.v1.WorkloadTypeInfo
-	(*GetInfoResponse)(nil),           // 3: rlark.execution.workload.v1.GetInfoResponse
-	(*RuntimeInfo)(nil),               // 4: rlark.execution.workload.v1.RuntimeInfo
-	(*TaskSnapshot)(nil),              // 5: rlark.execution.workload.v1.TaskSnapshot
-	(*InstanceDiscoveryPlan)(nil),     // 6: rlark.execution.workload.v1.InstanceDiscoveryPlan
-	(*WorkloadPlan)(nil),              // 7: rlark.execution.workload.v1.WorkloadPlan
-	(*MutationTarget)(nil),            // 8: rlark.execution.workload.v1.MutationTarget
-	(*WorkloadUnit)(nil),              // 9: rlark.execution.workload.v1.WorkloadUnit
-	(*ProcessDeclaration)(nil),        // 10: rlark.execution.workload.v1.ProcessDeclaration
-	(*PlanDigests)(nil),               // 11: rlark.execution.workload.v1.PlanDigests
-	(*ExecutablePlan)(nil),            // 12: rlark.execution.workload.v1.ExecutablePlan
-	(*CompileRequest)(nil),            // 13: rlark.execution.workload.v1.CompileRequest
-	(*CompileResponse)(nil),           // 14: rlark.execution.workload.v1.CompileResponse
-	(*ObserveRequest)(nil),            // 15: rlark.execution.workload.v1.ObserveRequest
-	(*Observation)(nil),               // 16: rlark.execution.workload.v1.Observation
-	(*ObserveResponse)(nil),           // 17: rlark.execution.workload.v1.ObserveResponse
-	(*InventoryRequest)(nil),          // 18: rlark.execution.workload.v1.InventoryRequest
-	(*InventoryResponse)(nil),         // 19: rlark.execution.workload.v1.InventoryResponse
-	(*v1.ProtocolVersion)(nil),        // 20: rlark.execution.common.v1.ProtocolVersion
-	(v1.ProtocolCapability)(0),        // 21: rlark.execution.common.v1.ProtocolCapability
-	(*v1.TaskIdentity)(nil),           // 22: rlark.execution.common.v1.TaskIdentity
-	(*v1.TypedValue)(nil),             // 23: rlark.execution.common.v1.TypedValue
-	(*v1.DesiredRuntimeObject)(nil),   // 24: rlark.execution.common.v1.DesiredRuntimeObject
-	(*v1.ObjectLocator)(nil),          // 25: rlark.execution.common.v1.ObjectLocator
-	(*v1.ObjectSnapshot)(nil),         // 26: rlark.execution.common.v1.ObjectSnapshot
-	(*v1.InstanceSnapshot)(nil),       // 27: rlark.execution.common.v1.InstanceSnapshot
-	(*v1.RuntimeObjectCandidate)(nil), // 28: rlark.execution.common.v1.RuntimeObjectCandidate
+	(*ObservationContract)(nil),       // 3: rlark.execution.workload.v1.ObservationContract
+	(*ObservationRoot)(nil),           // 4: rlark.execution.workload.v1.ObservationRoot
+	(*GetInfoResponse)(nil),           // 5: rlark.execution.workload.v1.GetInfoResponse
+	(*RuntimeInfo)(nil),               // 6: rlark.execution.workload.v1.RuntimeInfo
+	(*TaskSnapshot)(nil),              // 7: rlark.execution.workload.v1.TaskSnapshot
+	(*InstanceDiscoveryPlan)(nil),     // 8: rlark.execution.workload.v1.InstanceDiscoveryPlan
+	(*WorkloadPlan)(nil),              // 9: rlark.execution.workload.v1.WorkloadPlan
+	(*MutationTarget)(nil),            // 10: rlark.execution.workload.v1.MutationTarget
+	(*WorkloadUnit)(nil),              // 11: rlark.execution.workload.v1.WorkloadUnit
+	(*ProcessDeclaration)(nil),        // 12: rlark.execution.workload.v1.ProcessDeclaration
+	(*PlanDigests)(nil),               // 13: rlark.execution.workload.v1.PlanDigests
+	(*ExecutablePlan)(nil),            // 14: rlark.execution.workload.v1.ExecutablePlan
+	(*CompileRequest)(nil),            // 15: rlark.execution.workload.v1.CompileRequest
+	(*CompileResponse)(nil),           // 16: rlark.execution.workload.v1.CompileResponse
+	(*ObserveRequest)(nil),            // 17: rlark.execution.workload.v1.ObserveRequest
+	(*Observation)(nil),               // 18: rlark.execution.workload.v1.Observation
+	(*ObserveResponse)(nil),           // 19: rlark.execution.workload.v1.ObserveResponse
+	(*InventoryRequest)(nil),          // 20: rlark.execution.workload.v1.InventoryRequest
+	(*InventoryResponse)(nil),         // 21: rlark.execution.workload.v1.InventoryResponse
+	(*v1.ProtocolVersion)(nil),        // 22: rlark.execution.common.v1.ProtocolVersion
+	(v1.ProtocolCapability)(0),        // 23: rlark.execution.common.v1.ProtocolCapability
+	(*v1.TaskIdentity)(nil),           // 24: rlark.execution.common.v1.TaskIdentity
+	(*v1.TypedValue)(nil),             // 25: rlark.execution.common.v1.TypedValue
+	(*v1.DesiredRuntimeObject)(nil),   // 26: rlark.execution.common.v1.DesiredRuntimeObject
+	(*v1.ObjectLocator)(nil),          // 27: rlark.execution.common.v1.ObjectLocator
+	(*v1.ObjectSnapshot)(nil),         // 28: rlark.execution.common.v1.ObjectSnapshot
+	(*v1.InstanceSnapshot)(nil),       // 29: rlark.execution.common.v1.InstanceSnapshot
+	(*v1.RuntimeObjectCandidate)(nil), // 30: rlark.execution.common.v1.RuntimeObjectCandidate
 }
 var file_workload_v1_workload_proto_depIdxs = []int32{
-	20, // 0: rlark.execution.workload.v1.GetInfoRequest.supported_protocol_versions:type_name -> rlark.execution.common.v1.ProtocolVersion
+	22, // 0: rlark.execution.workload.v1.GetInfoRequest.supported_protocol_versions:type_name -> rlark.execution.common.v1.ProtocolVersion
 	1,  // 1: rlark.execution.workload.v1.WorkloadTypeInfo.configuration:type_name -> rlark.execution.workload.v1.ConfigurationContract
-	20, // 2: rlark.execution.workload.v1.WorkloadTypeInfo.protocol_version:type_name -> rlark.execution.common.v1.ProtocolVersion
-	21, // 3: rlark.execution.workload.v1.WorkloadTypeInfo.capabilities:type_name -> rlark.execution.common.v1.ProtocolCapability
-	2,  // 4: rlark.execution.workload.v1.GetInfoResponse.info:type_name -> rlark.execution.workload.v1.WorkloadTypeInfo
-	22, // 5: rlark.execution.workload.v1.TaskSnapshot.identity:type_name -> rlark.execution.common.v1.TaskIdentity
-	23, // 6: rlark.execution.workload.v1.TaskSnapshot.configuration:type_name -> rlark.execution.common.v1.TypedValue
-	23, // 7: rlark.execution.workload.v1.TaskSnapshot.environment_requirements:type_name -> rlark.execution.common.v1.TypedValue
-	23, // 8: rlark.execution.workload.v1.InstanceDiscoveryPlan.options:type_name -> rlark.execution.common.v1.TypedValue
-	24, // 9: rlark.execution.workload.v1.WorkloadPlan.objects:type_name -> rlark.execution.common.v1.DesiredRuntimeObject
-	23, // 10: rlark.execution.workload.v1.WorkloadPlan.environment_requirements:type_name -> rlark.execution.common.v1.TypedValue
-	6,  // 11: rlark.execution.workload.v1.WorkloadPlan.discovery:type_name -> rlark.execution.workload.v1.InstanceDiscoveryPlan
-	23, // 12: rlark.execution.workload.v1.WorkloadPlan.update_policy:type_name -> rlark.execution.common.v1.TypedValue
-	8,  // 13: rlark.execution.workload.v1.WorkloadPlan.mutation_targets:type_name -> rlark.execution.workload.v1.MutationTarget
-	9,  // 14: rlark.execution.workload.v1.WorkloadPlan.workload_units:type_name -> rlark.execution.workload.v1.WorkloadUnit
-	10, // 15: rlark.execution.workload.v1.WorkloadPlan.processes:type_name -> rlark.execution.workload.v1.ProcessDeclaration
-	25, // 16: rlark.execution.workload.v1.MutationTarget.locator:type_name -> rlark.execution.common.v1.ObjectLocator
-	25, // 17: rlark.execution.workload.v1.WorkloadUnit.locator:type_name -> rlark.execution.common.v1.ObjectLocator
-	25, // 18: rlark.execution.workload.v1.ProcessDeclaration.locator:type_name -> rlark.execution.common.v1.ObjectLocator
-	11, // 19: rlark.execution.workload.v1.ExecutablePlan.digests:type_name -> rlark.execution.workload.v1.PlanDigests
-	24, // 20: rlark.execution.workload.v1.ExecutablePlan.objects:type_name -> rlark.execution.common.v1.DesiredRuntimeObject
-	6,  // 21: rlark.execution.workload.v1.ExecutablePlan.discovery:type_name -> rlark.execution.workload.v1.InstanceDiscoveryPlan
-	23, // 22: rlark.execution.workload.v1.ExecutablePlan.update_policy:type_name -> rlark.execution.common.v1.TypedValue
-	5,  // 23: rlark.execution.workload.v1.CompileRequest.task:type_name -> rlark.execution.workload.v1.TaskSnapshot
-	4,  // 24: rlark.execution.workload.v1.CompileRequest.runtime:type_name -> rlark.execution.workload.v1.RuntimeInfo
-	7,  // 25: rlark.execution.workload.v1.CompileResponse.plan:type_name -> rlark.execution.workload.v1.WorkloadPlan
-	5,  // 26: rlark.execution.workload.v1.ObserveRequest.task:type_name -> rlark.execution.workload.v1.TaskSnapshot
-	12, // 27: rlark.execution.workload.v1.ObserveRequest.plan:type_name -> rlark.execution.workload.v1.ExecutablePlan
-	26, // 28: rlark.execution.workload.v1.ObserveRequest.objects:type_name -> rlark.execution.common.v1.ObjectSnapshot
-	27, // 29: rlark.execution.workload.v1.ObserveRequest.instances:type_name -> rlark.execution.common.v1.InstanceSnapshot
-	16, // 30: rlark.execution.workload.v1.ObserveResponse.observation:type_name -> rlark.execution.workload.v1.Observation
-	22, // 31: rlark.execution.workload.v1.InventoryRequest.task:type_name -> rlark.execution.common.v1.TaskIdentity
-	4,  // 32: rlark.execution.workload.v1.InventoryRequest.runtime:type_name -> rlark.execution.workload.v1.RuntimeInfo
-	28, // 33: rlark.execution.workload.v1.InventoryResponse.candidates:type_name -> rlark.execution.common.v1.RuntimeObjectCandidate
-	0,  // 34: rlark.execution.workload.v1.WorkloadAdapter.GetInfo:input_type -> rlark.execution.workload.v1.GetInfoRequest
-	13, // 35: rlark.execution.workload.v1.WorkloadAdapter.Compile:input_type -> rlark.execution.workload.v1.CompileRequest
-	15, // 36: rlark.execution.workload.v1.WorkloadAdapter.Observe:input_type -> rlark.execution.workload.v1.ObserveRequest
-	18, // 37: rlark.execution.workload.v1.WorkloadAdapter.Inventory:input_type -> rlark.execution.workload.v1.InventoryRequest
-	3,  // 38: rlark.execution.workload.v1.WorkloadAdapter.GetInfo:output_type -> rlark.execution.workload.v1.GetInfoResponse
-	14, // 39: rlark.execution.workload.v1.WorkloadAdapter.Compile:output_type -> rlark.execution.workload.v1.CompileResponse
-	17, // 40: rlark.execution.workload.v1.WorkloadAdapter.Observe:output_type -> rlark.execution.workload.v1.ObserveResponse
-	19, // 41: rlark.execution.workload.v1.WorkloadAdapter.Inventory:output_type -> rlark.execution.workload.v1.InventoryResponse
-	38, // [38:42] is the sub-list for method output_type
-	34, // [34:38] is the sub-list for method input_type
-	34, // [34:34] is the sub-list for extension type_name
-	34, // [34:34] is the sub-list for extension extendee
-	0,  // [0:34] is the sub-list for field type_name
+	22, // 2: rlark.execution.workload.v1.WorkloadTypeInfo.protocol_version:type_name -> rlark.execution.common.v1.ProtocolVersion
+	23, // 3: rlark.execution.workload.v1.WorkloadTypeInfo.capabilities:type_name -> rlark.execution.common.v1.ProtocolCapability
+	3,  // 4: rlark.execution.workload.v1.WorkloadTypeInfo.observations:type_name -> rlark.execution.workload.v1.ObservationContract
+	4,  // 5: rlark.execution.workload.v1.ObservationContract.roots:type_name -> rlark.execution.workload.v1.ObservationRoot
+	2,  // 6: rlark.execution.workload.v1.GetInfoResponse.info:type_name -> rlark.execution.workload.v1.WorkloadTypeInfo
+	24, // 7: rlark.execution.workload.v1.TaskSnapshot.identity:type_name -> rlark.execution.common.v1.TaskIdentity
+	25, // 8: rlark.execution.workload.v1.TaskSnapshot.configuration:type_name -> rlark.execution.common.v1.TypedValue
+	25, // 9: rlark.execution.workload.v1.TaskSnapshot.environment_requirements:type_name -> rlark.execution.common.v1.TypedValue
+	25, // 10: rlark.execution.workload.v1.InstanceDiscoveryPlan.options:type_name -> rlark.execution.common.v1.TypedValue
+	26, // 11: rlark.execution.workload.v1.WorkloadPlan.objects:type_name -> rlark.execution.common.v1.DesiredRuntimeObject
+	25, // 12: rlark.execution.workload.v1.WorkloadPlan.environment_requirements:type_name -> rlark.execution.common.v1.TypedValue
+	8,  // 13: rlark.execution.workload.v1.WorkloadPlan.discovery:type_name -> rlark.execution.workload.v1.InstanceDiscoveryPlan
+	25, // 14: rlark.execution.workload.v1.WorkloadPlan.update_policy:type_name -> rlark.execution.common.v1.TypedValue
+	10, // 15: rlark.execution.workload.v1.WorkloadPlan.mutation_targets:type_name -> rlark.execution.workload.v1.MutationTarget
+	11, // 16: rlark.execution.workload.v1.WorkloadPlan.workload_units:type_name -> rlark.execution.workload.v1.WorkloadUnit
+	12, // 17: rlark.execution.workload.v1.WorkloadPlan.processes:type_name -> rlark.execution.workload.v1.ProcessDeclaration
+	27, // 18: rlark.execution.workload.v1.MutationTarget.locator:type_name -> rlark.execution.common.v1.ObjectLocator
+	27, // 19: rlark.execution.workload.v1.WorkloadUnit.locator:type_name -> rlark.execution.common.v1.ObjectLocator
+	27, // 20: rlark.execution.workload.v1.ProcessDeclaration.locator:type_name -> rlark.execution.common.v1.ObjectLocator
+	13, // 21: rlark.execution.workload.v1.ExecutablePlan.digests:type_name -> rlark.execution.workload.v1.PlanDigests
+	26, // 22: rlark.execution.workload.v1.ExecutablePlan.objects:type_name -> rlark.execution.common.v1.DesiredRuntimeObject
+	8,  // 23: rlark.execution.workload.v1.ExecutablePlan.discovery:type_name -> rlark.execution.workload.v1.InstanceDiscoveryPlan
+	25, // 24: rlark.execution.workload.v1.ExecutablePlan.update_policy:type_name -> rlark.execution.common.v1.TypedValue
+	7,  // 25: rlark.execution.workload.v1.CompileRequest.task:type_name -> rlark.execution.workload.v1.TaskSnapshot
+	6,  // 26: rlark.execution.workload.v1.CompileRequest.runtime:type_name -> rlark.execution.workload.v1.RuntimeInfo
+	9,  // 27: rlark.execution.workload.v1.CompileResponse.plan:type_name -> rlark.execution.workload.v1.WorkloadPlan
+	7,  // 28: rlark.execution.workload.v1.ObserveRequest.task:type_name -> rlark.execution.workload.v1.TaskSnapshot
+	14, // 29: rlark.execution.workload.v1.ObserveRequest.plan:type_name -> rlark.execution.workload.v1.ExecutablePlan
+	28, // 30: rlark.execution.workload.v1.ObserveRequest.objects:type_name -> rlark.execution.common.v1.ObjectSnapshot
+	29, // 31: rlark.execution.workload.v1.ObserveRequest.instances:type_name -> rlark.execution.common.v1.InstanceSnapshot
+	18, // 32: rlark.execution.workload.v1.ObserveResponse.observation:type_name -> rlark.execution.workload.v1.Observation
+	24, // 33: rlark.execution.workload.v1.InventoryRequest.task:type_name -> rlark.execution.common.v1.TaskIdentity
+	6,  // 34: rlark.execution.workload.v1.InventoryRequest.runtime:type_name -> rlark.execution.workload.v1.RuntimeInfo
+	30, // 35: rlark.execution.workload.v1.InventoryResponse.candidates:type_name -> rlark.execution.common.v1.RuntimeObjectCandidate
+	0,  // 36: rlark.execution.workload.v1.WorkloadAdapter.GetInfo:input_type -> rlark.execution.workload.v1.GetInfoRequest
+	15, // 37: rlark.execution.workload.v1.WorkloadAdapter.Compile:input_type -> rlark.execution.workload.v1.CompileRequest
+	17, // 38: rlark.execution.workload.v1.WorkloadAdapter.Observe:input_type -> rlark.execution.workload.v1.ObserveRequest
+	20, // 39: rlark.execution.workload.v1.WorkloadAdapter.Inventory:input_type -> rlark.execution.workload.v1.InventoryRequest
+	5,  // 40: rlark.execution.workload.v1.WorkloadAdapter.GetInfo:output_type -> rlark.execution.workload.v1.GetInfoResponse
+	16, // 41: rlark.execution.workload.v1.WorkloadAdapter.Compile:output_type -> rlark.execution.workload.v1.CompileResponse
+	19, // 42: rlark.execution.workload.v1.WorkloadAdapter.Observe:output_type -> rlark.execution.workload.v1.ObserveResponse
+	21, // 43: rlark.execution.workload.v1.WorkloadAdapter.Inventory:output_type -> rlark.execution.workload.v1.InventoryResponse
+	40, // [40:44] is the sub-list for method output_type
+	36, // [36:40] is the sub-list for method input_type
+	36, // [36:36] is the sub-list for extension type_name
+	36, // [36:36] is the sub-list for extension extendee
+	0,  // [0:36] is the sub-list for field type_name
 }
 
 func init() { file_workload_v1_workload_proto_init() }
@@ -1546,7 +1697,7 @@ func file_workload_v1_workload_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_workload_v1_workload_proto_rawDesc), len(file_workload_v1_workload_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   20,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

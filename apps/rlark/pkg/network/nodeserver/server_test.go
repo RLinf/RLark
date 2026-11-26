@@ -17,6 +17,39 @@ type testLifecycle struct {
 	ready chan bool
 }
 
+func TestLocalServiceStopsAndJoins(t *testing.T) {
+	s := newTestNodeServer(time.Second)
+	stop := s.startLocalService()
+	stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	conn, err := s.localServiceDialer(ctx)
+	if err == nil {
+		_ = conn.Close()
+		t.Fatal("private service accepted connection after shutdown")
+	}
+}
+
+func TestStartupFailureClosesLocalService(t *testing.T) {
+	s := newTestNodeServer(time.Second)
+	// A socket parent which is a regular file causes listener startup failure.
+	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parent, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.config.UnixSocketAddress = filepath.Join(parent, "node.sock")
+	if err := s.Run(context.Background(), &testLifecycle{ready: make(chan bool, 1)}); err == nil {
+		t.Fatal("invalid listener started")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	conn, err := s.localServiceDialer(ctx)
+	if err == nil {
+		_ = conn.Close()
+		t.Fatal("startup failure leaked private service")
+	}
+}
+
 func (l *testLifecycle) SetReady(ready bool) {
 	select {
 	case l.ready <- ready:

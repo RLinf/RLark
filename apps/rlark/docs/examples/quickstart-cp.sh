@@ -28,6 +28,14 @@ ok()   { echo -e "\033[1;32m[$(date +%H:%M:%S)] ✓\033[0m $*"; }
 warn() { echo -e "\033[1;33m[$(date +%H:%M:%S)] !\033[0m $*"; }
 err()  { echo -e "\033[1;31m[$(date +%H:%M:%S)] ✗\033[0m $*"; exit 1; }
 
+# Docker 29 dropped the legacy top-level NetworkSettings.IPAddress field, so
+# "-f '{{.NetworkSettings.IPAddress}}'" aborts with a template parsing error.
+# Read the address from the per-network map, which works on every version.
+container_ip() {
+  docker inspect "$1" \
+    -f '{{range .NetworkSettings.Networks}}{{if .IPAddress}}{{.IPAddress}}{{end}}{{end}}' 2>/dev/null
+}
+
 IMAGE="localhost:5555/rlark:latest"
 
 # =============================================================================
@@ -46,6 +54,7 @@ log "Step 0: Checking prerequisites..."
 command -v docker  >/dev/null 2>&1 || err "docker is required"
 command -v kubectl >/dev/null 2>&1 || err "kubectl is required"
 command -v jq      >/dev/null 2>&1 || err "jq is required"
+command -v curl    >/dev/null 2>&1 || err "curl is required"
 command -v python3 >/dev/null 2>&1 || err "python3 is required"
 if $START_UI; then
   command -v node >/dev/null 2>&1 || err "node is required (install Node.js or use --no-ui)"
@@ -65,43 +74,19 @@ ok "Directories created: /tmp/rlark"
 log "Step 2: Starting local Docker registry..."
 docker rm -f local-registry 2>/dev/null || true
 docker run -d --name local-registry --restart=always -p 5555:5000 registry:2
-REGISTRY_IP=$(docker inspect local-registry -f '{{.NetworkSettings.IPAddress}}')
+REGISTRY_IP=$(container_ip local-registry)
+[ -n "$REGISTRY_IP" ] || err "Cannot determine the local registry IP address"
 ok "Local registry: localhost:5555 (IP: $REGISTRY_IP)"
 
 # =============================================================================
 # Step 3: Build and push images
 # =============================================================================
-log "Step 3: Building 5 Go binaries (server, agent, controller-manager, gateway, network-sidecar)..."
+log "Step 3: Building 6 Go binaries (server, agent, controller-manager, gateway, network-sidecar, rlark-tools)..."
 cd "$PROJECT_ROOT/apps/rlark"
 mkdir -p /tmp/rlark-bin
 
-GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/server ./cmd/server/ &
-GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/agent ./cmd/agent/ &
-GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/controller-manager ./cmd/controller-manager/ &
-GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/gateway ./cmd/gateway/ &
-GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/network-sidecar ./cmd/network-sidecar/ &
-wait
-log "  server:               $(du -h /tmp/rlark-bin/server               | cut -f1)"
-log "  agent:                $(du -h /tmp/rlark-bin/agent                | cut -f1)"
-log "  controller-manager:   $(du -h /tmp/rlark-bin/controller-manager   | cut -f1)"
-log "  gateway:              $(du -h /tmp/rlark-bin/gateway              | cut -f1)"
-log "  network-sidecar:      $(du -h /tmp/rlark-bin/network-sidecar      | cut -f1)"
-
-cat > /tmp/Dockerfile.rlark <<'DOCKERFILE'
-FROM scratch
-COPY server /rlark-server
-COPY agent /rlark-agent
-COPY controller-manager /rlark-controller-manager
-COPY gateway /rlark-gateway
-COPY network-sidecar /usr/local/bin/network-sidecar
-DOCKERFILE
-
-docker build -t "$IMAGE" -f /tmp/Dockerfile.rlark /tmp/rlark-bin
-log "  Docker image built: $IMAGE"
-docker push "$IMAGE"
-log "  Docker image pushed to local registry"
-
-# Pull busybox
+# Pull busybox (try Docker Hub, then mirror, use local if available). It backs
+# both the sample workloads and the rlark image base, so pull it before build.
 if ! docker pull busybox:latest 2>/dev/null; then
   if ! docker pull docker.m.daocloud.io/library/busybox:latest 2>/dev/null; then
     warn "Cannot pull busybox, using local copy"
@@ -110,10 +95,66 @@ if ! docker pull busybox:latest 2>/dev/null; then
     docker rmi docker.m.daocloud.io/library/busybox:latest 2>/dev/null
   fi
 fi
+docker image inspect busybox:latest >/dev/null 2>&1 || \
+  err "busybox:latest is required as the rlark image base"
 docker tag busybox:latest localhost:5555/busybox:latest 2>/dev/null || true
 docker push localhost:5555/busybox:latest 2>/dev/null || warn "Cannot push busybox"
 
-ok "Images pushed: $IMAGE, localhost:5555/busybox:latest"
+# Pull the Ray image used by the sample workloads. The Kubernetes runtime only
+# supports the "rlinf.io/ray" workload and replaces the main container command
+# with "rlark-tools ray-launcher", so a workload image must ship the Ray CLI,
+# bash and python. These tags are single-architecture, so pick by host arch.
+RAY_VERSION="${RAY_VERSION:-2.9.0}"
+case "$(uname -m)" in
+  arm64|aarch64) RAY_TAG="${RAY_VERSION}-py310-aarch64" ;;
+  *)             RAY_TAG="${RAY_VERSION}-py310" ;;
+esac
+if ! docker image inspect "rayproject/ray:$RAY_TAG" >/dev/null 2>&1; then
+  log "Pulling rayproject/ray:$RAY_TAG (large image, this takes a while)..."
+  if ! docker pull "rayproject/ray:$RAY_TAG" 2>/dev/null; then
+    docker pull "docker.m.daocloud.io/rayproject/ray:$RAY_TAG" || \
+      err "Cannot pull rayproject/ray:$RAY_TAG"
+    docker tag "docker.m.daocloud.io/rayproject/ray:$RAY_TAG" "rayproject/ray:$RAY_TAG"
+    docker rmi "docker.m.daocloud.io/rayproject/ray:$RAY_TAG" 2>/dev/null
+  fi
+fi
+docker tag "rayproject/ray:$RAY_TAG" localhost:5555/ray:quickstart
+docker push localhost:5555/ray:quickstart || \
+  err "Cannot push the Ray workload image to the local registry"
+
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/server ./cmd/server/ &
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/agent ./cmd/agent/ &
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/controller-manager ./cmd/controller-manager/ &
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/gateway ./cmd/gateway/ &
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/network-sidecar ./cmd/network-sidecar/ &
+GOOS=linux CGO_ENABLED=0 go build -o /tmp/rlark-bin/rlark-tools ./cmd/rlark-tools/ &
+wait
+log "  server:               $(du -h /tmp/rlark-bin/server               | cut -f1)"
+log "  agent:                $(du -h /tmp/rlark-bin/agent                | cut -f1)"
+log "  controller-manager:   $(du -h /tmp/rlark-bin/controller-manager   | cut -f1)"
+log "  gateway:              $(du -h /tmp/rlark-bin/gateway              | cut -f1)"
+log "  network-sidecar:      $(du -h /tmp/rlark-bin/network-sidecar      | cut -f1)"
+log "  rlark-tools:          $(du -h /tmp/rlark-bin/rlark-tools          | cut -f1)"
+
+# busybox, not scratch: the Kubernetes Runtime injects an rlark-tools-init
+# init container that runs "cp /usr/local/bin/rlark-tools" from this image, so
+# the image must ship rlark-tools and a working cp.
+cat > /tmp/Dockerfile.rlark <<'DOCKERFILE'
+FROM busybox:latest
+COPY server /rlark-server
+COPY agent /rlark-agent
+COPY controller-manager /rlark-controller-manager
+COPY gateway /rlark-gateway
+COPY network-sidecar /usr/local/bin/network-sidecar
+COPY rlark-tools /usr/local/bin/rlark-tools
+DOCKERFILE
+
+docker build -t "$IMAGE" -f /tmp/Dockerfile.rlark /tmp/rlark-bin
+log "  Docker image built: $IMAGE"
+docker push "$IMAGE"
+log "  Docker image pushed to local registry"
+
+ok "Images pushed: $IMAGE, localhost:5555/busybox:latest, localhost:5555/ray:quickstart"
 
 # =============================================================================
 # Step 4: Start kcp and PostgreSQL
@@ -210,11 +251,19 @@ log "  CRDs generated to /tmp/rlark/crds"
 kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard \
   apply -f /tmp/rlark/crds/ --validate=false
 log "  CRDs installed to kcp"
+# The controller manager builds field indexes for these kinds at startup and
+# exits if a CRD is not yet served, so block until the API server accepts them.
+kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard \
+  wait --for=condition=Established --timeout=120s \
+  -f /tmp/rlark/crds/
+log "  CRDs established"
 
 # UI credentials
 log "Generating UI credentials..."
 ADMIN_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(8))')
 USER_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(8))')
+# The Gateway refuses to start unless jwt-signing-key holds at least 32 bytes.
+JWT_SIGNING_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
 kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard \
   create namespace default --dry-run=client -o yaml 2>/dev/null | \
   kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard apply --validate=false -f - 2>/dev/null || true
@@ -224,6 +273,7 @@ kubectl --kubeconfig /tmp/rlark/admin.kubeconfig --context root-shard \
   create secret generic rlark-ui-auth -n default \
   --from-literal="admin-password=$ADMIN_PASSWORD" \
   --from-literal="user-password=$USER_PASSWORD" \
+  --from-literal="jwt-signing-key=$JWT_SIGNING_KEY" \
   --validate=false
 ok "kubeconfig, DB config, CRDs, and UI credentials ready"
 
@@ -262,15 +312,20 @@ IMAGE="$IMAGE" \
 docker compose -f "$SCRIPT_DIR/docker-compose.yml" up -d --no-deps --force-recreate rlark-gateway rlark-controller-manager
 
 log "Waiting for Gateway..."
-GATEWAY_READY=false
+# Every /api/v1 route except the login endpoint requires a JWT, so an anonymous
+# probe always returns 401. Log in instead: a successful login proves the
+# Gateway is serving and yields a token usable for manual API calls.
+RLARK_TOKEN=""
 for i in $(seq 1 30); do
-  if curl -s -o /dev/null -w "%{http_code}" "http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes" 2>/dev/null | grep -q "200"; then
-    GATEWAY_READY=true
-    break
-  fi
+  RLARK_TOKEN=$(jq -n --arg password "$ADMIN_PASSWORD" '{username:"admin",password:$password}' | \
+    curl -fsS --connect-timeout 5 --max-time 15 \
+      -H 'Content-Type: application/json' --data-binary @- \
+      "http://localhost:9000/api/v1/auth/login" 2>/dev/null | \
+    jq -er 'select(.role == "admin") | .token | select(type == "string" and length > 0)' 2>/dev/null) || RLARK_TOKEN=""
+  [ -n "$RLARK_TOKEN" ] && break
   sleep 2
 done
-$GATEWAY_READY || err "Gateway failed to become ready"
+[ -n "$RLARK_TOKEN" ] || err "Gateway failed to become ready (login to http://localhost:9000 did not succeed; check 'docker logs rlark-gateway')"
 ok "Control plane is running"
 
 # =============================================================================
@@ -323,8 +378,12 @@ if $START_UI; then
   echo "  docker compose -f $SCRIPT_DIR/docker-compose.yml down"
   echo "  docker rm -f local-registry"
 else
-  echo "Use the API directly:"
-  echo "  curl http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes"
+  echo "Use the API directly (every /api/v1 route except the login endpoint requires a JWT):"
+  echo "  TOKEN=\$(curl -fsS -H 'Content-Type: application/json' \\"
+  echo "    -d '{\"username\":\"admin\",\"password\":\"$ADMIN_PASSWORD\"}' \\"
+  echo "    http://localhost:9000/api/v1/auth/login | jq -r .token)"
+  echo "  curl -fsS -H \"Authorization: Bearer \$TOKEN\" \\"
+  echo "    http://localhost:9000/api/v1/rlinf.io/v1alpha1/nodes"
   echo ""
   echo "Stop:"
   echo "  docker compose -f $SCRIPT_DIR/docker-compose.yml down"

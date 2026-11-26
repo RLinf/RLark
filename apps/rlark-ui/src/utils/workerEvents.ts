@@ -53,6 +53,23 @@ export function refineWorkerEventReason(
   return current;
 }
 
+// keepPullProgressForImage 只保留与指定镜像相关的拉取进展事件。Pulling/Pulled
+// 是按镜像上报的：Worker Pod 还会拉取平台注入的 sidecar/init 镜像，它们先于
+// 业务镜像上报且往往早于业务镜像的拉取，因此在 supersedePullProgress 里会
+// 永远被降级成历史事件，让 tooltip 常驻一条被划掉的"镜像已拉取"。这里按事件
+// message 里携带的镜像名把它剔除；Warning 事件（拉取失败等）不参与过滤，
+// 避免丢失排查信息。镜像缺失时原样返回。
+export function keepPullProgressForImage(
+  events: NodeEventEntry[],
+  image: string | undefined,
+): NodeEventEntry[] {
+  if (!image) return events;
+  return events.filter((event) => {
+    if (!PULL_PROGRESS_REASONS.has(event.reason ?? "")) return true;
+    return (event.message ?? "").includes(image);
+  });
+}
+
 // supersedePullProgress 从"当前有效"事件里剔除已经没有参考价值的镜像拉取
 // 进展：只保留最新的一条，并在出现不早于它的 Warning 事件、或镜像拉取已进入
 // 失败状态时整条剔除。被剔除的事件进入 resolved 分区，仍可排查。

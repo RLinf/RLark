@@ -21,7 +21,7 @@ func TestKubernetesStatusWriterReplacesAndClearsPerNodeInstances(t *testing.T) {
 	writer := KubernetesStatusWriter{Client: kube}
 	observed := []rlarkv1alpha1.TaskInstanceStatus{{Node: "a", Name: "task-a", Phase: rlarkv1alpha1.TaskInstanceRunning, Image: "station:v1"}}
 	intent := IntentForTask(task, rlarkv1alpha1.TaskPhaseRunning, "", []string{"a"}, StatusPriorityWorkload)
-	intent.Instances = observed
+	intent.Observed.Instances = observed
 	if err := writer.WriteStatus(context.Background(), task, intent); err != nil {
 		t.Fatal(err)
 	}

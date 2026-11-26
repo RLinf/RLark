@@ -51,7 +51,6 @@ import {
   getNodeResourceSummary,
   getResourceUsagePercent,
   isBusinessWorkerNode,
-  nodeStatusReasonLabel,
   parseResourceQuantity,
 } from "../../utils/nodes";
 import { useClusters } from "../components/useClusters";
@@ -612,6 +611,7 @@ export function NodeDetailReal({
   copy: c,
   onTaskNavigate,
   onDisplayNameSaved,
+  showConditions = false,
 }: {
   node: CRDNode;
   copy: Copy;
@@ -619,6 +619,7 @@ export function NodeDetailReal({
   // Given to an administrator: the pencil beside the name sets the Node's
   // display name, and the saved Node comes back here.
   onDisplayNameSaved?: (node: CRDNode) => void;
+  showConditions?: boolean;
 }) {
   const zh = c.nav.overview === "总览";
   const clusters = useClusters();
@@ -950,12 +951,12 @@ export function NodeDetailReal({
         <RobotNodeControls node={node} zh={zh} />
         <NodeCameras node={node.metadata.name} namespace={node.metadata.namespace ?? ""} labels={node.metadata.labels} published={node.metadata.annotations?.["rlark.io/cameras"]} zh={zh} />
 
-        {node.status?.reason && (
-          <div className="node-health-message">
+        {showConditions && (node.status?.conditions ?? []).map((condition) => (
+          <div className="node-health-message" key={condition.type}>
             <Activity size={15} />
-            <span>{nodeStatusReasonLabel(node.status.reason, zh)}</span>
+            <span>{`${condition.type}: ${condition.status} · ${condition.reason}`}</span>
           </div>
-        )}
+        ))}
 
         <div className="node-insight-facts">
           <div>

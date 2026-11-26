@@ -22,15 +22,27 @@ RLark 的仓库级 E2E 框架位于 `test/e2e`。每个测例在代码中声明�
 ```bash
 # 创建 Kind、部署 RLark、验证、收集证据并清理
 make test-e2e-rlark
+
+# 不部署数据面 Agent，验证控制面的节点磁盘压力派生逻辑
+make test-e2e-rlark-node-pressure
 ```
 
-这是唯一的 RLark E2E 入口。它会构建 `rlarkadm` 和默认 RLark/UI 镜像，创建隔离的
-Kind 集群、加载镜像、使用 Kubernetes management API 安装 RLark、验证 API discovery 和组件
-可用性、收集证据、卸载 RLark 并删除集群。可通过 `RLARK_SMOKE_IMAGE` 和
-`RLARK_SMOKE_UI_IMAGE` 选择其他构建 tag；如需直接使用已有的本地不可变镜像，还需设置
-`RLARK_SMOKE_BUILD_IMAGES=false`。入口会校验并加载指定镜像，不会替换它们。受限环境可通过
-`RLARK_SMOKE_GO_BASE_IMAGE`、`RLARK_SMOKE_RUNTIME_BASE_IMAGE` 和
-`RLARK_SMOKE_UI_BASE_IMAGE` 指定基础镜像；仓库默认值不包含私有 registry。
+smoke 入口会构建 `rlarkadm` 和默认 RLark/UI 镜像，创建隔离的 Kind 集群、加载镜像、
+使用 Kubernetes management API 安装 RLark、验证 API discovery 和组件可用性、收集证据、
+卸载 RLark 并删除集群。可通过 `RLARK_SMOKE_IMAGE` 和 `RLARK_SMOKE_UI_IMAGE` 选择其他
+构建 tag；如需直接使用已有的本地不可变镜像，还需设置 `RLARK_SMOKE_BUILD_IMAGES=false`。
+入口会校验并加载指定镜像，不会替换它们。受限环境可通过 `RLARK_SMOKE_GO_BASE_IMAGE`、
+`RLARK_SMOKE_RUNTIME_BASE_IMAGE` 和 `RLARK_SMOKE_UI_BASE_IMAGE` 指定基础镜像；仓库
+默认值不包含私有 registry。
+
+node pressure 入口只部署控制面。它在独立 namespace 中创建合成 Node，通过 status 子资源
+注入 `status.diskPressure=true`，并维护通常由 Agent 写入的 `node-heartbeat-<node-name>`
+Lease。测例会验证 Node controller 派生出 `ResourcePressure=True`、`StorageReady=False`、
+`Ready=True`、`Degraded=True` 以及 `Degraded` phase，全程不会写入文件制造磁盘压力。
+该测例不覆盖 Agent 到 status 的映射，该路径由单元测试覆盖。可通过
+`RLARK_NODE_PRESSURE_IMAGE`、`RLARK_NODE_PRESSURE_UI_IMAGE`、
+`RLARK_NODE_PRESSURE_RLARKADM` 和 `RLARK_NODE_PRESSURE_TIMEOUT` 配置该测例；设置
+`RLARK_NODE_PRESSURE_BUILD_IMAGES=false` 可复用已有本地镜像。
 
 镜像、namespace、功能配置和升级版本等产品部署输入属于使用它们的测例，而不是全局框架
 配置。真实场景必须使用不可变镜像身份、唯一运行标签、有界且感知 context 的轮询，以及经过

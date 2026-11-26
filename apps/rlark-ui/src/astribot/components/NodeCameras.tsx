@@ -8,7 +8,7 @@ import "./NodeCameras.css";
 // newest JPEG through the Gateway and its state as the robot's camera service tells it. The console holds one
 // connection for the report and one for the frames, never a stream: over HTTP/1.1 the browser has six to the host for
 // every tab of the console, and an <img> stream is not reliably let go when it leaves the page. A hidden tab holds none.
-export function NodeCameras({ node, namespace, labels, published, zh, heading, onOpen }: {
+export function NodeCameras({ node, namespace, labels, published, zh, heading, onOpen, active = true }: {
   node: string;
   namespace: string;
   labels?: Record<string, string>;
@@ -16,6 +16,9 @@ export function NodeCameras({ node, namespace, labels, published, zh, heading, o
   zh: boolean;
   heading?: string;
   onOpen?: (view: CameraView, trigger: HTMLElement) => void;
+  // While false the loops idle (no report or frame requests) but the last frames and their URLs stay: the detail
+  // dialog pauses its wall while the zoom dialog owns the cameras, and resumes from the newest state on return.
+  active?: boolean;
 }) {
   const robot = Boolean(labels?.["rlark.io/robot-model"]);
   const [report, setReport] = useState<CamerasReport>();
@@ -26,17 +29,29 @@ export function NodeCameras({ node, namespace, labels, published, zh, heading, o
   const [missed, setMissed] = useState<Partial<Record<CameraView, string>>>({});
   // The views that have sent a frame, as the last report says; the frame loop asks for these in turn.
   const views = useRef<CameraView[]>([]);
+  // The active contract lives behind a ref so a pause/resume flips a resolver instead of tearing the loops down.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const resumeRef = useRef(new Set<() => void>());
+  useEffect(() => {
+    if (active) resumeRef.current.forEach((resolve) => resolve());
+    resumeRef.current.clear();
+  }, [active]);
 
   useEffect(() => {
     if (!robot) return;
     const stop = new AbortController();
+    // A stable handle on the pause resolvers for this effect run: the cleanup must wake the loops of this run,
+    // not whatever a later run left in the ref.
+    const resumers = resumeRef.current;
     const within = (ms: number) => AbortSignal.any([stop.signal, AbortSignal.timeout(ms)]);
     const pause = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
     const shown = async () => {
-      while (document.hidden && !stop.signal.aborted) {
+      while ((document.hidden || !activeRef.current) && !stop.signal.aborted) {
         await new Promise<void>((resolve) => {
           document.addEventListener("visibilitychange", () => resolve(), { once: true, signal: stop.signal });
           stop.signal.addEventListener("abort", () => resolve(), { once: true });
+          resumers.add(resolve);
         });
       }
     };
@@ -92,6 +107,8 @@ export function NodeCameras({ node, namespace, labels, published, zh, heading, o
 
     return () => {
       stop.abort();
+      resumers.forEach((resolve) => resolve());
+      resumers.clear();
       Object.values(shot).forEach((frame) => URL.revokeObjectURL(frame.url));
       views.current = [];
       setReport(undefined);

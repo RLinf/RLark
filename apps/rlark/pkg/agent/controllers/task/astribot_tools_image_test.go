@@ -43,7 +43,7 @@ func TestAnotherToolsImageDoesNotReplaceRunningPods(t *testing.T) {
 	// reconcile is one pass of a cluster Agent started with --image=image; it returns the DaemonSet and its tools image.
 	reconcileWith := func(image string) (*appsv1.DaemonSet, string) {
 		t.Helper()
-		execution, err := NewKubernetesExecutionCoordinator(local, image)
+		execution, err := newTestKubernetesExecutionCoordinator(local, image)
 		if err != nil {
 			t.Fatal(err)
 		}

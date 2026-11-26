@@ -108,6 +108,13 @@
   background: var(--red);
 }
 
+.node-row .node-status-ring.degraded,
+.node-row .node-status-ring.cordoned,
+.node-row .node-status-ring.draining,
+.node-row .node-status-ring.registering {
+  background: var(--orange);
+}
+
 .node-row-name {
   flex: 1;
   font-size: 13px;
@@ -283,22 +290,25 @@
 .node-resource-table {
   width: 100%;
   overflow-x: auto;
+  overflow-y: visible;
 }
 
 .node-resource-table-head,
 .node-resource-row {
   min-width: 1380px;
   display: grid;
+  /* 短内容列（类型/可用性/资源压力/任务）用 auto 按内容收缩，避免被 fr 撑宽；
+     仅名称、说明、集群、资源等可变长列保留弹性比例。 */
   grid-template-columns:
+    20px
     minmax(170px, 1.35fr)
-    minmax(110px, 0.75fr)
-    minmax(100px, 0.7fr)
-    minmax(150px, 1fr)
-    minmax(140px, 0.95fr)
-    minmax(130px, 0.85fr)
+    auto
+    auto
+    auto
+    minmax(120px, 0.9fr)
+    minmax(110px, 0.8fr)
     minmax(220px, 1.4fr)
-    minmax(160px, 1.05fr)
-    20px;
+    auto;
   align-items: center;
   column-gap: 14px;
 }
@@ -332,38 +342,17 @@
   gap: 6px;
 }
 
-.node-offline-info-wrap {
-  position: relative;
-  display: inline-flex;
+.node-availability-info {
+  cursor: help;
 }
 
-.node-offline-info {
-  display: inline-grid;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--panel);
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.node-offline-info:hover {
-  color: var(--blue);
-}
-
-.node-offline-info:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
-
-.node-offline-info-tooltip {
+.node-availability-info-tooltip {
   position: absolute;
   z-index: 10;
   bottom: calc(100% + 8px);
   left: 50%;
+  display: grid;
+  gap: 3px;
   width: max-content;
   max-width: 260px;
   padding: 7px 9px;
@@ -373,8 +362,23 @@
   color: var(--panel);
   font-size: 12px;
   line-height: 1.4;
+  visibility: hidden;
+  opacity: 0;
   transform: translateX(-50%);
   box-shadow: 0 6px 18px rgb(15 23 42 / 18%);
+  transition: opacity 0.12s ease;
+}
+
+.placement-node-state
+  > .node-availability-info:hover
+  + .node-availability-info-tooltip,
+.placement-node-card:focus-visible .node-availability-info-tooltip {
+  visibility: visible;
+  opacity: 1;
+}
+
+.node-availability-reason {
+  white-space: nowrap;
 }
 
 .node-detail-link {
@@ -404,51 +408,75 @@
   background: color-mix(in srgb, var(--skyblue-bg) 72%, var(--panel));
 }
 
+.node-resource-table-head.compact,
+.node-resource-row.compact {
+  min-width: 860px;
+  grid-template-columns:
+    20px
+    minmax(190px, 1.45fr)
+    auto
+    auto
+    minmax(140px, 1fr)
+    minmax(190px, 1.35fr);
+}
+
 .node-resource-table-head.has-admin-actions,
 .node-resource-row.has-admin-actions {
-  min-width: 1510px;
+  min-width: 1640px;
   grid-template-columns:
+    auto
     minmax(170px, 1.35fr)
-    minmax(110px, 0.75fr)
-    minmax(100px, 0.7fr)
-    minmax(150px, 1fr)
-    minmax(140px, 0.95fr)
-    minmax(130px, 0.85fr)
+    auto
+    auto
+    auto
+    minmax(120px, 0.9fr)
+    minmax(110px, 0.8fr)
     minmax(220px, 1.4fr)
-    minmax(160px, 1.05fr)
-    minmax(190px, 1.15fr);
+    auto;
+}
+
+.node-resource-table-head.compact.has-admin-actions,
+.node-resource-row.compact.has-admin-actions {
+  min-width: 940px;
+  grid-template-columns:
+    auto
+    minmax(190px, 1.45fr)
+    auto
+    auto
+    minmax(140px, 1fr)
+    minmax(190px, 1.35fr);
 }
 
 .node-resource-table-head.has-selection,
 .node-resource-row.has-selection {
-  min-width: 1430px;
+  min-width: 1414px;
   grid-template-columns:
     34px
+    20px
     minmax(170px, 1.35fr)
-    minmax(110px, 0.75fr)
-    minmax(100px, 0.7fr)
-    minmax(150px, 1fr)
-    minmax(140px, 0.95fr)
-    minmax(130px, 0.85fr)
+    auto
+    auto
+    auto
+    minmax(120px, 0.9fr)
+    minmax(110px, 0.8fr)
     minmax(220px, 1.4fr)
-    minmax(160px, 1.05fr)
-    20px;
+    auto;
 }
 
 .node-resource-table-head.has-admin-actions.has-selection,
 .node-resource-row.has-admin-actions.has-selection {
-  min-width: 1560px;
+  min-width: 1674px;
   grid-template-columns:
     34px
+    auto
     minmax(170px, 1.35fr)
-    minmax(110px, 0.75fr)
-    minmax(100px, 0.7fr)
-    minmax(150px, 1fr)
-    minmax(140px, 0.95fr)
-    minmax(130px, 0.85fr)
+    auto
+    auto
+    auto
+    minmax(120px, 0.9fr)
+    minmax(110px, 0.8fr)
     minmax(220px, 1.4fr)
-    minmax(160px, 1.05fr)
-    minmax(190px, 1.15fr);
+    auto;
 }
 
 .node-resource-row.selected {
@@ -853,6 +881,10 @@
   }
 }
 
+.node-scheduling-column {
+  text-align: right;
+}
+
 .node-scheduling-actions {
   display: flex;
   align-items: center;
@@ -909,6 +941,13 @@
 
 .node-resource-row .node-status-ring.offline {
   background: var(--red);
+}
+
+.node-resource-row .node-status-ring.degraded,
+.node-resource-row .node-status-ring.cordoned,
+.node-resource-row .node-status-ring.draining,
+.node-resource-row .node-status-ring.registering {
+  background: var(--orange);
 }
 
 .node-type-cell {
