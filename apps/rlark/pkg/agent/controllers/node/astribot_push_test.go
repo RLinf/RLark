@@ -140,3 +140,19 @@ func TestTheRestartAskedForReachesTheNodeAndGoesWithIt(t *testing.T) {
 		t.Fatalf("the restart taken away stays: %v", local.Annotations)
 	}
 }
+
+func TestTheStationMarkReachesTheRobotAndGoesWithIt(t *testing.T) {
+	mark := `{"mark":"repair","reason":"换夹爪","by":"op","at":"2026-11-26T10:00:00Z"}`
+	management := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{"rlark.io/station-mark-set": mark}}}
+	local := &corev1.Node{}
+	if !pullManagementAnnotations(management, local) || local.Annotations["rlark.io/station-mark-set"] != mark {
+		t.Fatalf("the mark did not go down: %v", local.Annotations)
+	}
+	if merged := mergeManagementAnnotations(map[string]string{}, local.Annotations); len(merged) != 0 {
+		t.Fatalf("the mark went back up: %v", merged)
+	}
+	delete(management.Annotations, "rlark.io/station-mark-set")
+	if !pullManagementAnnotations(management, local) || len(local.Annotations) != 0 {
+		t.Fatalf("the cleared mark stays: %v", local.Annotations)
+	}
+}

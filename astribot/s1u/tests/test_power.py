@@ -481,7 +481,8 @@ def test_the_claim_file_follows_the_watched_nodes_label_and_stays_while_the_api_
 
 def test_a_restart_the_holder_asked_for_lowers_and_raises_the_robot_once_with_its_desired_state_untouched(tmp_path, monkeypatch):
     """C1: the driver stopped, the arms let sink, for level power the motors off for the vendor's 10 s, then ready;
-    only for the claim holder whose Run every mark names; each id once, also across a restart of the service."""
+    only for the claim holder whose Run every mark names and with no session on the device layer; each id once, also
+    when an older one is written again and across a restart of the service."""
     monkeypatch.setattr(power, "IN_USE", tmp_path / "in-use")
     monkeypatch.setattr(power, "CLAIM_FILE", tmp_path / "claim")
     monkeypatch.setattr(power, "MAINTENANCE", tmp_path / "maintenance")
@@ -527,6 +528,9 @@ def test_a_restart_the_holder_asked_for_lowers_and_raises_the_robot_once_with_it
     assert not restart(run)  # the same id is not run again
     (tmp_path / "in-use" / "s1u-device").write_text("a session of Run run_a is attached to the device layer")
     assert restart(dict(run, id="21", holder="run_b")) and "held by run_a" in service.restart["error"] and not sent
+    # The holder's own session still attached: its policy may be running, so nothing is cut under it.
+    assert restart(dict(run, id="21")) and "s1u-device" in service.restart["error"] and not sent
+    (tmp_path / "in-use" / "s1u-device").unlink()
     # The holder's power restart: driver off, 5 s for the arms, motors off, 10 s, then up to ready.
     assert restart(dict(run, id="22"))
     assert service.restart["phase"] == "done" and service.restart["error"] == "", service.restart
@@ -546,6 +550,9 @@ def test_a_restart_the_holder_asked_for_lowers_and_raises_the_robot_once_with_it
                         type("T", (), {"start": lambda self: None})())
     fresh.restart_step(dict(run, id="23", level="driver"))
     assert fresh.restart["phase"] == "done" and not started
+    # An older request written again after a newer one is not run again either.
+    fresh.restart_step(dict(run, id="22"))
+    assert fresh.restart["id"] == "23" and not started
     # While a restart runs, the convergence waits and presses are refused.
     service.restart_step(dict(run, id="24"))
     service.converge("ready", "", clock[0], NONE)

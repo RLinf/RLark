@@ -27,8 +27,10 @@ const (
 )
 
 // downwardNodeAnnotations are the management Node's annotations the node itself acts on: the restart its claim
-// holder asked for (the Gateway's POST nodes/{name}/robot-restart), which the robot's power service runs.
-var downwardNodeAnnotations = []string{"rlark.io/robot-restart"}
+// holder asked for (the Gateway's POST nodes/{name}/robot-restart), which the robot's power service runs, and its
+// Station's mark with its reason (the Gateway's station mark), which the robot's power service serves to its device
+// layer for its lamp. Both are the management plane's (isSiteOwnedNodeAnnotation), so neither goes back up.
+var downwardNodeAnnotations = []string{"rlark.io/robot-restart", "rlark.io/station-mark-set"}
 
 // pullManagementAnnotations puts downwardNodeAnnotations of the management Node on the local Node, and answers
 // whether it changed it.

@@ -85,13 +85,14 @@ This service converges the robot on it every few seconds, for as long as the x86
   restarted, the tuner did not renew it), the robot is brought back to its desired state: one a person powered off
   stays off.
 - a restart the Run that holds the robot asks for at RLark (the Node's annotation rlark.io/robot-restart: {id,
-  level, holder}, written by the Gateway's POST nodes/{name}/robot-restart; restart_step) runs once per id (the last
-  one is kept on the host before it runs, so a restart of this service never runs it again), its desired state
-  untouched: the driver stopped and the arms let sink (the node profile's S1U_DRIVER_STOP_SECONDS),
-  for level power the motors off for POWER_OFF_SECONDS, then brought up again to ready. Only while the claim names
-  that holder and every component's mark under /run/rlark/in-use names its Run ("... Run <holder> ...", the holder
-  not followed or preceded by a word character, "." or "-"), and no
-  maintenance holds the robot; otherwise it fails with the reason. Nothing else lowers or raises the robot meanwhile
+  level, holder}, written by the Gateway's POST nodes/{name}/robot-restart; restart_step) runs once per id and holder
+  (the last RESTART_HISTORY started are kept on the host before each runs, so neither a restart of this service nor
+  an older request written again runs one twice), its desired state untouched: the driver stopped and the arms let
+  sink (the node profile's S1U_DRIVER_STOP_SECONDS), for level power the motors off for POWER_OFF_SECONDS, then
+  brought up again to ready. Only while the claim names that holder, every component's mark under /run/rlark/in-use
+  names its Run ("... Run <holder> ...", the holder not followed or preceded by a word character, "." or "-"), the
+  device layer has no session (its mark DEVICE_MARK: a session drives the robot until it is released, whoever asked)
+  and no maintenance holds the robot; otherwise it fails with the reason. Nothing else lowers or raises the robot meanwhile
   (the convergence waits, a press is refused "restarting"). Its progress is the annotation rlark.io/power.restart,
   {id, level, holder, phase: lowering | raising | done | failed, error, at}, and "restart" in rlark.io/power.
 - not up before the tuner's first word since the host booted (no lease file yet): a robot whose node profile needs
@@ -140,6 +141,8 @@ IN_FORCE, CLAIM = "rlark.io/power-desired", "rlark.io/robot-claim"
 STATION, STATION_MARK = "rlark.io/station", "rlark.io/station-mark-set"
 RESTART, RESTARTED = "rlark.io/robot-restart", "rlark.io/power.restart"
 RESTARTING = ("lowering", "raising")  # the phases of a restart under way
+RESTART_HISTORY = 32  # the restarts started on this host, by (id, holder), that are never run again
+DEVICE_MARK = "s1u-device"  # the device layer's (deviceImage) mark while a session is admitted or attached
 
 
 def robot_state(codes, powered_off_s=None, driver_stop_wait_s=0.0):
@@ -172,12 +175,16 @@ def in_use():
 
 
 def restart_refusal(holder, lease):
-    """Why the restart ``holder`` asked for is not run, or "": the claim is another's, a mark is not its Run's, or a
-    maintenance holds the robot."""
+    """Why the restart ``holder`` asked for is not run, or "": the claim is another's, a mark is not its Run's, the
+    device layer still has a session, or a maintenance holds the robot."""
     held = json.loads(CLAIM_FILE.read_text())["holder"] if CLAIM_FILE.exists() else None
     if held != holder:
         return "the robot is held by %s, not by %s" % (held or "nobody", holder)
-    others = {name: why for name, why in marks().items() if not re.search(r"(?<![\w.-])Run %s(?![\w.-])" % re.escape(holder), why)}
+    found = marks()
+    if DEVICE_MARK in found:
+        return "a session of the device layer still drives the robot (%s: %s): it is released first" % (
+            DEVICE_MARK, found[DEVICE_MARK])
+    others = {name: why for name, why in found.items() if not re.search(r"(?<![\w.-])Run %s(?![\w.-])" % re.escape(holder), why)}
     if others:
         return "in use by others: %s" % "; ".join("%s: %s" % mark for mark in others.items())
     return "maintenance: %s" % lease["why"] if lease and lease["kind"] else ""
@@ -228,18 +235,22 @@ class Power:
         # The label is None until the Node has been read once or a kept state says what it was: a robot whose desired
         # state is not known is left as it is.
         self.label, self.used = None, None
-        # The last restart a holder asked for and what became of it (published as RESTARTED), kept with the rest: a
-        # request whose id and holder it names is never run again, whatever the Node says. One that was under way when
-        # this service stopped did not end. A record from before restarts were kept has none.
-        self.restart = None
         if record is not None and record.exists():
             kept = json.loads(record.read_text())
             self.desired, self.applied, self.label, self.used = kept["desired"], kept["applied"], kept["label"], kept["used"]
-            self.restart = kept.get("restart")
-            if self.restart and self.restart["phase"] in RESTARTING:
+        # The last restart a holder asked for and what became of it (published as RESTARTED), and the (id, holder) of
+        # the last RESTART_HISTORY started: a request among them is never run again, whatever the Node says. Kept
+        # beside the record (restarts.json, written once a restart is first asked for on this host); one that was under
+        # way when this service stopped did not end.
+        self.restart, self.started = None, []
+        self.restarts = record and record.with_name("restarts.json")
+        if self.restarts is not None and self.restarts.exists():
+            kept = json.loads(self.restarts.read_text())
+            self.restart, self.started = kept["last"], [tuple(started) for started in kept["started"]]
+            if self.restart["phase"] in RESTARTING:
                 self.restart = dict(self.restart, phase="failed", error="the power service restarted during it",
                                     at=time.time())
-        self.saving = threading.Lock()  # the restart's thread writes the record too
+        self.saving = threading.Lock()  # the restart's thread writes its record too
         # Why nothing converges now; the recoveries.
         self.waiting, self.recovered = "", []
         # The Node as last watched: {"labels", "annotations"}, empty until it was read (watch).
@@ -255,9 +266,15 @@ class Power:
             return
         with self.saving:
             self.record.with_suffix(".new").write_text(json.dumps(dict(
-                desired=self.desired, applied=self.applied, label=self.label, used=self.used,
-                restart=self.restart)) + "\n")
+                desired=self.desired, applied=self.applied, label=self.label, used=self.used)) + "\n")
             os.replace(self.record.with_suffix(".new"), self.record)
+
+    def save_restart(self):
+        if self.restarts is None:
+            return
+        with self.saving:
+            self.restarts.with_suffix(".new").write_text(json.dumps(dict(last=self.restart, started=self.started)) + "\n")
+            os.replace(self.restarts.with_suffix(".new"), self.restarts)
 
     def receive(self, text):
         """One publication of the status codes (comma-separated)."""
@@ -367,14 +384,14 @@ class Power:
 
     def restart_step(self, request, sleep=time.sleep):
         """A restart the holder asked for (``request``: the Node's RESTART) started on a thread of its own, unless it
-        is the last one (kept on the host before it is run) or one runs."""
-        if request is None or self.restarting() or self.restart and (self.restart["id"], self.restart["holder"]) == (
-                request["id"], request["holder"]):
+        is one of those started already (kept on the host before each runs) or one runs."""
+        if request is None or self.restarting() or (request["id"], request["holder"]) in self.started:
             return
         with self.lock:
             self.restart = dict(id=request["id"], level=request["level"], holder=request["holder"], phase="lowering",
                                 error="", at=time.time())
-            self.save()
+            self.started = (self.started + [(request["id"], request["holder"])])[-RESTART_HISTORY:]
+            self.save_restart()
         print("%s restart %s (%s) for %s" % (time.strftime("%F %T"), request["id"], request["level"], request["holder"]),
               flush=True)
         threading.Thread(target=self.restart_run, args=(maintenance(), sleep), daemon=True).start()
@@ -386,7 +403,7 @@ class Power:
 
         def phase(name, error=""):
             self.restart = dict(restart, phase=name, error=error, at=time.time())
-            self.save()
+            self.save_restart()
             if error:
                 print("%s restart %s failed: %s" % (time.strftime("%F %T"), restart["id"], error), flush=True)
 
