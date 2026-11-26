@@ -24,7 +24,8 @@ It speaks ROS itself (rospy, the vendor's noetic) to the robot's master at S1U_R
 (the container is on the host's network). It listens on a Unix socket only (S1U_SERVICE_SOCKET); RLark reaches it on
 the node and decides who may press, and records who did.
 
-    GET  /power   the state: monitor, powered, driver, emergency_stop, ready, errors, power_level, driver_level, power_wait_s
+    GET  /power   the state: monitor, powered, driver, emergency_stop, ready, errors, power_level, driver_level, power_wait_s,
+                  driver_stop_wait_s, restart (the last restart asked for at RLark and its phase, or null)
     POST /power   {"action": power_on | power_off | driver_on | driver_off | restart | bring_up | shut_down,
                    "force": false, "reason": "..."}: 200 {sent, value, success, message, state}; 409 {reason, state}
                    when refused; 400 when force comes without a reason; 503 when the vendor's service failed; 504 when
@@ -36,7 +37,7 @@ motors).
                   first hold sends the vendor's web server (S1U_ROS_IP_ADDRESS:5141, POST /msg) pose_running, each
                   further hold keeps the robot moving, and pose_stop is sent on stop or once no hold came for
                   HOLD_SECONDS (a dead man's switch: a button let go, a browser or link gone). 200 {pose, moving,
-                  started, vendor}; 409 {reason, state} when refused: estop, fault, not_powered, driver_not_running, claimed (a Run
+                  started, vendor}; 409 {reason, state} when refused: estop, fault, not_powered, driver_not_running, restarting, claimed (a Run
                   holds the robot), in_use, maintenance: <why>, vendor_monitor_down; a hold refused while the robot
                   moves stops it. 503 when the vendor's web server failed. The vendor checks the robot's state, its
                   control source and permission itself.
@@ -79,6 +80,14 @@ This service converges the robot on it every few seconds, for as long as the x86
   the lease while nobody did, and nobody was let on since). When the lease ends (the maintenance is over, the host
   restarted, the tuner did not renew it), the robot is brought back to its desired state: one a person powered off
   stays off.
+- a restart the Run that holds the robot asks for at RLark (the Node's annotation rlark.io/robot-restart: {id,
+  level, holder}, written by the Gateway's POST nodes/{name}/robot-restart; restart_step) runs once per id, its
+  desired state untouched: the driver stopped and the arms let sink (the node profile's S1U_DRIVER_STOP_SECONDS),
+  for level power the motors off for POWER_OFF_SECONDS, then brought up again to ready. Only while the claim names
+  that holder and every component's mark under /run/rlark/in-use names its Run ("... Run <holder> ..."), and no
+  maintenance holds the robot; otherwise it fails with the reason. Nothing else lowers or raises the robot meanwhile
+  (the convergence waits, a press is refused "restarting"). Its progress is the annotation rlark.io/power.restart,
+  {id, level, holder, phase: lowering | raising | done | failed, error, at}, and "restart" in rlark.io/power.
 - not up before the tuner's first word since the host booted (no lease file yet): a robot whose node profile needs
   a restart, a new one's first of all, gets it before its motors are ever on.
 Powering a robot off for good is done at RLark: with the desired state still ready, a power-off at the vendor's page
@@ -87,6 +96,7 @@ On the socket, a press that lowers the robot below its desired state is refused 
 """
 import json
 import os
+import re
 import signal
 import socketserver
 import ssl
@@ -121,6 +131,8 @@ VENDOR_WEB_PORT = 5141
 ACCOUNT = "/var/run/secrets/kubernetes.io/serviceaccount"
 ANNOTATION, STATE, WANTED = "rlark.io/power", "rlark.io/power-state", "rlark.io/robot-power"
 IN_FORCE, CLAIM = "rlark.io/power-desired", "rlark.io/robot-claim"
+RESTART, RESTARTED = "rlark.io/robot-restart", "rlark.io/power.restart"
+RESTARTING = ("lowering", "raising")  # the phases of a restart under way
 
 
 def robot_state(codes, powered_off_s=None, driver_stop_wait_s=0.0):
@@ -142,10 +154,26 @@ def robot_state(codes, powered_off_s=None, driver_stop_wait_s=0.0):
                 driver_stop_wait_s=round(driver_stop_wait_s, 1))
 
 
+def marks():
+    """Each component's mark under /run/rlark/in-use: {name: why}."""
+    return {path.name: path.read_text().strip()[:200] for path in sorted(IN_USE.glob("*"))} if IN_USE.is_dir() else {}
+
+
 def in_use():
-    """Why the robot is in use now (each component's mark under /run/rlark/in-use), or ""."""
-    marks = sorted(IN_USE.glob("*")) if IN_USE.is_dir() else []
-    return "; ".join("%s: %s" % (path.name, path.read_text().strip()[:200]) for path in marks)
+    """Why the robot is in use now (each component's mark), or ""."""
+    return "; ".join("%s: %s" % mark for mark in marks().items())
+
+
+def restart_refusal(holder, lease):
+    """Why the restart ``holder`` asked for is not run, or "": the claim is another's, a mark is not its Run's, or a
+    maintenance holds the robot."""
+    held = json.loads(CLAIM_FILE.read_text())["holder"] if CLAIM_FILE.exists() else None
+    if held != holder:
+        return "the robot is held by %s, not by %s" % (held or "nobody", holder)
+    others = {name: why for name, why in marks().items() if not re.search(r"\bRun %s\b" % re.escape(holder), why)}
+    if others:
+        return "in use by others: %s" % "; ".join("%s: %s" % mark for mark in others.items())
+    return "maintenance: %s" % lease["why"] if lease and lease["kind"] else ""
 
 
 def maintenance():
@@ -198,6 +226,8 @@ class Power:
             self.desired, self.applied, self.label, self.used = kept["desired"], kept["applied"], kept["label"], kept["used"]
         # Why nothing converges now; the recoveries.
         self.waiting, self.recovered = "", []
+        # The last restart a holder asked for and what became of it (RESTARTED); None until the Node was read.
+        self.restart = None
         self.tried, self.pause, self.retry_at, self.converged = None, RETRY_SECONDS[0], 0.0, False
 
     def keep(self, desired, applied):
@@ -236,6 +266,8 @@ class Power:
             return 409, dict(reason="desired", desired=self.desired, state=self.state())
         with self.lock:
             state, lease = self.state(), maintenance()
+            if self.restarting():
+                return 409, dict(reason="restarting", state=state)
             if action in RAISES and lease and lease["kind"]:
                 return 409, dict(reason="maintenance: %s" % lease["why"], state=state)
             if action in ("bring_up", "shut_down"):
@@ -308,6 +340,62 @@ class Power:
             return 504, dict(detail="errors: %s" % ",".join(state["errors"]), state=state)
         return 200, dict(sent="bring_up", value=True, success=True, message="ready", state=state)
 
+    def restarting(self):
+        return self.restart is not None and self.restart["phase"] in RESTARTING
+
+    def restart_step(self, request, reported, sleep=time.sleep):
+        """A restart the holder asked for (``request``: the Node's RESTART) started on a thread of its own, unless it
+        is the last one (``reported``: RESTARTED as this service published it before it started) or one runs."""
+        if self.restart is None and reported:
+            # Under way when this service stopped: it did not end.
+            self.restart = reported if reported["phase"] not in RESTARTING else dict(
+                reported, phase="failed", error="the power service restarted during it", at=time.time())
+        if request is None or self.restarting() or self.restart and (self.restart["id"], self.restart["holder"]) == (
+                request["id"], request["holder"]):
+            return
+        with self.lock:
+            self.restart = dict(id=request["id"], level=request["level"], holder=request["holder"], phase="lowering",
+                                error="", at=time.time())
+        print("%s restart %s (%s) for %s" % (time.strftime("%F %T"), request["id"], request["level"], request["holder"]),
+              flush=True)
+        threading.Thread(target=self.restart_run, args=(maintenance(), sleep), daemon=True).start()
+
+    def restart_run(self, lease, sleep):
+        """The restart in self.restart: the driver stopped and the arms let sink, for level power the motors off for
+        POWER_OFF_SECONDS, then up to ready. Each step waited for up to SHUT_DOWN_SECONDS (up: bring_up's)."""
+        restart = self.restart
+
+        def phase(name, error=""):
+            self.restart = dict(restart, phase=name, error=error, at=time.time())
+            if error:
+                print("%s restart %s failed: %s" % (time.strftime("%F %T"), restart["id"], error), flush=True)
+
+        state = self.state()
+        refused = restart_refusal(restart["holder"], lease) or (
+            "the vendor's system monitor does not answer" if not state["monitor"] else
+            "emergency stop" if state["emergency_stop"] else "")
+        if refused:
+            return phase("failed", refused)
+        try:
+            if state["driver"]:
+                self.send("driver_off")
+                if not self.wait(lambda s: not s["driver"], SHUT_DOWN_SECONDS, sleep):
+                    return phase("failed", "the driver still runs %d s after driver_off" % SHUT_DOWN_SECONDS)
+            if not self.wait(lambda s: s["driver_stop_wait_s"] == 0, SHUT_DOWN_SECONDS, sleep):
+                return phase("failed", "the driver's stop has not settled")
+            if restart["level"] == "power" and self.state()["powered"]:
+                self.send("power_off")
+                if not self.wait(lambda s: not s["powered"], SHUT_DOWN_SECONDS, sleep):
+                    return phase("failed", "still powered %d s after power_off" % SHUT_DOWN_SECONDS)
+                self.wait(lambda s: s["power_wait_s"] == 0, POWER_OFF_SECONDS + 1.0, sleep)
+            phase("raising")
+            status, answer = self.bring_up(sleep)
+        except Exception as error:  # the vendor's service is gone or failed
+            return phase("failed", "vendor service failed: %s" % error)
+        if status != 200:
+            return phase("failed", answer.get("reason") or answer["detail"])
+        phase("done")
+
     def summary(self):
         """What the robot is now, in a word (the Node's label STATE)."""
         state = self.state()
@@ -327,6 +415,9 @@ class Power:
         ``label`` is None (the Node was never read and nothing was kept)."""
         if label is None:
             self.waiting = "the Node has not been read: the desired state is not known"
+            return
+        if self.restarting():
+            self.waiting = "restart %s: %s" % (self.restart["id"], self.restart["phase"])
             return
         if label != self.used:
             self.used = None  # set again at RLark since the Run: the label's state is in force
@@ -414,6 +505,8 @@ class Pose:
             return "not_powered", state
         if not state["driver"]:
             return "driver_not_running", state
+        if self.power.restarting():
+            return "restarting", state
         if CLAIM_FILE.exists():
             return "claimed", state
         if in_use():
@@ -485,7 +578,8 @@ def handler(power, pose):
             self.wfile.write(data)
 
         def do_GET(self):
-            self.reply(*((200, power.state()) if self.path == "/power" else (404, dict(detail="no such path"))))
+            self.reply(*((200, dict(power.state(), restart=power.restart)) if self.path == "/power" else
+                         (404, dict(detail="no such path"))))
 
         def do_POST(self):
             if self.path not in ("/power", "/pose"):
@@ -562,6 +656,7 @@ def watch(seen):
                     if event["type"] not in ("ADDED", "MODIFIED"):
                         continue
                     seen["labels"] = labels = event["object"]["metadata"].get("labels", {})
+                    seen["annotations"] = event["object"]["metadata"].get("annotations", {})
                     if CLAIM in labels:
                         CLAIM_FILE.with_suffix(".new").write_text(json.dumps(dict(holder=labels[CLAIM])))
                         CLAIM_FILE.with_suffix(".new").replace(CLAIM_FILE)
@@ -573,12 +668,16 @@ def watch(seen):
 
 
 def follow(power):
-    """Every 5 s: the desired state from the Node as last watched (the last one seen while the API server is away),
-    one step towards it, and what the robot is and why it is not converging published when they change."""
+    """Every 5 s: a restart asked for at RLark started, the desired state from the Node as last watched (the last one
+    seen while the API server is away), one step towards it, and what the robot is, why it is not converging and the
+    restart's progress published when they change."""
     published, seen = None, {}
     vital(watch, seen)
     while True:
         label = seen["labels"].get(WANTED, "") if "labels" in seen else power.label
+        if "annotations" in seen:
+            power.restart_step(*(json.loads(seen["annotations"][key]) if key in seen["annotations"] else None
+                                 for key in (RESTART, RESTARTED)))
         try:
             power.converge(label, in_use(), time.monotonic(), maintenance())
         except Exception as error:  # the vendor's service is gone or failed: said, and tried again
@@ -586,7 +685,7 @@ def follow(power):
         state = power.state()
         now = (power.summary(), power.desired, json.dumps(dict(
             desired=power.desired, used_by_a_run=power.used is not None, state=power.summary(), waiting=power.waiting,
-            recovered=power.recovered, errors=state["errors"])))
+            recovered=power.recovered, errors=state["errors"], restart=power.restart)))
         if now != published:
             if published is None or now[0] != published[0]:
                 # Which of the vendor's codes made the state what it is: a fault or an emergency stop names them.
@@ -594,7 +693,8 @@ def follow(power):
                                          if state["errors"] else ""), flush=True)
             try:
                 node("/" + os.environ["NODE_NAME"],
-                     dict(labels={STATE: now[0], IN_FORCE: now[1]}, annotations={ANNOTATION: now[2]})).close()
+                     dict(labels={STATE: now[0], IN_FORCE: now[1]}, annotations={
+                         ANNOTATION: now[2], RESTARTED: power.restart and json.dumps(power.restart)})).close()
                 published = now
             except OSError as error:
                 print("the Node is not written: %s" % error, flush=True)

@@ -465,4 +465,73 @@ def test_the_claim_file_follows_the_watched_nodes_label_and_stays_while_the_api_
     with pytest.raises(StopIteration):
         power.watch(seen)
     assert files == [dict(holder="run-a"), dict(holder="run-a"), dict(holder="run-b"), dict(holder="run-b"), None]
-    assert asked[0] == ("?watch=true&fieldSelector=metadata.name%3Ds1u-03-x86&timeoutSeconds=30", 35) and seen == dict(labels={})
+    assert asked[0] == ("?watch=true&fieldSelector=metadata.name%3Ds1u-03-x86&timeoutSeconds=30", 35) and seen == dict(labels={}, annotations={})
+
+
+def test_a_restart_the_holder_asked_for_lowers_and_raises_the_robot_once_with_its_desired_state_untouched(tmp_path, monkeypatch):
+    """C1: the driver stopped, the arms let sink, for level power the motors off for the vendor's 10 s, then ready;
+    only for the claim holder whose Run every mark names; each id once, also across a restart of the service."""
+    monkeypatch.setattr(power, "IN_USE", tmp_path / "in-use")
+    monkeypatch.setattr(power, "CLAIM_FILE", tmp_path / "claim")
+    monkeypatch.setattr(power, "MAINTENANCE", tmp_path / "maintenance")
+    (tmp_path / "in-use").mkdir()
+    (tmp_path / "claim").write_text(json.dumps(dict(holder="run_a")))
+    (tmp_path / "maintenance").write_text(json.dumps(dict(kind="", until=0)))
+    clock = [1000.0]
+    monkeypatch.setattr(power.time, "monotonic", lambda: clock[0])
+    sent = []
+
+    def call(name, value):
+        sent.append((name.rsplit("/", 1)[1], value, clock[0]))
+        codes = set(service.codes)
+        if "power" in name:
+            codes = {"12000000"} if value else set()
+        else:
+            codes = codes | {"13000000"} if value else codes - {"13000000"}
+        service.receive(",".join(sorted(codes)))
+        return True, ""
+
+    def tick(seconds):
+        clock[0] += seconds
+        service.receive(",".join(service.codes))
+
+    service = power.Power(call, driver_stop_seconds=5.0)
+    service.receive("12000000,13000000")
+    service.converge("ready", "", clock[0], NONE)
+    run = dict(id="20", level="power", holder="run_a")
+
+    def restart(request, reported=None):
+        started = []
+        monkeypatch.setattr(power.threading, "Thread", lambda target, args, daemon: started.append((target, args)) or
+                            type("T", (), {"start": lambda self: None})())
+        service.restart_step(request, reported, sleep=tick)
+        for target, args in started:
+            target(*args)
+        return bool(started)
+
+    # Another Run's mark, or another holder: refused with the reason, nothing sent.
+    (tmp_path / "in-use" / "fleet-station").write_text("the Station serves Run run_a")
+    (tmp_path / "in-use" / "s1u-device").write_text("a session of Run run_b is attached to the device layer")
+    assert restart(run) and service.restart["phase"] == "failed" and "s1u-device" in service.restart["error"] and not sent
+    assert not restart(run)  # the same id is not run again
+    (tmp_path / "in-use" / "s1u-device").write_text("a session of Run run_a is attached to the device layer")
+    assert restart(dict(run, id="21", holder="run_b")) and "held by run_a" in service.restart["error"] and not sent
+    # The holder's power restart: driver off, 5 s for the arms, motors off, 10 s, then up to ready.
+    assert restart(dict(run, id="22"))
+    assert service.restart["phase"] == "done" and service.restart["error"] == "", service.restart
+    names = [(step[0], step[1]) for step in sent]
+    assert names == [("driver_command", False), ("power_command", False), ("power_command", True), ("driver_command", True)]
+    assert sent[1][2] - sent[0][2] >= 5.0 and sent[2][2] - sent[1][2] >= power.POWER_OFF_SECONDS
+    assert service.desired == "ready" and service.state()["ready"]
+    # A driver restart leaves the motors on.
+    sent.clear()
+    assert restart(dict(run, id="23", level="driver")) and service.restart["phase"] == "done"
+    assert [(step[0], step[1]) for step in sent] == [("driver_command", False), ("driver_command", True)]
+    # While a restart runs, the convergence waits and presses are refused.
+    service.restart = dict(service.restart, id="24", phase="lowering")
+    service.converge("ready", "", clock[0], NONE)
+    assert service.waiting == "restart 24: lowering" and service.act("driver_on")[1]["reason"] == "restarting"
+    # The service restarted during a restart: it reads its own report and does not run the request again.
+    fresh = power.Power(call, driver_stop_seconds=5.0)
+    fresh.restart_step(dict(run, id="24"), dict(service.restart))
+    assert fresh.restart["phase"] == "failed" and "restarted during it" in fresh.restart["error"]

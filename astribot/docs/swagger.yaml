@@ -1151,6 +1151,38 @@ paths:
         '400': {description: Invalid mark or reason, or the node is not a robot}
         '403': {description: Operator access is required}
         '404': {description: Node not found}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/robot-restart:
+    post:
+      tags: [Node]
+      summary: Restart a robot's driver, or its motors and driver, for the Run that holds it (audited with its actor)
+      description: >-
+        Writes the annotation rlark.io/robot-restart {id, level, holder, by, at} on the Node; the agents carry it to
+        the member cluster's Node, where the robot's power service (s1u-robot Addon) runs each new id once: the
+        driver stopped and the arms let sink (the node profile's S1U_DRIVER_STOP_SECONDS), for level power the motors
+        off for the vendor's 10 s, then powered and the driver started until ready. It runs only while the claim on
+        the robot names the holder and every in-use mark on the robot names the holder's Run ("... Run <holder> ...")
+        and no maintenance holds it; otherwise it fails with the reason. The desired power (rlark.io/robot-power)
+        stays as it is. Progress is the Node's annotation rlark.io/power.restart and "restart" in rlark.io/power:
+        {id, level, holder, phase: lowering | raising | done | failed, error, at (unix seconds)}.
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [level, holder, request_id]
+              properties:
+                level: {type: string, enum: [driver, power]}
+                holder: {type: string, description: "The Run that holds the robot (its claim's holder)"}
+                request_id: {type: string, maxLength: 63, description: "A label value; the same id asked again is the same request"}
+      responses:
+        '200': {description: "The request recorded: id, level, holder, by, at"}
+        '400': {description: level, holder or request_id is invalid}
+        '404': {description: Not Found}
+        '409': {description: "ROBOT_CLAIM_BUSY: the robot is not held by holder (details.current: its claim, null: none), or its station is marked (details.mark)"}
   /api/v1/rlinf.io/v1alpha1/nodes/{name}/robot-power:
     put:
       tags: [Node]

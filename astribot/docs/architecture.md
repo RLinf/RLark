@@ -151,7 +151,8 @@ Addon 的包：装或更新时，Gateway（或发布命令）把“名字@版本
 | 电源现状 | 标签 `rlark.io/power-state`（`off`/`powered`/`ready`/`estop`/`fault`/`unknown`），注解 `rlark.io/power` |
 | 电源服务 | 本机 socket `/run/rlark/services/s1u-power.sock`（`GET /power`、`POST /power {action, force, reason}`、`POST /pose {pose, action}`：按住移动的初始姿势，网关 `POST nodes/{name}/robot-pose` 经 Server 的 `nodeproxy` 和该节点的节点 agent 转到这里） |
 | 占用 | 节点标签 `rlark.io/robot-claim`；`power` 盯着自己的节点，一秒内写到 `/run/rlark/s1u/claim`（`{"holder"}`，没人持有时没有文件） |
-| 在用 | `/run/rlark/in-use/<组件>`：Station 服务 Run 时写 `fleet-station`，设备层有会话时写 `s1u-device`；上电、驱动在跑不算在用 |
+| 在用 | `/run/rlark/in-use/<组件>`：Station 服务 Run 时写 `fleet-station`，设备层有会话时写 `s1u-device`，内容写明 Run（`... Run <id> ...`）；上电、驱动在跑不算在用 |
+| 重启 | 认领者经 Gateway `POST .../nodes/{name}/robot-restart {level: driver/power, holder, request_id}` 写管理面注解 `rlark.io/robot-restart`，agent 带到集群 Node；`power` 每个 id 只做一次：停驱动 → 等手臂缓降（`S1U_DRIVER_STOP_SECONDS`）→［power：下电 → 等 10 s］→ 上电起驱动到 ready。认领不是 holder、有标记不属于它的 Run、有维护时失败并写原因。期望电源不动。进度在注解 `rlark.io/power.restart` 和 `rlark.io/power` 的 `restart`：`{id, level, holder, phase: lowering/raising/done/failed, error, at}`，socket 的 `GET /power` 也带 |
 | 维护 | 租约 `/run/rlark/s1u/maintenance`；标签 `rlark.io/maintenance-state`，注解 `rlark.io/maintenance` |
 | 相机 | 标签 `rlark.io/camera-state`（`ok`/`recovering`/`degraded`/`stuck`），注解 `rlark.io/cameras`（和 `GET /cameras` 同一份 JSON），只在变化时写；节点事件 `CameraDriverRestart`、`CameraUsbReset`、`CameraStuck`、`CameraBack`；看画面经 Gateway `GET .../nodes/{name}/cameras…`（下面） |
 | 自检 | 设备层写 `/run/rlark/s1u/self-check.json`；标签 `rlark.io/self-check-state`，注解 `rlark.io/self-check` |
@@ -235,6 +236,7 @@ Station 容器：机器人被一个 Run 占用时，带站点令牌向 `stationC
 | 节点身份、地址、在线 | `GET /api/v1/site-nodes[/{node}]?cluster_id=&label=k=v`：`node_uid`、`phase`、`online`、`tunnel`、`rlark_node`、`boot_time`、`reboots`、`network.address`（别的节点找它用的地址）、`robot_id`、全部标签 |
 | 用机器人 | 占用接口（上一节）；机器人上的 Station 容器读占用，向 `stationControlURL` 取连接参数 |
 | 机器人电源 | `PUT .../nodes/{name}/robot-power` |
+| Run 里重启驱动或断电重启 | `POST .../nodes/{name}/robot-restart`（上一节“重启”），进度读节点的 `rlark.io/power` 的 `restart` |
 | 工位停用、维修或解除 | `PUT .../nodes/{name}/station-mark`，网关记录原因、操作者和时间。标记同时释放既有认领，拒绝新的认领和续租，直到解除标记 |
 | 数据、模型 | 按名字引用的存储 |
 | 令牌、密钥 | Job 密钥 |

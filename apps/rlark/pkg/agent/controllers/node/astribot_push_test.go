@@ -30,7 +30,7 @@ func TestManagementOwnedNodeLabels(t *testing.T) {
 		"rlark.io/node-category": true, "rlark.io/node-category-robot": true,
 		"rlark.io/robot-model": true, "rlark.io/robot-body": true, "rlark.io/robot-id": true,
 		"fleet.astribot/robot-body": true, "site.example/anything": true,
-		"rlark.io/rollout-wave": true, "rlark.io/restart-request": true, "rlark.io/accelerator": true,
+		"rlark.io/rollout-wave": true, "rlark.io/restart-request": true, "rlark.io/accelerator": true, "rlark.io/station": true,
 		// What a machine reports of its rollout and restarts, and of its cameras, is its own.
 		"rlark.io/rollout-state": false, "rlark.io/node-profile-state": false, "rlark.io/camera-state": false,
 		// What a node says of itself stays the node's.
@@ -122,5 +122,21 @@ func TestRobotAnnotationsStayTheManagementPlanes(t *testing.T) {
 	cameras := `{"state":"stuck","cameras":{"head":{"state":"stale","step":3}}}`
 	if merged := mergeManagementAnnotations(map[string]string{"rlark.io/cameras": "{}"}, map[string]string{"rlark.io/cameras": cameras}); merged["rlark.io/cameras"] != cameras {
 		t.Fatalf("annotations = %v", merged)
+	}
+}
+
+func TestTheRestartAskedForReachesTheNodeAndGoesWithIt(t *testing.T) {
+	management := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
+		"rlark.io/robot-restart": `{"id":"20"}`, "rlark.io/robot-claim-set": `{"holder":"run_a"}`}}}
+	local := &corev1.Node{}
+	if !pullManagementAnnotations(management, local) || local.Annotations["rlark.io/robot-restart"] != `{"id":"20"}` || len(local.Annotations) != 1 {
+		t.Fatalf("the restart alone goes down: %v", local.Annotations)
+	}
+	if pullManagementAnnotations(management, local) {
+		t.Fatal("an unchanged annotation was written again")
+	}
+	delete(management.Annotations, "rlark.io/robot-restart")
+	if !pullManagementAnnotations(management, local) || len(local.Annotations) != 0 {
+		t.Fatalf("the restart taken away stays: %v", local.Annotations)
 	}
 }

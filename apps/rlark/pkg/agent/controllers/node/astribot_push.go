@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -21,7 +22,35 @@ const (
 	// The accelerator a node has (nvidia): the management plane declares it, and the nvidia-gpu Addon selects by it
 	// (the Gateway's new cluster labels its GPU machine so; a node never labels itself).
 	nodeAcceleratorLabel = "rlark.io/accelerator"
+	// The robot Station a node stands at (S01, S02, …): given at its admission, changed through the Gateway.
+	nodeStationLabel = "rlark.io/station"
 )
+
+// downwardNodeAnnotations are the management Node's annotations the node itself acts on: the restart its claim
+// holder asked for (the Gateway's POST nodes/{name}/robot-restart), which the robot's power service runs.
+var downwardNodeAnnotations = []string{"rlark.io/robot-restart"}
+
+// pullManagementAnnotations puts downwardNodeAnnotations of the management Node on the local Node, and answers
+// whether it changed it.
+func pullManagementAnnotations(mgmtNode *rlarkv1alpha1.Node, localNode *corev1.Node) bool {
+	changed := false
+	for _, key := range downwardNodeAnnotations {
+		value, declared := mgmtNode.Annotations[key]
+		if current, present := localNode.Annotations[key]; present == declared && current == value {
+			continue
+		}
+		if !declared {
+			delete(localNode.Annotations, key)
+		} else {
+			if localNode.Annotations == nil {
+				localNode.Annotations = map[string]string{}
+			}
+			localNode.Annotations[key] = value
+		}
+		changed = true
+	}
+	return changed
+}
 
 // siteOwnedLabels are the labels a site declares on the management Node
 // besides RLark's own: SetManagementOwnedLabels.
@@ -46,7 +75,7 @@ func SetManagementOwnedLabels(entries []string) error {
 // like the node's category, and so are what people ask of a node through the management plane (its rollout wave
 // and a restart), its accelerator, and the labels the site names.
 func isSiteOwnedNodeLabel(key string) bool {
-	if strings.HasPrefix(key, nodeRobotLabelPrefix) || key == nodeRolloutWaveLabel || key == nodeRestartRequestLabel || key == nodeAcceleratorLabel || key == "rlark.io/station-mark" {
+	if strings.HasPrefix(key, nodeRobotLabelPrefix) || key == nodeRolloutWaveLabel || key == nodeRestartRequestLabel || key == nodeAcceleratorLabel || key == "rlark.io/station-mark" || key == nodeStationLabel {
 		return true
 	}
 	for _, entry := range siteOwnedLabels {

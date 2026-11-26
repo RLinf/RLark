@@ -61,6 +61,7 @@ func (r *pullNodeReconciler) Reconcile(ctx context.Context, req reconcile.Reques
 		}
 	}
 
+	changed = pullManagementAnnotations(&mgmtNode, &localNode) || changed
 	if localNode.Spec.Unschedulable != mgmtNode.Spec.Unschedulable {
 		localNode.Spec.Unschedulable = mgmtNode.Spec.Unschedulable
 		changed = true
