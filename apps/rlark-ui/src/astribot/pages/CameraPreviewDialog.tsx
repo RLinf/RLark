@@ -36,10 +36,14 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, onDismiss
     if (cell?.frames === false) return;
     let stopped = false;
     let timer = 0;
+    let inFlight: AbortController | null = null;
     let url = "";
     const ask = async () => {
+      if (inFlight) return; // one request at a time: a slow frame never stacks a second one
+      inFlight = new AbortController();
+      const signal = AbortSignal.any([inFlight.signal, AbortSignal.timeout(3000)]);
       try {
-        const response = await request(cameraFramePath(node, namespace, view), { signal: AbortSignal.timeout(3000) });
+        const response = await request(cameraFramePath(node, namespace, view), { signal });
         const blob = await response.blob();
         if (stopped) return;
         if (url) URL.revokeObjectURL(url);
@@ -47,7 +51,9 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, onDismiss
         setFrame(url);
         setFailure("");
       } catch (reason) {
-        if (!stopped) setFailure((reason as Error).message);
+        if (!stopped && !signal.aborted) setFailure((reason as Error).message);
+      } finally {
+        inFlight = null;
       }
     };
     void ask();
@@ -55,6 +61,7 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, onDismiss
     return () => {
       stopped = true;
       window.clearInterval(timer);
+      inFlight?.abort(); // closing also cancels the request in flight; late responses never build a URL
       if (url) URL.revokeObjectURL(url);
     };
   }, [node, namespace, view, cell?.frames]);
@@ -74,5 +81,6 @@ export function CameraPreviewDialog({ node, namespace, view, cell, zh, onDismiss
       {cell?.note && <small>{cell.note}</small>}
       {cell?.advice && <small>{cell.advice}</small>}
     </footer>
+    <div className="station-toast-host" aria-live="polite" />
   </dialog>;
 }

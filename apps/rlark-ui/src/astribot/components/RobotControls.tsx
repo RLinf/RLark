@@ -40,7 +40,10 @@ export async function releasePoseSessions(robots: ControlledRobot[]): Promise<Po
   const keys = new Set(sessionKeys(robots));
   const live = [...sessions.values()].filter((session) => shares(session.keys, keys));
   if (!live.length) return "released";
-  const outcomes = await Promise.all(live.map((session) => session.done));
+  const outcomes = await Promise.all(live.map((session) => {
+    session.release();
+    return session.done;
+  }));
   return outcomes.includes("release-failed") ? "release-failed" : outcomes.includes("release-unknown") ? "release-unknown" : "released";
 }
 

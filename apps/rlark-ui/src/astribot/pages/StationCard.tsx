@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Camera, ChevronDown } from "lucide-react";
 import { request } from "../../api";
 import type { StationItem } from "../api";
 import type { ClusterSummary } from "../../types";
-import { isControlPlaneLabels } from "../../utils/nodeVisibility";
 import { NodeName, type NodeRef } from "../components/NodeName";
 import { RobotPoseButton } from "../components/RobotControls";
 import { cameraCells, cameraFramePath, publishedCameras, type CameraCell, type CameraView } from "../lib/cameras";
@@ -16,17 +15,19 @@ import {
 } from "../lib/siteNodeDisplay";
 import { NetworkBadge } from "./StationFields";
 
-// A robot's cameras on its card: the published state, plus one slow frame per view so the card shows the machine
-// without the live wall that only an open detail needs. A frame click enlarges that camera; it never expands the
-// card. Requests stop while the wall is off screen, the tab is hidden or the detail below is open, which owns the
-// live frames.
-function CameraWall({ cells, node, namespace, zh, expanded, onZoom }: {
+// A robot's cameras as the tile's media surface: one large view carrying the identity and control overlays, and a
+// strip of the smaller views. Frames are slow previews (one frame per view, five seconds); a frame click enlarges
+// that camera and never expands the card. Requests stop while the tile is off screen, the tab is hidden or the
+// detail below is open, which owns the live frames.
+function CameraWall({ cells, node, namespace, zh, expanded, onZoom, overlayTop, overlayBottom }: {
   cells: CameraCell[];
   node: string;
   namespace: string;
   zh: boolean;
   expanded: boolean;
   onZoom: (view: CameraView, trigger: HTMLElement) => void;
+  overlayTop?: ReactNode;
+  overlayBottom?: ReactNode;
 }) {
   const wall = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -78,18 +79,37 @@ function CameraWall({ cells, node, namespace, zh, expanded, onZoom }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, expanded, node, namespace, viewsKey]);
 
-  return <div ref={wall} className="station-camera-wall" role="group" aria-label={zh ? "相机" : "Cameras"}>
-    {cells.map((cell) => <button key={cell.view} type="button" className={`station-camera${cell.present === false ? " is-missing" : ""}`}
-      onClick={(event) => onZoom(cell.view, event.currentTarget)} aria-haspopup="dialog"
-      aria-label={`${cell.name} · ${cell.badge}`} title={[cell.badge, cell.note, cell.advice].filter(Boolean).join(" · ")}>
-      <span className={`station-camera-frame is-${cell.tone}`}>{frames[cell.view] ? <img src={frames[cell.view]} alt="" loading="lazy" /> : cell.present === false ? <span aria-hidden="true">—</span> : <Camera size={18} aria-hidden="true" />}</span>
-      <span className="station-camera-caption"><strong>{cell.name}</strong><span className={`station-camera-state is-${cell.tone}`}><i />{cell.badge}</span></span>
-    </button>)}
+  const [big, ...small] = cells;
+  const bigTitle = big ? [big.badge, big.note, big.advice].filter(Boolean).join(" · ") : undefined;
+  return <div ref={wall} className="station-tile-media" role="group" aria-label={zh ? "相机" : "Cameras"}>
+    <div className="station-tile-main">
+      {big ? <button type="button" className={`station-camera is-big${big.present === false ? " is-missing" : ""}`}
+        onClick={(event) => onZoom(big.view, event.currentTarget)} aria-haspopup="dialog"
+        aria-label={`${big.name} · ${big.badge}`} title={bigTitle}>
+        <span className={`station-camera-frame is-${big.tone}`}>{frames[big.view] ? <img src={frames[big.view]} alt="" loading="lazy" /> : big.present === false ? <span aria-hidden="true">—</span> : <Camera size={22} aria-hidden="true" />}</span>
+      </button> : <div className="station-camera is-big is-empty" aria-hidden="true">
+        <span className="station-camera-frame"><Camera size={22} aria-hidden="true" /></span>
+      </div>}
+      {overlayTop}
+      {overlayBottom}
+    </div>
+    {small.length > 0 && <div className="station-tile-strip" role="group" aria-label={zh ? "其余相机" : "Other cameras"}>
+      {small.map((cell) => <button key={cell.view} type="button" className={`station-camera${cell.present === false ? " is-missing" : ""}`}
+        onClick={(event) => onZoom(cell.view, event.currentTarget)} aria-haspopup="dialog"
+        aria-label={`${cell.name} · ${cell.badge}`} title={[cell.badge, cell.note, cell.advice].filter(Boolean).join(" · ")}>
+        <span className={`station-camera-frame is-${cell.tone}`}>{frames[cell.view] ? <img src={frames[cell.view]} alt="" loading="lazy" /> : cell.present === false ? <span aria-hidden="true">—</span> : <Camera size={16} aria-hidden="true" />}</span>
+        <span className="station-camera-caption"><strong>{cell.name}</strong><span className={`station-camera-state is-${cell.tone}`}><i />{cell.badge}</span></span>
+      </button>)}
+    </div>}
   </div>;
 }
 
 // The card says a robot's state in two or three words; the open detail has the full wording.
-const cardPowerDesired = (state: string, zh: boolean) => state === "ready" ? (zh ? "运行" : "Run") : state === "off" ? (zh ? "下电" : "Off") : state;
+const cardPowerDesired = (state: string, zh: boolean) =>
+  state === "ready" ? (zh ? "运行" : "Run")
+    : state === "powered" ? (zh ? "已上电" : "Powered")
+      : state === "off" ? (zh ? "下电" : "Off")
+        : state;
 const cardPowerActual = (state: string | null, zh: boolean) =>
   state === "ready" ? (zh ? "运行中" : "Running")
     : state === "powered" ? (zh ? "已上电" : "Powered")
@@ -126,7 +146,6 @@ export function StationCard({
   const retired = phase === "Retired";
   const robot = variant === "robot";
   const control = variant === "control";
-  const controlPlane = isControlPlaneLabels(labels);
   const facts = stationFacts(station, cluster, now, zh);
   const powerNow = robotPowerState(labels);
   const powerDesired = robotPowerDesired(labels);
@@ -165,12 +184,58 @@ export function StationCard({
     </article>;
   }
 
-  return <article className={`station-card ${robot ? "is-robot" : "is-node"}${expanded ? " is-expanded" : ""}${chosen && robot ? " is-selected" : ""}${retired ? " is-retired" : ""}`} aria-labelledby={nameID} onKeyDown={onKeyDown}>
+  if (robot) {
+    // The camera-wall tile: identity and controls live on the picture itself. An alert state (a power fault or
+    // e-stop, a failed self-check, or maintenance) rings the tile so a problem reads from across the room.
+    const tileAlert = powerNow === "fault" || powerNow === "estop" || selfCheck === "failed" || Boolean(maintenance);
+    const overlayTop = <>
+      <div className="station-tile-overlay is-top">
+        <div className="station-tile-top">
+          <input type="checkbox" className="station-card-check" aria-label={zh ? `选中 ${station.metadata.name}` : `Select ${station.metadata.name}`} checked={chosen} onChange={(event) => onChoose(event.target.checked)} />
+          <div className="station-tile-name">
+            <h3 id={nameID}><NodeName node={node} /></h3>
+            <small>{machineModel(labels) || siteNode?.declared_type || siteNode?.observed_type || "—"} · <code className="inline-code">UID {shortUID(station.spec.nodeUID)}</code></small>
+          </div>
+          <span className={`station-tile-phase status ${stationStatusClass(phase)}`}><i />{stationPhaseLabel(phase, zh)}</span>
+          <button id={expanderID} type="button" className="station-tile-expand" aria-expanded={expanded} aria-haspopup="dialog" aria-controls={detailsID} aria-label={expanded ? (zh ? "收起详情" : "Collapse details") : (zh ? "展开详情" : "Expand details")} title={expanded ? (zh ? "收起详情" : "Collapse details") : (zh ? "展开详情" : "Expand details")} onClick={onToggle}>
+            <ChevronDown size={16} className={expanded ? "is-open" : ""} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="station-tile-tags">
+          {admission ? <span className={`station-tile-tag is-${admissionStateClass(admission.state)}`} title={admission.reason}>{admissionStateLabel(admission.state, zh)}</span> : <span className="station-tile-tag">{zh ? "未用入网码" : "No code"}</span>}
+          {selfCheck && <span className={`station-tile-tag is-${selfCheck === "failed" ? "alert" : selfCheck === "pending" ? "warning" : "good"}`}>{robotSelfCheckLabel(selfCheck, zh)}</span>}
+          {maintenance && <span className="station-tile-tag is-warning" title={robotMaintenanceLabel(maintenance, zh)}>{zh ? "维护中" : "Maintenance"}</span>}
+          {siteNode?.identity_verified === "False" && <span className="station-tile-tag is-alert" title={siteNode?.identity_reason}>{zh ? "身份不匹配" : "identity mismatch"}</span>}
+          <NetworkBadge state={stationNetworkState(station)} zh={zh} />
+        </div>
+      </div>
+    </>;
+    const overlayBottom = <>
+      <div className="station-tile-overlay is-bottom">
+        <div className="station-tile-power">
+          <span><small>{zh ? "期望" : "Desired"}</small><strong>{cardPowerDesired(powerDesired, zh)}</strong></span>
+          <span><small>{zh ? "实际" : "Actual"}</small>{powerNow ? <strong className={powerNow === "fault" || powerNow === "estop" ? "is-alert" : powerNow === "off" ? "muted" : ""}>{cardPowerActual(powerNow, zh)}</strong> : <span className="muted">{zh ? "未上报" : "No report"}</span>}</span>
+        </div>
+        <div className="station-tile-actions">
+          {driverAction && <button type="button" className="station-tile-action" disabled={power.pending} onClick={() => power.press(driverAction, driverLabel)}>{driverLabel}</button>}
+          <button type="button" className="station-tile-action" disabled={power.pending} onClick={() => power.press(quickPower, quickPowerLabel)}>{quickPowerLabel}</button>
+          <RobotPoseButton robots={[{ key: `${station.metadata.namespace}/${station.metadata.name}`, node: station.metadata.name, namespace: station.metadata.namespace, labels }]} zh={zh} />
+        </div>
+      </div>
+    </>;
+    return <article className={`station-tile${expanded ? " is-expanded" : ""}${chosen ? " is-selected" : ""}${retired ? " is-retired" : ""}${tileAlert ? " is-alert" : ""}`} aria-labelledby={nameID} onKeyDown={onKeyDown}>
+      <CameraWall cells={cameraList} node={station.metadata.name} namespace={station.metadata.namespace} zh={zh} expanded={expanded} onZoom={onZoom} overlayTop={overlayTop} overlayBottom={overlayBottom} />
+      <dl className="station-tile-facts">{facts.slice(0, 3).map((fact) => <div key={fact.key}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>
+    </article>;
+  }
+
+  // Plain inventory nodes keep the compact card; the Stations page renders them as rows, so this branch is a
+  // fallback for embedders that still pass variant "node".
+  return <article className={`station-card is-node${expanded ? " is-expanded" : ""}${retired ? " is-retired" : ""}`} aria-labelledby={nameID} onKeyDown={onKeyDown}>
     <header className="station-card-head">
-      {robot && <input type="checkbox" className="station-card-check" aria-label={zh ? `选中 ${station.metadata.name}` : `Select ${station.metadata.name}`} checked={chosen} onChange={(event) => onChoose(event.target.checked)} />}
       <div className="station-card-name">
         <h3 id={nameID}><NodeName node={node} /></h3>
-        <small>{controlPlane && <span className="control-plane-badge">{zh ? "控制面" : "Control plane"}</span>}{machineModel(labels) || "—"} · <code className="inline-code">UID {shortUID(station.spec.nodeUID)}</code></small>
+        <small>{machineModel(labels) || "—"} · <code className="inline-code">UID {shortUID(station.spec.nodeUID)}</code></small>
       </div>
       <span className={`status ${stationStatusClass(phase)}`}><i />{stationPhaseLabel(phase, zh)}</span>
     </header>
@@ -179,27 +244,12 @@ export function StationCard({
       {(siteNode?.declared_type || siteNode?.observed_type) && <span className="station-card-kind" title={siteNode?.identity_reason}>{siteNode?.declared_type || siteNode?.observed_type}{(siteNode?.declared_model || siteNode?.observed_model) ? ` · ${siteNode.declared_model || siteNode.observed_model}` : ""}{siteNode?.identity_verified === "False" ? (zh ? " · 身份不匹配" : " · identity mismatch") : ""}</span>}
       <NetworkBadge state={stationNetworkState(station)} zh={zh} />
       {admission ? <span className={`status ${admissionStateClass(admission.state)}`} title={admission.reason}><i />{admissionStateLabel(admission.state, zh)}</span> : <span className="muted">{zh ? "未用入网码" : "No code"}</span>}
-      {robot && <>
-        <span className="station-card-power"><small>{zh ? "期望" : "Desired"}</small><strong>{cardPowerDesired(powerDesired, zh)}</strong></span>
-        <span className="station-card-power"><small>{zh ? "实际" : "Actual"}</small>{powerNow ? <strong className={powerNow === "fault" || powerNow === "estop" ? "is-alert" : powerNow === "off" ? "muted" : ""}>{cardPowerActual(powerNow, zh)}</strong> : <span className="muted">{zh ? "未上报" : "No report"}</span>}</span>
-        <span className="station-card-power"><small>{zh ? "自检" : "Self-check"}</small>{selfCheck ? <strong className={selfCheck === "failed" ? "is-alert" : selfCheck === "pending" ? "is-warning" : ""}>{robotSelfCheckLabel(selfCheck, zh)}</strong> : <span className="muted">{zh ? "未上报" : "No report"}</span>}</span>
-        {maintenance && <span className="station-card-power" title={robotMaintenanceLabel(maintenance, zh)}><small>{zh ? "维护" : "Maintenance"}</small><strong className="is-warning">{zh ? "维护中" : "Maintenance"}</strong></span>}
-      </>}
     </div>
-
-    {robot && <>
-      <CameraWall cells={cameraList} node={station.metadata.name} namespace={station.metadata.namespace} zh={zh} expanded={expanded} onZoom={onZoom} />
-      <div className="station-camera-line"><span>{zh ? "相机" : "Cameras"}</span><span>{expanded ? (zh ? "实时画面在下方" : "Live frames below") : (zh ? "慢速预览 · 5 秒" : "Preview · 5 s")}</span></div>
-    </>}
 
     <dl className="station-card-facts">{facts.slice(0, 3).map((fact) => <div key={fact.key}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>
 
     <footer className="station-card-foot">
-      <div className="station-card-quick">{robot && <>
-        {driverAction && <button type="button" className="secondary-button" disabled={power.pending} onClick={() => power.press(driverAction, driverLabel)}>{driverLabel}</button>}
-        <button type="button" className="secondary-button" disabled={power.pending} onClick={() => power.press(quickPower, quickPowerLabel)}>{quickPowerLabel}</button>
-        <RobotPoseButton robots={[{ key: `${station.metadata.namespace}/${station.metadata.name}`, node: station.metadata.name, namespace: station.metadata.namespace, labels }]} zh={zh} />
-      </>}</div>
+      <div className="station-card-quick"></div>
       {expander}
     </footer>
   </article>;

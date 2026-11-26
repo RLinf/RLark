@@ -37,6 +37,14 @@ export interface StationItem {
   };
 }
 
+export interface StationRunningImage {
+  namespace: string;
+  pod: string;
+  container: string;
+  image: string;
+  imageID?: string;
+}
+
 export interface NodeOperation {
   // annotations: what a removal's PowerOff stage found (station.rlark.io/power-off).
   metadata: { name: string; namespace: string; annotations?: Record<string, string>; creationTimestamp?: string; uid?: string };
@@ -103,6 +111,10 @@ export const clusterProvisionsApi = {
 export const stationsApi = {
   list(query: Record<string, string | undefined> = {}, signal?: AbortSignal) {
     return requestJson<Page<StationItem>>(withQuery("/api/v1/station/stations", query), { signal });
+  },
+  runningImages(name: string, clusterID: string, nodeUID: string, signal?: AbortSignal) {
+    const path = `/api/v1/station/stations/${encodeURIComponent(name)}/running-images`;
+    return requestJson<{ items: StationRunningImage[] }>(withQuery(path, { cluster_id: clusterID, node_uid: nodeUID }), { signal });
   },
   listNodeOperations(clusterID: string, signal?: AbortSignal) {
     return requestJson<Page<NodeOperation>>(withQuery("/api/v1/station/node-operations", { cluster_id: clusterID, limit: 100 }), { signal });

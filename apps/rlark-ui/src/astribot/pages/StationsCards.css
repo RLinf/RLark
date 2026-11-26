@@ -624,6 +624,54 @@
 .stations-page .station-condition-pill.is-unknown i { background: var(--orange); }
 .stations-page .station-condition-detail { grid-column: 1 / -1; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 
+.station-running-images {
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.station-running-images summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.station-running-images summary svg {
+  vertical-align: text-bottom;
+  margin-inline: 4px 7px;
+}
+
+.station-images-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.station-images-table-wrap {
+  margin-top: 8px;
+  overflow: auto;
+}
+
+.station-images-table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.station-images-table :is(th, td) {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: start;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.station-images-table td small {
+  display: block;
+  color: var(--muted);
+}
+
 .stations-page .station-detail-robot {
   display: grid;
   gap: 10px;
@@ -678,30 +726,10 @@
 }
 
 @container (width < 960px) {
-  .stations-page .station-detail-columns {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-    row-gap: 12px;
-  }
-  .stations-page .station-detail-column:nth-child(2) { padding-right: 0; }
-  .stations-page .station-detail-column:last-child {
-    grid-column: 1 / -1;
-    margin-top: 12px;
-    padding: 12px 0 0;
-    border-top: 1px solid var(--line);
-    border-left: 0;
-  }
   .stations-page .station-detail-panel .node-cameras-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @container (width < 640px) {
-  .stations-page .station-detail-columns { grid-template-columns: minmax(0, 1fr); }
-  .stations-page .station-detail-column,
-  .stations-page .station-detail-column:first-child { padding: 0; border-left: 0; }
-  .stations-page .station-detail-column + .station-detail-column {
-    margin-top: 12px;
-    padding: 12px 0 0;
-    border-top: 1px solid var(--line);
-  }
   .stations-page .station-detail-conflict-ids,
   .stations-page .station-detail-column .station-detail-fields.is-network { grid-template-columns: minmax(0, 1fr); }
   .stations-page .station-detail-head { flex-direction: column; }
@@ -802,4 +830,661 @@
 
 @media (max-width: 520px) {
   .stations-page .stations-power-toast { right: 12px; bottom: 12px; }
+}
+
+/* ===== Camera-wall tiles (robot clusters) + quiet inventory rows + bounded column =====
+   Language round: robots borrow the "camera wall" (picture-first tiles, overlays carry identity and controls,
+   problems ring in amber); inventory and control-plane keep the quiet-list grammar; everything sits in one
+   bounded 1480px column. Older rules above stay for the node-card fallback and the detail panel. */
+
+/* Full-bleed: the shell's page gutters collapse for this page and the wall runs edge to edge. */
+.stations-page.page-content { padding: 18px 12px 26px; }
+
+.stations-page .stations-frame {
+  display: grid;
+  gap: 18px;
+  max-width: none;
+  margin-inline: auto;
+  min-width: 0;
+  container-type: inline-size;
+  container-name: stations-frame;
+}
+
+/* The wall sits straight on the canvas: no panel chrome around a robot cluster or an inventory group. */
+.stations-page .stations-group.stations-robot-group,
+.stations-page .stations-groups .stations-cluster {
+  padding: 8px 2px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.stations-page .stations-groups .stations-cluster + .stations-cluster { border-top: 0; }
+
+.stations-page .stations-group-head h4 { font-size: 16px; letter-spacing: -0.012em; }
+
+.stations-page .stations-group-head .stations-group-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stations-page .stations-group-head .stations-group-count b { font-weight: 600; }
+.stations-page .stations-group-head .stations-group-count b.is-warn { color: color-mix(in srgb, var(--orange) 72%, var(--ink)); }
+
+/* Robot tiles: fixed three tracks that fill the row (no orphan track on wide screens). */
+.stations-page .stations-card-grid.is-robot-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.stations-page .station-tile {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  align-self: stretch;
+  overflow-wrap: anywhere;
+}
+
+.stations-page .station-tile.is-retired { opacity: .62; }
+
+.stations-page .station-tile-media { display: grid; gap: 8px; min-width: 0; }
+
+.stations-page .station-tile-main {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #101418;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.stations-page .station-tile.is-alert .station-tile-main {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--orange) 62%, transparent), 0 10px 30px color-mix(in srgb, var(--orange) 14%, transparent);
+}
+
+.stations-page .station-tile.is-expanded .station-tile-main {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--blue) 58%, transparent);
+}
+
+.stations-page .station-camera.is-big {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.stations-page .station-camera.is-big .station-camera-frame { aspect-ratio: 16 / 10; border-radius: 0; }
+
+.stations-page .station-camera.is-big.is-missing { border: 0; }
+.stations-page .station-camera.is-big.is-empty { cursor: default; }
+.stations-page .station-camera.is-big.is-empty .station-camera-frame { color: rgb(255 255 255 / .4); }
+
+/* Overlays: identity and state on a top gradient, power facts and controls on a bottom one. */
+.stations-page .station-tile-overlay { position: absolute; left: 0; right: 0; z-index: 2; }
+
+.stations-page .station-tile-overlay.is-top {
+  top: 0;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 34px;
+  color: #fff;
+  background: linear-gradient(rgb(9 13 18 / .9) 0%, rgb(9 13 18 / .84) 52%, rgb(9 13 18 / .5) 80%, rgb(9 13 18 / 0) 100%);
+}
+
+.stations-page .station-tile-overlay.is-bottom {
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 34px 12px 10px;
+  background: linear-gradient(rgb(9 13 18 / 0), rgb(9 13 18 / .58) 26%, rgb(9 13 18 / .92) 100%);
+}
+
+.stations-page .station-tile-top { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+
+.stations-page .station-tile .station-card-check { margin-top: 4px; }
+
+.stations-page .station-tile-name { display: grid; flex: 1; gap: 2px; min-width: 0; }
+
+.stations-page .station-tile-name h3,
+.stations-page .station-tile-name h3 .node-name {
+  margin: 0;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  text-shadow: 0 1px 10px rgb(0 0 0 / .65);
+  overflow-wrap: anywhere;
+}
+
+.stations-page .station-tile-name small { display: flex; flex-wrap: wrap; gap: 2px 6px; color: rgb(255 255 255 / .72); font-size: 11px; }
+.stations-page .station-tile-name small .inline-code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgb(255 255 255 / .78);
+  font-size: 11px;
+}
+
+.stations-page .station-tile-phase {
+  flex: none;
+  font-size: 12px;
+  font-weight: 650;
+  text-shadow: 0 1px 6px rgb(0 0 0 / .6);
+}
+
+.stations-page .station-tile-expand {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / .34);
+  border-radius: 9px;
+  background: rgb(6 10 12 / .4);
+  color: #fff;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+}
+
+.stations-page .station-tile-expand:hover { background: rgb(6 10 12 / .62); }
+.stations-page .station-tile-expand svg { transition: transform 150ms ease; }
+.stations-page .station-tile-expand svg.is-open { transform: rotate(180deg); }
+
+.stations-page .station-tile-tags { display: flex; flex-wrap: wrap; gap: 4px 12px; color: rgb(255 255 255 / .82); font-size: 11px; }
+
+.stations-page .station-tile-tag { display: inline-flex; align-items: center; gap: 5px; }
+
+.stations-page .station-tile-tag::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: rgb(255 255 255 / .55); }
+.stations-page .station-tile-tag.is-good::before,
+.stations-page .station-tile-tag.is-status-online::before,
+.stations-page .station-tile-tag.is-status-bound::before { background: #58d68d; }
+.stations-page .station-tile-tag.is-warning { color: rgb(255 226 178 / .96); }
+.stations-page .station-tile-tag.is-warning::before { background: var(--orange); }
+.stations-page .station-tile-tag.is-alert,
+.stations-page .station-tile-tag.is-status-conflict { color: rgb(255 205 210 / .96); }
+.stations-page .station-tile-tag.is-alert::before,
+.stations-page .station-tile-tag.is-status-conflict::before { background: var(--red); }
+.stations-page .station-tile-tag.is-muted::before,
+.stations-page .station-tile-tag.is-status-offline::before,
+.stations-page .station-tile-tag.is-status-retired::before { background: rgb(255 255 255 / .45); }
+
+.stations-page .station-tile-power { display: flex; gap: 14px; min-width: 0; }
+.stations-page .station-tile-power span { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; }
+.stations-page .station-tile-power small { color: rgb(255 255 255 / .62); font-size: 11px; }
+
+.stations-page .station-tile-power strong {
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 6px rgb(0 0 0 / .6);
+}
+
+.stations-page .station-tile-power strong.is-alert { color: #ffb3bd; }
+.stations-page .station-tile-power strong.muted { color: rgb(255 255 255 / .66); }
+
+.stations-page .station-tile-actions { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+
+.stations-page .station-tile-action {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / .32);
+  border-radius: 8px;
+  background: rgb(6 10 12 / .42);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+}
+
+.stations-page .station-tile-action:hover:not(:disabled) { background: rgb(6 10 12 / .66); }
+.stations-page .station-tile-action:disabled { opacity: .5; cursor: default; }
+
+.stations-page .station-tile-actions .robot-pose-button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / .32);
+  border-radius: 8px;
+  background: rgb(6 10 12 / .42);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stations-page .station-tile-actions .robot-pose-button:disabled { opacity: .55; }
+.stations-page .station-tile-actions .robot-pose-button.is-moving { background: color-mix(in srgb, var(--blue) 45%, rgb(6 10 12 / .6)); }
+
+/* The hold-to-move hints float under the overlay instead of pushing the picture around. */
+.stations-page .station-tile-actions .robot-pose-hint,
+.stations-page .station-tile-actions .robot-controls-error {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 6;
+  max-width: 340px;
+  margin: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: color-mix(in srgb, var(--orange) 72%, var(--ink));
+  box-shadow: 0 8px 22px rgb(0 0 0 / .25);
+  font-size: 11px;
+}
+
+.stations-page .station-tile-actions .robot-controls-error { color: color-mix(in srgb, var(--red) 72%, var(--ink)); }
+
+.stations-page .station-tile-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+
+/* The tile's fact row is one three-column grid so neighboring tiles line up too. */
+.stations-page .station-tile-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 18px;
+  margin: 0;
+  padding: 0 2px;
+}
+
+.stations-page .station-tile-facts div { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.stations-page .station-tile-facts dt { flex: none; color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+.stations-page .station-tile-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inventory rows: the quiet list. */
+.stations-page .stations-inv-list { display: grid; min-width: 0; }
+
+.stations-page .station-inv-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 11px 10px;
+  border-bottom: 1px solid var(--line);
+  transition: background 140ms ease;
+}
+
+.stations-page .station-inv:hover .station-inv-row,
+.stations-page .station-inv:focus-within .station-inv-row { background: color-mix(in srgb, var(--canvas) 55%, var(--panel)); }
+
+.stations-page .station-inv.is-retired { opacity: .62; }
+
+.stations-page .station-inv-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--canvas) 70%, var(--panel));
+  color: var(--muted);
+}
+
+.stations-page .station-inv-name { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.stations-page .station-inv-name h3 { margin: 0; color: var(--ink); font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
+.stations-page .station-inv-name small { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; color: var(--muted); font-size: 11px; }
+.stations-page .station-inv-name small .is-alert { color: color-mix(in srgb, var(--red) 72%, var(--ink)); font-weight: 600; }
+
+.stations-page .station-inv-status { flex: none; font-size: 12px; }
+.stations-page .station-inv-status i { width: 7px; height: 7px; }
+
+/* Fixed-width fact columns so 运行时间 / 重启次数 / 最近上报 line up across every row. */
+.stations-page .station-inv-facts { display: grid; flex: none; grid-template-columns: repeat(3, 158px); margin: 0; }
+.stations-page .station-inv-facts div { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.stations-page .station-inv-facts dt { flex: none; width: 58px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+.stations-page .station-inv-facts dd {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stations-page .station-inv-expand {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.stations-page .station-inv-expand:hover { color: var(--ink); background: var(--canvas); }
+.stations-page .station-inv-expand svg { transition: transform 150ms ease; }
+.stations-page .station-inv-expand svg.is-open { transform: rotate(180deg); }
+.stations-page .station-inv .stations-detail-block { border-bottom: 1px solid var(--line); }
+
+/* Phase tabs: quiet underline tabs, left aligned, not a stretched pill bar. */
+.stations-page .stations-phase-tabs {
+  width: max-content;
+  max-width: 100%;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  overflow-x: auto;
+}
+
+.stations-page .stations-phase-tabs button {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  position: relative;
+}
+
+.stations-page .stations-phase-tabs button:hover { color: var(--ink); background: transparent; }
+
+.stations-page .stations-phase-tabs button[aria-pressed="true"] {
+  background: transparent;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.stations-page .stations-phase-tabs button[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  bottom: -1px;
+  left: 6px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--blue);
+}
+
+/* Toolbar: one quiet row, actions gathered on the right. */
+.stations-page .stations-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.stations-page .stations-toolbar .page-toolbar { margin-inline-end: auto; }
+
+/* Column counts follow the frame's real width (sidebar and zoom included), not the window's. */
+@container stations-frame (max-width: 1160px) {
+  .stations-page .stations-card-grid.is-robot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stations-page .station-inv-row { flex-wrap: wrap; gap: 8px 14px; }
+  .stations-page .station-inv-facts { flex-basis: 100%; order: 5; padding-left: 44px; }
+  .stations-page .station-inv-expand { margin-left: auto; }
+}
+
+@container stations-frame (max-width: 720px) {
+  .stations-page .stations-card-grid.is-robot-grid { grid-template-columns: minmax(0, 1fr); }
+  .stations-page .stations-frame { gap: 14px; }
+  .stations-page .station-tile-overlay.is-top { padding: 8px 10px 26px; }
+  .stations-page .station-tile-overlay.is-bottom { padding: 30px 10px 8px; }
+}
+
+/* ===== Detail panel in the quiet language =====
+   The panel keeps its full-row span and behavior, but drops the divider lines, uses content-aware columns,
+   and rides the page's container queries so fields fill the wide panel instead of stranding whitespace. */
+
+.stations-page .station-detail-panel {
+  gap: 16px;
+  padding: 16px 20px 20px;
+  background: var(--panel);
+}
+
+.stations-page .station-detail-head {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.stations-page .station-detail-columns {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px 24px;
+}
+
+.stations-page .station-detail-column,
+.stations-page .station-detail-column:first-child {
+  padding: 0;
+  border-left: 0;
+}
+
+.stations-page .station-detail-column h4 {
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  line-height: 20px;
+}
+
+.stations-page .station-detail-fields { gap: 10px; }
+.stations-page .station-detail-field dt { font-size: 11px; line-height: 16px; }
+.stations-page .station-detail-field dd { font-size: 12.5px; line-height: 18px; }
+
+.stations-page .station-detail-panel .station-detail-columns .station-copy-value {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stations-page .station-detail-panel .station-detail-columns .station-copy-value .icon-button {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  height: 30px;
+}
+
+@container (width < 960px) {
+  .stations-page .station-detail-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stations-page .station-detail-column:last-child { grid-column: 1 / -1; }
+}
+
+@container (width < 640px) {
+  .stations-page .station-detail-columns { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* On a wide panel the identity fields run two-up so the column does not strand whitespace. */
+@container (width > 1500px) {
+  .stations-page .station-detail-column .station-detail-fields:not(.is-network) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 11px 26px;
+  }
+  .stations-page .station-detail-column .station-detail-fields .station-detail-field.is-wide { grid-column: 1 / -1; }
+}
+
+/* Keep the Hub reports below the three detail columns. */
+.stations-page .station-network-links {
+  border-top: 1px solid var(--line);
+}
+
+.stations-page .station-network-links > summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  padding: 10px 0 0;
+  cursor: pointer;
+}
+
+.stations-page .station-network-links > summary::-webkit-details-marker { display: none; }
+.stations-page .station-network-links > summary svg { align-self: center; flex-shrink: 0; }
+.stations-page .station-network-links-title { font-weight: 650; }
+.stations-page .station-network-links > summary .node-link { font-size: 12px; overflow-wrap: anywhere; }
+.stations-page .station-network-links-chevron { margin-inline-start: auto; color: var(--muted); }
+.stations-page .station-network-links[open] .station-network-links-chevron { transform: rotate(180deg); }
+.stations-page .station-network-links-body { padding: 10px 0 0 23px; }
+
+.stations-page .station-network-links .node-info-list > div {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 16px;
+  padding: 9px 0;
+}
+
+.stations-page .station-network-links .node-info-list dt {
+  color: var(--ink-2, var(--ink));
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.stations-page .station-network-links .node-info-list dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 4px 10px;
+  overflow: visible;
+  text-align: right;
+}
+
+.stations-page .station-network-links .node-info-list dd small { color: var(--muted); }
+
+@container (width < 640px) {
+  .stations-page .station-network-links .node-info-list > div { grid-template-columns: minmax(0, 1fr); }
+  .stations-page .station-network-links .node-info-list dd { justify-content: flex-start; text-align: start; }
+}
+
+/* Conditions: the pill and its age stack on the right, the detail line hangs under the name. */
+.stations-page .station-condition-list li {
+  gap: 3px 10px;
+  padding: 10px 0;
+}
+
+.stations-page .station-condition-main { line-height: 16px; }
+
+.stations-page .station-condition-side {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.stations-page .station-condition-pill { background: color-mix(in srgb, var(--canvas) 60%, var(--panel)); }
+.stations-page .station-condition-detail { color: var(--muted); }
+
+/* ===== Detail dialog: the open station in a native modal ===== */
+
+.stations-page .station-detail-dialog {
+  width: min(1560px, calc(100vw - 48px));
+  height: min(92dvh, calc(100dvh - 48px));
+  max-width: calc(100vw - 24px);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.stations-page .station-detail-dialog::backdrop { background: rgb(9 13 18 / .55); }
+
+.stations-page .station-detail-dialog .station-detail-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel);
+}
+
+.stations-page .station-detail-dialog .station-detail-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: -16px -20px 0;
+  padding: 16px 20px 14px;
+  background: var(--panel);
+}
+
+.stations-page .station-detail-dialog .station-detail-actions { flex-wrap: wrap; }
+
+.stations-page .station-detail-dismiss {
+  flex: none;
+  min-width: 34px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* The power toast, portalled into whichever dialog is topmost, docks to that dialog's corner. */
+.stations-page .station-detail-dialog > .station-toast-host,
+.stations-page .station-camera-dialog .station-toast-host {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  left: 14px;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.stations-page .station-power-toast-in-dialog,
+.stations-page .stations-power-toast-in-dialog {
+  position: static;
+  width: min(460px, 100%);
+  pointer-events: auto;
+}
+
+.stations-page .station-camera-dialog .station-toast-host { right: 14px; bottom: 52px; }
+
+/* Compact body-status line under the robot power head (from the body comparison work). */
+.stations-page .station-detail-body-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.stations-page .station-detail-body-status small { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+
+@media (max-width: 760px) {
+  .stations-page .station-detail-dialog {
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+}
+
+/* Dialog content: the three columns keep their natural height (the tallest one no longer stretches the other two
+   into dead space), and the identity field's verification note sits on its own line under the type/model. */
+.stations-page .station-detail-dialog .station-detail-columns { align-items: start; }
+
+.stations-page .station-detail-dialog .station-detail-field dd strong small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* An identity mismatch is an alert everywhere else on the page (tile tag, inventory row); it stays one here
+   instead of reading as a grey footnote. */
+.stations-page .station-detail-dialog .station-detail-field dd strong small.is-alert {
+  color: color-mix(in srgb, var(--red) 78%, var(--ink));
+  font-weight: 650;
 }

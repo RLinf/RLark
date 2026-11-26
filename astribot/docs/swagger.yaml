@@ -834,6 +834,42 @@ paths:
         '404': {description: Cluster not found}
         '409': {description: The node is in the cluster (remove it first), or the record changed while it was being deleted}
         '502': {description: Management Kubernetes API unavailable}
+  /api/v1/station/stations/{name}/running-images:
+    get:
+      tags: [Station]
+      summary: List observed running container images for a site node (administrator only)
+      description: >-
+        Reads Kubernetes Pod container statuses through the member cluster agent. The registered node UID
+        must match the member Node UID. The snapshot includes only containers in the Running state.
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: cluster_id, in: query, required: true, schema: {type: string}}
+        - {name: node_uid, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Running container image snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [namespace, pod, container, image]
+                      properties:
+                        namespace: {type: string}
+                        pod: {type: string}
+                        container: {type: string}
+                        image: {type: string}
+                        imageID: {type: string, description: Runtime-reported image ID when available}
+        '400': {description: Invalid node name or cluster ID, or missing node UID}
+        '403': {description: Administrator role required}
+        '404': {description: Cluster, site node record, or member Node not found}
+        '409': {description: Cluster namespace ownership or node identity could not be verified}
+        '502': {description: Management or member Kubernetes API unavailable}
   /api/v1/station/node-operations:
     post:
       tags: [Station]

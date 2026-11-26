@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent } from "react";
+import { type KeyboardEvent } from "react";
 import { AlertTriangle, Fingerprint, KeyRound, ListFilter, Power } from "lucide-react";
 import type { ClusterSummary } from "../../types";
 import type { StationItem } from "../api";
@@ -16,6 +16,7 @@ import {
   robotSelfCheckState, type NodeAdmission, type RobotPowerAction, type SiteNode,
 } from "../lib/siteNodeDisplay";
 import { CopyValue, DetailField, NetworkBadge } from "./StationFields";
+import { StationRunningImages } from "./StationRunningImages";
 
 export interface StationPower {
   pending: boolean;
@@ -67,18 +68,11 @@ export function StationDetailPanel({
   const detailsID = `station-details-${station.metadata.namespace}-${station.metadata.name}`;
   const titleID = `${detailsID}-title`;
   const deleteReasonID = `${detailsID}-delete-reason`;
-  const titleRef = useRef<HTMLHeadingElement>(null);
 
   const conditions = conditionView(station, now, zh);
   const cameraList = cameraCells(publishedCameras(siteNode?.cameras), zh, siteDataState !== "unavailable");
   const cameraIssues = robot ? cameraList.filter((cell) => cell.present !== false && (cell.tone === "failed" || cell.tone === "pending" || Boolean(cell.note) || Boolean(cell.advice))) : [];
   const conflictUID = station.status?.observation?.nodeUID;
-
-  useEffect(() => {
-    // Keep the keyboard focus inside the panel, but do not scroll: opening a detail must leave the card row
-    // exactly where the user clicked it.
-    titleRef.current?.focus({ preventScroll: true });
-  }, []);
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "Escape" || !onDismiss) return;
@@ -97,7 +91,7 @@ export function StationDetailPanel({
       <div className="station-detail-title">
         <span className="station-detail-eyebrow">{zh ? "节点详情" : "Node details"}</span>
         <div className="station-detail-name">
-          <h3 id={titleID} ref={titleRef} tabIndex={-1}>{station.metadata.name}</h3>
+          <h3 id={titleID} data-detail-title tabIndex={-1}>{station.metadata.name}</h3>
           <span className={`status ${stationStatusClass(phase)}`}><i />{stationPhaseLabel(phase, zh)}</span>
         </div>
         <small className="station-detail-sub">
@@ -139,7 +133,7 @@ export function StationDetailPanel({
           <DetailField label={zh ? "集群" : "Cluster"}><strong>{cluster?.name ?? (zh ? "集群未确定" : "Cluster unresolved")}</strong></DetailField>
           <DetailField label={zh ? "集群 ID" : "Cluster ID"}><CopyValue value={cluster?.id} zh={zh} /></DetailField>
           <DetailField label={zh ? "声明类型 / 型号" : "Declared type / model"}><strong>{[siteNode?.declared_type, siteNode?.declared_model].filter(Boolean).join(" · ") || "—"}</strong></DetailField>
-          <DetailField label={zh ? "观测类型 / 型号" : "Observed type / model"}><strong>{[siteNode?.observed_type, siteNode?.observed_model].filter(Boolean).join(" · ") || "—"}{siteNode?.identity_verified && <small>{siteNode.identity_verified}{siteNode.identity_reason ? ` · ${siteNode.identity_reason}` : ""}</small>}</strong></DetailField>
+          <DetailField label={zh ? "观测类型 / 型号" : "Observed type / model"}><strong>{[siteNode?.observed_type, siteNode?.observed_model].filter(Boolean).join(" · ") || "—"}{siteNode?.identity_verified && <small className={siteNode.identity_verified === "False" ? "is-alert" : undefined}>{siteNode.identity_verified}{siteNode.identity_reason ? ` · ${siteNode.identity_reason}` : ""}</small>}</strong></DetailField>
           <DetailField label="Node UID"><CopyValue value={station.spec.nodeUID} zh={zh} /></DetailField>
           <DetailField label="System UUID"><CopyValue value={station.status?.observation?.systemUUID} zh={zh} /></DetailField>
         </dl>
@@ -164,7 +158,7 @@ export function StationDetailPanel({
           <DetailField label={zh ? "SSH 主机指纹" : "SSH host fingerprint"} wide><CopyValue value={admission?.ssh_host_key} zh={zh} /></DetailField>
           {admission?.reason && <DetailField label={zh ? "入网说明" : "Admission detail"} wide><strong>{admission.reason}</strong></DetailField>}
         </dl>
-        {siteNode ? <NodeLinks network={{ site: { online: siteNode.online, links: siteNode.network?.links ?? [], summary: siteNode.network?.link_summary ?? "" } }} zh={zh} /> : <p className="station-detail-note">{zh ? "该节点当前不在场站网络中。" : "This node is not currently in the site network."}</p>}
+        {siteDataState === "ready" && !siteNode && <p className="station-detail-note">{zh ? "该节点当前不在场站网络中。" : "This node is not currently in the site network."}</p>}
       </section>
 
       <section className="station-detail-column" aria-label={zh ? "条件" : "Conditions"}>
@@ -178,6 +172,10 @@ export function StationDetailPanel({
         </ul> : <p className="station-detail-note">{zh ? "暂无条件上报" : "No conditions reported"}</p>}
       </section>
     </div>
+
+    {siteNode && <NodeLinks network={{ site: { online: siteNode.online, links: siteNode.network?.links ?? [], summary: siteNode.network?.link_summary ?? "" } }} zh={zh} collapsible />}
+
+    {!retired && <StationRunningImages name={station.metadata.name} clusterID={cluster?.id ?? ""} uid={station.spec.nodeUID} zh={zh} />}
 
     {robot && <section className="station-detail-robot" aria-label={zh ? "机器人" : "Robot"}>
       <div className="station-detail-robot-head">

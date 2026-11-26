@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { AlertTriangle, Boxes, Check, KeyRound, ListFilter } from "lucide-react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { AlertTriangle, Boxes, Check, ChevronDown, KeyRound, ListFilter, Server } from "lucide-react";
 import { clustersApi, nodesApi } from "../../backend";
 import { nodeAdmissionsApi, selfHealApi, siteNodesApi, stationsApi, type StationItem } from "../api";
 import { stationDeletable, stationsOfPhase } from "../lib/nodeRemoval";
@@ -8,16 +9,21 @@ import { useAutoRefresh } from "../../hooks";
 import type { Copy } from "../../i18n";
 import type { ClusterSummary, CRDNode } from "../../types";
 import { RobotControls } from "../components/RobotControls";
+import { NodeName } from "../components/NodeName";
 import { useRobotPower } from "../components/useRobotPower";
 import { nodeLabel } from "../lib/displayName";
 import { clusterForStation, stationPhase } from "../lib/stationDisplay";
 import { isControlPlaneLabels } from "../../utils/nodeVisibility";
-import { isRobotNode, robotPowerAfter, robotPowerDesired, type IssuedNodeAdmission, type NodeAdmission, type RobotPowerAction, type SiteNode } from "../lib/siteNodeDisplay";
+import { admissionStateLabel, isRobotNode, robotPowerAfter, robotPowerDesired, robotPowerState, type IssuedNodeAdmission, type NodeAdmission, type RobotPowerAction, type SiteNode } from "../lib/siteNodeDisplay";
 import { cameraCells, publishedCameras, type CameraCell, type CameraView } from "../lib/cameras";
 import { CameraPreviewDialog } from "./CameraPreviewDialog";
 import { StationCard, type StationCardVariant } from "./StationCard";
+import { StationDetailDialog } from "./StationDetailDialog";
 import { StationDetailPanel } from "./StationDetailPanel";
+import { releasePoseSessions } from "../components/RobotControls";
 import { AdmissionRecords, NodeOperations } from "./StationRecords";
+import { stationFacts } from "../lib/stationDrawer";
+import { shortUID, stationPhaseLabel, stationStatusClass } from "../lib/stationDisplay";
 import "./Stations.css";
 import "./StationsCards.css";
 import "../components/controlPlaneBadge.css";
@@ -26,46 +32,15 @@ function keyOf(item: StationItem) {
   return `${item.metadata.namespace}/${item.metadata.name}`;
 }
 
-// The resolved column count of the card grid. The grid decides its tracks from the page width; this reads them back
-// so a row's cards can be grouped and the open detail can sit under that row, spanning every column.
-function useGridColumns(ref: RefObject<HTMLDivElement | null>) {
-  const [columns, setColumns] = useState(1);
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    const update = () => {
-      const template = getComputedStyle(element).gridTemplateColumns;
-      const count = template && template !== "none" ? template.split(" ").filter(Boolean).length : 1;
-      setColumns((current) => (current === count ? current : Math.max(1, count)));
-    };
-    update();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [ref]);
-  return columns;
-}
-
-function CardGrid({ items, className, openKey, renderCard, renderPanel }: {
+// A plain grid of tiles or rows: the open detail is a dialog, so nothing is inserted between the grid children
+// and no measured row grouping is needed any more.
+function CardGrid({ items, className, renderCard }: {
   items: StationItem[];
   className: string;
-  openKey: string;
   renderCard: (item: StationItem) => ReactNode;
-  renderPanel: (item: StationItem) => ReactNode;
 }) {
-  const grid = useRef<HTMLDivElement>(null);
-  const columns = useGridColumns(grid);
-  const rows: StationItem[][] = [];
-  for (let start = 0; start < items.length; start += columns) rows.push(items.slice(start, start + columns));
-  return <div ref={grid} className={`stations-card-grid ${className}`}>
-    {rows.map((row, index) => {
-      const opened = row.find((item) => keyOf(item) === openKey);
-      return <Fragment key={`${className}-${index}-${row[0] ? keyOf(row[0]) : ""}`}>
-        {row.map(renderCard)}
-        {opened && renderPanel(opened)}
-      </Fragment>;
-    })}
+  return <div className={`stations-card-grid ${className}`}>
+    {items.map((item) => <Fragment key={keyOf(item)}>{renderCard(item)}</Fragment>)}
   </div>;
 }
 
@@ -97,6 +72,12 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
   const [openKey, setOpenKey] = useState("");
   const [zoom, setZoom] = useState<{ item: StationItem; view: CameraView; cell?: CameraCell; trigger: HTMLElement }>();
   const [now, setNow] = useState(() => Date.now());
+  // The dialog keeps showing the last known record for its key even when a filter would hide the row.
+  const detailItem = openKey ? items.find((item) => keyOf(item) === openKey) : undefined;
+  const detailsID = detailItem ? `station-details-${detailItem.metadata.namespace}-${detailItem.metadata.name}` : "";
+  // The power toast portals into the top-most dialog's host so the fixed page toast is not hidden behind the
+  // native top layer; with no dialog open it stays the page's own fixed corner toast.
+  const [toastHost, setToastHost] = useState<HTMLElement | null>(null);
   const activeRequest = useRef<AbortController | null>(null);
 
   const load = async (append = false) => {
@@ -166,6 +147,29 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => setNow(Date.now()), [items]);
+  // While the camera zoom dialog is open it owns Escape: the detail dialog must not react to the same key.
+  useEffect(() => {
+    const detail = document.querySelector<HTMLDialogElement>(".station-detail-dialog");
+    if (!detail) return;
+    detail.closedBy = zoom ? "none" : "closerequest";
+  }, [zoom, openKey]);
+  useEffect(() => {
+    if (!openKey && !zoom) {
+      setToastHost(null);
+      return;
+    }
+    // Two frames: the dialog mounts and calls showModal, then the top layer is live and the host is queryable.
+    let raf2 = 0;
+    const raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(() => {
+        setToastHost(document.querySelector(".station-detail-dialog[open] > .station-toast-host, .station-camera-dialog[open] .station-toast-host"));
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      window.cancelAnimationFrame(raf2);
+    };
+  }, [openKey, zoom]);
 
   // A namespace's Node by its name, or its name alone when the Node is gone.
   const nodeAt = (namespace: string, name: string) => nodesByKey[`${namespace}/${name}`] ?? { metadata: { name } };
@@ -279,8 +283,36 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
     { value: "Retired", label: zh ? "已移除" : "Retired" },
   ];
 
-  const powerPress = (item: StationItem, action: RobotPowerAction, label: string) =>
-    void power.set([{ node: item.metadata.name, namespace: item.metadata.namespace, desired: robotPowerAfter(action, robotPowerDesired(labelsOf(item))) }], label);
+  const powerPress = (item: StationItem, action: RobotPowerAction, label: string) => {
+    const entry = { node: item.metadata.name, namespace: item.metadata.namespace, desired: robotPowerAfter(action, robotPowerDesired(labelsOf(item))) };
+    // The machine must not be moving while the browser blocks on the confirmation dialog.
+    void releasePoseSessions([{ key: keyOf(item), node: entry.node, namespace: entry.namespace, labels: labelsOf(item) }]).then(() => power.set([entry], label));
+  };
+
+  // Inventory rows: the quiet-list grammar for non-robot nodes — icon, name, a dot status word, mono facts and a
+  // chevron; the open detail spans the full width below the row.
+  const row = (item: StationItem) => {
+    const key = keyOf(item);
+    const facts = stationFacts(item, clusterForStation(clusters, item.metadata.namespace), now, zh);
+    const phase = stationPhase(item);
+    const admission = admissionOf(item);
+    const identityOff = siteNodeOf(item)?.identity_verified === "False";
+    const detailsID = `station-details-${item.metadata.namespace}-${item.metadata.name}`;
+    return <div key={key} className={`station-inv${openKey === key ? " is-expanded" : ""}${phase === "Retired" ? " is-retired" : ""}`}>
+      <div className="station-inv-row">
+        <span className="station-inv-icon" aria-hidden="true"><Server size={15} /></span>
+        <div className="station-inv-name">
+          <h3><NodeName node={nodeOf(item)} /></h3>
+          <small>{identityOff ? <strong className="is-alert">{zh ? "身份不匹配" : "identity mismatch"}</strong> : null}{admission ? <span title={admission.reason}>{admissionStateLabel(admission.state, zh)}</span> : <span>{zh ? "未用入网码" : "No code"}</span>} · <code className="inline-code">UID {shortUID(item.spec.nodeUID)}</code></small>
+        </div>
+        <span className={`station-inv-status status ${stationStatusClass(phase)}`}><i />{stationPhaseLabel(phase, zh)}</span>
+        <dl className="station-inv-facts">{facts.slice(0, 3).map((fact) => <div key={fact.key}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl>
+        <button id={`station-expand-${item.metadata.namespace}-${item.metadata.name}`} type="button" className="station-inv-expand" aria-expanded={openKey === key} aria-haspopup="dialog" aria-controls={detailsID} aria-label={openKey === key ? (zh ? "关闭详情" : "Close details") : (zh ? "展开详情" : "Expand details")} title={openKey === key ? (zh ? "关闭详情" : "Close details") : (zh ? "展开详情" : "Expand details")} onClick={() => toggleOpen(item)}>
+          <ChevronDown size={16} className={openKey === key ? "is-open" : ""} aria-hidden="true" />
+        </button>
+      </div>
+    </div>;
+  };
 
   const card = (item: StationItem, variant: StationCardVariant) => {
     const key = keyOf(item);
@@ -325,6 +357,7 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
       deleting={deletePending === key}
       admissionPending={admissionPending?.key === key ? admissionPending.kind : ""}
       onDismiss={() => closePanel(item)}
+      cameraActive={!zoom}
       onDelete={() => void removeRecord(item)}
       onReissue={() => void actAdmission(item, "reissue")}
       onRevoke={() => void actAdmission(item, "revoke")}
@@ -335,6 +368,7 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
 
   return (
     <div className="page-content resource-page stations-page">
+      <div className="stations-frame">
       <div className="stations-phase-tabs" role="group" aria-label={zh ? "按状态筛选" : "Filter by status"}>
         {phaseTabs.map((tab) => <button key={tab.value} type="button" aria-pressed={phase === tab.value} className={phase === tab.value ? "is-active" : ""} onClick={() => setPhase(tab.value)}>
           {tab.label}<span>{count(tab.value)}</span>
@@ -389,21 +423,25 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
               const entries = robots.map((item) => ({ key: keyOf(item), node: item.metadata.name, namespace: item.metadata.namespace, labels: labelsOf(item) }));
               const groupChosen = entries.filter((entry) => chosen.has(entry.key));
               const allChosen = entries.length > 0 && groupChosen.length === entries.length;
+              const driverReady = robots.filter((item) => robotPowerState(labelsOf(item)) === "ready").length;
+              const online = robots.filter((item) => stationPhase(item) === "Bound").length;
+              const cameraIssues = robots.filter((item) => cameraCells(publishedCameras(siteNodeOf(item)?.cameras), zh, siteDataState !== "unavailable").some((cell) => cell.present === false || cell.tone !== "online")).length;
               return <section className="stations-group stations-robot-group" key={group.id} aria-labelledby={`stations-robot-group-${group.id}`}>
                 <header className="stations-group-head">
                   <div><h4 id={`stations-robot-group-${group.id}`}>{group.name}</h4><small>{zh ? "机器人集群" : "Robot cluster"} · {group.namespace}</small></div>
-                  <span className="stations-group-count">{robots.length} {zh ? "机器人" : "robots"}</span>
+                  <span className="stations-group-count">
+                    <b>{zh ? "驱动就绪" : "Drivers ready"} {driverReady}/{robots.length}</b>
+                    {cameraIssues > 0 && <b className="is-warn">{zh ? "相机异常" : "Camera issues"} {cameraIssues}</b>}
+                    <b>{zh ? "在线" : "Online"} {online}/{robots.length}</b>
+                  </span>
                 </header>
-                {controls.map((item) => <Fragment key={keyOf(item)}>
-                  {card(item, "control")}
-                  {openKey === keyOf(item) && <div className="stations-detail-block">{panel(item)}</div>}
-                </Fragment>)}
+                {controls.map((item) => card(item, "control"))}
                 {robots.length > 0 && <div className="stations-batch-line">
                   <label className="stations-check-label"><input type="checkbox" checked={allChosen} ref={(element) => { if (element) element.indeterminate = groupChosen.length > 0 && !allChosen; }} onChange={(event) => setChosen((current) => { const next = new Set(current); for (const entry of entries) { if (event.target.checked) next.add(entry.key); else next.delete(entry.key); } return next; })} />{zh ? "全选当前集群机器人" : "Select all robots in this cluster"}</label>
                   {groupChosen.length > 0 && <RobotControls robots={entries} chosen={groupChosen} power={power} zh={zh} showMessage={false} />}
                 </div>}
-                {robots.length > 0 && <CardGrid items={robots} className="is-robot-grid" openKey={openKey} renderCard={(item) => card(item, "robot")} renderPanel={panel} />}
-                {others.length > 0 && <CardGrid items={others} className="is-stock-grid" openKey={openKey} renderCard={(item) => card(item, "node")} renderPanel={panel} />}
+                {robots.length > 0 && <CardGrid items={robots} className="is-robot-grid" renderCard={(item) => card(item, "robot")} />}
+                {others.length > 0 && <div className="stations-inv-list">{others.map(row)}</div>}
               </section>;
             })}
             {inventoryGroups.length > 0 ? inventoryGroups.map((group) => {
@@ -414,7 +452,7 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
                   <div><h4>{group.name}</h4><small>{zh ? "普通节点" : "Node inventory"} · {group.namespace}</small></div>
                   <div className="stations-cluster-stats"><span><i className="is-online" />{zh ? "在线" : "Online"} {online}/{group.items.length}</span><span><i className="is-total" />{zh ? "节点" : "Nodes"} {group.items.length}</span>{conflicts > 0 && <span className="is-conflict"><i />{zh ? "冲突" : "Conflicts"} {conflicts}</span>}</div>
                 </header>
-                <CardGrid items={group.items} className="is-stock-grid" openKey={openKey} renderCard={(item) => card(item, "node")} renderPanel={panel} />
+                <div className="stations-inv-list">{group.items.map(row)}</div>
               </section>;
             }) : <p className="stations-state muted">{robotGroups.length ? (zh ? "没有其他场站节点" : "No other site nodes") : (zh ? "没有匹配的场站节点" : "No matching site nodes")}</p>}
           </>
@@ -427,15 +465,28 @@ export function StationsPage({ copy: c, onJoin, onModels }: { copy: Copy; onJoin
         <header className="stations-admission-section-heading"><div><h3 id="stations-admissions-title">{zh ? "入网记录" : "Admission records"}</h3><small>{zh ? "发码和使用状态 · 入网码本身不会保存" : "Issued and redemption status · codes are never stored"}</small></div><span className="stations-table-count">{admissions.length} {zh ? "条记录" : "records"}</span></header>
         <AdmissionRecords admissions={admissions} clusters={clusters} loadError={admissionError} zh={zh} onJoin={onJoin} onChanged={() => load(false)} />
       </section>
+      </div>
       {zoom && <CameraPreviewDialog node={zoom.item.metadata.name} namespace={zoom.item.metadata.namespace} view={zoom.view} cell={zoom.cell} zh={zh} onDismiss={closeZoom} />}
-      {(power.pending || power.message) && <div className={`stations-power-toast${power.failed ? " is-error" : ""}`} role={power.failed ? "alert" : "status"}>
-        <span className={`stations-power-toast-icon${power.pending ? " is-pending" : ""}`} aria-hidden="true">{power.pending ? <span className="stations-power-spinner" /> : power.failed ? <AlertTriangle size={16} /> : <Check size={16} />}</span>
-        <div className="stations-power-toast-copy">
-          <strong>{power.pending ? (zh ? `正在下发：${power.activeLabel || "命令"}` : `Sending: ${power.activeLabel || "command"}`) : power.failed ? (zh ? "操作失败" : "Action failed") : (zh ? "操作已下发" : "Action sent")}</strong>
-          <p>{power.pending ? (zh ? "请稍候，命令正在发送…" : "Sending the command…") : power.message}</p>
-        </div>
-        {!power.pending && <button type="button" className="stations-power-toast-close" onClick={power.clear} aria-label={zh ? "关闭" : "Dismiss"}>×</button>}
-      </div>}
+      {detailItem && <StationDetailDialog labelledBy={`${detailsID}-title`} onClose={() => closePanel(detailItem)}>
+        {panel(detailItem)}
+      </StationDetailDialog>}
+      {(power.pending || power.message) && (toastHost
+        ? createPortal(<div className={`stations-power-toast stations-power-toast-in-dialog${power.failed ? " is-error" : ""}`} role={power.failed ? "alert" : "status"}>
+          <span className={`stations-power-toast-icon${power.pending ? " is-pending" : ""}`} aria-hidden="true">{power.pending ? <span className="stations-power-spinner" /> : power.failed ? <AlertTriangle size={16} /> : <Check size={16} />}</span>
+          <div className="stations-power-toast-copy">
+            <strong>{power.pending ? (zh ? `正在下发：${power.activeLabel || "命令"}` : `Sending: ${power.activeLabel || "command"}`) : power.failed ? (zh ? "操作失败" : "Action failed") : (zh ? "操作已下发" : "Action sent")}</strong>
+            <p>{power.pending ? (zh ? "请稍候，命令正在发送…" : "Sending the command…") : power.message}</p>
+          </div>
+          {!power.pending && <button type="button" className="stations-power-toast-close" onClick={power.clear} aria-label={zh ? "关闭" : "Dismiss"}>×</button>}
+        </div>, toastHost)
+        : <div className={`stations-power-toast${power.failed ? " is-error" : ""}`} role={power.failed ? "alert" : "status"}>
+          <span className={`stations-power-toast-icon${power.pending ? " is-pending" : ""}`} aria-hidden="true">{power.pending ? <span className="stations-power-spinner" /> : power.failed ? <AlertTriangle size={16} /> : <Check size={16} />}</span>
+          <div className="stations-power-toast-copy">
+            <strong>{power.pending ? (zh ? `正在下发：${power.activeLabel || "命令"}` : `Sending: ${power.activeLabel || "command"}`) : power.failed ? (zh ? "操作失败" : "Action failed") : (zh ? "操作已下发" : "Action sent")}</strong>
+            <p>{power.pending ? (zh ? "请稍候，命令正在发送…" : "Sending the command…") : power.message}</p>
+          </div>
+          {!power.pending && <button type="button" className="stations-power-toast-close" onClick={power.clear} aria-label={zh ? "关闭" : "Dismiss"}>×</button>}
+        </div>)}
     </div>
   );
 }
