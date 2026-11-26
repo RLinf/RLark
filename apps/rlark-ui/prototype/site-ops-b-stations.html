@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RLark · 场站节点</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #171b25;
+      --muted: #7c8492;
+      --soft: #a9b0bd;
+      --line: #e7ebf0;
+      --line-strong: #dce2ea;
+      --panel: #fff;
+      --canvas: #f4f6f9;
+      --hover: #f5f0fe;
+      --blue: #7c3aed;
+      --blue-2: #a78bfa;
+      --blue-bg: #efe9fd;
+      --green: #36c98f;
+      --green-soft: #e7f8f1;
+      --red: #ef5a7a;
+      --orange: #f59e35;
+      --shadow-soft: 0 8px 24px rgba(28,39,58,.055);
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; min-height: 100%; margin: 0; overflow-x: clip; }
+    body { background: var(--canvas); color: var(--ink); font: 13px/1.45 Inter, "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif; }
+    button, input, select { font: inherit; }
+    button, select { color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .48; }
+    :focus-visible { outline: 3px solid var(--blue-2); outline-offset: 2px; }
+    .theme-dark {
+      color-scheme: dark;
+      --ink: #f5f7fb;
+      --muted: #9ca8ba;
+      --line: #273348;
+      --line-strong: #34435a;
+      --panel: #151d2b;
+      --canvas: #0f1623;
+      --blue: #a78bfa;
+      --blue-bg: rgba(167,139,250,.18);
+      --hover: rgba(167,139,250,.08);
+    }
+    .shell-sidebar { position: fixed; z-index: 30; inset: 0 auto 0 0; width: 256px; display: flex; flex-direction: column; padding: 19px 16px 14px; border-right: 1px solid var(--line); background: var(--panel); }
+    .brand { display: flex; align-items: center; gap: 10px; min-height: 45px; margin: 0 10px 24px; color: var(--blue); font-size: 25px; font-weight: 800; letter-spacing: -.7px; }
+    .brand-mark { width: 35px; height: 35px; display: grid; place-items: center; border: 2px solid var(--blue); border-radius: 50%; }
+    .brand-mark svg { width: 22px; }
+    .nav-caption { margin: 0 10px 8px; color: var(--soft); font-size: 10px; font-weight: 800; }
+    .nav-list { display: grid; gap: 4px; }
+    .nav-item { display: flex; align-items: center; gap: 12px; min-height: 43px; padding: 0 11px; border-radius: 12px; color: #596579; font-weight: 650; text-decoration: none; white-space: nowrap; }
+    .nav-item svg { width: 17px; height: 17px; flex: none; }
+    .nav-item:hover { background: var(--hover); color: var(--ink); }
+    .nav-item.active { background: var(--blue-bg); color: var(--blue); }
+    .nav-item.active::before { position: absolute; left: 0; width: 4px; height: 28px; border-radius: 0 4px 4px 0; background: var(--blue); content: ""; }
+    .sidebar-bottom { margin-top: auto; }
+    .sidebar-bottom button.nav-item { width: 100%; border: 0; background: transparent; font: inherit; text-align: left; }
+    body.sidebar-collapsed .shell-sidebar { width: 80px; align-items: center; padding-right: 8px; padding-left: 8px; }
+    body.sidebar-collapsed .brand { width: 42px; justify-content: center; margin-right: 0; margin-left: 0; font-size: 0; }
+    body.sidebar-collapsed .brand-word, body.sidebar-collapsed .nav-caption, body.sidebar-collapsed .nav-item span { display: none; }
+    body.sidebar-collapsed .nav-item { justify-content: center; width: 46px; margin-right: auto; margin-left: auto; padding: 0; }
+    body.sidebar-collapsed .nav-item.active::before { left: -8px; }
+    body.sidebar-collapsed .shell-main { width: calc(100% - 80px); margin-left: 80px; }
+    .shell-main { width: calc(100% - 256px); min-height: 100vh; margin-left: 256px; }
+    .topbar { position: sticky; z-index: 20; top: 0; height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 0 28px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    .topbar-current { display: grid; gap: 2px; }
+    .topbar-current small { color: var(--soft); font-size: 10px; font-weight: 700; }
+    .topbar-current strong { font-size: 14px; }
+    .topbar-actions { display: flex; align-items: center; gap: 8px; }
+    .topbar-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
+    .topbar-toggle button { min-height: 28px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; }
+    .topbar-toggle button.active { background: var(--blue-bg); color: var(--blue); }
+    .topbar-icon { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); }
+    .avatar { width: 34px; height: 34px; display: grid; place-items: center; border: 2px solid var(--panel); border-radius: 50%; background: #f6d8c5; color: #604632; font-size: 11px; font-weight: 800; }
+    .page-content { display: grid; align-content: start; gap: 18px; min-width: 0; padding: 28px; padding-bottom: 52px; }
+    .page-a, .page-b { display: grid; align-content: start; gap: 18px; min-width: 0; }
+    .hero { position: relative; min-height: 158px; display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 24px 28px; overflow: hidden; border: 1px solid rgba(124,58,237,.12); border-radius: 22px; background: radial-gradient(circle at 78% -25%, rgba(124,58,237,.16), transparent 40%), linear-gradient(135deg, var(--panel) 28%, var(--blue-bg) 100%); box-shadow: var(--shadow-soft); }
+    .hero::after { position: absolute; top: -172px; right: 8%; width: 260px; height: 260px; border: 40px solid rgba(124,58,237,.045); border-radius: 50%; content: ""; pointer-events: none; }
+    .hero-copy, .hero-side { position: relative; z-index: 1; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 750; }
+    .hero h1 { margin: 6px 0; font-size: 28px; line-height: 1.15; letter-spacing: -.5px; }
+    .hero p { max-width: 620px; margin: 0; color: var(--muted); font-size: 13px; }
+    .hero-side { display: grid; justify-items: end; gap: 11px; min-width: 260px; }
+    .hero-empty-note { color: var(--muted); font-size: 10px; text-align: right; }
+    .hero-empty-note a { color: var(--blue); font-weight: 700; }
+    .health-summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--panel) 85%, transparent); }
+    .health-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 14%, transparent); }
+    .health-summary strong { font-size: 12px; }
+    .health-summary small, .hero-side > small { color: var(--muted); font-size: 11px; }
+    .health-summary-copy { display: grid; gap: 1px; }
+    .primary-button, .secondary-button, .quiet-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 0 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); font-weight: 700; white-space: nowrap; }
+    .primary-button { border-color: var(--blue); background: var(--blue); color: var(--panel); box-shadow: 0 8px 18px rgba(124,58,237,.18); }
+    .primary-button:hover { filter: brightness(1.04); }
+    .secondary-button:hover, .quiet-button:hover { border-color: var(--line-strong); background: var(--hover); }
+    .button-icon { display: inline-grid; place-items: center; }
+    .overview-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
+    .overview-card { min-width: 0; min-height: 94px; display: grid; grid-template-columns: 40px minmax(0,1fr); align-items: center; gap: 12px; padding: 15px 17px; border: 1px solid var(--line); border-radius: 17px; background: var(--panel); box-shadow: var(--shadow-soft); }
+    .overview-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; background: var(--blue-bg); color: var(--blue); }
+    .overview-card.green .overview-icon { background: var(--green-soft); color: #168a61; }
+    .overview-card.orange .overview-icon { background: color-mix(in srgb, var(--orange) 15%, var(--panel)); color: #bf751c; }
+    .overview-card.red .overview-icon { background: color-mix(in srgb, var(--red) 14%, var(--panel)); color: #cf3f61; }
+    .overview-card small, .overview-card strong, .overview-card em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .overview-card small { color: var(--muted); font-size: 10px; font-weight: 750; }
+    .overview-card strong { margin-top: 1px; font-size: 22px; line-height: 1.15; }
+    .overview-card em { margin-top: 3px; color: var(--soft); font-size: 10px; font-style: normal; }
+    .filters { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .phase-tabs { flex: none; display: flex; align-items: center; gap: 3px; padding: 4px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); }
+    .phase-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .phase-tab b { min-width: 18px; padding: 1px 5px; border-radius: 999px; background: var(--canvas); color: var(--muted); font-size: 10px; text-align: center; }
+    .phase-tab.active { background: var(--blue-bg); color: var(--blue); }
+    .search-field, .select-field { display: flex; align-items: center; gap: 8px; min-width: 0; height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--muted); }
+    .search-field { flex: 1 1 210px; }
+    .search-field input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 12px; }
+    .search-field input::placeholder { color: var(--soft); }
+    .select-field { flex: 0 1 190px; }
+    .select-field select { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 12px; font-weight: 700; }
+    .result-count { flex: none; color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .toolbar-actions { display: flex; align-items: center; gap: 8px; }
+    .toolbar-actions .secondary-button { min-height: 40px; padding: 0 11px; font-size: 12px; }
+    .inventory-panel, .lower-panel, .cluster-section { min-width: 0; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); box-shadow: var(--shadow-soft); }
+    .panel-heading { min-height: 61px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 17px; border-bottom: 1px solid var(--line); }
+    .panel-heading h2, .panel-heading h3 { margin: 0; font-size: 16px; }
+    .panel-heading p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+    .panel-heading small { color: var(--muted); font-size: 11px; }
+    .count-pill { flex: none; padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--canvas); color: var(--muted); font-size: 10px; font-weight: 750; }
+    .robot-bar { min-height: 51px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 15px; border-bottom: 1px solid var(--line); }
+    .robot-summary { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; font-weight: 750; }
+    .robot-bar .secondary-button { min-height: 32px; padding: 0 10px; font-size: 11px; }
+    .table-scroll { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    .node-table { min-width: 1280px; table-layout: auto; }
+    @media (min-width: 761px) and (max-width: 1500px) {
+      .node-table { min-width: 0; table-layout: fixed; }
+      .node-table th, .node-table td { padding-right: 6px; padding-left: 6px; font-size: 10px; }
+      .node-table th:nth-child(1), .node-table td:nth-child(1) { width: 3%; }
+      .node-table th:nth-child(2), .node-table td:nth-child(2) { width: 19%; }
+      .node-table th:nth-child(3), .node-table td:nth-child(3) { width: 16%; }
+      .node-table th:nth-child(4), .node-table td:nth-child(4) { width: 8%; }
+      .node-table th:nth-child(5), .node-table td:nth-child(5) { width: 11%; }
+      .node-table th:nth-child(6), .node-table td:nth-child(6) { width: 10%; }
+      .node-table th:nth-child(7), .node-table td:nth-child(7) { display: none; }
+      .node-table th:nth-child(8), .node-table td:nth-child(8) { width: 10%; }
+      .node-table th:nth-child(9), .node-table td:nth-child(9) { width: 5%; }
+      .node-table th:nth-child(10), .node-table td:nth-child(10) { width: 9%; }
+      .node-table th:nth-child(11), .node-table td:nth-child(11) { width: 9%; }
+      .node-identity { min-width: 0; }
+    }
+    th { height: 42px; padding: 0 10px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--canvas) 54%, var(--panel)); color: var(--muted); font-size: 10px; font-weight: 750; white-space: nowrap; }
+    td { min-height: 58px; padding: 10px; border-bottom: 1px dashed var(--line); color: var(--ink); font-size: 11px; white-space: nowrap; }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr.node-row { cursor: pointer; }
+    tbody tr.node-row:hover, tbody tr.node-row:focus { background: var(--hover); }
+    .check-cell { width: 38px; text-align: center; }
+    input[type="checkbox"] { width: 15px; height: 15px; margin: 0; accent-color: var(--blue); vertical-align: middle; }
+    .node-identity { min-width: 200px; display: grid; gap: 3px; }
+    .node-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .node-title-line strong { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+    .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+    .uid-chip { max-width: 168px; display: inline-block; overflow: hidden; padding: 3px 6px; border-radius: 6px; background: var(--canvas); color: var(--muted); text-overflow: ellipsis; vertical-align: middle; }
+    .control-badge { display: inline-flex; padding: 2px 6px; border-radius: 999px; background: var(--blue-bg); color: var(--blue); font-size: 9px; font-weight: 750; }
+    .status { display: inline-flex; align-items: center; gap: 5px; min-height: 22px; padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 750; white-space: nowrap; }
+    .status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .status-online { background: var(--green-soft); color: #12865c; }
+    .status-pending { background: color-mix(in srgb, var(--orange) 13%, var(--panel)); color: #a96313; }
+    .status-failed { background: color-mix(in srgb, var(--red) 13%, var(--panel)); color: #c23858; }
+    .status-stopped { background: var(--canvas); color: var(--muted); }
+    .network-verified { color: #168a61; }
+    .network-failed { color: #cf3f61; }
+    .network-unknown { color: var(--muted); }
+    .admission-chip { display: inline-flex; align-items: center; min-height: 22px; padding: 3px 8px; border-radius: 999px; background: var(--green-soft); color: #12865c; font-size: 10px; font-weight: 750; }
+    .admission-chip.pending { background: color-mix(in srgb, var(--orange) 13%, var(--panel)); color: #a96313; }
+    .admission-chip.expired, .admission-chip.revoked { background: var(--canvas); color: var(--muted); }
+    .muted { color: var(--muted); }
+    .table-footer { min-height: 47px; display: flex; align-items: center; justify-content: center; padding: 7px; border-top: 1px solid var(--line); }
+    .table-footer button { min-height: 32px; padding: 0 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--muted); font-size: 11px; font-weight: 700; }
+    .empty-state { min-height: 142px; display: grid; align-content: center; justify-items: center; gap: 7px; padding: 20px; text-align: center; }
+    .empty-state strong { font-size: 14px; }
+    .empty-state p { max-width: 400px; margin: 0; color: var(--muted); font-size: 12px; }
+    .empty-state .secondary-button, .empty-state .primary-button { margin-top: 4px; }
+    .lower-deck.is-ledger-only { grid-template-columns: 1fr; }
+    .lower-deck { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(300px,.8fr); align-items: start; gap: 16px; }
+    .lower-panel { overflow: hidden; }
+    .ledger-scroll { overflow-x: auto; }
+    .ledger-table { min-width: 760px; }
+    .ledger-table th { padding: 0 11px; }
+    .ledger-table td { padding: 10px 11px; vertical-align: top; }
+    .ledger-node { display: grid; gap: 4px; max-width: 210px; }
+    .ledger-node small { overflow-wrap: anywhere; white-space: normal; }
+    .ledger-actions { display: flex; flex-wrap: wrap; gap: 3px; }
+    .table-action { min-height: 27px; padding: 0 7px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--blue); font-size: 10px; font-weight: 700; white-space: nowrap; }
+    .table-action.danger { color: #c23858; }
+    .attention-content { padding: 13px 15px; }
+    .attention-group + .attention-group { margin-top: 14px; }
+    .attention-group > strong { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; font-size: 12px; }
+    .attention-item, .operation-item { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; min-height: 39px; padding: 7px 0; border-top: 1px solid var(--line); }
+    .attention-item > span:first-child, .operation-main { min-width: 0; display: grid; gap: 2px; }
+    .attention-item small, .operation-main small { color: var(--muted); font-size: 10px; }
+    .operation-item { grid-template-columns: 1fr auto; }
+    .operation-item button { padding: 0; border: 0; background: transparent; color: var(--ink); text-align: left; }
+    .operation-item details { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
+    .operation-item summary { cursor: pointer; }
+    .operation-item details p { margin: 5px 0 0; }
+    .lower-empty { padding: 14px 0 4px; color: var(--muted); font-size: 11px; }
+    .cluster-list { display: grid; gap: 15px; }
+    .cluster-section { overflow: hidden; }
+    .cluster-heading { min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 17px; border-bottom: 1px solid var(--line); }
+    .cluster-title { min-width: 0; }
+    .cluster-title h2 { margin: 0; overflow-wrap: anywhere; font-size: 16px; }
+    .cluster-title small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+    .cluster-metrics { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+    .cluster-metric { display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .cluster-metric strong { color: var(--ink); }
+    .node-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); grid-auto-rows: 1fr; align-items: stretch; gap: 11px; padding: 13px; }
+    .node-card { position: relative; min-width: 0; display: grid; align-content: start; grid-template-rows: auto 1fr auto; gap: 11px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--ink); text-align: left; cursor: pointer; transition: border-color .14s ease, background .14s ease; }
+    .node-card:hover { border-color: color-mix(in srgb, var(--blue) 40%, var(--line)); background: var(--hover); }
+    .node-card.is-selected { border-color: var(--blue); box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 13%, transparent); }
+    .node-card-head { min-width: 0; display: flex; justify-content: space-between; gap: 8px; }
+    .node-card-name { min-width: 0; display: grid; gap: 4px; }
+    .node-card-name strong { overflow-wrap: anywhere; font-size: 13px; }
+    .node-card-name code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .node-card-state { flex: none; }
+    .node-card-details { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-top: 9px; border-top: 1px solid var(--line); }
+    .node-card-details > span { min-width: 0; display: grid; gap: 3px; }
+    .node-card-details small { color: var(--muted); font-size: 9px; }
+    .node-card-details strong, .node-card-details code { min-width: 0; font-size: 10px; }
+    .node-card-details .status, .node-card-details .admission-chip { max-width: 100%; justify-self: start; white-space: normal; overflow-wrap: anywhere; }
+    .node-card-details .network-verified, .node-card-details .network-failed, .node-card-details .network-unknown { white-space: normal; overflow-wrap: anywhere; }
+    .node-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--muted); font-size: 10px; }
+    .card-select { display: inline-flex; align-items: center; gap: 6px; }
+    .health-strip { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+    .health-stat { min-height: 72px; display: flex; align-items: center; gap: 10px; padding: 12px 15px; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); box-shadow: var(--shadow-soft); }
+    .health-stat strong { display: block; font-size: 20px; line-height: 1.1; }
+    .health-stat small { color: var(--muted); font-size: 10px; }
+    .health-stat.conflict { border-color: color-mix(in srgb, var(--red) 30%, var(--line)); }
+    .health-stat.conflict strong { color: #c23858; }
+    .board-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+    .board-toolbar .phase-tabs { margin-right: auto; }
+    .board-toolbar .search-field { flex: 1 1 220px; }
+    .board-lower { margin-top: 1px; }
+    .admissions-collapsible > summary { list-style: none; }
+    .admissions-collapsible > summary::-webkit-details-marker { display: none; }
+    .summary-button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 15px 18px; border: 0; background: transparent; text-align: left; cursor: pointer; }
+    .summary-button > span:first-child { display: grid; gap: 3px; }
+    .summary-button strong { font-size: 15px; }
+    .summary-button small { color: var(--muted); font-size: 11px; }
+    .admissions-collapsible[open] .summary-button { border-bottom: 1px solid var(--line); }
+    .admissions-inner { padding: 0 14px 14px; }
+    .drawer-backdrop { position: fixed; z-index: 80; inset: 0; background: rgba(12,18,29,.42); }
+    .station-drawer { position: fixed; z-index: 81; inset: 0 0 0 auto; width: min(650px,100vw); display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); color: var(--ink); box-shadow: -16px 0 44px rgba(16,25,42,.16); }
+    .drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 19px 22px 15px; border-bottom: 1px solid var(--line); }
+    .drawer-header h2 { margin: 3px 0 8px; overflow-wrap: anywhere; font-size: 20px; }
+    .drawer-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
+    .icon-button { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); color: var(--muted); }
+    .drawer-tabs { display: flex; gap: 3px; padding: 0 20px; border-bottom: 1px solid var(--line); }
+    .drawer-tab { position: relative; min-height: 43px; padding: 0 13px; border: 0; background: transparent; color: var(--muted); font-weight: 700; }
+    .drawer-tab.active { color: var(--blue); }
+    .drawer-tab.active::after { position: absolute; right: 8px; bottom: -1px; left: 8px; height: 2px; border-radius: 2px; background: var(--blue); content: ""; }
+    .drawer-body { min-height: 0; flex: 1; overflow: auto; padding: 17px 21px; overscroll-behavior: contain; }
+    .drawer-panel { display: grid; gap: 14px; }
+    .facts-strip { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--canvas); }
+    .facts-strip > div { min-width: 0; display: grid; gap: 5px; padding: 11px; border-right: 1px solid var(--line); }
+    .facts-strip > div:last-child { border-right: 0; }
+    .facts-strip small, .detail-grid small { color: var(--muted); font-size: 10px; }
+    .facts-strip strong { overflow-wrap: anywhere; font-size: 11px; }
+    .detail-section { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+    .detail-section h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 11px; font-size: 13px; }
+    .detail-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px 15px; }
+    .detail-grid > div { min-width: 0; display: grid; gap: 4px; }
+    .detail-grid strong, .detail-grid code { overflow-wrap: anywhere; font-size: 11px; }
+    .condition-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+    .condition-list li { display: grid; grid-template-columns: 9px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+    .condition-list li:last-child { border-bottom: 0; }
+    .condition-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .condition-dot.ok { background: var(--green); }
+    .condition-dot.bad { background: var(--red); }
+    .condition-copy { min-width: 0; display: grid; gap: 3px; }
+    .condition-copy small { color: var(--muted); overflow-wrap: anywhere; }
+    .drawer-alert { padding: 11px 13px; border: 1px solid color-mix(in srgb, var(--red) 34%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--red) 9%, var(--panel)); color: #c23858; }
+    .drawer-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 12px 17px max(12px,env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--panel); }
+    .drawer-footer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; margin-left: auto; }
+    .drawer-footer .secondary-button { min-height: 34px; padding: 0 10px; font-size: 11px; }
+    .drawer-footer .danger { color: #c23858; }
+    .toast { position: fixed; z-index: 100; right: 18px; bottom: 18px; max-width: min(440px,calc(100vw - 32px)); padding: 11px 15px; border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow-soft); }
+    .review-toggle { position: fixed; z-index: 110; right: 14px; bottom: 14px; display: flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--muted); box-shadow: var(--shadow-soft); font-size: 10px; font-weight: 700; }
+    .review-panel { position: fixed; z-index: 110; right: 14px; bottom: 14px; width: min(370px,calc(100vw - 28px)); display: grid; gap: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow-soft); }
+    .review-panel[hidden], .review-toggle[hidden] { display: none; }
+    .review-head { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 10px; font-weight: 750; }
+    .review-controls { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; }
+    .review-controls label { display: grid; gap: 4px; color: var(--muted); font-size: 9px; }
+    .review-controls select { width: 100%; min-width: 0; height: 31px; padding: 0 7px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); font-size: 10px; }
+    .review-close { padding: 2px 5px; border: 0; background: transparent; color: var(--muted); }
+    .theme-dark .nav-item { color: var(--muted); }
+    .theme-dark .nav-item.active { color: var(--blue); }
+    .theme-dark .avatar { background: #553f39; color: #f5dccd; }
+    .theme-dark .status-online, .theme-dark .admission-chip { color: #70e0b6; }
+    .theme-dark .status-pending, .theme-dark .admission-chip.pending { color: #ffc36d; }
+    .theme-dark .status-failed { color: #ff8fa8; }
+    .theme-dark .network-verified { color: #70e0b6; }
+    .theme-dark .network-failed { color: #ff8fa8; }
+    .theme-dark .drawer-alert { color: #ff9fb4; }
+    .theme-dark .primary-button { color: var(--canvas); }
+    .is-refreshing { opacity: .68; pointer-events: none; }
+    .refresh-spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 1535px) {
+      .node-grid { grid-template-columns: repeat(auto-fit,minmax(min(100%,250px),1fr)); }
+      .filters { flex-wrap: wrap; }
+      .phase-tabs { order: 0; }
+      .filters .search-field { flex: 1 1 280px; }
+    }
+    @media (max-width: 1199px) {
+      .overview-grid, .health-strip { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .lower-deck { grid-template-columns: 1fr; }
+      .node-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    }
+    @media (max-width: 760px) {
+      .shell-sidebar { width: 72px; align-items: center; padding: 14px 8px; }
+      body.sidebar-collapsed .shell-sidebar { width: 72px; }
+      .brand { width: 42px; height: 42px; justify-content: center; margin: 0 0 22px; font-size: 0; }
+      .brand-mark { width: 35px; height: 35px; }
+      .brand-word, .nav-caption, .nav-item span { display: none; }
+      .nav-list { width: 100%; }
+      .nav-item { position: relative; justify-content: center; width: 46px; min-height: 46px; margin: 0 auto; padding: 0; }
+      .nav-item svg { width: 19px; height: 19px; }
+      .nav-item.active::before { left: -8px; }
+      .sidebar-bottom .nav-item { margin-top: 0; }
+      .shell-main { width: calc(100% - 72px); margin-left: 72px; }
+      body.sidebar-collapsed .shell-main { width: calc(100% - 72px); margin-left: 72px; }
+      .topbar { height: 72px; padding: 0 16px; }
+      .topbar-actions { gap: 5px; }
+      .topbar-toggle button { padding: 0 7px; }
+      .topbar-icon, .avatar { display: none; }
+      .page-content { gap: 13px; padding: 18px 16px 74px; }
+      .page-a, .page-b { gap: 13px; }
+      .hero { min-height: 0; align-items: flex-start; flex-direction: column; gap: 12px; padding: 18px; }
+      .hero-copy { min-width: 0; }
+      .hero-side { display: flex; align-items: center; justify-items: start; flex-wrap: wrap; min-width: 0; }
+      .hero h1 { font-size: 23px; }
+      .hero p { max-width: 100%; font-size: 11px; }
+      .hero-side .health-summary { display: none; }
+      .hero::after { right: -125px; }
+      .overview-grid, .health-strip { gap: 8px; }
+      .overview-card { min-height: 80px; grid-template-columns: 32px minmax(0,1fr); gap: 8px; padding: 10px; border-radius: 13px; }
+      .overview-icon { width: 32px; height: 32px; border-radius: 10px; }
+      .overview-icon svg { width: 16px; }
+      .overview-card strong { font-size: 18px; }
+      .overview-card em { font-size: 9px; }
+      .filters, .board-toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+      .phase-tabs { grid-column: 1 / -1; width: 100%; justify-content: space-between; }
+      .phase-tab { flex: 1; justify-content: center; padding: 0 5px; font-size: 10px; }
+      .filters .search-field, .board-toolbar .search-field { grid-column: 1 / -1; width: 100%; min-height: 40px; }
+      .filters .select-field, .board-toolbar .select-field { width: 100%; }
+      .toolbar-actions { display: contents; }
+      .toolbar-actions .secondary-button { width: 100%; }
+      .result-count { align-self: center; text-align: right; }
+      .panel-heading { min-height: 54px; padding: 11px 13px; }
+      .panel-heading h2, .panel-heading h3 { font-size: 14px; }
+      .robot-bar { align-items: flex-start; }
+      .robot-summary { flex-basis: 100%; }
+      .node-grid { grid-template-columns: 1fr; padding: 10px; }
+      .cluster-heading { align-items: flex-start; flex-direction: column; padding: 12px; }
+      .cluster-metrics { justify-content: flex-start; }
+      .health-stat { min-height: 62px; padding: 9px; gap: 7px; }
+      .health-stat strong { font-size: 17px; }
+      .health-stat small { font-size: 9px; }
+      .drawer-header { padding: 16px 15px 12px; }
+      .drawer-body { padding: 13px 14px; }
+      .drawer-tabs { padding: 0 12px; }
+      .facts-strip { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .facts-strip > div { padding: 9px; }
+      .facts-strip > div:nth-child(2) { border-right: 0; }
+      .facts-strip > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+      .drawer-footer { padding: 10px 12px max(10px,env(safe-area-inset-bottom)); }
+      .drawer-footer > .secondary-button { display: none; }
+      .drawer-footer-actions { width: 100%; margin-left: 0; }
+      .drawer-footer-actions .secondary-button { flex: 1 1 30%; min-width: 0; padding: 0 6px; font-size: 10px; }
+      .review-toggle { right: 8px; bottom: 8px; }
+      .review-panel { right: 8px; bottom: 8px; width: min(320px,calc(100vw - 88px)); }
+    }
+    @media (max-width: 390px) {
+      .hero { padding: 15px 13px; }
+      .hero .primary-button { min-height: 34px; padding: 0 9px; font-size: 10px; }
+      .hero-side { align-self: stretch; }
+      .phase-tab { gap: 3px; }
+      .phase-tab b { min-width: 15px; padding: 1px 3px; }
+      .health-stat { padding: 8px 6px; }
+      .health-stat small { line-height: 1.2; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute;overflow:hidden">
+    <symbol id="i-mark" viewBox="0 0 32 32"><path d="M4 17c2-6 10-7 12-1 2-6 10-5 12 1-2 7-9 10-12 10S6 24 4 17Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="10" r="3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-cluster" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="m3 7 9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></symbol>
+    <symbol id="i-fingerprint" viewBox="0 0 24 24"><path d="M12 11a2 2 0 0 0-2 2c0 3-.4 5.5-1.5 7M14 13c0 3.2-.3 5.7-1 7M6 15a6 6 0 1 1 12 0c0 2-.2 3.8-.7 5M4 13a8 8 0 1 1 16 0M12 5a8 8 0 0 0-8 8"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9 2 2-2 2 2 2-3 3-2-2-3 3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.6.9l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.6-.9l-1.7.7-1.4-2.4 1.4-1.1a7 7 0 0 1 0-1.9l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.6-.9l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.6.9l1.7-.7 1.4 2.4-1.4 1.1a7 7 0 0 1 0 1.9Z" transform="translate(-1 -2)"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.2 9A7 7 0 0 1 18 6l2 6M4 12l2 6a7 7 0 0 0 11.8-3"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10M6.2 5.5a8 8 0 1 0 11.6 0"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m10.3 3.7-8 14A2 2 0 0 0 4 20.7h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 3h.01"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 1 1 4.2 1.8c-1 .8-1.8 1.2-1.8 2.7M12 17h.01"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></symbol>
+  </svg>
+  <aside class="shell-sidebar" aria-label="RLark navigation">
+    <div class="brand"><span class="brand-mark"><svg fill="none"><use href="#i-mark"/></svg></span><span class="brand-word">RLark</span></div>
+    <div class="nav-caption" data-copy="admin">管理后台</div>
+    <nav class="nav-list">
+      <a class="nav-item" href="/admin"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-grid"/></svg><span data-copy="dashboard">管理工作台</span></a>
+      <a class="nav-item" href="/admin/clusters"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-cluster"/></svg><span data-copy="clusters">集群管理</span></a>
+      <a class="nav-item" href="/admin/tasks"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-list"/></svg><span data-copy="tasks">任务管理</span></a>
+      <a class="nav-item" href="/admin/domains"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-globe"/></svg><span data-copy="network">网络域</span></a>
+      <a class="nav-item" href="/admin/storage"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-box"/></svg><span data-copy="storage">存储管理</span></a>
+      <a class="nav-item" href="/admin/image-registries"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-image"/></svg><span data-copy="images">镜像管理</span></a>
+      <a class="nav-item active" aria-current="page" data-page-link="stations" href="site-ops-a-stations.html"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-fingerprint"/></svg><span data-copy="stations">场站节点</span></a>
+      <a class="nav-item" href="/admin/ssh-keys"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-key"/></svg><span data-copy="ssh">SSH 公钥</span></a>
+      <a class="nav-item" href="/admin/settings"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-settings"/></svg><span data-copy="settings">系统配置</span></a>
+      <a class="nav-item" href="/admin/api-reference"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-list"/></svg><span data-copy="reference">接口参考</span></a>
+    </nav>
+    <div class="sidebar-bottom"><button class="nav-item" type="button" id="sidebar-toggle" aria-expanded="true"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-chevron"/></svg><span data-copy="collapse">收起侧栏</span></button></div>
+  </aside>
+  <main class="shell-main">
+    <header class="topbar">
+      <div class="topbar-current"><small data-copy="current">当前页面</small><strong data-copy="stations">场站节点</strong></div>
+      <div class="topbar-actions">
+        <div class="topbar-toggle" aria-label="Language"><button type="button" data-lang="zh" class="active">中</button><button type="button" data-lang="en">EN</button></div>
+        <div class="topbar-toggle" aria-label="Theme"><button type="button" data-theme="light" class="active">浅色</button><button type="button" data-theme="dark">◐ 深色</button></div>
+        <button class="topbar-icon" id="notifications" type="button" aria-label="Notifications"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button>
+        <span class="avatar" aria-label="Administrator">AD</span>
+      </div>
+    </header>
+    <div class="page-content" id="page-content"></div>
+  </main>
+  <button class="review-toggle" id="review-toggle" type="button" aria-expanded="false">◉ <span data-copy="review">评审设置</span></button>
+  <section class="review-panel" id="review-panel" aria-label="Prototype review controls" hidden>
+    <div class="review-head"><span data-copy="review">评审设置</span><button class="review-close" id="review-close" type="button" aria-label="Close review settings">×</button></div>
+    <div class="review-controls">
+      <label><span data-copy="scenario">场景</span><select id="scenario"><option value="dense">Dense</option><option value="sparse">Sparse</option><option value="empty">Empty</option></select></label>
+      <label><span data-copy="theme">主题</span><select id="theme"><option value="light">Light</option><option value="dark">Dark</option></select></label>
+      <label><span data-copy="language">语言</span><select id="language"><option value="zh">中文</option><option value="en">English</option></select></label>
+    </div>
+  </section>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <div id="drawer-root"></div>
+  <script>
+    (() => {
+      const isBoard = location.pathname.includes("site-ops-b");
+      const params = new URLSearchParams(location.search);
+      const state = {
+        scenario: ["dense", "sparse", "empty"].includes(params.get("scenario")) ? params.get("scenario") : "dense",
+        theme: params.get("theme") === "dark" ? "dark" : "light",
+        lang: params.get("lang") === "en" ? "en" : "zh",
+        phase: "all", cluster: "all", query: "", selectedRobots: new Set(["n2"]), drawerNode: null,
+        drawerTab: "overview", shown: 8, operationOpen: !isBoard, admissionsOpen: true,
+      };
+      const icon = (name, size = 15) => `<svg width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+      const words = {
+        zh: {
+          admin:"管理后台", dashboard:"管理工作台", clusters:"集群管理", tasks:"任务管理", network:"网络域", storage:"存储管理", images:"镜像管理", stations:"场站节点", ssh:"SSH 公钥", settings:"系统配置", reference:"接口参考", collapse:"收起侧栏", current:"当前页面", review:"评审设置", scenario:"场景", theme:"主题", language:"语言",
+          desc:"查看场站机器的身份、连接与入网状态。点击节点可查看完整详情。", add:"加入节点", refresh:"刷新", healthy:"集群连接正常", lastRefresh:"最近更新：刚刚", total:"全部节点", online:"在线", offline:"离线", conflict:"冲突", statusAll:"全部", search:"搜索节点名、UID、IP", cluster:"全部集群", operations:"节点操作", results:"条结果", inventory:"节点库存", inventoryHint:"按节点名登记的场站机器", robots:"机器人", selected:"已选", powerOn:"上电并启动驱动", powerOff:"关闭驱动并下电", pose:"初始姿势", loadMore:"加载更多节点", loadedAll:"已显示全部原型节点", emptyTitle:"还没有场站节点", emptyText:"从加入节点开始，为集群登记第一台机器。", goJoin:"加入第一台节点", ledger:"入网记录", ledgerHint:"发码、使用与隧道信息 · 入网码本身不会保存", attention:"需要关注", opTimeline:"节点操作", noAttention:"当前没有需要处理的节点。", noOps:"暂无进行中的节点操作。", viewAll:"查看全部记录", issued:"发码人", issuedAt:"发码时间", expires:"过期时间", wg:"WireGuard 公钥", tunnel:"隧道地址", action:"操作", reissue:"重发", revoke:"作废", restart:"清掉重来", joined:"已入网", pending:"待使用", redeemed:"已兑换", expired:"已过期", revoked:"已作废", stuck:"卡住", name:"节点", uid:"Node UID", cp:"控制面", site:"场地", network:"网络", admission:"入网", model:"机型", uptime:"运行时间", reboots:"重启", seen:"最近上报", close:"关闭", overview:"概览", networkTab:"网络", conditions:"条件", identity:"身份", recordName:"记录名", clusterName:"集群", systemUUID:"System UUID", power:"机器人电源", desired:"期望", now:"现在", selfCheck:"自检", note:"网络与入网", verified:"已验证", probeFailed:"探测失败", unknown:"未知", publicKey:"WireGuard 公钥", address:"隧道地址", admissionState:"入网状态", issuer:"发码人", sshLogin:"SSH 登录", hostKey:"SSH 主机指纹", hub:"Hub 探测", hubReach:"可达", conditionObserved:"已观测", conditionIdentity:"身份匹配", conditionNetwork:"网络已验证", conditionLinked:"RLark 已连接", conditionRebooted:"已重启", true:"True", false:"False", unknownValue:"Unknown", reissueCode:"重发入网码", delete:"删除记录", deleteBlocked:"当前仍有节点资源，不能删除记录。", refreshed:"已刷新场站节点", clicked:"已提交操作：", selectReason:"先选择一台机器人", statusOnline:"在线", statusOffline:"离线", statusConflict:"冲突", statusRetired:"已移除", allClusters:"所有集群", namespace:"Namespace", nodeCount:"节点", healthyCount:"在线", conflictCount:"冲突", robotLabel:"机器人", viewDetails:"查看详情", noMatch:"没有匹配的节点", clearSearch:"清除筛选", focus:"高亮", emptyHint:"可以切换筛选条件，或加入节点。", issueConflict:"节点 UID 与当前上报不一致", issueOffline:"心跳超过阈值", noHistory:"该集群暂无操作记录", stage:"阶段", success:"成功", running:"进行中", failed:"失败", retry:"重试", details:"展开阶段", more:"更多详情", siteCluster:"场站节点", healthyNodes:"在线节点", issueCount:"需要关注", lowerEmpty:"没有待处理事项", reached:"已验证", notUsed:"未用入网码", expiredShort:"过期", fullRecord:"完整记录", nextStep:"选择一个节点查看详情，或开始接入第一台机器。"
+        },
+        en: {
+          admin:"Administration", dashboard:"Admin workspace", clusters:"Clusters", tasks:"Tasks", network:"Network domains", storage:"Storage", images:"Image registries", stations:"Site nodes", ssh:"SSH keys", settings:"System settings", reference:"API reference", collapse:"Collapse sidebar", current:"CURRENT PAGE", review:"Review controls", scenario:"Scenario", theme:"Theme", language:"Language",
+          desc:"Review machine identity, connectivity, and admission. Select a node to see its full details.", add:"Add node", refresh:"Refresh", healthy:"Cluster connection healthy", lastRefresh:"Updated just now", total:"All nodes", online:"Online", offline:"Offline", conflict:"Conflicts", statusAll:"All", search:"Search name, UID, or IP", cluster:"All clusters", operations:"Node operations", results:"results", inventory:"Node inventory", inventoryHint:"Site machines registered by node name", robots:"Robots", selected:"selected", powerOn:"Power on + start driver", powerOff:"Stop driver + power off", pose:"Initial pose", loadMore:"Load more nodes", loadedAll:"All prototype nodes shown", emptyTitle:"No site nodes yet", emptyText:"Start by adding the first machine to a cluster.", goJoin:"Add the first node", ledger:"Admission records", ledgerHint:"Issue, redemption, and tunnel details · codes are never stored", attention:"Needs attention", opTimeline:"Node operations", noAttention:"Nothing needs attention right now.", noOps:"No active node operations.", viewAll:"View all records", issued:"Issued by", issuedAt:"Issued", expires:"Expires", wg:"WireGuard key", tunnel:"Tunnel address", action:"Actions", reissue:"Reissue", revoke:"Revoke", restart:"Start over", joined:"Joined", pending:"Pending", redeemed:"Redeemed", expired:"Expired", revoked:"Revoked", stuck:"Stuck", name:"Node", uid:"Node UID", cp:"Control plane", site:"Site", network:"Network", admission:"Admission", model:"Model", uptime:"Uptime", reboots:"Reboots", seen:"Last seen", close:"Close", overview:"Overview", networkTab:"Network", conditions:"Conditions", identity:"Identity", recordName:"Record name", clusterName:"Cluster", systemUUID:"System UUID", power:"Robot power", desired:"Desired", now:"Now", selfCheck:"Self-check", note:"Network & admission", verified:"Verified", probeFailed:"Probe failed", unknown:"Unknown", publicKey:"WireGuard public key", address:"Tunnel address", admissionState:"Admission", issuer:"Issued by", sshLogin:"SSH login", hostKey:"SSH host fingerprint", hub:"Hub probes", hubReach:"Reachable", conditionObserved:"Observed", conditionIdentity:"IdentityMatched", conditionNetwork:"NetworkVerified", conditionLinked:"RLarkLinked", conditionRebooted:"Rebooted", true:"True", false:"False", unknownValue:"Unknown", reissueCode:"Reissue code", delete:"Delete record", deleteBlocked:"A Node resource still exists, so this record cannot be deleted.", refreshed:"Site nodes refreshed", clicked:"Action submitted: ", selectReason:"Select a robot first", statusOnline:"Online", statusOffline:"Offline", statusConflict:"Conflict", statusRetired:"Retired", allClusters:"All clusters", namespace:"Namespace", nodeCount:"Nodes", healthyCount:"Online", conflictCount:"Conflicts", robotLabel:"Robot", viewDetails:"View details", noMatch:"No matching nodes", clearSearch:"Clear filters", focus:"Focus", emptyHint:"Change a filter or add a node.", stage:"Stage", success:"Succeeded", running:"Running", failed:"Failed", retry:"Retry", details:"Show stages", more:"More details", siteCluster:"Site nodes", healthyNodes:"Online nodes", issueCount:"Needs attention", lowerEmpty:"No pending items", reached:"Verified", notUsed:"No code issued", expiredShort:"Expired", fullRecord:"Full record", nextStep:"Select a node for details or start onboarding the first machine."
+        }
+      };
+      const t = key => key === "noCluster"
+        ? (state.lang === "zh" ? "请先在集群管理创建或启用一个集群。" : "Create or enable a cluster in Cluster management first.")
+        : key === "expand" ? (state.lang === "zh" ? "展开侧栏" : "Expand sidebar")
+        : key === "denseScenario" ? (state.lang === "zh" ? "密集" : "Dense")
+          : key === "sparseScenario" ? (state.lang === "zh" ? "稀疏" : "Sparse")
+            : key === "emptyScenario" ? (state.lang === "zh" ? "空状态" : "Empty")
+              : key === "phase" ? (state.lang === "zh" ? "状态" : "Phase")
+                : key === "recordState" ? (state.lang === "zh" ? "状态" : "State")
+              : key === "noAdmissions" ? (state.lang === "zh" ? "还没有入网记录" : "No admission records yet")
+              : key === "emptyAdmissions" ? (state.lang === "zh" ? "暂无入网记录，可刷新查看最新状态。" : "No admission records. Refresh to check the latest status.")
+              : key === "activeOperations" ? (state.lang === "zh" ? "条进行中操作" : "active operations")
+                  : words[state.lang][key] ?? key;
+      const clusters = [
+        { id:"c1", name: state.lang === "zh" ? "深圳公司 S1U 调试集群" : "Shenzhen S1U Lab", ns:"s1u-system" },
+        { id:"c2", name: state.lang === "zh" ? "深圳公司边缘机器人集群" : "Shenzhen Edge Robotics", ns:"edge-robotics" },
+      ];
+      const rawNodes = [
+        ["n1","s1u-01-x86","c1","Bound","s1u-x86-01","AstraBot S1","3 天 4 小时","16 秒前","5E9Iw0BvF8…"],
+        ["n2","s1u-02-orin","c1","Bound","s1u-orin-02","AstraBot S1","1 天 2 小时","42 秒前","8xqT4kRz2A…","robot","cp"],
+        ["n3","s1u-03-x86","c1","Bound","s1u-x86-03","AstraBot S1","8 小时","1 分钟前","RkP1Y6IpJX…"],
+        ["n4","s1u-04-orin","c1","Bound","s1u-orin-04","AstraBot S1","6 小时","2 分钟前","p9Qe3D4xZk…","robot"],
+        ["n5","s1u-05-x86","c1","Bound","s1u-x86-05","AstraBot S1","9 天","3 分钟前","Dz2jL1Rm6s…"],
+        ["n6","s1u-06-orin","c1","Offline","s1u-orin-06","AstraBot S1","—","2 小时前","a6","robot"],
+        ["n7","s1u-07-x86","c1","Conflict","s1u-x86-07","AstraBot S1","—","40 秒前","Rpk1Y6IpJX…"],
+        ["n8","s1u-08-x86","c1","Retired","s1u-x86-08","AstraBot S1","—","19 天前","a8"],
+        ["n9","edge-01-orin","c2","Bound","edge-orin-01","AstraBot E2","2 天","18 秒前","8Pt4LmQ2Vd…","robot"],
+        ["n10","edge-02-x86","c2","Bound","edge-x86-02","AstraBot E2","12 小时","58 秒前","Qh7A0nM5Rx…"],
+        ["n11","edge-03-orin","c2","Bound","edge-orin-03","AstraBot E2","4 天","4 分钟前","Nz5Qk2A7Wc…","robot"],
+        ["n12","edge-04-x86","c2","Offline","edge-x86-04","AstraBot E2","—","5 小时前","b4"],
+      ].map(([id,name,cluster,phase,serial,model,uptime,seen,key,...tags]) => ({ id,name,cluster,phase,serial,model,uptime,seen,key,robot:tags.includes("robot"),cp:tags.includes("cp"),uid:`nodeuid-6f21-9a03-${id}`,system:`${id.toUpperCase()}-7B3E-4AC9-A280-01F2C1E19B65`, mac:`02:5A:71:8C:${id.slice(1).padStart(2,"0")}:4F`, ip:`10.254.${cluster === "c1" ? "240" : "251"}.${id.slice(1)}` }));
+      const admissionsByScenario = {
+        dense: [
+          { id:"a1", node:"s1u-01-x86", cluster:"c1", state:"Joined", issuer:"admin", issued:"2026-11-21 13:17", expires:"2026-11-22 13:17", key:"5E9Iw0BvF8…", tunnel:"10.254.240.7", ssh:"root@10.254.240.7 · SHA256:8f3c1d9e…" },
+          { id:"a2", node:"s1u-02-orin", cluster:"c1", state:"Joined", issuer:"ops-team", issued:"2026-11-21 12:08", expires:"2026-11-22 12:08", key:"8xqT4kRz2A…", tunnel:"10.254.240.8", ssh:"astri@10.254.240.8 · SHA256:2c10ab73…" },
+          { id:"a6", node:"s1u-06-orin", cluster:"c1", state:"Pending", issuer:"admin", issued:"2026-11-24 09:10", expires:"2026-11-25 09:10", key:"—", tunnel:"—", ssh:"等待机器使用入网码" },
+          { id:"b2", node:"edge-02-x86", cluster:"c2", state:"Redeemed", stuck:true, issuer:"ops-team", issued:"2026-11-23 18:20", expires:"2026-11-24 18:20", key:"Rpk1Y6IpJX…", tunnel:"10.254.251.10", ssh:"SSH root@10.254.251.10 · stalled at JoinTunnel" },
+          { id:"b3", node:"edge-03-orin", cluster:"c2", state:"Expired", issuer:"admin", issued:"2026-11-20 08:00", expires:"2026-11-21 08:00", key:"—", tunnel:"—", ssh:"未兑换" },
+          { id:"b4", node:"edge-04-x86", cluster:"c2", state:"Revoked", issuer:"admin", issued:"2026-11-18 16:42", expires:"2026-11-19 16:42", key:"—", tunnel:"—", ssh:"已作废" },
+        ],
+        sparse: [{ id:"s1", node:"bench-02-x86", cluster:"c1", state:"Pending", issuer:"admin", issued:"2026-11-24 09:10", expires:"2026-11-25 09:10", key:"—", tunnel:"—", ssh:"等待机器使用入网码" }],
+        empty: [],
+      };
+      const nodesByScenario = {
+        dense: rawNodes,
+        sparse: [rawNodes[0], { ...rawNodes[5], id:"s2", name:"bench-02-x86", serial:"bench-x86-02", phase:"Offline", robot:true, cp:false, key:"s2", uid:"nodeuid-98bc-81d4-s2" }, { ...rawNodes[6], id:"s3", name:"bench-03-orin", serial:"bench-orin-03", phase:"Conflict", robot:true, cp:false, key:"s3", uid:"nodeuid-245c-6d01-s3" }],
+        empty: [],
+      };
+      state.selectedRobots = new Set(nodesByScenario[state.scenario].filter(n => n.robot).slice(0,1).map(n => n.id));
+      const operationsByScenario = {
+        dense: [
+          { node:"s1u-02-orin", action:"PowerOn", stage:"StartDriver", phase:"Running", progress:"5 / 7", note:"等待机器人驱动就绪" },
+          { node:"s1u-03-x86", action:"Join", stage:"ConfigureNetwork", phase:"Running", progress:"6 / 9", note:"正在配置 WireGuard 隧道" },
+          { node:"edge-03-orin", action:"Join", stage:"ProbeNetwork", phase:"Failed", progress:"4 / 9", note:"Hub 探测超时，可查看详情或重试" },
+          { node:"s1u-05-x86", action:"Reboot", stage:"WaitForHeartbeat", phase:"Succeeded", progress:"7 / 7", note:"节点已重新上线" },
+        ], sparse: [], empty: [],
+      };
+      const labelPhase = phase => ({ Bound:t("statusOnline"), Offline:t("statusOffline"), Conflict:t("statusConflict"), Retired:t("statusRetired") }[phase]);
+      const statusClass = phase => phase === "Bound" ? "status-online" : phase === "Offline" ? "status-pending" : phase === "Conflict" ? "status-failed" : "status-stopped";
+      const admissionClass = row => row.state === "Joined" ? "joined" : row.state === "Pending" ? "pending" : row.state === "Expired" ? "expired" : row.state === "Revoked" ? "revoked" : "pending";
+      const admissionLabel = row => row.stuck ? t("stuck") : t(row.state.toLowerCase());
+      const admissionDetail = row => row.state === "Pending" ? (state.lang === "zh" ? "等待机器使用入网码" : "Waiting for the machine to use its join code") : row.state === "Expired" ? (state.lang === "zh" ? "未兑换" : "Not redeemed") : row.state === "Revoked" ? (state.lang === "zh" ? "已作废" : "Revoked") : row.ssh;
+      const operationDetail = operation => operation.phase === "Failed" ? (state.lang === "zh" ? "Hub 探测超时，可查看详情或重试" : "Hub probe timed out. Review details and retry") : operation.phase === "Succeeded" ? (state.lang === "zh" ? "节点已重新上线" : "Node reported again") : operation.action === "PowerOn" ? (state.lang === "zh" ? "等待机器人驱动就绪" : "Waiting for the robot driver to become ready") : (state.lang === "zh" ? "正在配置 WireGuard 隧道" : "Configuring the WireGuard tunnel");
+      const enDuration = value => {
+        if (state.lang !== "en" || !value || value === "—") return value;
+        return String(value)
+          .replace(/(\d+)\s*天前/g, "$1d ago")
+          .replace(/(\d+)\s*天/g, "$1 d")
+          .replace(/(\d+)\s*小时前/g, "$1h ago")
+          .replace(/(\d+)\s*小时/g, "$1 h")
+          .replace(/(\d+)\s*分钟前/g, "$1m ago")
+          .replace(/(\d+)\s*分钟/g, "$1 min")
+          .replace(/(\d+)\s*秒前/g, "$1s ago");
+      };
+      const nodes = () => nodesByScenario[state.scenario];
+      const admissions = () => admissionsByScenario[state.scenario];
+      const operations = () => operationsByScenario[state.scenario];
+      const visibleNodes = () => nodes().filter(node => (state.phase === "all" || (state.phase === "online" ? node.phase === "Bound" : node.phase.toLowerCase() === state.phase)) && (state.cluster === "all" || node.cluster === state.cluster) && (!state.query || [node.name,node.uid,node.ip,node.mac,node.serial,clusterName(node.cluster)].some(value => value.toLowerCase().includes(state.query.toLowerCase()))));
+      const counts = () => ({ all:nodes().length, online:nodes().filter(n => n.phase === "Bound").length, offline:nodes().filter(n => n.phase === "Offline").length, conflict:nodes().filter(n => n.phase === "Conflict").length });
+      const clusterName = id => id === "c1" ? (state.lang === "zh" ? "深圳公司 S1U 调试集群" : "Shenzhen S1U Lab") : id === "c2" ? (state.lang === "zh" ? "深圳公司边缘机器人集群" : "Shenzhen Edge Robotics") : id;
+      const clusterNS = id => clusters.find(c => c.id === id)?.ns ?? "—";
+      const toast = message => { const el = document.getElementById("toast"); el.textContent = message; el.hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => { el.hidden = true; }, 2400); };
+      const renderHeader = () => {
+        const count = counts();
+        const action = state.scenario === "empty" ? `<button class="primary-button" type="button" disabled title="${t("noCluster")}">${icon("plus",15)}${t("add")}</button><small class="hero-empty-note">${t("noCluster")} <a href="/admin/clusters">${t("clusters")}</a></small>` : `<a class="primary-button" href="site-ops-${isBoard ? "b" : "a"}-join.html">${icon("plus",15)}${t("add")}</a>`;
+        if (!isBoard) return `<section class="hero" aria-labelledby="page-title"><div class="hero-copy"><span class="eyebrow">${icon("fingerprint",13)} ${t("stations")}</span><h1 id="page-title">${t("stations")}</h1><p>${t("desc")}</p></div><div class="hero-side"><div class="health-summary"><span class="health-dot"></span><span class="health-summary-copy"><strong>${state.scenario === "empty" ? t("noCluster") : t("healthy")}</strong><small>${count.online} ${t("online")} · ${count.offline + count.conflict} ${t("issueCount").toLowerCase()}</small></span></div>${action}</div></section>`;
+        return `<section class="hero" aria-labelledby="page-title"><div class="hero-copy"><span class="eyebrow">${icon("cluster",13)} ${t("stations")}</span><h1 id="page-title">${t("stations")}</h1><p>${t("desc")}</p></div><div class="hero-side">${action}</div></section><section class="health-strip" aria-label="${t("stations")}"><div class="health-stat">${icon("fingerprint",18)}<div><strong>${count.all}</strong><small>${t("total")}</small></div></div><div class="health-stat">${icon("check",18)}<div><strong>${count.online}</strong><small>${t("online")}</small></div></div><div class="health-stat">${icon("help",18)}<div><strong>${count.offline}</strong><small>${t("offline")}</small></div></div><div class="health-stat conflict">${icon("alert",18)}<div><strong>${count.conflict}</strong><small>${t("conflict")}</small></div></div></section>`;
+      };
+      const renderFilters = () => {
+        const c = counts();
+        const tabs = [["all","statusAll",c.all],["online","online",c.online],["offline","offline",c.offline],["conflict","conflict",c.conflict]];
+        const tabHtml = tabs.map(([value,label,n]) => `<button type="button" class="phase-tab${state.phase === value ? " active" : ""}" data-phase="${value}" aria-pressed="${state.phase === value}">${t(label)}<b>${n}</b></button>`).join("");
+        const clustersOption = `<option value="all">${t("allClusters")}</option>` + (state.scenario === "empty" ? [] : state.scenario === "sparse" ? clusters.slice(0,1) : clusters).map(c => `<option value="${c.id}" ${state.cluster === c.id ? "selected" : ""}>${clusterName(c.id)}</option>`).join("");
+        const result = visibleNodes().length;
+        const tools = `<div class="toolbar-actions"><button class="secondary-button" type="button" id="refresh">${icon("refresh",15)}${t("refresh")}</button><span class="result-count">${result} ${t("results")}</span><button class="secondary-button" type="button" id="operations-toggle" aria-expanded="${state.operationOpen}">${icon("list",15)}${t("operations")}</button></div>`;
+        if (!isBoard) return `<div class="filters" role="search"><div class="phase-tabs" role="group" aria-label="${t("statusAll")}">${tabHtml}</div><label class="search-field">${icon("search",16)}<input id="search" type="search" placeholder="${t("search")}" value="${state.query}" aria-label="${t("search")}"></label><label class="select-field">${icon("filter",15)}<select id="cluster" aria-label="${t("cluster")}">${clustersOption}</select></label>${tools}</div>`;
+        return `<div class="board-toolbar"><div class="phase-tabs" role="group" aria-label="${t("statusAll")}">${tabHtml}</div><label class="search-field">${icon("search",16)}<input id="search" type="search" placeholder="${t("search")}" value="${state.query}" aria-label="${t("search")}"></label><label class="select-field">${icon("filter",15)}<select id="cluster" aria-label="${t("cluster")}">${clustersOption}</select></label><button class="secondary-button" type="button" id="refresh">${icon("refresh",15)}${t("refresh")}</button><button class="secondary-button" type="button" id="operations-toggle" aria-expanded="${state.operationOpen}">${icon("list",15)}${t("operations")}</button><span class="result-count">${result} ${t("results")}</span></div>`;
+      };
+      const renderTable = () => {
+        const list = visibleNodes();
+        if (state.scenario === "empty") return `<div class="empty-state"><strong>${t("emptyTitle")}</strong><p>${t("emptyText")}</p><a class="primary-button" href="${isBoard ? "site-ops-b-join.html" : "site-ops-a-join.html"}">${icon("plus",14)}${t("goJoin")}</a></div>`;
+        if (!list.length) return `<div class="empty-state"><strong>${t("noMatch")}</strong><p>${t("emptyHint")}</p><button class="secondary-button" id="clear-filters" type="button">${t("clearSearch")}</button></div>`;
+        const visible = list.slice(0,state.shown);
+        const robotNodes = nodes().filter(n => n.robot);
+        const allRobotsSelected = robotNodes.length > 0 && robotNodes.every(node => state.selectedRobots.has(node.id));
+        const selectedCount = list.filter(node => node.robot && state.selectedRobots.has(node.id)).length;
+        return `<div class="robot-bar"><span class="robot-summary">${icon("power",16)} ${t("robots")}：${selectedCount} / ${robotNodes.length} ${t("selected")}</span><button class="secondary-button robot-action" type="button" data-action="power-on" ${selectedCount ? "" : `disabled title="${t("selectReason")}"`}>${t("powerOn")}</button><button class="secondary-button robot-action" type="button" data-action="power-off" ${selectedCount ? "" : `disabled title="${t("selectReason")}"`}>${t("powerOff")}</button><button class="secondary-button robot-action" type="button" data-action="pose" ${selectedCount ? "" : `disabled title="${t("selectReason")}"`}>${t("pose")}</button></div><div class="table-scroll"><table class="node-table"><thead><tr><th class="check-cell"><input type="checkbox" aria-label="Select robots" id="select-robots" ${allRobotsSelected ? "checked" : ""}></th><th>${t("name")}</th><th>${t("clusterName")}</th><th>${t("phase")}</th><th>${t("network")}</th><th>${t("admission")}</th><th>${t("wg")}</th><th>${t("model")}</th><th>${t("reboots")}</th><th>${t("uptime")}</th><th>${t("seen")}</th></tr></thead><tbody>${visible.map(node => renderRow(node)).join("")}</tbody></table></div><div class="table-footer"><button type="button" id="load-more" ${state.shown >= list.length ? `disabled title="${t("loadedAll")}"` : ""}>${state.shown < list.length ? `${t("loadMore")} (${list.length-state.shown})` : t("loadedAll")}</button></div>`;
+      };
+      const renderRow = node => {
+        const adm = admissions().find(a => a.node === node.name);
+        const net = node.phase === "Offline" ? "unknown" : node.phase === "Conflict" ? "failed" : "verified";
+        const netText = net === "verified" ? t("verified") : net === "failed" ? t("probeFailed") : t("unknown");
+        const admitText = adm ? admissionLabel(adm) : t("notUsed");
+        const admitKind = adm ? admissionClass(adm) : "expired";
+        const robotCheck = node.robot ? `<input type="checkbox" data-robot="${node.id}" aria-label="Select ${node.name}" ${state.selectedRobots.has(node.id) ? "checked" : ""} onclick="event.stopPropagation()">` : "";
+        return `<tr class="node-row" tabindex="0" data-node="${node.id}" aria-label="${node.name}, ${labelPhase(node.phase)}"><td class="check-cell" onclick="event.stopPropagation()">${robotCheck}</td><td><div class="node-identity"><span class="node-title-line"><strong>${node.name}</strong>${node.cp ? `<span class="control-badge">${t("cp")}</span>` : ""}</span><code class="uid-chip mono" title="${node.uid}">${node.uid}</code></div></td><td>${clusterName(node.cluster)}</td><td><span class="status ${statusClass(node.phase)}"><i></i>${labelPhase(node.phase)}</span></td><td><span class="network-${net}">${icon(net === "verified" ? "check" : net === "failed" ? "alert" : "help",13)} ${netText}</span></td><td><span class="admission-chip ${admitKind}">${admitText}</span></td><td><code class="uid-chip mono" title="${node.key}">${node.phase === "Bound" ? node.key : "—"}</code></td><td>${node.model}</td><td>${node.phase === "Bound" ? "1" : "—"}</td><td>${enDuration(node.uptime)}</td><td>${enDuration(node.seen)}</td></tr>`;
+      };
+      const renderLedger = () => {
+        const rows = admissions();
+        if (!rows.length) return `<div class="empty-state"><strong>${state.scenario === "empty" ? t("noAdmissions") : t("ledger")}</strong><p>${state.scenario === "empty" ? t("emptyAdmissions") : t("noAttention")}</p>${state.scenario === "empty" ? `<button class="secondary-button" type="button" data-action="refresh-empty">${t("refresh")}</button>` : ""}</div>`;
+        return `<div class="ledger-scroll"><table class="ledger-table"><thead><tr><th>${t("name")}</th><th>${t("clusterName")}</th><th>${t("recordState")}</th><th>${t("issued")}</th><th>${t("issuedAt")}</th><th>${t("expires")}</th><th>${t("wg")}</th><th>${t("tunnel")}</th><th>${t("action")}</th></tr></thead><tbody>${rows.map((row,i) => `<tr><td><div class="ledger-node"><strong>${row.node}</strong><small class="muted">${admissionDetail(row)}</small>${row.stuck ? `<small class="status status-failed"><i></i>${t("stuck")} · JoinTunnel</small>` : ""}</div></td><td>${clusterName(row.cluster)}</td><td><span class="admission-chip ${admissionClass(row)}">${admissionLabel(row)}</span>${row.state === "Pending" ? `<small class="muted"> · ${new Date().toLocaleDateString()}</small>` : ""}</td><td>${row.issuer}</td><td><small>${row.issued}</small></td><td><small>${row.expires}</small></td><td><code class="mono">${row.key}</code></td><td><code class="mono">${row.tunnel}</code></td><td><div class="ledger-actions"><button class="table-action" type="button" data-ledger="reissue" data-index="${i}">${t("reissue")}</button>${row.state === "Pending" ? `<button class="table-action danger" type="button" data-ledger="revoke" data-index="${i}">${t("revoke")}</button>` : ""}${row.state === "Redeemed" ? `<button class="table-action danger" type="button" data-ledger="restart" data-index="${i}">${t("restart")}</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>`;
+      };
+      const renderOperations = () => {
+        const rows = operations();
+        const attentionNodes = nodes().filter(n => n.phase === "Conflict" || n.phase === "Offline");
+        const activeOperations = rows.filter(o => o.phase === "Running" || o.phase === "Failed").length;
+        return `<section class="lower-panel"><header class="panel-heading"><div><h3>${t("attention")}</h3><p>${t("opTimeline")}</p></div><span class="count-pill">${attentionNodes.length} ${t("issueCount")}</span></header><div class="attention-content"><div class="attention-group">${attentionNodes.length ? attentionNodes.slice(0,3).map(n => `<div class="attention-item"><span><strong>${n.name}</strong><small>${n.phase === "Conflict" ? t("issueConflict") : t("issueOffline")}</small></span><span class="status ${statusClass(n.phase)}"><i></i>${labelPhase(n.phase)}</span></div>`).join("") : `<div class="lower-empty">${t("noAttention")}</div>`}</div><div class="attention-group"><strong>${icon("server",14)}${t("opTimeline")} <span class="count-pill">${activeOperations} ${t("activeOperations")}</span></strong>${rows.length ? rows.map((op,i) => `<div class="operation-item"><div class="operation-main"><button type="button" data-operation="${i}"><strong>${op.node}</strong></button><small>${op.action} · ${op.stage} · ${op.progress}</small></div><span class="status ${op.phase === "Succeeded" ? "status-online" : op.phase === "Failed" ? "status-failed" : "status-pending"}"><i></i>${t(op.phase === "Succeeded" ? "success" : op.phase === "Failed" ? "failed" : "running")}</span><details><summary>${t("details")}</summary><p>${operationDetail(op)}. ${op.phase === "Failed" ? `<button class="table-action" data-retry="${i}" type="button">${t("retry")}</button>` : ""}</p></details></div>`).join("") : `<div class="lower-empty">${t("noOps")}</div>`}</div></div></section>`;
+      };
+      const renderA = () => `<div class="page-a">${renderHeader()}${renderFilters()}<section class="inventory-panel" aria-labelledby="inventory-title"><header class="panel-heading"><div><h2 id="inventory-title">${t("inventory")}</h2><p>${t("inventoryHint")}</p></div><span class="count-pill">${visibleNodes().length} ${t("results")}</span></header><div id="table-content">${renderTable()}</div></section><section class="lower-deck${state.operationOpen ? "" : " is-ledger-only"}"><section class="lower-panel"><header class="panel-heading"><div><h3>${t("ledger")}</h3><p>${t("ledgerHint")}</p></div><span class="count-pill">${admissions().length} ${t("results")}</span></header>${renderLedger()}</section>${state.operationOpen ? renderOperations() : ""}</section></div>`;
+      const renderBoard = () => {
+        const filtered = visibleNodes();
+        const groupIds = state.cluster === "all" ? (state.scenario === "sparse" ? ["c1"] : ["c1","c2"]) : [state.cluster];
+        const perGroupLimit = state.cluster === "all" ? Math.max(4, Math.ceil(state.shown / groupIds.length)) : state.shown;
+        let renderedCount = 0;
+        const sections = groupIds.map(id => {
+          const list = filtered.filter(n => n.cluster === id);
+          const shown = list.slice(0, state.shown >= filtered.length ? list.length : perGroupLimit);
+          renderedCount += shown.length;
+          const all = nodes().filter(n => n.cluster === id);
+          const online = all.filter(n => n.phase === "Bound").length;
+          const conflicts = all.filter(n => n.phase === "Conflict").length;
+          const cards = shown.length ? `<div class="node-grid">${shown.map(node => renderCard(node)).join("")}</div>` : `<div class="empty-state"><strong>${t("noMatch")}</strong><p>${t("emptyHint")}</p></div>`;
+          return `<section class="cluster-section"><header class="cluster-heading"><div class="cluster-title"><h2>${clusterName(id)}</h2><small>${t("namespace")}: <code class="mono">${clusterNS(id)}</code></small></div><div class="cluster-metrics"><span class="cluster-metric">${t("healthyCount")} <strong>${online}/${all.length}</strong></span><span class="cluster-metric">${t("nodeCount")} <strong>${all.length}</strong></span><span class="cluster-metric">${t("conflictCount")} <strong>${conflicts}</strong></span></div></header>${cards}</section>`;
+        }).join("");
+        const selectedRobotCount = filtered.filter(n => n.robot && state.selectedRobots.has(n.id)).length;
+        const batch = selectedRobotCount ? `<div class="robot-bar"><span class="robot-summary">${icon("power",16)} ${t("robots")}: ${selectedRobotCount} ${t("selected")}</span><button class="secondary-button" type="button" data-action="power-on">${t("powerOn")}</button><button class="secondary-button" type="button" data-action="power-off">${t("powerOff")}</button><button class="secondary-button" type="button" data-action="pose">${t("pose")}</button></div>` : "";
+        const loadMore = renderedCount < filtered.length ? `<div class="table-footer"><button type="button" id="load-more">${t("loadMore")} (${filtered.length-renderedCount})</button></div>` : "";
+        const emptyLink = `<a class="secondary-button" href="/admin/clusters">${t("clusters")}</a>`;
+        return `<div class="page-b">${renderHeader()}${renderFilters()}${state.scenario === "empty" ? `<section class="cluster-section empty-state"><strong>${t("emptyTitle")}</strong><p>${t("noCluster")}</p>${emptyLink}</section>` : `<div class="cluster-list">${batch}${sections}${loadMore}</div>`}<section class="lower-panel board-lower"><details class="admissions-collapsible" ${state.admissionsOpen ? "open" : ""}><summary class="summary-button"><span><strong>${t("ledger")}</strong><small>${t("ledgerHint")}</small></span><span class="count-pill">${admissions().length} ${t("results")}　⌄</span></summary><div class="admissions-inner">${renderLedger()}</div></details></section>${state.operationOpen ? renderOperations() : ""}</div>`;
+      };
+      const renderCard = node => {
+        const adm = admissions().find(a => a.node === node.name);
+        const net = node.phase === "Bound" ? t("verified") : node.phase === "Conflict" ? t("probeFailed") : t("unknown");
+        return `<article class="node-card${node.robot && state.selectedRobots.has(node.id) ? " is-selected" : ""}" role="button" tabindex="0" data-node="${node.id}" aria-label="${node.name}, ${labelPhase(node.phase)}"><div class="node-card-head"><div class="node-card-name"><strong>${node.name}${node.cp ? ` <span class="control-badge">${t("cp")}</span>` : ""}</strong><code class="uid-chip mono">${node.uid}</code></div><span class="status node-card-state ${statusClass(node.phase)}"><i></i>${labelPhase(node.phase)}</span></div><div class="node-card-details"><span><small>${t("network")}</small><strong class="network-${node.phase === "Bound" ? "verified" : node.phase === "Conflict" ? "failed" : "unknown"}">${net}</strong></span><span><small>${t("admission")}</small><strong><span class="admission-chip ${adm ? admissionClass(adm) : "expired"}">${adm ? admissionLabel(adm) : t("notUsed")}</span></strong></span><span><small>${t("model")}</small><strong>${node.model}</strong></span><span><small>${t("uptime")}</small><strong>${enDuration(node.uptime)}</strong></span></div><div class="node-card-foot"><span>${t("seen")} ${enDuration(node.seen)}</span>${node.robot ? `<label class="card-select" onclick="event.stopPropagation()"><input type="checkbox" data-robot="${node.id}" ${state.selectedRobots.has(node.id) ? "checked" : ""} aria-label="${t("robotLabel")} ${node.name}">${t("robotLabel")}</label>` : `<span>${icon("plus",12)} ${t("viewDetails")}</span>`}</div></article>`;
+      };
+      const openDrawer = id => { state.drawerNode = nodes().find(n => n.id === id); state.drawerTab = "overview"; renderDrawer(); document.body.style.overflow = "hidden"; document.querySelector(".drawer-close")?.focus(); };
+      const closeDrawer = () => { state.drawerNode = null; document.getElementById("drawer-root").innerHTML = ""; document.body.style.overflow = ""; state.lastTrigger?.focus?.(); };
+      const renderDrawer = () => {
+        const node = state.drawerNode;
+        if (!node) return;
+        const root = document.getElementById("drawer-root");
+        const adm = admissions().find(a => a.node === node.name);
+        const tabs = [["overview","overview"],["network","networkTab"],["conditions","conditions"]];
+        let panel = "";
+        if (state.drawerTab === "overview") panel = `<section class="drawer-panel" role="tabpanel" id="drawer-panel" aria-labelledby="drawer-tab-${state.drawerTab}"><div class="facts-strip"><div><small>${t("uptime")}</small><strong>${enDuration(node.uptime)}</strong></div><div><small>${t("reboots")}</small><strong>${node.phase === "Bound" ? "1" : "—"}</strong></div><div><small>${t("seen")}</small><strong>${enDuration(node.seen)}</strong></div><div><small>${t("clusterName")}</small><strong>${clusterName(node.cluster)}</strong></div></div><section class="detail-section"><h3>${icon("fingerprint",14)}${t("identity")}</h3><div class="detail-grid"><div><small>${t("recordName")}</small><strong>${node.name}</strong></div><div><small>${t("clusterName")}</small><strong>${clusterName(node.cluster)}</strong></div><div><small>${t("uid")}</small><code class="mono">${node.uid}</code></div><div><small>${t("systemUUID")}</small><code class="mono">${node.system}</code></div></div></section>${node.robot ? `<section class="detail-section"><h3>${icon("power",14)}${t("power")}</h3><div class="detail-grid"><div><small>${t("desired")}</small><span class="status status-online"><i></i>On</span></div><div><small>${t("now")}</small><span class="status status-online"><i></i>On</span></div><div><small>${t("selfCheck")}</small><span class="status status-online"><i></i>Healthy</span></div><div><small>${t("model")}</small><strong>${node.model}</strong></div></div><div class="ledger-actions" style="margin-top:12px"><button class="secondary-button" data-action="power-on" type="button">${t("powerOn")}</button><button class="secondary-button" data-action="pose" type="button">${t("pose")}</button></div></section>` : ""}<section class="detail-section"><h3>${icon("server",14)}${t("note")}</h3><div class="detail-grid"><div><small>CPU</small><strong>8 cores · 42%</strong></div><div><small>Memory</small><strong>21.4 / 64 GB</strong></div><div><small>${t("model")}</small><strong>${node.model}</strong></div><div><small>MAC</small><code class="mono">${node.mac}</code></div></div></section></section>`;
+        else if (state.drawerTab === "network") panel = `<section class="drawer-panel" role="tabpanel" id="drawer-panel" aria-labelledby="drawer-tab-${state.drawerTab}"><section class="detail-section"><h3>${icon("globe",14)}${t("network")}</h3><div class="detail-grid"><div><small>NetworkVerified</small><span class="status ${node.phase === "Bound" ? "status-online" : node.phase === "Conflict" ? "status-failed" : "status-pending"}"><i></i>${node.phase === "Bound" ? t("verified") : node.phase === "Conflict" ? t("probeFailed") : t("unknown")}</span></div><div><small>${t("publicKey")}</small><code class="mono">${node.phase === "Bound" ? node.key : "—"}</code></div><div><small>${t("address")}</small><code class="mono">${adm?.tunnel ?? node.ip}</code></div><div><small>${t("admissionState")}</small><span class="admission-chip ${adm ? admissionClass(adm) : "expired"}">${adm ? admissionLabel(adm) : t("notUsed")}</span></div><div><small>${t("expires")}</small><strong>${adm?.expires ?? "—"}</strong></div><div><small>${t("issuer")}</small><strong>${adm?.issuer ?? "—"}</strong></div><div><small>${t("sshLogin")}</small><code class="mono">${adm?.ssh ?? `root@${node.ip}`}</code></div><div><small>${t("hostKey")}</small><code class="mono">SHA256:8f3c1d9e2a7b4c6d0e5f1a2b3c4d5e6f</code></div></div></section><section class="detail-section"><h3>${icon("server",14)}${t("hub")}</h3><div class="detail-grid"><div><small>hub-shenzhen-01</small><span class="status status-online"><i></i>${t("hubReach")}</span></div><div><small>hub-shenzhen-02</small><span class="status ${node.phase === "Offline" ? "status-pending" : "status-online"}"><i></i>${node.phase === "Offline" ? t("unknown") : t("hubReach")}</span></div></div></section></section>`;
+        else panel = `<section class="drawer-panel" role="tabpanel" id="drawer-panel" aria-labelledby="drawer-tab-${state.drawerTab}"><section class="detail-section"><h3>${t("conditions")}</h3><ul class="condition-list"><li><span class="condition-dot ${node.phase === "Bound" ? "ok" : ""}"></span><span class="condition-copy"><strong>${t("conditionObserved")}</strong><small>AgentHeartbeat · Last report ${enDuration(node.seen)}</small></span><span class="status ${node.phase === "Bound" ? "status-online" : "status-pending"}"><i></i>${node.phase === "Bound" ? t("true") : t("unknownValue")}</span></li><li><span class="condition-dot ${node.phase === "Conflict" ? "bad" : "ok"}"></span><span class="condition-copy"><strong>${t("conditionIdentity")}</strong><small>${node.phase === "Conflict" ? t("issueConflict") : "Node UID matches station record"}</small></span><span class="status ${node.phase === "Conflict" ? "status-failed" : "status-online"}"><i></i>${node.phase === "Conflict" ? t("false") : t("true")}</span></li><li><span class="condition-dot ${node.phase === "Bound" ? "ok" : ""}"></span><span class="condition-copy"><strong>${t("conditionNetwork")}</strong><small>${node.phase === "Offline" ? "No current probe result" : "WireGuard peer responds"}</small></span><span class="status ${node.phase === "Bound" ? "status-online" : "status-pending"}"><i></i>${node.phase === "Bound" ? t("true") : t("unknownValue")}</span></li><li><span class="condition-dot ok"></span><span class="condition-copy"><strong>${t("conditionLinked")}</strong><small>Station agent reports RLark connection</small></span><span class="status status-online"><i></i>${t("true")}</span></li><li><span class="condition-dot ok"></span><span class="condition-copy"><strong>${t("conditionRebooted")}</strong><small>Reboot count 1 · 3 days ago</small></span><span class="status status-online"><i></i>${t("true")}</span></li></ul></section></section>`;
+        root.innerHTML = `<div class="drawer-backdrop" data-close-drawer></div><aside class="station-drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title"><header class="drawer-header"><div><span class="eyebrow">${icon("fingerprint",13)} ${t("stations")}</span><h2 id="drawer-title">${node.name}</h2><div class="drawer-meta"><span class="status ${statusClass(node.phase)}"><i></i>${labelPhase(node.phase)}</span><span>${clusterName(node.cluster)}</span><span class="network-${node.phase === "Bound" ? "verified" : node.phase === "Conflict" ? "failed" : "unknown"}">${node.phase === "Bound" ? t("verified") : node.phase === "Conflict" ? t("probeFailed") : t("unknown")}</span><span>${t("seen")} ${enDuration(node.seen)}</span></div></div><button class="icon-button drawer-close" type="button" data-close-drawer aria-label="${t("close")}">${icon("close",16)}</button></header><div class="drawer-tabs" role="tablist" aria-label="${t("stations")}">${tabs.map(([id,label]) => `<button class="drawer-tab${state.drawerTab === id ? " active" : ""}" type="button" role="tab" id="drawer-tab-${id}" aria-controls="drawer-panel" aria-selected="${state.drawerTab === id}" tabIndex="${state.drawerTab === id ? 0 : -1}" data-drawer-tab="${id}">${t(label)}</button>`).join("")}</div><div class="drawer-body">${panel}</div><footer class="drawer-footer"><button class="secondary-button" type="button" data-close-drawer>${t("close")}</button><div class="drawer-footer-actions"><button class="secondary-button" type="button" data-action="reissue">${t("reissueCode")}</button><button class="secondary-button danger" type="button" data-action="revoke">${t("revoke")}</button><button class="secondary-button danger" type="button" data-action="delete" ${node.phase === "Bound" ? `disabled title="${t("deleteBlocked")}"` : ""}>${t("delete")}</button></div>${node.phase === "Bound" ? `<small class="muted">${t("deleteBlocked")}</small>` : ""}</footer></aside>`;
+      };
+      const render = () => {
+        document.documentElement.lang = state.lang === "zh" ? "zh-CN" : "en";
+        document.body.classList.toggle("theme-dark", state.theme === "dark");
+        document.title = `RLark · ${t("stations")}`;
+        document.querySelectorAll("[data-copy]").forEach(el => { el.textContent = t(el.dataset.copy); });
+        document.querySelectorAll(".nav-item").forEach(item => { const label = item.querySelector("span"); if (label) item.setAttribute("aria-label", label.textContent); });
+        const sidebarToggle = document.getElementById("sidebar-toggle");
+        const sidebarCollapsed = document.body.classList.contains("sidebar-collapsed");
+        sidebarToggle.setAttribute("aria-expanded", String(!sidebarCollapsed));
+        sidebarToggle.setAttribute("aria-label", t(sidebarCollapsed ? "expand" : "collapse"));
+        sidebarToggle.querySelector("span").textContent = t(sidebarCollapsed ? "expand" : "collapse");
+        document.querySelector("[data-page-link='stations']").href = `site-ops-${isBoard ? "b" : "a"}-stations.html`;
+        document.querySelectorAll("[data-theme]").forEach(btn => { btn.textContent = btn.dataset.theme === "light" ? (state.lang === "zh" ? "浅色" : "Light") : `◐ ${state.lang === "zh" ? "深色" : "Dark"}`; });
+        document.querySelectorAll("[data-lang]").forEach(btn => btn.classList.toggle("active", btn.dataset.lang === state.lang));
+        document.querySelectorAll("[data-theme]").forEach(btn => btn.classList.toggle("active", btn.dataset.theme === state.theme));
+        document.getElementById("scenario").innerHTML = `<option value="dense">${t("denseScenario")}</option><option value="sparse">${t("sparseScenario")}</option><option value="empty">${t("emptyScenario")}</option>`;
+        document.getElementById("theme").innerHTML = `<option value="light">${state.lang === "zh" ? "浅色" : "Light"}</option><option value="dark">${state.lang === "zh" ? "深色" : "Dark"}</option>`;
+        document.getElementById("scenario").value = state.scenario;
+        document.getElementById("theme").value = state.theme;
+        document.getElementById("language").value = state.lang;
+        document.getElementById("page-content").innerHTML = isBoard ? renderBoard() : renderA();
+        if (state.drawerNode) renderDrawer();
+      };
+      document.addEventListener("click", event => {
+        const target = event.target.closest("button, [data-node], [data-close-drawer], .phase-tab, .table-action, summary");
+        if (!target) return;
+        if (target.matches(".admissions-collapsible > summary")) { state.admissionsOpen = !state.admissionsOpen; return; }
+        if (target.matches("[data-lang]")) { state.lang = target.dataset.lang; render(); return; }
+        if (target.matches("[data-theme]")) { state.theme = target.dataset.theme; render(); return; }
+        if (target.id === "sidebar-toggle") { document.body.classList.toggle("sidebar-collapsed"); render(); return; }
+        if (target.id === "notifications") { toast(state.lang === "zh" ? "暂无新通知" : "No new notifications"); return; }
+        if (target.matches("[data-phase]")) { state.phase = target.dataset.phase; state.shown = 8; render(); return; }
+        if (target.id === "refresh") { const button = target; button.classList.add("is-refreshing"); button.querySelector("svg")?.classList.add("refresh-spin"); setTimeout(() => { render(); toast(t("refreshed")); }, 650); return; }
+        if (target.id === "operations-toggle") { state.operationOpen = !state.operationOpen; render(); return; }
+        if (target.id === "load-more") { state.shown = visibleNodes().length; render(); toast(t("loadedAll")); return; }
+        if (target.id === "clear-filters") { state.phase = "all"; state.cluster = "all"; state.query = ""; render(); return; }
+        if (target.dataset.node) { state.lastTrigger = target; openDrawer(target.dataset.node); return; }
+        if (target.dataset.drawerTab) { state.drawerTab = target.dataset.drawerTab; renderDrawer(); return; }
+        if (target.hasAttribute("data-close-drawer")) { closeDrawer(); return; }
+        if (target.dataset.action) {
+          const action = target.dataset.action;
+          if (action === "delete" && state.drawerNode?.phase === "Bound") return;
+          if (action === "refresh-empty") { toast(t("refreshed")); return; }
+          toast(`${t("clicked")}${action === "reissue" ? t("reissueCode") : action === "revoke" ? t("revoke") : action === "delete" ? t("delete") : action}`);
+          return;
+        }
+        if (target.dataset.ledger) { const row = admissions()[Number(target.dataset.index)]; if (!row) return; if (target.dataset.ledger === "revoke") { row.state = "Revoked"; } toast(`${t("clicked")}${t(target.dataset.ledger)}`); render(); return; }
+        if (target.dataset.operation !== undefined) { toast(`${target.dataset.operation}: ${t("details")}`); return; }
+        if (target.dataset.retry !== undefined) { toast(`${t("retry")} · ${operations()[Number(target.dataset.retry)]?.node ?? ""}`); return; }
+      });
+      document.addEventListener("input", event => { if (event.target.id === "search") { state.query = event.target.value; const start = event.target.selectionStart; render(); const input = document.getElementById("search"); input.focus(); input.setSelectionRange(start,start); } });
+      document.addEventListener("change", event => {
+        if (event.target.id === "cluster") { state.cluster = event.target.value; render(); }
+        if (event.target.id === "scenario") { state.scenario = event.target.value; state.phase = "all"; state.cluster = "all"; state.query = ""; state.shown = 8; state.selectedRobots = new Set(nodesByScenario[state.scenario].filter(n => n.robot).slice(0,1).map(n => n.id)); render(); }
+        if (event.target.id === "theme") { state.theme = event.target.value; render(); }
+        if (event.target.id === "language") { state.lang = event.target.value; render(); }
+        if (event.target.id === "select-robots") { const all = nodes().filter(n => n.robot); state.selectedRobots = event.target.checked ? new Set(all.map(n => n.id)) : new Set(); render(); }
+        if (event.target.matches("[data-robot]")) { const selected = new Set(state.selectedRobots); if (event.target.checked) selected.add(event.target.dataset.robot); else selected.delete(event.target.dataset.robot); state.selectedRobots = selected; render(); }
+      });
+      document.getElementById("review-toggle").addEventListener("click", () => { const panel = document.getElementById("review-panel"); panel.hidden = false; document.getElementById("review-toggle").hidden = true; document.getElementById("review-toggle").setAttribute("aria-expanded","true"); });
+      document.getElementById("review-close").addEventListener("click", () => { document.getElementById("review-panel").hidden = true; document.getElementById("review-toggle").hidden = false; document.getElementById("review-toggle").setAttribute("aria-expanded","false"); document.getElementById("review-toggle").focus(); });
+      document.addEventListener("keydown", event => {
+        if (event.key === "Escape" && state.drawerNode) closeDrawer();
+        if ((event.key === "Enter" || event.key === " ") && event.target.matches("[data-node]")) { event.preventDefault(); openDrawer(event.target.dataset.node); }
+        if (state.drawerNode && event.target.matches("[data-drawer-tab]") && ["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) { event.preventDefault(); const tabIds = ["overview", "network", "conditions"]; const current = tabIds.indexOf(state.drawerTab); const next = event.key === "Home" ? 0 : event.key === "End" ? tabIds.length - 1 : (current + (event.key === "ArrowRight" ? 1 : tabIds.length - 1)) % tabIds.length; state.drawerTab = tabIds[next]; renderDrawer(); document.querySelector(`[data-drawer-tab="${state.drawerTab}"]`)?.focus(); return; }
+        if (state.drawerNode && (event.key === "Enter" || event.key === " ") && event.target.matches("[data-drawer-tab]")) { event.preventDefault(); state.drawerTab = event.target.dataset.drawerTab; renderDrawer(); }
+        if (state.drawerNode && event.key === "Tab") {
+          const drawer = document.querySelector(".station-drawer");
+          const items = [...drawer.querySelectorAll("button:not(:disabled), [tabindex='0']")];
+          const first = items[0], last = items[items.length-1];
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+        }
+      });
+      const startTheme = state.theme, startLang = state.lang;
+      render();
+      document.getElementById("scenario").value = state.scenario;
+      document.getElementById("theme").value = startTheme;
+      document.getElementById("language").value = startLang;
+    })();
+  </script>
+</body>
+</html>

@@ -19,6 +19,14 @@ export function podsToStop(pods: CRDPod[], namespace: string, nodeName: string):
     .sort();
 }
 
+export function removalWorkloadPreview(pods: string[], limit: number): { visible: string[]; hiddenCount: number } {
+  const visibleCount = Math.max(0, Math.floor(limit));
+  return {
+    visible: pods.slice(0, visibleCount),
+    hiddenCount: Math.max(0, pods.length - visibleCount),
+  };
+}
+
 // The stages of a removal, as the NodeOperation names them.
 export const removalStages = ["Preflight", "PowerOff", "Drain", "RemovePeer", "Reset", "DeleteNode", "VerifyRemoval"];
 

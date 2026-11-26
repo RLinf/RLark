@@ -92,6 +92,28 @@ spec:
                   registers with.
                 maxProperties: 32
                 type: object
+              machine:
+                description: Machine records the selected identity for new typed onboarding
+                  flows.
+                properties:
+                  body:
+                    maxLength: 63
+                    type: string
+                  category:
+                    allOf:
+                    - enum:
+                      - Robot
+                      - Server
+                    - enum:
+                      - Robot
+                      - Server
+                    type: string
+                  model:
+                    maxLength: 63
+                    type: string
+                required:
+                - category
+                type: object
               nodeClass:
                 description: |-
                   NodeClass names the NodeClass of the machine. The node follows what

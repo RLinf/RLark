@@ -48,6 +48,9 @@ func machineFixture(t *testing.T, objects ...client.Object) (*MachineReconciler,
 	if err := stationv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
+	if err := registerMachineNodeJoinKinds(scheme); err != nil {
+		t.Fatal(err)
+	}
 	_ = clientscheme.AddToScheme(scheme)
 	class := &stationv1alpha1.NodeClass{ObjectMeta: metav1.ObjectMeta{Name: "s1u"}, Spec: stationv1alpha1.NodeClassSpec{
 		Labels: map[string]string{"rlark.io/robot-model": "s1u", "rlark.io/robot-body": "s1u"}, Taints: []string{"rlark.io/node-category=robot:NoSchedule"},
@@ -59,6 +62,50 @@ func machineFixture(t *testing.T, objects ...client.Object) (*MachineReconciler,
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&stationv1alpha1.Machine{}, &stationv1alpha1.NodeOperation{}).WithObjects(append(objects, class)...).Build()
 	inspections := &machineInspections{seen: map[string]MachineInspection{}, refused: map[string]error{}}
 	return &MachineReconciler{Client: c, Reader: c, Inspector: inspections, Clusters: machineClusters{"robots": "agents-robots"}, Namespace: "station-system"}, c, inspections
+}
+
+func TestUnclassifiedCandidateDoesNotAttemptRobotInspection(t *testing.T) {
+	ctx := context.Background()
+	machine := discoveredMachine(1, false)
+	machine.Spec.NodeClass = ""
+	r, c, inspections := machineFixture(t, machine)
+	if _, err := r.Reconcile(ctx, machineRequest(machine)); err != nil {
+		t.Fatal(err)
+	}
+	stored := &stationv1alpha1.Machine{}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), stored); err != nil {
+		t.Fatal(err)
+	}
+	if inspections.calls != 0 || stored.Status.Problem != "" || stored.Status.Phase != stationv1alpha1.MachineDiscovered {
+		t.Fatalf("unclassified candidate inspection count=%d status=%+v", inspections.calls, stored.Status)
+	}
+}
+
+func TestServerMachineProjectsNodeJoinWithoutRobotInspection(t *testing.T) {
+	ctx := context.Background()
+	machine := discoveredMachine(2, false)
+	machine.Spec.NodeClass = ""
+	machine.Spec.Admit = &stationv1alpha1.MachineAdmit{ClusterID: "robots", Type: stationv1alpha1.MachineTypeServer, RequestedBy: "alice", RequestedAt: metav1.Now()}
+	join := &machineNodeJoinResource{TypeMeta: metav1.TypeMeta{APIVersion: machineNodeJoinGV, Kind: "NodeJoin"}, ObjectMeta: metav1.ObjectMeta{
+		Name: "robots.server-02", Labels: map[string]string{MachineNodeJoinLabel: machine.Name},
+		Annotations: map[string]string{"station.rlark.io/machine": machine.Name},
+	}, Status: struct {
+		Phase      string             `json:"phase,omitempty"`
+		Stage      string             `json:"stage,omitempty"`
+		Conditions []metav1.Condition `json:"conditions,omitempty"`
+	}{Phase: "Running", Stage: "Install"}}
+	join.Spec.ClusterID, join.Spec.NodeName = "robots", "server-02"
+	r, c, inspections := machineFixture(t, machine, join)
+	if _, err := r.Reconcile(ctx, machineRequest(machine)); err != nil {
+		t.Fatal(err)
+	}
+	stored := &stationv1alpha1.Machine{}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(machine), stored); err != nil {
+		t.Fatal(err)
+	}
+	if inspections.calls != 0 || stored.Status.Phase != stationv1alpha1.MachineAdmitted || stored.Status.NodeJoin == nil || stored.Status.NodeJoin.Phase != "Running" || stored.Status.NodeJoin.Stage != "Install" {
+		t.Fatalf("server NodeJoin projection: inspections=%d status=%+v", inspections.calls, stored.Status)
+	}
 }
 
 func discoveredMachine(number int, admitted bool) *stationv1alpha1.Machine {

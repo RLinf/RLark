@@ -279,6 +279,11 @@ spec:
                           - clusterID
                           - nodeName
                           type: object
+                        includeUnclassified:
+                          description: |-
+                            IncludeUnclassified opts this site into credential-free SSH candidate
+                            discovery. Release A controllers keep the field absent in Hub documents.
+                          type: boolean
                         intervalSeconds:
                           default: 30
                           format: int32
@@ -295,6 +300,18 @@ spec:
                             type: string
                           maxItems: 8
                           minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                        sshPorts:
+                          description: |-
+                            SSHPorts are extra ports probed for hosts without a class fingerprint.
+                            An empty value means the default port 22 when the feature is enabled.
+                          items:
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                          maxItems: 4
                           type: array
                           x-kubernetes-list-type: set
                       required:

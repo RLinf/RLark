@@ -300,6 +300,49 @@ spec:
                     - digest
                     - documentLevel
                     type: object
+                  hardware:
+                    properties:
+                      architecture:
+                        maxLength: 64
+                        type: string
+                      kernelVersion:
+                        maxLength: 256
+                        type: string
+                      osImage:
+                        maxLength: 256
+                        type: string
+                      productName:
+                        maxLength: 256
+                        type: string
+                      systemVendor:
+                        maxLength: 256
+                        type: string
+                    type: object
+                  identity:
+                    description: |-
+                      Identity is derived by Station API from the Node it authenticated, not
+                      accepted as an arbitrary client assertion.
+                    properties:
+                      category:
+                        enum:
+                        - Robot
+                        - Server
+                        type: string
+                      model:
+                        maxLength: 63
+                        type: string
+                      reportedAt:
+                        description: ReportedAt is Station API receipt time.
+                        format: date-time
+                        type: string
+                      source:
+                        enum:
+                        - node-labels
+                        - node-info
+                        type: string
+                    required:
+                    - reportedAt
+                    type: object
                   nodeUID:
                     maxLength: 128
                     minLength: 1

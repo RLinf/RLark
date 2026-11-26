@@ -60,3 +60,30 @@ test("a sighting shows its date when it was not today, and how long ago", () => 
   assert.equal(unseenFor(at(20, 5, 0), now, true), "Hub 已 11 小时没看到");
   assert.equal(unseenFor(undefined, now, true), "没有被看到过");
 });
+
+test("join credentials are grouped once per NodeClass and validated before admitting", async () => {
+  const { joinCredentialGroups, joinCredentialProblem } = await import("../dist/test/astribot/lib/machineJoin.js");
+  const access = {
+    entry: { secret: "s1u-access", key: "password", configured: true },
+    node: { secret: "s1u-access", key: "x86_password", configured: true },
+  };
+  const classes = { s1u: { access } };
+  const groups = joinCredentialGroups([
+    machine("a", { node_class: "s1u" }),
+    machine("b", { node_class: "s1u" }),
+    machine("c", { node_class: "x86" }),
+  ], { ...classes, x86: { access } });
+  assert.deepEqual(groups.map((group) => [group.name, group.machines.length]), [["s1u", 2], ["x86", 1]]);
+  assert.equal(joinCredentialProblem(groups, {}, true), "");
+
+  const missingNode = { s1u: { access: { ...access, node: { ...access.node, configured: false } } }, x86: { access } };
+  assert.match(joinCredentialProblem(joinCredentialGroups([machine("a")], missingNode), {}, true), /x86 登录口令/);
+  assert.equal(joinCredentialProblem(joinCredentialGroups([machine("a")], missingNode), { s1u: { password: "typed", sudo: "" } }, true), "");
+
+  const missingEntry = { s1u: { access: { ...access, entry: { ...access.entry, configured: false } } } };
+  assert.match(joinCredentialProblem(joinCredentialGroups([machine("a")], missingEntry), { s1u: { password: "typed", sudo: "" } }, true), /Orin 入口口令/);
+
+  const noAccess = { s1u: {} };
+  assert.match(joinCredentialProblem(joinCredentialGroups([machine("a")], noAccess), { s1u: { password: "typed", sudo: "" } }, true), /没有声明登录方式/);
+  assert.match(joinCredentialProblem([], {}, false), /No machines/);
+});

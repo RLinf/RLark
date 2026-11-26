@@ -154,7 +154,7 @@ func TestKernelStatus(t *testing.T) {
 	if observation.Interface != "wg-status" || observation.PublicKey != private.PublicKey().String() || len(observation.Addresses) == 0 || observation.Addresses[0] != "10.253.5.1/32" {
 		t.Fatalf("unexpected snapshot: %s", data)
 	}
-	if !bytes.Contains(data, []byte(`"gateway":{"documentLevel":3,"digest":"`+strings.Repeat("ab", 32)+`"}`)) {
+	if !bytes.Contains(data, []byte(`"gateway":{"documentLevel":4,"digest":"`+strings.Repeat("ab", 32)+`"}`)) {
 		t.Fatalf("snapshot does not state the program: %s", data)
 	}
 	if bytes.Contains(data, []byte(private.String())) || !bytes.Contains(data, []byte(`"peers":[{"publicKey":"`+peerKey.PublicKey().String()+`"}]`)) {

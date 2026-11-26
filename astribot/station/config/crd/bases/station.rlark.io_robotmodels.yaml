@@ -1,0 +1,64 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: robotmodels.station.rlark.io
+spec:
+  group: station.rlark.io
+  names:
+    kind: RobotModel
+    listKind: RobotModelList
+    plural: robotmodels
+    singular: robotmodel
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          RobotModel is an immutable catalog entry for a robot model. Its metadata
+          name is the stable model ID referenced by NodeClass and node identity.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              description:
+                maxLength: 1024
+                type: string
+              displayName:
+                description: DisplayName is the operator-facing label for this model.
+                maxLength: 128
+                minLength: 1
+                type: string
+              vendor:
+                maxLength: 128
+                type: string
+            required:
+            - displayName
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: RobotModel spec is immutable
+          rule: self.spec == oldSelf.spec
+    served: true
+    storage: true

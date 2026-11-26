@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -34,7 +35,7 @@ const routePriority = 49321
 // so the commit that gives config a field raises this by one, and a
 // controller that writes that field is rolled out once every gateway reports
 // this level (the gate of stage controller in apps/rlark/astribot/release).
-const documentLevel = 3
+const documentLevel = 4
 
 type config struct {
 	Interface    string        `json:"interface"`
@@ -89,6 +90,19 @@ func parse(data []byte) (*desired, error) {
 	}
 	if c.ListenPort < 0 || c.ListenPort > 65535 || c.MTU < 576 || c.MTU > 9000 {
 		return nil, errors.New("invalid listen port or MTU")
+	}
+	if c.Discovery != nil {
+		if c.Discovery.RelayToken != "" && !c.Discovery.validRelayToken() {
+			return nil, errors.New("invalid discovery relay token")
+		}
+		if len(c.Discovery.SSHPorts) > 4 {
+			return nil, errors.New("at most four unclassified SSH ports are allowed")
+		}
+		for i, port := range c.Discovery.SSHPorts {
+			if port < 1 || port > 65535 || slices.Contains(c.Discovery.SSHPorts[:i], port) {
+				return nil, errors.New("invalid or duplicate unclassified SSH port")
+			}
+		}
 	}
 	if strings.ContainsAny(c.NodeUID, " \t\r\n\x00") || strings.ContainsAny(c.PublicKey, " \t\r\n\x00") || len(c.NodeUID) > 128 {
 		return nil, errors.New("invalid node ownership metadata")

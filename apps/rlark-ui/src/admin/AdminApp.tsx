@@ -292,7 +292,9 @@ export function AdminApp() {
               adminPage === item.id ||
               (item.id === "storageClass" && adminPage === "files");
             const isChildActive = isParent
-              ? item.children!.some((ch) => ch.id === adminPage)
+              ? item.id === "stations"
+                ? adminPage === "stations" && item.children!.some((ch) => ch.id === adminSub)
+                : item.children!.some((ch) => ch.id === adminPage)
               : false;
             const expanded = isParent && (isChildActive || isActive);
             return (
@@ -313,11 +315,9 @@ export function AdminApp() {
                   }
                   onClick={() =>
                     isParent
-                      ? navigate(
-                          item.id === "clusters"
-                            ? "clusters-list"
-                            : item.children![0].id,
-                        )
+                      ? item.id === "stations"
+                        ? navigate("stations")
+                        : navigate(item.id === "clusters" ? "clusters-list" : item.children![0].id)
                       : navigate(item.id)
                   }
                 >
@@ -334,8 +334,8 @@ export function AdminApp() {
                           key={ch.id}
                           aria-label={childLabel}
                           title={childLabel}
-                          className={adminPage === ch.id ? "active" : ""}
-                          onClick={() => navigate(ch.id)}
+                          className={(item.id === "stations" ? adminPage === "stations" && adminSub === ch.id : adminPage === ch.id) ? "active" : ""}
+                          onClick={() => item.id === "stations" ? navigate("stations", ch.id) : navigate(ch.id)}
                         >
                           <ChIcon size={16} />
                           <span>{childLabel}</span>

@@ -3,7 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -27,12 +28,15 @@ import (
 // discovery is what a hub looks for on its site's own network, and what it
 // lets the management plane reach there (astribot/station/network, Discovery).
 type discovery struct {
-	Ranges          []string `json:"ranges"`
-	IntervalSeconds int      `json:"intervalSeconds"`
-	Ports           []int    `json:"ports"`
-	HostKeys        []string `json:"hostKeys"`
-	RelayPort       int      `json:"relayPort"`
-	RelayFrom       string   `json:"relayFrom"`
+	Ranges              []string `json:"ranges"`
+	IntervalSeconds     int      `json:"intervalSeconds"`
+	Ports               []int    `json:"ports"`
+	HostKeys            []string `json:"hostKeys"`
+	IncludeUnclassified bool     `json:"includeUnclassified,omitempty"`
+	SSHPorts            []int    `json:"sshPorts,omitempty"`
+	RelayToken          string   `json:"relayToken,omitempty"`
+	RelayPort           int      `json:"relayPort"`
+	RelayFrom           string   `json:"relayFrom"`
 }
 
 // discoveredHost is a host that showed the host key of a machine that has
@@ -41,8 +45,11 @@ type discoveredHost struct {
 	Address string `json:"address"`
 	Port    int    `json:"port"`
 	// MAC is the host's hardware address: what stays when its lease changes.
-	MAC     string `json:"mac"`
-	HostKey string `json:"host_key"`
+	MAC              string `json:"mac"`
+	HostKey          string `json:"host_key"`
+	HostKeyAlgorithm string `json:"host_key_algorithm,omitempty"`
+	Banner           string `json:"ssh_banner,omitempty"`
+	Unclassified     bool   `json:"unclassified,omitempty"`
 }
 
 // virtualLinks are the beginnings of the names of the interfaces whose
@@ -97,12 +104,18 @@ func (d *discovery) networks(attached []netip.Prefix) ([]netip.Prefix, error) {
 	all := slices.Clone(attached)
 	for _, text := range d.Ranges {
 		prefix, err := netip.ParsePrefix(text)
-		if err != nil || !prefix.Addr().Is4() || prefix.Bits() < 22 {
+		if err != nil || !prefix.Addr().Is4() || prefix.Bits() < 22 ||
+			!(prefix.Addr().IsPrivate() || prefix.Addr().IsLoopback() || prefix.Addr().IsLinkLocalUnicast()) {
 			return nil, fmt.Errorf("discovery range %q is not an IPv4 prefix of /22 or smaller", text)
 		}
 		all = append(all, prefix.Masked())
 	}
 	return all, nil
+}
+
+func (d *discovery) validRelayToken() bool {
+	decoded, err := base64.StdEncoding.DecodeString(d.RelayToken)
+	return err == nil && len(decoded) == 32 && base64.StdEncoding.EncodeToString(decoded) == d.RelayToken
 }
 
 // addresses are the host addresses of the networks, each once.
@@ -129,23 +142,46 @@ var errKeyRead = errors.New("the host key is read")
 // hostKey returns the fingerprint of the ED25519 host key the host at the
 // address shows, empty if none answers there in time. The host is not asked
 // to authenticate anybody.
-func hostKey(ctx context.Context, address string) string {
+type sshObservation struct {
+	Banner      string
+	Algorithm   string
+	Fingerprint string
+}
+
+type bufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c bufferedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+
+func hostKey(ctx context.Context, address string, algorithms []string) sshObservation {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", address)
 	if err != nil {
-		return ""
+		return sshObservation{}
 	}
 	defer conn.Close()
 	deadline, _ := ctx.Deadline()
 	_ = conn.SetDeadline(deadline)
-	shown := ""
-	_, _, _, _ = ssh.NewClientConn(conn, address, &ssh.ClientConfig{HostKeyAlgorithms: []string{ssh.KeyAlgoED25519},
+	reader := bufio.NewReaderSize(conn, 512)
+	banner, err := reader.ReadSlice('\n')
+	if err != nil || len(banner) > 255 || !strings.HasPrefix(string(banner), "SSH-") {
+		return sshObservation{}
+	}
+	observed := sshObservation{Banner: strings.TrimSpace(string(banner))}
+	if len(observed.Banner) > 200 {
+		observed.Banner = observed.Banner[:200]
+	}
+	replay := bufio.NewReader(io.MultiReader(strings.NewReader(string(banner)), reader))
+	_, _, _, _ = ssh.NewClientConn(bufferedConn{Conn: conn, reader: replay}, address, &ssh.ClientConfig{HostKeyAlgorithms: algorithms,
 		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
-			shown = ssh.FingerprintSHA256(key)
+			observed.Algorithm = key.Type()
+			observed.Fingerprint = ssh.FingerprintSHA256(key)
 			return errKeyRead
 		}})
-	return shown
+	return observed
 }
 
 // scan looks at every address of the ranges and of the attached networks
@@ -162,27 +198,53 @@ func (d *discovery) scan(ctx context.Context, attached []netip.Prefix, hardware 
 	var mu sync.Mutex
 	var group sync.WaitGroup
 	slots := make(chan struct{}, 128)
+	ports := slices.Clone(d.Ports)
+	if d.IncludeUnclassified {
+		sshPorts := d.SSHPorts
+		if len(sshPorts) == 0 {
+			sshPorts = []int{22}
+		}
+		for _, port := range sshPorts {
+			if !slices.Contains(ports, port) {
+				ports = append(ports, port)
+			}
+		}
+	}
+	algorithms := []string{ssh.KeyAlgoED25519, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521, ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256}
 	for _, address := range addresses(networks) {
-		for _, port := range d.Ports {
+		for _, port := range ports {
 			group.Add(1)
 			slots <- struct{}{}
 			go func() {
 				defer func() { <-slots; group.Done() }()
-				key := hostKey(ctx, net.JoinHostPort(address.String(), strconv.Itoa(port)))
-				if !slices.Contains(d.HostKeys, key) {
+				observed := hostKey(ctx, net.JoinHostPort(address.String(), strconv.Itoa(port)), algorithms)
+				known := slices.Contains(d.HostKeys, observed.Fingerprint)
+				if observed.Fingerprint == "" || !known && !d.IncludeUnclassified {
 					return
 				}
 				// Without a hardware address the host is not on this network itself.
 				if mac := hardware(address.String()); mac != "" {
 					mu.Lock()
-					found = append(found, discoveredHost{Address: address.String(), Port: port, MAC: mac, HostKey: key})
+					found = append(found, discoveredHost{Address: address.String(), Port: port, MAC: mac, HostKey: observed.Fingerprint,
+						HostKeyAlgorithm: observed.Algorithm, Banner: observed.Banner, Unclassified: !known})
 					mu.Unlock()
 				}
 			}()
 		}
 	}
 	group.Wait()
-	slices.SortFunc(found, func(a, b discoveredHost) int { return strings.Compare(a.Address, b.Address) })
+	slices.SortFunc(found, func(a, b discoveredHost) int {
+		if a.Unclassified != b.Unclassified {
+			if a.Unclassified {
+				return 1
+			}
+			return -1
+		}
+		if order := strings.Compare(a.Address, b.Address); order != 0 {
+			return order
+		}
+		return a.Port - b.Port
+	})
 	return found, nil
 }
 
@@ -209,33 +271,76 @@ func neighbour(address string) string {
 // dials from.
 func (d *discovery) relay(conn net.Conn, attached []netip.Prefix) {
 	defer conn.Close()
-	// Only the node the management plane dials from: any other peer of the
-	// tunnel is closed before a line of it is read.
-	if remote, ok := conn.RemoteAddr().(*net.TCPAddr); !ok || remote.IP.String() != d.RelayFrom {
-		return
-	}
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	line, err := bufio.NewReaderSize(conn, 64).ReadString('\n')
-	if err != nil {
+	reader := bufio.NewReaderSize(conn, 256)
+	line, err := reader.ReadSlice('\n')
+	if err != nil || len(line) > 256 {
 		return
 	}
 	_ = conn.SetReadDeadline(time.Time{})
-	target, err := netip.ParseAddrPort(strings.TrimSpace(line))
-	networks, _ := d.networks(attached) // none for a document with a bad range, which scan says
-	if err != nil || !slices.Contains(d.Ports, int(target.Port())) || !slices.ContainsFunc(networks, func(prefix netip.Prefix) bool { return prefix.Contains(target.Addr()) }) {
+	fields := strings.Fields(string(line))
+	if len(fields) == 3 && fields[0] == "gateway" {
+		if !d.validRelayToken() || subtle.ConstantTimeCompare([]byte(fields[1]), []byte(d.RelayToken)) != 1 {
+			return
+		}
+		target, err := d.relayTarget(fields[2], attached, true)
+		if err != nil {
+			return
+		}
+		d.pipeRelay(conn, reader, target, true)
+		return
+	}
+	// The legacy protocol is still restricted to the configured controller
+	// tunnel address. Its wire format and response strings stay unchanged.
+	if remote, ok := conn.RemoteAddr().(*net.TCPAddr); !ok || remote.IP.String() != d.RelayFrom {
+		return
+	}
+	if len(fields) != 1 {
+		return
+	}
+	target, err := d.relayTarget(fields[0], attached, false)
+	if err != nil {
 		_, _ = io.WriteString(conn, "refused\n")
 		return
 	}
-	far, err := net.DialTimeout("tcp", target.String(), 5*time.Second)
+	d.pipeRelay(conn, reader, target, false)
+}
+
+func (d *discovery) relayTarget(raw string, attached []netip.Prefix, authenticated bool) (string, error) {
+	target, err := netip.ParseAddrPort(raw)
+	if err != nil || !target.Addr().Is4() || !slices.Contains(d.Ports, int(target.Port())) {
+		if authenticated {
+			ports := d.SSHPorts
+			if len(ports) == 0 {
+				ports = []int{22}
+			}
+			if err != nil || !target.Addr().Is4() || !slices.Contains(ports, int(target.Port())) {
+				return "", errors.New("target is outside the discovery ports")
+			}
+		} else {
+			return "", errors.New("target is outside the discovery ports")
+		}
+	}
+	networks, err := d.networks(attached)
+	if err != nil || !slices.ContainsFunc(networks, func(prefix netip.Prefix) bool { return prefix.Contains(target.Addr()) }) {
+		return "", errors.New("target is outside the discovery networks")
+	}
+	return target.String(), nil
+}
+
+func (d *discovery) pipeRelay(conn net.Conn, reader *bufio.Reader, target string, silent bool) {
+	far, err := net.DialTimeout("tcp", target, 5*time.Second)
 	if err != nil {
-		_, _ = io.WriteString(conn, "unreachable\n")
+		if !silent {
+			_, _ = io.WriteString(conn, "unreachable\n")
+		}
 		return
 	}
 	defer far.Close()
 	if _, err := io.WriteString(conn, "ok\n"); err != nil {
 		return
 	}
-	go func() { _, _ = io.Copy(far, conn); _ = far.Close() }()
+	go func() { _, _ = io.Copy(far, reader); _ = far.Close() }()
 	_, _ = io.Copy(conn, far)
 }
 
@@ -294,7 +399,14 @@ func discover(read func() *desired, directory string, key wgtypes.Key) {
 					ca, err = os.ReadFile(os.Getenv("STATION_API_CA_FILE"))
 				}
 				if err == nil {
-					status, _, err = askStationAPI(url, ca, key, "/v1/network/discovered", map[string]any{"hosts": found})
+					// Deliver an empty heartbeat as well as non-empty batches.
+					for start := 0; ; start += 256 {
+						end := min(start+256, len(found))
+						status, _, err = askStationAPI(url, ca, key, "/v1/network/discovered", map[string]any{"hosts": found[start:end]})
+						if err != nil || status != http.StatusOK || end == len(found) {
+							break
+						}
+					}
 				}
 				if err == nil && status != http.StatusOK {
 					err = fmt.Errorf("Station API answered %d to what was found", status)
@@ -303,8 +415,7 @@ func discover(read func() *desired, directory string, key wgtypes.Key) {
 			if err != nil {
 				state = err.Error()
 			} else if state == "" {
-				names, _ := json.Marshal(found)
-				state = "machines that have not joined: " + string(names)
+				state = fmt.Sprintf("observed %d SSH endpoints", len(found))
 			}
 		}
 		if state != said {

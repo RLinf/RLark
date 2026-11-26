@@ -89,7 +89,22 @@ services:
       - ${ADDONS:?the environment's addonCatalog}:/etc/rlark/addons:ro
     depends_on: [rlark-server]
 
-  # 控制台：同一个提交构建的 rlark-ui 镜像（astribot/release/rlark-ui.Dockerfile），/api/ 转给上面的网关。
+  astribot-iam:
+    <<: *rlark
+    # The release stages service images after writing the compose file; use a valid image until IAM is staged.
+    image: ${ASTRIBOT_IAM_IMAGE:-${RLARK_SERVER_IMAGE}}
+    container_name: astribot-iam
+    command:
+      - /usr/local/bin/astribot-iam
+      - --addr=:8081
+      - --db-config=/etc/rlark/db-config.yaml
+      - --upstream-tokens=/etc/rlark/iam/upstream-tokens.json
+    volumes:
+      - ${R}/db-config.yaml:/etc/rlark/db-config.yaml:ro
+      - ${R}/iam:/etc/rlark/iam:ro
+    depends_on: [rlark-server]
+
+  # 控制台：/api/ 转给网关，/api/iam/ 转给同一发布的 IAM 服务。
   # 用户打开 http://<控制面地址>/ ；登录态是网关签的令牌（有效期 GATEWAY_TOKEN_TTL），过期后界面回到登录页。
   rlark-ui:
     image: ${RLARK_UI_IMAGE:?the release's rlark-ui}
@@ -98,8 +113,9 @@ services:
     networks: [rlark]
     environment:
       RLARK_GATEWAY_URL: http://rlark-gateway:8080
+      ASTRIBOT_IAM_URL: http://astribot-iam:8081
     ports: ["80:80"]
-    depends_on: [rlark-gateway]
+    depends_on: [rlark-gateway, astribot-iam]
 
 networks:
   rlark: {external: true, name: fleet-rlark-env_rlark-network}

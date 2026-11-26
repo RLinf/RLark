@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"reflect"
@@ -156,6 +158,54 @@ func TestNetworkEnrollsNodesAtTheirDeclaredAddresses(t *testing.T) {
 	reconcileNetwork(t, r)
 	if got := configOf(t, enrollmentStatus(t, c, "robot-01", "s1u-01-x86")); got.Peers[1].Endpoint != "10.11.13.77:51820" {
 		t.Fatalf("endpoint did not follow the reported address: %+v", got.Peers[1])
+	}
+}
+
+func TestGatewayRelayTokenIsVisibleAsConditionButDormantAtDocumentLevelTwo(t *testing.T) {
+	networkConfig := testSiteNetwork()
+	networkConfig.Spec.Sites[0].Discovery = &stationv1alpha1.SiteNetworkDiscovery{
+		Enabled: true, Ranges: []string{"10.10.0.0/24"}, IntervalSeconds: 30,
+		From: stationv1alpha1.SiteNetworkDiscoverySource{ClusterID: "dev", NodeName: "cailiang"},
+	}
+	token := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xa4}, 32))
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: relayTokenNamespace, Name: relayTokenName("office")}, Data: map[string][]byte{"token": []byte(token)}}
+	r, c := newNetworkTest(t, networkConfig, secret)
+	reconcileNetwork(t, r)
+
+	var stored stationv1alpha1.SiteNetwork
+	if err := c.Get(context.Background(), testNetworkKey, &stored); err != nil {
+		t.Fatal(err)
+	}
+	condition := apimeta.FindStatusCondition(stored.Status.Conditions, "GatewayRelayReady")
+	if condition == nil || condition.Status != metav1.ConditionTrue {
+		t.Fatalf("relay condition: %+v", condition)
+	}
+	encoded, _ := json.Marshal(stored.Status)
+	if strings.Contains(string(encoded), token) {
+		t.Fatal("relay token leaked into SiteNetwork status")
+	}
+}
+
+func TestGatewayRelayMissingSecretSetsConditionWithoutToken(t *testing.T) {
+	networkConfig := testSiteNetwork()
+	networkConfig.Spec.Sites[0].Discovery = &stationv1alpha1.SiteNetworkDiscovery{
+		Enabled: true, Ranges: []string{"10.10.0.0/24"}, IntervalSeconds: 30,
+		From: stationv1alpha1.SiteNetworkDiscoverySource{ClusterID: "dev", NodeName: "cailiang"},
+	}
+	r, c := newNetworkTest(t, networkConfig)
+	reconcileNetwork(t, r)
+
+	var stored stationv1alpha1.SiteNetwork
+	if err := c.Get(context.Background(), testNetworkKey, &stored); err != nil {
+		t.Fatal(err)
+	}
+	condition := apimeta.FindStatusCondition(stored.Status.Conditions, "GatewayRelayReady")
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "SecretMissing" || !strings.Contains(condition.Message, relayTokenName("office")) {
+		t.Fatalf("missing relay Secret condition: %+v", condition)
+	}
+	encoded, _ := json.Marshal(stored.Status)
+	if strings.Contains(string(encoded), "base64") {
+		t.Fatalf("relay token material leaked into SiteNetwork status: %s", encoded)
 	}
 }
 

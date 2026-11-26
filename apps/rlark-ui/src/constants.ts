@@ -13,6 +13,7 @@ import {
   ListChecks,
   LayoutDashboard,
   Terminal,
+  ShieldCheck,
 } from "lucide-react";
 import type { NavParent, AdminNavItem } from "./types";
 
@@ -33,6 +34,7 @@ export const adminNavItems: AdminNavItem[] = [
     zh: "管理工作台",
     en: "Dashboard",
   },
+  { id: "iam", icon: ShieldCheck, zh: "身份与访问", en: "Identity & Access" },
   {
     id: "clusters",
     icon: Network,
@@ -64,7 +66,10 @@ export const adminNavItems: AdminNavItem[] = [
     zh: "镜像管理",
     en: "Image Registries",
   },
-  { id: "stations", icon: Fingerprint, zh: "场站节点", en: "Site Nodes" },
+  { id: "stations", icon: Fingerprint, zh: "场站节点", en: "Site Nodes", children: [
+    { id: "join", icon: CirclePlus, zh: "加入节点", en: "Join Nodes" },
+    { id: "network", icon: Network, zh: "扫描设置", en: "Discovery Settings" },
+  ] },
   { id: "ssh-keys", icon: Terminal, zh: "SSH 公钥", en: "SSH Keys" },
   { id: "config", icon: Settings, zh: "系统配置", en: "System Config" },
   { id: "api", icon: Braces, zh: "接口参考", en: "API Reference" },

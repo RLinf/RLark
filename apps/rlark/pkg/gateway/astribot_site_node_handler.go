@@ -43,12 +43,18 @@ type siteNode struct {
 	LastSeenTime string `json:"last_seen_time,omitempty"`
 	// BootTime changes when the machine restarts, also when the restart was
 	// too short to show as offline; Reboots counts the changes seen.
-	BootTime      string            `json:"boot_time,omitempty"`
-	Reboots       int64             `json:"reboots"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	Network       *siteNodeNetwork  `json:"network,omitempty"`
-	RobotID       string            `json:"robot_id,omitempty"`
-	WorkstationID string            `json:"workstation_id,omitempty"`
+	BootTime         string            `json:"boot_time,omitempty"`
+	Reboots          int64             `json:"reboots"`
+	Labels           map[string]string `json:"labels,omitempty"`
+	DeclaredType     string            `json:"declared_type,omitempty"`
+	DeclaredModel    string            `json:"declared_model,omitempty"`
+	ObservedType     string            `json:"observed_type,omitempty"`
+	ObservedModel    string            `json:"observed_model,omitempty"`
+	IdentityVerified string            `json:"identity_verified,omitempty"`
+	IdentityReason   string            `json:"identity_reason,omitempty"`
+	Network          *siteNodeNetwork  `json:"network,omitempty"`
+	RobotID          string            `json:"robot_id,omitempty"`
+	WorkstationID    string            `json:"workstation_id,omitempty"`
 	// A robot's cameras as its camera service last wrote them (the annotation rlark.io/cameras, JSON).
 	Cameras string `json:"cameras,omitempty"`
 }
@@ -94,6 +100,39 @@ func (g *Gateway) siteNodes(c *gin.Context, clusterID, namespace string) ([]site
 		labelsOf[nodes.Items[i].GetName()] = nodes.Items[i].GetLabels()
 		camerasOf[nodes.Items[i].GetName()] = nodes.Items[i].GetAnnotations()[siteNodeCameras]
 	}
+	admissions, err := g.stationClient.Resource(nodeAdmissionGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	declared := map[string][2]string{}
+	for i := range admissions.Items {
+		admission := &admissions.Items[i]
+		category, _, _ := unstructured.NestedString(admission.Object, "spec", "machine", "category")
+		model, _, _ := unstructured.NestedString(admission.Object, "spec", "machine", "model")
+		if category == "" {
+			category, _, _ = unstructured.NestedString(admission.Object, "spec", "machine", "type")
+		}
+		declared[admission.GetName()] = [2]string{category, model}
+	}
+	machines, err := g.stationClient.Resource(machineGVR).Namespace(machineNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	identities, verification := map[string][2]string{}, map[string][2]string{}
+	for i := range machines.Items {
+		machine := &machines.Items[i]
+		cluster, _, _ := unstructured.NestedString(machine.Object, "status", "clusterID")
+		node, _, _ := unstructured.NestedString(machine.Object, "status", "nodeName")
+		if cluster != clusterID || node == "" {
+			continue
+		}
+		category, _, _ := unstructured.NestedString(machine.Object, "status", "observedIdentity", "category")
+		model, _, _ := unstructured.NestedString(machine.Object, "status", "observedIdentity", "model")
+		identities[node] = [2]string{category, model}
+		verified, _, _ := unstructured.NestedString(machine.Object, "status", "identityVerified")
+		reason, _, _ := unstructured.NestedString(machine.Object, "status", "identityReason")
+		verification[node] = [2]string{verified, reason}
+	}
 	results := make([]siteNode, 0, len(enrollments.Items))
 	for i := range enrollments.Items {
 		enrollment := &enrollments.Items[i]
@@ -102,6 +141,15 @@ func (g *Gateway) siteNodes(c *gin.Context, clusterID, namespace string) ([]site
 		}
 		result := siteNode{ClusterID: clusterID, NodeName: enrollment.GetName(), Tunnel: "unknown", RLarkNode: "unknown", Labels: labelsOf[enrollment.GetName()], Cameras: camerasOf[enrollment.GetName()]}
 		result.RobotID, result.WorkstationID = result.Labels[siteNodeRobotLabel], result.Labels[siteNodeWorkstationID]
+		result.DeclaredType, result.DeclaredModel = declared[enrollment.GetName()][0], declared[enrollment.GetName()][1]
+		result.ObservedType, result.ObservedModel = identities[enrollment.GetName()][0], identities[enrollment.GetName()][1]
+		result.IdentityVerified, result.IdentityReason = verification[enrollment.GetName()][0], verification[enrollment.GetName()][1]
+		if result.ObservedType == "" {
+			result.ObservedType, _, _ = unstructured.NestedString(enrollment.Object, "status", "observation", "identity", "category")
+		}
+		if result.ObservedModel == "" {
+			result.ObservedModel, _, _ = unstructured.NestedString(enrollment.Object, "status", "observation", "identity", "model")
+		}
 		result.NodeUID, _, _ = unstructured.NestedString(enrollment.Object, "spec", "nodeUID")
 		result.Phase, _, _ = unstructured.NestedString(enrollment.Object, "status", "node", "state")
 		result.LastSeenTime, _, _ = unstructured.NestedString(enrollment.Object, "status", "node", "lastSeenTime")

@@ -11,6 +11,7 @@
     "skipLibCheck": true
   },
   "include": [
+    "src/vite-env.d.ts",
     "src/api.ts",
     "src/backend.ts",
     "src/utils/clipboard.ts",
@@ -27,6 +28,7 @@
     "src/utils/terminalKeyboard.ts",
     "src/utils/workerEvents.ts",
     "src/astribot/api.ts",
+    "src/astribot/iam/portal.ts",
     "src/astribot/mockBackend.ts",
     "src/astribot/lib",
     "src/astribot/components/NodeName.tsx",

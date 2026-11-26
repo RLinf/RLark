@@ -1,4 +1,4 @@
-import { machineStateLabel, machineUnseen, seenTime, unseenFor, type Machine } from "./siteNodeDisplay.js";
+import { machineStateLabel, machineUnseen, seenTime, unseenFor, type Machine, type MachineList, type NodeClassAccess } from "./siteNodeDisplay.js";
 
 // The steps of a ticked machine's join: station-controller logs in to read it and gives it its node name (the
 // Machine is Admitted), then the NodeOperation that joins it goes through its stages
@@ -111,4 +111,43 @@ export function machineJoinSummary(progress: MachineJoinProgress, zh: boolean): 
   return zh
     ? `已加入 ${progress.joined} / 共 ${progress.total} 台，进行中 ${progress.running} 台，失败 ${progress.failed} 台`
     : `${progress.joined} of ${progress.total} joined, ${progress.running} under way, ${progress.failed} stopped`;
+}
+
+// The passwords a join needs are the class's, one set for every machine of it. The dialog groups the selected
+// machines so one password is typed per class, never per machine.
+export interface JoinCredentialGroup {
+  name: string;
+  machines: Machine[];
+  access?: NodeClassAccess;
+}
+
+export interface JoinCredentialInput {
+  password: string;
+  sudo: string;
+}
+
+export function joinCredentialGroups(machines: Machine[], classes: MachineList["classes"]): JoinCredentialGroup[] {
+  const grouped = new Map<string, Machine[]>();
+  for (const machine of machines) {
+    const list = grouped.get(machine.node_class) ?? [];
+    list.push(machine);
+    grouped.set(machine.node_class, list);
+  }
+  return [...grouped.entries()]
+    .map(([name, list]) => ({ name, machines: list, access: classes[name]?.access }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Why the dialog cannot submit yet: a class whose entry device password is missing, or whose x86 password is neither
+// stored nor typed. Empty when every group can be joined.
+export function joinCredentialProblem(groups: JoinCredentialGroup[], credentials: Record<string, JoinCredentialInput>, zh: boolean): string {
+  if (groups.length === 0) return zh ? "没有选中的机器。" : "No machines are selected.";
+  for (const group of groups) {
+    if (!group.access) return zh ? `机型 ${group.name} 没有声明登录方式。` : `NodeClass ${group.name} declares no access.`;
+    if (!group.access.entry.configured) return zh ? `机型 ${group.name} 的 Orin 入口口令还没有配置，请先在密钥里配置。` : `The entry-device password of NodeClass ${group.name} is not configured. Configure it in Secrets first.`;
+    if (!group.access.node.configured && !(credentials[group.name]?.password ?? "").trim()) {
+      return zh ? `请填写机型 ${group.name} 的 x86 登录口令。` : `Enter the x86 password for NodeClass ${group.name}.`;
+    }
+  }
+  return "";
 }

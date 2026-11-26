@@ -538,7 +538,8 @@ func TestApplyWalksTheStagesInOrderAndReadsBack(t *testing.T) {
 		{"office deployment rlark-cluster-agent", "node-agents lab"},
 		{"node-agents office", "lab daemonset station-agent-host OnDelete"},
 		{"office daemonset station-agent-host", "compose rlark-server"}, // the server after every agent
-		{"compose rlark-controller-manager", "compose rlark-ui"},
+		{"compose rlark-controller-manager", "compose astribot-iam"},
+		{"compose astribot-iam", "compose rlark-ui"},
 		{"compose rlark-ui", "addon lab/site-registry v0.2.9"},
 		{"addon lab/site-registry v0.2.9", "addon lab/s1u-robot v1.3.9"}, // the cache before what pulls through it
 	} {
@@ -1201,6 +1202,7 @@ func TestTheControlPlaneRunsTheTreesComposeFile(t *testing.T) {
 	desired := environment.Desired(release, testClusters)
 	// The release's images are the ones running: only the definitions change.
 	desired.ControlPlane = maps.Clone(s.plane)
+	desired.ControlPlane["astribot-iam"] = oldRLark
 	desired.Compose = environment.Compose(Tree{Compose: "services: {gateway: {}}\n"})
 	if want := map[string]string{"R": "/var/lib/rlark", "STATION_API_ADDRESS": "https://10.254.240.1:18443", "GATEWAY_TOKEN_TTL": "168h",
 		"STATION_API_BOOTSTRAP_URL": "https://10.11.14.128:18443", "ADDONS": "/var/lib/rlark/addons"}; !maps.Equal(desired.Compose.Variables, want) {
@@ -1222,7 +1224,7 @@ func TestTheControlPlaneRunsTheTreesComposeFile(t *testing.T) {
 	}
 	if want := []string{"gateway control plane compose file", "gateway control plane ADDONS", "gateway control plane GATEWAY_TOKEN_TTL",
 		"gateway control plane STATION_API_ADDRESS", "gateway control plane STATION_API_BOOTSTRAP_URL", "gateway rlark-gateway definition",
-		"server rlark-server definition", "server rlark-controller-manager definition", "console rlark-ui definition"}; !slices.Equal(planned, want) {
+		"server rlark-server definition", "server rlark-controller-manager definition", "console astribot-iam", "console rlark-ui definition"}; !slices.Equal(planned, want) {
 		t.Errorf("the plan: %v", planned)
 	}
 	if err := run.Apply(context.Background()); err != nil {
@@ -1234,7 +1236,7 @@ func TestTheControlPlaneRunsTheTreesComposeFile(t *testing.T) {
 			plane = append(plane, strings.Fields(write)[1])
 		}
 	}
-	if want := []string{"files", "rlark-gateway", "rlark-server", "rlark-controller-manager", "rlark-ui"}; !slices.Equal(plane, want) {
+	if want := []string{"files", "rlark-gateway", "rlark-server", "rlark-controller-manager", "astribot-iam", "rlark-ui"}; !slices.Equal(plane, want) {
 		t.Errorf("the control plane's writes: %v", plane)
 	}
 	if s.compose.File != desired.Compose.File || !maps.Equal(s.compose.Variables, desired.Compose.Variables) {
@@ -1254,9 +1256,61 @@ func TestTheControlPlaneRunsTheTreesComposeFile(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	// Going back the console is the first service started anew: the machine's files are written before it.
-	files, console := slices.Index(s.writes, "compose files"), slices.IndexFunc(s.writes, func(write string) bool { return strings.HasPrefix(write, "compose rlark-ui") })
-	if s.compose.File != machine.File || !maps.Equal(s.compose.Variables, machine.Variables) || files < 0 || files > console {
+	files := slices.Index(s.writes, "compose files")
+	iam := slices.IndexFunc(s.writes, func(write string) bool { return strings.HasPrefix(write, "compose astribot-iam") })
+	console := slices.IndexFunc(s.writes, func(write string) bool { return strings.HasPrefix(write, "compose rlark-ui") })
+	if s.compose.File != machine.File || !maps.Equal(s.compose.Variables, machine.Variables) || files < 0 || files > iam || iam > console {
 		t.Errorf("back: the machine's compose %+v, writes %v", s.compose, s.writes)
+	}
+}
+
+func TestComposeSetRemovesOnlyOwnedOrphans(t *testing.T) {
+	directory := t.TempDir()
+	composeFile := filepath.Join(directory, "compose.yaml")
+	envFile := filepath.Join(directory, "env")
+	if err := os.WriteFile(composeFile, []byte("services:\n  rlark-ui: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envFile, []byte("R=/tmp/rlark\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	docker := filepath.Join(directory, "docker")
+	logFile := filepath.Join(directory, "docker.log")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+case "$1" in
+  compose) printf 'rlark-ui\n' ;;
+  inspect) printf '%s astribot-iam\n' "$FAKE_DOCKER_PROJECT" ;;
+  rm) exit 0 ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(docker, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_DOCKER_LOG", logFile)
+	compose := Compose{Project: "rlark", File: composeFile, Env: envFile}
+
+	t.Setenv("FAKE_DOCKER_PROJECT", "rlark")
+	if err := compose.Set(context.Background(), "astribot-iam", "unused-image"); err != nil {
+		t.Fatalf("remove owned orphan: %v", err)
+	}
+	log, err := os.ReadFile(logFile)
+	if err != nil || !strings.Contains(string(log), "rm -f astribot-iam") {
+		t.Fatalf("owned orphan was not removed, docker log %q, err %v", log, err)
+	}
+
+	if err := os.WriteFile(logFile, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_DOCKER_PROJECT", "another-project")
+	if err := compose.Set(context.Background(), "astribot-iam", "unused-image"); err == nil || !strings.Contains(err.Error(), "refuse to remove container") {
+		t.Fatalf("foreign container removal error = %v", err)
+	}
+	log, err = os.ReadFile(logFile)
+	if err != nil || strings.Contains(string(log), "rm -f astribot-iam") {
+		t.Fatalf("foreign container removal was attempted, docker log %q, err %v", log, err)
 	}
 }
 

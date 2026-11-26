@@ -232,6 +232,16 @@ type SiteNetworkDiscovery struct {
 	// +kubebuilder:validation:Maximum=3600
 	// +kubebuilder:default=30
 	IntervalSeconds int32 `json:"intervalSeconds,omitempty"`
+	// IncludeUnclassified opts this site into credential-free SSH candidate
+	// discovery. Release A controllers keep the field absent in Hub documents.
+	IncludeUnclassified bool `json:"includeUnclassified,omitempty"`
+	// SSHPorts are extra ports probed for hosts without a class fingerprint.
+	// An empty value means the default port 22 when the feature is enabled.
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:Minimum=1
+	// +kubebuilder:validation:items:Maximum=65535
+	// +listType=set
+	SSHPorts []int32 `json:"sshPorts,omitempty"`
 }
 
 type SiteNetworkDiscoverySource struct {

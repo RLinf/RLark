@@ -53,7 +53,7 @@ stages:
     requires: [station-api]
     back: true
     gate:
-      - gateways-understand: 3
+      - gateways-understand: 4
     check: [documents-unchanged, enrollments-enrolled, network-connected]
     recreates: [station-system/station-controller]
     note: A gateway refuses a document with a field it does not know. The level is that of the document this build's controller writes, DocumentLevel in astribot/station/network, and the commit that raises that raises it here.

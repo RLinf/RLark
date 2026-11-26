@@ -91,7 +91,7 @@ export const clusterProvisionsApi = {
     });
     return response.data;
   },
-  async retry(name: string, password: string, user: string) {
+  async retry(name: string, password: string, user: string, sudoPassword = "") {
     const response = await requestJson<{ data: ClusterProvision }>(
       `/api/v1/cluster-provisions/${encodeURIComponent(name)}/retry`,
       { method: "POST", body: { password, user: user.trim() } },
@@ -134,6 +134,85 @@ export interface RobotPoseAnswer {
   // The vendor's reply to pose_running or pose_stop; null when none was sent.
   vendor: unknown;
 }
+
+export interface SiteNetworkMember {
+  clusterID: string;
+  nodeName: string;
+  role: string;
+  site: string;
+  address: string;
+}
+
+export interface SiteNetworkNodeClass {
+  name: string;
+  hasAccess: boolean;
+  hasDiscovery: boolean;
+  entryPort?: number;
+  hostKeyFingerprints?: string[];
+}
+
+export interface SiteNetworkDiscovery {
+  enabled: boolean;
+  ranges: string[];
+  intervalSeconds: number;
+  from: { clusterID: string; nodeName: string };
+  includeUnclassified?: boolean;
+  sshPorts?: number[];
+}
+
+export interface SiteNetworkSite {
+  name: string;
+  clusters: string[];
+  discovery?: SiteNetworkDiscovery;
+}
+
+export interface SiteNetworkView {
+  resourceVersion: string;
+  generation: number;
+  sites: SiteNetworkSite[];
+  members: SiteNetworkMember[];
+  nodeClasses: SiteNetworkNodeClass[];
+  status: {
+    observedGeneration?: number;
+    members?: number;
+    unreachable?: string[];
+    conditions?: Condition[];
+  };
+}
+
+export interface SiteNetworkDiscoveryInput {
+  resourceVersion: string;
+  discovery: SiteNetworkDiscovery | null;
+}
+
+export const siteNetworkApi = {
+  get(signal?: AbortSignal) {
+    return requestJson<SiteNetworkView>("/api/v1/station/site-network", { signal });
+  },
+  updateDiscovery(site: string, input: SiteNetworkDiscoveryInput) {
+    return requestJson<SiteNetworkView>(
+      `/api/v1/station/site-network/sites/${encodeURIComponent(site)}/discovery`,
+      { method: "PUT", body: input },
+    );
+  },
+};
+
+export interface RobotModelItem {
+  name: string;
+  displayName?: string;
+  vendor?: string;
+  description?: string;
+  references: { nodeClasses: number; nodes: number; machines: number; nodeAdmissions: number; nodeJoins: number };
+}
+
+export const robotModelsApi = {
+  list(signal?: AbortSignal) {
+    return requestJson<{ items: RobotModelItem[] }>("/api/v1/station/robot-models", { signal });
+  },
+  delete(name: string) {
+    return request(`/api/v1/station/robot-models/${encodeURIComponent(name)}`, { method: "DELETE" });
+  },
+};
 export interface RobotPoseRefusal {
   reason: "estop" | "fault" | "not_powered" | "driver_not_running" | "claimed" | "in_use" | "vendor_monitor_down" | `maintenance: ${string}`;
   state: Record<string, unknown>;
@@ -157,27 +236,34 @@ export const nodeJoinsApi = {
   },
   async create(input: {
     cluster_id: string;
+    machine_name?: string;
+    host_key?: string;
+    host_key_algorithm?: string;
+    machine_type?: "Robot" | "Server";
+    machine_model?: string;
+    labels?: Record<string, string>;
     address: string;
     port?: number;
     user: string;
     password: string;
+    sudo_password?: string;
     node_name?: string;
     tunnel_endpoint?: string;
   }) {
     const response = await requestJson<{ data: NodeJoin }>("/api/v1/station/node-joins", { method: "POST", body: input });
     return response.data;
   },
-  async retry(name: string, password: string, user: string) {
+  async retry(name: string, password: string, user: string, sudoPassword = "") {
     const response = await requestJson<{ data: NodeJoin }>(`/api/v1/station/node-joins/${encodeURIComponent(name)}/retry`, {
       method: "POST",
-      body: { password, user: user.trim() },
+      body: { password, user: user.trim(), ...(sudoPassword ? { sudo_password: sudoPassword } : {}) },
     });
     return response.data;
   },
-  async clear(name: string, password: string, user: string, machineGone: boolean) {
+  async clear(name: string, password: string, user: string, machineGone: boolean, sudoPassword = "") {
     const response = await requestJson<{ steps?: string[] }>(`/api/v1/station/node-joins/${encodeURIComponent(name)}/clear`, {
       method: "POST",
-      body: { password, user: user.trim(), machine_gone: machineGone },
+      body: { password, user: user.trim(), machine_gone: machineGone, ...(sudoPassword ? { sudo_password: sudoPassword } : {}) },
     });
     return response.steps ?? [];
   },
@@ -199,6 +285,7 @@ export const nodeAdmissionsApi = {
     address?: string;
     uplink?: string;
     node_class?: string;
+    machine?: { category: "Robot" | "Server"; model?: string; body?: string };
     labels?: Record<string, string>;
     taints?: string[];
     ttl_seconds?: number;
@@ -223,10 +310,11 @@ export const nodeAdmissionsApi = {
 };
 
 export const machinesApi = {
-  list(signal?: AbortSignal) {
-    return requestJson<MachineList>("/api/v1/station/machines", { signal });
+  // site scopes the list to the machines that site's hubs found; empty lists every site's.
+  list(site = "", signal?: AbortSignal) {
+    return requestJson<MachineList>(withQuery("/api/v1/station/machines", { site }), { signal });
   },
-  admit(input: { cluster_id: string; machines: string[]; labels?: Record<string, string> }) {
+  admit(input: { cluster_id: string; machines: string[]; node_class?: string; machine_type?: "Robot" | "Server"; machine_model?: string; model?: string; labels?: Record<string, string> }) {
     return requestJson<{ machines: AdmittedMachine[] }>("/api/v1/station/machines/admit", {
       method: "POST",
       body: input,

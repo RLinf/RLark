@@ -1,3 +1,5 @@
+@import "./theme-overlay.css";
+
 /* Styles our hooks in RLark's pages use; main.tsx loads them after RLark's own. */
 
 /* The real name (cluster ID, Kubernetes Node name) beside a display name. */

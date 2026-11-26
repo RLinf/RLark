@@ -8,6 +8,12 @@ export interface SiteNode {
   node_name: string;
   online: boolean;
   labels?: Record<string, string>;
+  declared_type?: string;
+  declared_model?: string;
+  observed_type?: string;
+  observed_model?: string;
+  identity_verified?: string;
+  identity_reason?: string;
   // A robot's cameras as its Node's annotation rlark.io/cameras has them (lib/cameras.ts publishedCameras).
   cameras?: string;
   network?: { public_key?: string; links?: SiteNodeLink[]; link_summary?: string };
@@ -46,6 +52,9 @@ export function sshJoinFailure(reason: string | undefined, error: string, zh: bo
   if (!zh) return error;
   const said: Record<string, string> = {
     Unreachable: "连不上这台机器的 SSH：检查 IP、端口，以及它是否开机、在网上。",
+    RelayUnavailable: "直连失败，站点中继不可用；可以改用入网码。",
+    RelayRejected: "站点中继拒绝了这台机器的 SSH 连接；可以改用入网码。",
+    HostKeyChanged: "机器显示的 SSH 主机密钥与扫描记录不一致。",
     LoginRejected: "账号或密码不对，机器拒绝了登录。",
     NoSudo: "这个账号没有 sudo 权限，换一个能 sudo 的账号。",
     SudoPasswordRejected: "这个账号的 sudo 不接受登录密码。",
@@ -125,6 +134,8 @@ export interface Machine {
   name: string;
   site: string;
   node_class: string;
+  machine_type: "Robot" | "Server" | "Unknown";
+  machine_model?: string;
   phase: "Discovered" | "Admitted" | "Joined";
   problem?: string;
   message?: string;
@@ -134,6 +145,10 @@ export interface Machine {
   inspected_at?: string;
   node_host_key_fingerprint?: string;
   address?: string;
+  port?: number;
+  host_key?: string;
+  host_key_algorithm?: string;
+  banner?: string;
   // The hardware address of the entry device it was last seen through: what tells one's robots from others on the
   // same network.
   mac?: string;
@@ -150,6 +165,10 @@ export interface Machine {
   admit_cluster_id?: string;
   // Where the NodeOperation of the present request stands: its phase and the last stage it completed.
   join?: { phase?: string; stage?: string };
+  node_join?: { phase?: string; stage?: string; reason?: string };
+  observed_identity?: { category?: string; model?: string; source?: string };
+  identity_verified?: "True" | "False" | "Unknown";
+  identity_reason?: string;
 }
 
 // One password every machine of a NodeClass has: the value of a secret kept
@@ -168,8 +187,7 @@ export interface NodeClassAccess {
 
 export interface MachineList {
   items: Machine[];
-  // The labels of each NodeClass, and which of its passwords have been entered, by its name.
-  classes: Record<string, { labels?: Record<string, string>; access?: NodeClassAccess }>;
+  classes: Record<string, { kind?: string; model?: string; labels?: Record<string, string>; taints?: string[]; naming?: Record<string, unknown>; hasDiscovery?: boolean; hostKeyFingerprints?: string[]; access?: NodeClassAccess }>;
 }
 
 export interface AdmittedMachine {

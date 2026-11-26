@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -156,6 +157,8 @@ func observationStatus(evidence Evidence, observation Observation, members map[s
 		// Written as a list even when empty: that is what tells a Node under no
 		// pressure from a report stored before pressures were.
 		"pressures": append([]string{}, evidence.NodePressures...),
+		"identity":  observedNodeIdentity(evidence, receivedAt),
+		"hardware":  observedNodeHardware(evidence),
 	}
 	if observation.BootTime != nil {
 		status["bootTime"] = observation.BootTime.UTC().Format(time.RFC3339Nano)
@@ -180,4 +183,40 @@ func observationStatus(evidence Evidence, observation Observation, members map[s
 		status["wireguard"] = wireguard
 	}
 	return status, nil
+}
+
+func observedNodeIdentity(evidence Evidence, receivedAt time.Time) map[string]interface{} {
+	labels := evidence.NodeLabels
+	category := ""
+	switch strings.ToLower(labels["station.rlark.io/machine-type"]) {
+	case "robot":
+		category = "Robot"
+	case "server":
+		category = "Server"
+	}
+	model := labels["station.rlark.io/machine-model"]
+	if category == "" {
+		if legacyModel := labels["rlark.io/robot-model"]; legacyModel != "" || labels["rlark.io/node-category"] == "robot" {
+			category = "Robot"
+			if model == "" {
+				model = legacyModel
+			}
+		} else if labels["rlark.io/node-category"] != "" {
+			category = "Server"
+		}
+	}
+	if category == "" && model == "" {
+		return nil
+	}
+	return map[string]interface{}{
+		"category": category, "model": model, "source": "node-labels",
+		"reportedAt": receivedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func observedNodeHardware(evidence Evidence) map[string]interface{} {
+	info := evidence.NodeInfo
+	return map[string]interface{}{
+		"architecture": info.Architecture, "osImage": info.OSImage, "kernelVersion": info.KernelVersion,
+	}
 }

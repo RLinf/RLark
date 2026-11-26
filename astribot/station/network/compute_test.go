@@ -353,13 +353,17 @@ func TestDocumentLevelNamesTheDocument(t *testing.T) {
 	levels := []string{
 		1: "address dns interface listenPort mtu names names.address names.name peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
 		2: "address discovery discovery.hostKeys discovery.intervalSeconds discovery.ports discovery.ranges discovery.relayFrom discovery.relayPort dns interface listenPort mtu names names.address names.name peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
-		3: "address discovery discovery.hostKeys discovery.intervalSeconds discovery.ports discovery.ranges discovery.relayFrom discovery.relayPort dns forwards forwards.destination forwards.sources interface listenPort mtu names names.address names.name peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
+		3: "address discovery discovery.hostKeys discovery.includeUnclassified discovery.intervalSeconds discovery.ports discovery.ranges discovery.relayFrom discovery.relayPort discovery.relayToken discovery.sshPorts dns interface listenPort mtu names names.address names.name peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
+		4: "address discovery discovery.hostKeys discovery.includeUnclassified discovery.intervalSeconds discovery.ports discovery.ranges discovery.relayFrom discovery.relayPort discovery.relayToken discovery.sshPorts dns forwards forwards.destination forwards.sources interface listenPort mtu names names.address names.name peers peers.allowedIPs peers.endpoint peers.keepaliveSeconds peers.publicKey routes uplinkRoutes uplinkRoutes.destination uplinkRoutes.gateway",
 	}
 	var fields []string
 	var walk func(prefix string, of reflect.Type)
 	walk = func(prefix string, of reflect.Type) {
 		for i := range of.NumField() {
 			name, _, _ := strings.Cut(of.Field(i).Tag.Get("json"), ",")
+			if name == "-" || prefix == "discovery." && DocumentLevel < 3 && slices.Contains([]string{"includeUnclassified", "sshPorts", "relayToken"}, name) {
+				continue
+			}
 			fields = append(fields, prefix+name)
 			if element := of.Field(i).Type; (element.Kind() == reflect.Slice || element.Kind() == reflect.Pointer) && element.Elem().Kind() == reflect.Struct {
 				walk(prefix+name+".", element.Elem())
@@ -367,9 +371,39 @@ func TestDocumentLevelNamesTheDocument(t *testing.T) {
 		}
 	}
 	walk("", reflect.TypeOf(NodeConfig{}))
+	if DocumentLevel >= 3 {
+		// The release-3 discovery fields are serialized by hand (json:"-"),
+		// so the reflection walk cannot see them; they are still part of the
+		// named document at level 3.
+		fields = append(fields, "discovery.includeUnclassified", "discovery.sshPorts")
+	}
 	sort.Strings(fields)
-	if len(levels)-1 != DocumentLevel || strings.Join(fields, " ") != levels[DocumentLevel] {
+	if DocumentLevel >= len(levels) || strings.Join(fields, " ") != levels[DocumentLevel] {
 		t.Fatalf("DocumentLevel %d does not name the document: %s", DocumentLevel, strings.Join(fields, " "))
+	}
+}
+
+func TestDiscoveryReleaseAOmitsReleaseBFields(t *testing.T) {
+	d := Discovery{Ranges: []string{"10.0.0.0/24"}, IntervalSeconds: 30, Ports: []int{22}, HostKeys: []string{"known"},
+		IncludeUnclassified: true, SSHPorts: []int{2222}, RelayToken: "secret-token"}
+	data, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"includeUnclassified", "sshPorts", "relayToken"} {
+		if strings.Contains(string(data), field) {
+			t.Fatalf("Release A document contains %s: %s", field, data)
+		}
+	}
+	d.DiscoveryDocumentLevel = 3
+	data, err = json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"includeUnclassified", "sshPorts", "relayToken"} {
+		if !strings.Contains(string(data), field) {
+			t.Fatalf("Release B document lacks %s: %s", field, data)
+		}
 	}
 }
 

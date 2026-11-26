@@ -5,6 +5,8 @@ ARG BASE_IMAGE=nginx:1.29.1
 # -- Build stage: the console is built from the commit, not from a host's node_modules --
 FROM ${NODE_IMAGE} AS build
 ARG NPM_REGISTRY=https://registry.npmjs.org/
+# The console this image serves sits behind Astribot IAM (apps/rlark-ui/src/astribot/iam/portal.ts).
+ENV VITE_IAM_PORTAL=1
 WORKDIR /src/apps/rlark-ui
 COPY apps/rlark-ui/ ./
 # A context may carry a host's node_modules or dist (the legacy builder ignores rlark-ui.Dockerfile.dockerignore).
@@ -17,6 +19,10 @@ FROM ${BASE_IMAGE}
 # deployment sets it to the gateway container (astribot/release/control-plane/rlark.compose.yaml).
 ENV RLARK_GATEWAY_URL=http://rlark-gateway.rlark-system.svc:8090
 COPY astribot/release/rlark-ui.nginx.conf /etc/nginx/templates/default.conf.template
+# 门户登录页与其静态资源（发布树里 dist 的资产名带哈希，复制成固定名供 login.html 引用）。
+COPY astribot/release/login.html /usr/share/nginx/html/login.html
+COPY --from=build /src/apps/rlark-ui/dist/assets/astribot-login-hero-*.jpg /usr/share/nginx/html/login-hero.jpg
+COPY --from=build /src/apps/rlark-ui/dist/assets/astribot-logo-light-*.png /usr/share/nginx/html/astribot-logo-light.png
 COPY --from=build /src/apps/rlark-ui/dist /usr/share/nginx/html
 # nginx answers on port 80 (whoever runs the image maps it). No EXPOSE: BuildKit's built-in Dockerfile frontend writes
 # a pointer of its own into an EXPOSE's history entry, and the same console was another image every build.

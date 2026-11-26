@@ -8,12 +8,14 @@ import "./NodeCameras.css";
 // newest JPEG through the Gateway and its state as the robot's camera service tells it. The console holds one
 // connection for the report and one for the frames, never a stream: over HTTP/1.1 the browser has six to the host for
 // every tab of the console, and an <img> stream is not reliably let go when it leaves the page. A hidden tab holds none.
-export function NodeCameras({ node, namespace, labels, published, zh }: {
+export function NodeCameras({ node, namespace, labels, published, zh, heading, onOpen }: {
   node: string;
   namespace: string;
   labels?: Record<string, string>;
   published?: string;
   zh: boolean;
+  heading?: string;
+  onOpen?: (view: CameraView, trigger: HTMLElement) => void;
 }) {
   const robot = Boolean(labels?.["rlark.io/robot-model"]);
   const [report, setReport] = useState<CamerasReport>();
@@ -103,7 +105,7 @@ export function NodeCameras({ node, namespace, labels, published, zh }: {
   const cells = failure ? cameraCells(publishedCameras(published), zh, false) : cameraCells(report, zh);
   const now = performance.now();
   return <section className="node-detail-section node-cameras">
-    <span className="node-detail-label"><Camera size={14} />{zh ? "相机" : "Cameras"}</span>
+    <span className="node-detail-label"><Camera size={14} />{heading ?? (zh ? "相机" : "Cameras")}</span>
     <div className="node-cameras-grid">
       {cells.map((cell) => {
         const frame = cell.frames ? frames[cell.view] : undefined;
@@ -111,8 +113,11 @@ export function NodeCameras({ node, namespace, labels, published, zh }: {
         const blank = !cell.frames ? cell.badge
           : missed[cell.view] ? (zh ? "读不到画面：" : "No frame: ") + missed[cell.view]
           : zh ? "等待画面" : "Waiting for a frame";
+        const media = frame ? <img src={frame.url} alt={cell.name} /> : <div className="node-camera-blank">{blank}</div>;
         return <figure key={cell.view} className={`node-camera${cell.present === false ? " is-missing" : ""}`}>
-          {frame ? <img src={frame.url} alt={cell.name} /> : <div className="node-camera-blank">{blank}</div>}
+          {onOpen
+            ? <button type="button" className="node-camera-open" onClick={(event) => onOpen(cell.view, event.currentTarget)} aria-label={`${cell.name} · ${cell.badge}`} aria-haspopup="dialog">{media}</button>
+            : media}
           <figcaption>
             <strong>{cell.name}</strong>
             {cell.present && <span className={`status status-${cell.tone}`}><i />{cell.badge}</span>}

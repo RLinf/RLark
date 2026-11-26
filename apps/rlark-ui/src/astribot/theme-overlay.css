@@ -1,0 +1,771 @@
+/*
+ * Fork-owned console theme overlay — Fleet-inspired warm neutral system.
+ *
+ * Loaded last (src/astribot/styles.css is imported after RLark's own styles by
+ * src/main.tsx). It only changes tokens and presentation; no page code or
+ * native stylesheet is modified. Selectors are `#root`-scoped so they win over
+ * `.theme-dark …` rules without !important.
+ */
+
+/* ---------- tokens ---------- */
+:root {
+  --ink: #1d1d1f;
+  --ink-2: #3a3a3c;
+  --muted: #6e6e73;
+  --soft: #a1a1a6;
+  --line: #e4e4e0;
+  --line-strong: #dadad6;
+  --panel: #ffffff;
+  --panel-2: #f0f0ee;
+  --canvas: #f7f7f5;
+  --sunken: #f2f2f0;
+  --app-bg: #f7f7f5;
+  --blue: #5b4bc4;
+  --blue-2: #7d6dd6;
+  --blue-bg: #f1eefb;
+  --hover: #f0f0ee;
+  --green: #3e9a5c;
+  --green-soft: #e0f1e5;
+  --green-ink: #2c6b41;
+  --red: #c8463b;
+  --red-ink: #a3332a;
+  --danger: #a3332a;
+  --danger-strong: #8f2b23;
+  --danger-soft: #fbe2de;
+  --orange: #d59b2d;
+  --amber-bg: #fbeed2;
+  --amber-ink: #8a5a0b;
+  --info: #4f82b8;
+  --info-bg: #e2ecf6;
+  --info-ink: #2f5c8a;
+  --shadow: 0 16px 40px rgba(29, 29, 31, 0.12), 0 2px 6px rgba(29, 29, 31, 0.05);
+  --shadow-soft: 0 1px 2px rgba(29, 29, 31, 0.05);
+}
+
+#root .theme-dark {
+  --ink: #f2f2ef;
+  --ink-2: #c9c9c4;
+  --muted: #9a9a93;
+  --soft: #6e6e68;
+  --line: #34342f;
+  --line-strong: #46463f;
+  --panel: #1c1c1a;
+  --panel-2: #242422;
+  --canvas: #141413;
+  --sunken: #171716;
+  --app-bg: #141413;
+  --blue: #b9a6ff;
+  --blue-2: #c8b9ff;
+  --blue-bg: #2b2540;
+  --hover: #242422;
+  --green: #6fbf8b;
+  --green-soft: #1d3327;
+  --green-ink: #9bd9b1;
+  --red: #e0796e;
+  --red-ink: #f2a39b;
+  --danger: #f08a80;
+  --danger-strong: #f2a39b;
+  --danger-soft: #3a211f;
+  --orange: #e0b15a;
+  --amber-bg: #332a18;
+  --amber-ink: #f0cc8c;
+  --info: #86addd;
+  --info-bg: #1d2a38;
+  --info-ink: #b7d0ee;
+  --shadow: 0 20px 48px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
+  background: var(--canvas);
+}
+
+#root {
+  font-family: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+html {
+  background: #f7f7f5;
+}
+
+/* ---------- shell ---------- */
+#root .app-shell {
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+#root .main-area {
+  background: var(--canvas);
+}
+
+#root .sidebar {
+  background: var(--canvas);
+  border-right: 1px solid var(--line);
+}
+
+#root .sidebar nav button,
+#root .sidebar-bottom > button {
+  color: var(--ink-2);
+  height: 46px;
+  font-size: 14px;
+  font-weight: 550;
+  border-radius: 9px;
+}
+
+#root .sidebar nav button:hover,
+#root .sidebar-bottom > button:hover,
+#root .sidebar nav button.nav-parent-expanded:hover {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+#root .sidebar nav button.active {
+  color: var(--ink);
+  background: var(--panel-2);
+  font-weight: 650;
+}
+
+#root .sidebar nav button.active::before {
+  left: -12px;
+  width: 2px;
+  height: 22px;
+  border-radius: 2px;
+  background: var(--blue);
+}
+
+#root .nav-children button {
+  height: 40px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+#root .nav-children button.active::before {
+  height: 20px;
+}
+
+#root .nav-label {
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+
+#root .sidebar nav button em {
+  color: var(--green-ink);
+  background: var(--green-soft);
+  font-size: 10.5px;
+}
+
+#root .topbar {
+  background: color-mix(in srgb, var(--canvas) 92%, transparent);
+  border-bottom: 1px solid var(--line);
+  height: 68px;
+  padding: 0 26px;
+}
+
+#root .topbar-context > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+#root .topbar-context h1 {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+#root .topbar-actions {
+  gap: 8px;
+}
+
+#root .segmented-control {
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: none;
+}
+
+#root .segmented-control button {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--muted);
+}
+
+#root .segmented-control button.active {
+  background: var(--panel-2);
+  color: var(--ink);
+  font-weight: 650;
+}
+
+#root .cluster-picker,
+#root .secondary-button {
+  height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+#root .cluster-picker:hover,
+#root .secondary-button:hover {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+#root .primary-button {
+  height: 42px;
+  border: 1px solid var(--ink);
+  border-radius: 10px;
+  background: var(--ink);
+  background-image: none;
+  color: var(--panel);
+  font-size: 13px;
+  font-weight: 650;
+  box-shadow: none;
+}
+
+#root .primary-button:hover {
+  background: var(--ink);
+  opacity: 0.9;
+}
+
+#root .primary-button:disabled {
+  opacity: 0.45;
+}
+
+#root .icon-button {
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  box-shadow: none;
+}
+
+#root .icon-button:hover {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+#root .avatar {
+  background: var(--panel-2);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+#root .admin-dashboard-hero,
+#root .stations-hero {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+#root .admin-dashboard-hero {
+  min-height: 164px;
+  padding: 22px 24px;
+}
+
+#root .stations-hero {
+  padding: 20px 22px;
+}
+
+#root .admin-dashboard-hero::after,
+#root .stations-hero::after {
+  display: none;
+}
+
+#root .environment-card {
+  min-height: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: none;
+  color: var(--ink);
+  padding: 12px;
+}
+
+#root .environment-card > span {
+  background: var(--blue-bg);
+  border: 1px solid var(--line);
+  color: var(--blue);
+  border-radius: 9px;
+}
+
+#root .environment-card small {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+#root .environment-card strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+#root .environment-card .env-meta {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+#root .environment-card > i {
+  background: var(--green);
+}
+
+#root .platform-footer {
+  background: var(--canvas);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+
+/* ---------- headings ---------- */
+#root .eyebrow {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+
+#root .hero-strip h2,
+#root .section-heading h2 {
+  color: var(--ink);
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+
+#root .hero-strip p,
+#root .section-heading p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+/* ---------- surfaces ---------- */
+#root .panel,
+#root .table-panel,
+#root .metric-card,
+#root .storage-overview-card,
+#root .form-section,
+#root .cluster-enrollment-card,
+#root .join-setup-card,
+#root .storage-create-form .form-section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: none;
+  color: var(--ink);
+}
+
+#root .panel-title h3 {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+#root .panel-title span,
+#root .metric-card > small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#root .metric-label {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+#root .metric-value-row strong {
+  font-size: 32px;
+  letter-spacing: -0.03em;
+}
+
+#root .storage-overview-card > span {
+  border-radius: 9px;
+}
+
+/* ---------- tables ---------- */
+#root table {
+  font-size: 13px;
+}
+
+#root th {
+  height: 50px;
+  padding: 0 16px;
+  background: color-mix(in srgb, var(--panel-2) 55%, var(--panel));
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+#root td {
+  height: 64px;
+  padding: 0 16px;
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--line);
+}
+
+#root tbody tr:hover {
+  background: color-mix(in srgb, var(--panel-2) 35%, transparent);
+}
+
+#root .table-primary strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#root .table-primary small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+#root .site-network-hero {
+  min-height: 140px;
+  padding: 20px 22px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+#root .site-network-hero::after {
+  display: none;
+}
+
+#root .jobs-table-panel th:last-child,
+#root .jobs-table-panel td:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  background: var(--panel);
+  box-shadow: -1px 0 0 var(--line);
+}
+
+#root .jobs-table-panel th:last-child {
+  background: color-mix(in srgb, var(--panel-2) 55%, var(--panel));
+}
+
+#root .jobs-table-panel tbody tr:hover td:last-child {
+  background: color-mix(in srgb, var(--panel-2) 35%, var(--panel));
+}
+
+#root .jobs-table-panel {
+  overflow-x: auto;
+}
+
+#root .row-icon {
+  background: var(--panel-2);
+  border-radius: 8px;
+}
+
+/* ---------- status ---------- */
+#root .status {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+}
+
+#root .status-running,
+#root .status-online,
+#root .status-succeeded {
+  color: var(--green-ink);
+  background: var(--green-soft);
+  border-color: color-mix(in srgb, var(--green) 24%, var(--line));
+}
+
+#root .status-failed,
+#root .status-offline {
+  color: var(--red-ink, var(--danger));
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--red) 24%, var(--line));
+}
+
+#root .status-pending,
+#root .status-stopping,
+#root .status-deleting {
+  color: var(--amber-ink);
+  background: var(--amber-bg);
+  border-color: color-mix(in srgb, var(--orange) 26%, var(--line));
+}
+
+#root .status-stopped {
+  color: var(--muted);
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+#root .role-chip {
+  font-size: 12px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+}
+
+/* ---------- forms ---------- */
+#root .search-field input,
+#root .storage-create-form input:not([type="checkbox"]),
+#root .storage-create-form select,
+#root .storage-create-form textarea,
+#root .modal-body input,
+#root .modal-body select,
+#root .modal-body textarea,
+#root .placement-field input,
+#root .placement-field select {
+  background: var(--sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  color: var(--ink);
+  font-size: 13px;
+  box-shadow: none;
+}
+
+#root .search-field input {
+  height: 38px;
+}
+
+#root .storage-create-form label,
+#root .admin-node-managed-field label {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#root .storage-create-form input:focus,
+#root .storage-create-form select:focus,
+#root .search-field input:focus,
+#root .modal-body input:focus,
+#root .modal-body select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 15%, transparent);
+}
+
+#root .storage-create-form {
+  background: var(--canvas);
+}
+
+#root .form-section > strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+#root .muted {
+  color: var(--muted);
+}
+
+/* ---------- overlays ---------- */
+#root .modal,
+#root .addon-drawer,
+#root .station-drawer-redesign {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  color: var(--ink);
+}
+
+#root .modal-head h2 {
+  color: var(--ink);
+  font-size: 24px;
+  letter-spacing: -0.02em;
+}
+
+#root .modal-body label {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+#root .modal-backdrop {
+  background: rgba(20, 20, 19, 0.38);
+}
+
+#root .topbar-popover,
+#root .tooltip,
+#root .toast {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+/* ---------- login ---------- */
+#root .admin-login-page,
+#root .user-login-page {
+  background: var(--canvas);
+}
+
+#root .admin-login-card,
+#root .user-login-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  backdrop-filter: none;
+}
+
+#root .admin-login-card h2,
+#root .user-login-card h2 {
+  color: var(--ink);
+  font-size: 24px;
+  letter-spacing: -0.02em;
+}
+
+#root .admin-login-field label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#root .admin-login-field input,
+#root .user-login-field input {
+  background: var(--sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+#root .admin-login-field input:focus,
+#root .user-login-field input:focus {
+  background: var(--sunken);
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 15%, transparent);
+}
+
+/* ---------- dark surfaces with literal light colors ---------- */
+#root .theme-dark .topbar {
+  background: color-mix(in srgb, var(--canvas) 94%, transparent);
+}
+
+#root .theme-dark .segmented-control,
+#root .theme-dark .cluster-picker,
+#root .theme-dark .secondary-button,
+#root .theme-dark .icon-button {
+  background: var(--panel);
+  color: var(--ink-2);
+}
+
+#root .theme-dark .icon-button:hover,
+#root .theme-dark .secondary-button:hover,
+#root .theme-dark .cluster-picker:hover {
+  background: var(--panel-2);
+  color: var(--ink);
+}
+
+#root .theme-dark .primary-button {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #1a1a18;
+}
+
+#root .theme-dark .sidebar nav button:hover,
+#root .theme-dark .sidebar-bottom > button:hover {
+  background: var(--panel-2);
+}
+
+#root .theme-dark th {
+  background: var(--panel-2);
+}
+
+#root .theme-dark tbody tr:hover {
+  background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+}
+
+#root .theme-dark .search-field input,
+#root .theme-dark .storage-create-form input:not([type="checkbox"]),
+#root .theme-dark .storage-create-form select,
+#root .theme-dark .storage-create-form textarea,
+#root .theme-dark .modal-body input,
+#root .theme-dark .modal-body select,
+#root .theme-dark .modal-body textarea {
+  background: var(--sunken);
+  color: var(--ink);
+}
+
+#root .theme-dark .admin-login-field input,
+#root .theme-dark .user-login-field input {
+  background: var(--sunken);
+}
+
+#root .theme-dark .modal-backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+#root .theme-dark .admin-dashboard-metric,
+#root .theme-dark .admin-dashboard-panel {
+  background: var(--panel);
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+#root .theme-dark .admin-action-grid button {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+#root .theme-dark .admin-action-grid button:hover {
+  background: color-mix(in srgb, var(--panel-2) 78%, var(--canvas));
+}
+
+#root .theme-dark .overview-map-stats button,
+#root .theme-dark .overview-city-summary button {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--ink-2);
+}
+
+#root .theme-dark .overview-map-stats button:hover,
+#root .theme-dark .overview-city-summary button:hover {
+  background: color-mix(in srgb, var(--panel-2) 78%, var(--canvas));
+}
+
+#root .theme-dark .overview-cross-region {
+  background: color-mix(in srgb, var(--blue-bg) 55%, var(--panel));
+  border-color: color-mix(in srgb, var(--blue) 22%, var(--line));
+}
+
+/* ---------- responsive height checks ---------- */
+@media (max-width: 1050px) {
+  #root .sidebar nav button {
+    height: 44px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 780px) {
+  #root .sidebar nav button {
+    height: 46px;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 620px) {
+  #root .section-heading h2,
+  #root .hero-strip h2 {
+    font-size: 26px;
+  }
+
+  #root .topbar {
+    height: auto;
+    min-height: 58px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+}

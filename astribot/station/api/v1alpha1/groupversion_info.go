@@ -16,6 +16,7 @@ func AddToScheme(scheme *runtime.Scheme) error {
 		&NodeAdmission{}, &NodeAdmissionList{},
 		&NodeClass{}, &NodeClassList{},
 		&Machine{}, &MachineList{},
+		&RobotModel{}, &RobotModelList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil

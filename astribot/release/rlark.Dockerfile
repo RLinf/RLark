@@ -30,7 +30,8 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     CGO_ENABLED=0 GOOS=linux go build -o /rlarkctl           ./cmd/rlarkctl && \
     CGO_ENABLED=0 GOOS=linux go build -o /rlark-tools        ./cmd/rlark-tools && \
     CGO_ENABLED=0 GOOS=linux go build -o /csi-nodepath       ./astribot/cmd/csi-nodepath && \
-    CGO_ENABLED=0 GOOS=linux go build -o /station-api        ./astribot/cmd/station-api
+    CGO_ENABLED=0 GOOS=linux go build -o /station-api        ./astribot/cmd/station-api && \
+    CGO_ENABLED=0 GOOS=linux go build -o /astribot-iam       ./astribot/cmd/astribot-iam
 
 # -- Runtime stage ---------------------------------------------------------
 FROM ${RUNTIME_BASE_IMAGE}
@@ -49,3 +50,4 @@ COPY --from=builder /rlarkctl           /usr/local/bin/rlarkctl
 COPY --from=builder /rlark-tools        /usr/local/bin/rlark-tools
 COPY --from=builder /csi-nodepath       /usr/local/bin/csi-nodepath
 COPY --from=builder /station-api        /usr/local/bin/station-api
+COPY --from=builder /astribot-iam       /usr/local/bin/astribot-iam

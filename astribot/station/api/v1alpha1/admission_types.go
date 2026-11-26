@@ -64,11 +64,31 @@ type NodeAdmissionSpec struct {
 	// its site (uplink).
 	// +kubebuilder:validation:MaxLength=63
 	NodeClass string `json:"nodeClass,omitempty"`
+	// Machine records the selected identity for new typed onboarding flows.
+	Machine *NodeMachine `json:"machine,omitempty"`
 	// Serial is the serial of the machine the name was given to: the same
 	// machine, admitted again, is the same node.
 	// +kubebuilder:validation:MaxLength=128
 	Serial string `json:"serial,omitempty"`
 }
+
+// Machine is the declared category and model installed on the admitted node.
+type NodeMachine struct {
+	// +kubebuilder:validation:Enum=Robot;Server
+	Category MachineCategory `json:"category"`
+	// +kubebuilder:validation:MaxLength=63
+	Model string `json:"model,omitempty"`
+	// +kubebuilder:validation:MaxLength=63
+	Body string `json:"body,omitempty"`
+}
+
+// +kubebuilder:validation:Enum=Robot;Server
+type MachineCategory string
+
+const (
+	MachineCategoryRobot  MachineCategory = "Robot"
+	MachineCategoryServer MachineCategory = "Server"
+)
 
 // +kubebuilder:validation:Enum=Pending;Redeemed;Joined;Expired
 type NodeAdmissionPhase string

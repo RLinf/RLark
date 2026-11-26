@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
@@ -204,7 +205,54 @@ func (d *NetworkDocuments) document(ctx context.Context, key string) (config, ha
 	if config != "" && !json.Valid([]byte(config)) {
 		return "", "", errors.New("the stored document of " + holder.GetNamespace() + "/" + holder.GetName() + " is not JSON")
 	}
-	return config, hash, nil
+	if config == "" {
+		return config, hash, nil
+	}
+	return d.withGatewayRelayToken(ctx, holder, config, hash)
+}
+
+// withGatewayRelayToken keeps the token outside Kubernetes status. Only an
+// enrolled Hub proving possession of its WireGuard key receives the token.
+func (d *NetworkDocuments) withGatewayRelayToken(ctx context.Context, holder *unstructured.Unstructured, config, hash string) (string, string, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(config), &payload); err != nil {
+		return "", "", errors.New("stored network document is not an object")
+	}
+	var discovery map[string]json.RawMessage
+	if raw := payload["discovery"]; len(raw) == 0 || json.Unmarshal(raw, &discovery) != nil {
+		return config, hash, nil
+	}
+	// includeUnclassified is part of the level-3 wire contract and is always
+	// emitted there, even when false. Its presence keeps Release A documents
+	// at level 2 while Station API can enrich Release B Hub responses.
+	if _, levelThree := discovery["includeUnclassified"]; !levelThree {
+		return config, hash, nil
+	}
+	delete(discovery, "relayToken")
+	role, _, _ := unstructured.NestedString(holder.Object, "status", "role")
+	site, _, _ := unstructured.NestedString(holder.Object, "status", "site")
+	if holder.GetKind() == "NetworkEnrollment" && role == "Hub" && site != "" {
+		secrets := schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
+		secret, err := d.Client.Resource(secrets).Namespace("default").Get(ctx, "station-relay-token-"+site, metav1.GetOptions{})
+		if err == nil {
+			encoded, _, _ := unstructured.NestedString(secret.Object, "data", "token")
+			token, decodeErr := base64.StdEncoding.DecodeString(encoded)
+			random, tokenErr := base64.StdEncoding.DecodeString(string(token))
+			if decodeErr == nil && tokenErr == nil && len(random) == 32 && base64.StdEncoding.EncodeToString(random) == string(token) {
+				discovery["relayToken"], _ = json.Marshal(string(token))
+			}
+		} else if !apierrors.IsNotFound(err) && !apierrors.IsForbidden(err) {
+			return "", "", errors.New("could not read the Hub's relay token")
+		}
+	}
+	if len(discovery) == 0 {
+		delete(payload, "discovery")
+	} else {
+		payload["discovery"], _ = json.Marshal(discovery)
+	}
+	data, _ := json.Marshal(payload)
+	digest := sha256.Sum256(data)
+	return string(data), hex.EncodeToString(digest[:]), nil
 }
 
 // holder is the object whose document is the node's that holds the key: its enrollment, read now (the index only

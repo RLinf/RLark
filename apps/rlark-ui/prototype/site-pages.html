@@ -1,0 +1,1626 @@
+<!doctype html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RLark 场站页面原型 · 扫描设置 / 加入节点</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   RLark 场站页面原型 — 铺满宽屏 + 行式机器列表 + 入网口令
+   ============================================================ */
+:root {
+  --canvas: #f7f7f5; --panel: #ffffff; --panel-2: #f0f0ee; --sunken: #f2f2f0;
+  --line: #e4e4e0; --line-strong: #dadad6;
+  --ink: #1d1d1f; --ink-2: #3a3a3c; --muted: #6e6e73; --soft: #a1a1a6;
+  --purple: #5b4bc4; --purple-bg: #f1eefb; --purple-soft: #e7e2fa;
+  --green: #3e9a5c; --green-bg: #e0f1e5; --green-ink: #2c6b41;
+  --amber: #d59b2d; --amber-bg: #fbeed2; --amber-ink: #8a5a0b;
+  --red: #c8463b; --red-bg: #fbe2de; --red-ink: #a3332a;
+  --info: #4f82b8; --info-bg: #e2ecf6; --info-ink: #2f5c8a;
+  --shadow: 0 16px 40px rgba(29,29,31,.12), 0 2px 6px rgba(29,29,31,.05);
+  --shadow-soft: 0 1px 2px rgba(29,29,31,.05);
+  --radius: 14px; --radius-sm: 10px;
+  --font: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  --canvas: #141413; --panel: #1c1c1a; --panel-2: #242422; --sunken: #171716;
+  --line: #34342f; --line-strong: #46463f;
+  --ink: #f2f2ef; --ink-2: #c9c9c4; --muted: #9a9a93; --soft: #6e6e68;
+  --purple: #b9a6ff; --purple-bg: #2b2540; --purple-soft: #332b4d;
+  --green: #6fbf8b; --green-bg: #1d3327; --green-ink: #9bd9b1;
+  --amber: #e0b15a; --amber-bg: #332a18; --amber-ink: #f0cc8c;
+  --red: #e0796e; --red-bg: #3a211f; --red-ink: #f2a39b;
+  --info: #86addd; --info-bg: #1d2a38; --info-ink: #b7d0ee;
+  --shadow: 0 20px 48px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35);
+  --shadow-soft: 0 1px 2px rgba(0,0,0,.4);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; font-family: var(--font); font-size: 14px; line-height: 1.5; background: var(--canvas); color: var(--ink); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: var(--purple); text-decoration: none; }
+::selection { background: var(--purple-soft); }
+svg.icon { width: 17px; height: 17px; flex: 0 0 auto; }
+svg.icon.sm { width: 14px; height: 14px; }
+.hidden { display: none !important; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
+
+/* shell */
+.app { display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 100vh; }
+.sidebar { position: sticky; top: 0; height: 100vh; overflow: auto; display: flex; flex-direction: column; gap: 18px; padding: 18px 12px 16px; background: var(--canvas); border-right: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 9px; padding: 2px 8px 14px; }
+.brand img { height: 28px; width: auto; display: block; }
+.brand img.dark { display: none; }
+[data-theme="dark"] .brand img.light { display: none; }
+[data-theme="dark"] .brand img.dark { display: block; }
+.brand .tag { margin-left: auto; font-size: 9px; font-weight: 700; letter-spacing: .08em; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 6px; }
+.nav-label { padding: 0 10px; font-size: 10.5px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; color: var(--soft); }
+.nav { display: grid; gap: 1px; }
+.nav-item { position: relative; display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--ink-2); font-size: 13.5px; font-weight: 500; text-align: left; }
+.nav-item svg { color: var(--muted); }
+.nav-item:hover { background: var(--panel-2); }
+.nav-item.active { background: var(--panel-2); color: var(--ink); font-weight: 650; }
+.nav-item.active::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 2px; border-radius: 2px; background: var(--purple); }
+.nav-item.active svg { color: var(--ink); }
+.nav-item .count { margin-left: auto; font-size: 10.5px; color: var(--muted); }
+.sidebar-bottom { margin-top: auto; display: grid; gap: 8px; }
+.env-card { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); }
+.env-card .env-icon { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--purple-bg); color: var(--purple); }
+.env-card small { display: block; font-size: 10.5px; color: var(--muted); }
+.env-card strong { display: block; font-size: 12px; font-weight: 650; }
+.env-card .live { margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 14%, transparent); }
+.side-link { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12px; text-align: left; }
+.side-link:hover { background: var(--panel-2); color: var(--ink); }
+.main { min-width: 0; display: flex; flex-direction: column; }
+.topbar { position: sticky; top: 0; z-index: 40; height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 26px; background: color-mix(in srgb, var(--canvas) 94%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.crumb { font-size: 10.5px; color: var(--muted); letter-spacing: .02em; }
+.topbar h1 { margin: 2px 0 0; font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.env-chip { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 11.5px; color: var(--ink-2); }
+.env-chip .dot { width: 6px; height: 6px; }
+.page-switch { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.page-switch button { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 11.5px; font-weight: 550; }
+.page-switch button svg { width: 14px; height: 14px; }
+.page-switch button.active { background: var(--panel-2); color: var(--ink); font-weight: 650; }
+.mobile-page { display: none; height: 32px; padding: 0 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); color: var(--ink-2); font-size: 11.5px; outline: none; }
+.mobile-page:focus { border-color: var(--purple); box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 15%, transparent); }
+.seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.seg button { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 11.5px; font-weight: 550; }
+.seg button svg { width: 14px; height: 14px; }
+.seg button.active { background: var(--panel-2); color: var(--ink); font-weight: 650; }
+.icon-btn { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--muted); }
+.icon-btn:hover { color: var(--ink); background: var(--panel-2); }
+.mobile-theme { display: none; }
+.avatar { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--panel-2); border: 1px solid var(--line); font-size: 11px; font-weight: 700; color: var(--ink-2); }
+
+/* buttons / fields */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 38px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel); color: var(--ink-2); font-size: 12.5px; font-weight: 600; white-space: nowrap; transition: background .15s ease, border-color .15s ease, color .15s ease, opacity .15s ease; }
+.btn:hover { background: var(--panel-2); color: var(--ink); }
+.btn svg { width: 15px; height: 15px; }
+.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--panel); }
+.btn.primary:hover { opacity: .9; }
+[data-theme="dark"] .btn.primary { color: #1a1a18; }
+.btn.danger { color: var(--red-ink); border-color: color-mix(in srgb, var(--red) 40%, var(--line)); }
+.btn.danger:hover { background: var(--red-bg); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+.btn.ghost:hover { background: var(--panel-2); color: var(--ink); }
+.btn.sm { height: 30px; padding: 0 10px; font-size: 11.5px; border-radius: 8px; }
+.btn.sm svg { width: 13px; height: 13px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary:disabled { opacity: .35; }
+.link-btn { border: 0; background: transparent; padding: 0; color: var(--purple); font-size: 11.5px; font-weight: 600; }
+.link-btn:hover { text-decoration: underline; }
+.search { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel); min-width: 260px; max-width: 320px; color: var(--muted); }
+.search svg { width: 14px; height: 14px; }
+.search input { width: 100%; border: 0; outline: 0; background: transparent; font-size: 12px; color: var(--ink); }
+.search input::placeholder { color: var(--soft); }
+.search:focus-within { border-color: var(--purple); box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 16%, transparent); }
+.field { display: grid; gap: 6px; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.field input, .field select { height: 40px; min-width: 0; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--sunken); color: var(--ink); font-size: 13px; font-weight: 400; outline: none; transition: border-color .15s ease, box-shadow .15s ease; }
+.field input::placeholder { color: var(--soft); }
+.field input:focus, .field select:focus { border-color: var(--purple); box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 15%, transparent); }
+.field small { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.5; }
+.field.error input { border-color: var(--red); box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 14%, transparent); }
+.check { width: 16px; height: 16px; accent-color: var(--purple); }
+.check-label { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+
+/* status */
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--soft); flex: 0 0 auto; }
+.dot.ok { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 14%, transparent); }
+.dot.warn { background: var(--amber); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 15%, transparent); }
+.dot.bad { background: var(--red); box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 14%, transparent); }
+.dot.purple { background: var(--purple); box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 14%, transparent); }
+.dot.info { background: var(--info); box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 14%, transparent); }
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.pill { display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); font-size: 10.5px; font-weight: 650; color: var(--ink-2); white-space: nowrap; }
+.pill .dot { width: 5px; height: 5px; }
+.pill.ok { color: var(--green-ink); background: var(--green-bg); border-color: color-mix(in srgb, var(--green) 26%, var(--line)); }
+.pill.warn { color: var(--amber-ink); background: var(--amber-bg); border-color: color-mix(in srgb, var(--amber) 28%, var(--line)); }
+.pill.bad { color: var(--red-ink); background: var(--red-bg); border-color: color-mix(in srgb, var(--red) 26%, var(--line)); }
+.pill.info { color: var(--info-ink); background: var(--info-bg); border-color: color-mix(in srgb, var(--info) 26%, var(--line)); }
+.pill.purple { color: var(--purple); background: var(--purple-bg); border-color: color-mix(in srgb, var(--purple) 26%, var(--line)); }
+.tag-chip { display: inline-flex; align-items: center; height: 22px; padding: 0 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); font-size: 10.5px; color: var(--muted); font-family: var(--mono); }
+
+/* notices */
+.notice { display: flex; align-items: flex-start; gap: 9px; padding: 10px 12px; border-radius: 10px; border: 1px solid; font-size: 11.5px; line-height: 1.5; }
+.notice svg { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; }
+.notice.warn { color: var(--amber-ink); background: var(--amber-bg); border-color: color-mix(in srgb, var(--amber) 26%, var(--line)); }
+.notice.bad { color: var(--red-ink); background: var(--red-bg); border-color: color-mix(in srgb, var(--red) 26%, var(--line)); }
+.notice.info { color: var(--info-ink); background: var(--info-bg); border-color: color-mix(in srgb, var(--info) 26%, var(--line)); }
+.notice.ok { color: var(--green-ink); background: var(--green-bg); border-color: color-mix(in srgb, var(--green) 26%, var(--line)); }
+.notice strong { font-weight: 650; }
+
+/* page */
+.page { display: none; padding: 22px 26px 52px; width: 100%; min-width: 0; }
+.page.active { display: block; }
+.page-head { display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap; margin-bottom: 14px; }
+.page-head-copy { flex: 1 1 380px; min-width: 0; }
+.page-head h2 { margin: 0 0 6px; font-size: 28px; line-height: 1.15; font-weight: 750; letter-spacing: -.025em; }
+.page-head p { margin: 0; max-width: 720px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; flex: 0 0 auto; }
+#page-discovery .page-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px 20px; }
+#page-discovery .page-head-copy { grid-column: 1; grid-row: 1; max-width: 720px; }
+#page-discovery .discovery-health { grid-column: 1 / -1; grid-row: 2; }
+#page-discovery .head-actions { grid-column: 2; grid-row: 1; justify-self: end; }
+@media (min-width: 1600px) {
+  #page-discovery .page-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px 24px; }
+  #page-discovery .page-head-copy { flex: 1 1 460px; }
+  #page-discovery .discovery-health { flex: 1 1 520px; }
+  #page-discovery .head-actions { flex: 0 0 auto; margin-left: auto; }
+}
+.section-gap { height: 14px; }
+
+/* discovery health */
+.discovery-health { flex: 1 1 600px; display: flex; align-items: stretch; min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
+.health-item { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-right: 1px solid var(--line); }
+.health-item:last-child { border-right: 0; }
+.health-item small { display: block; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.health-item strong { display: block; font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.health-item.warn strong { color: var(--amber-ink); }
+.inline-status { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; padding: 8px 11px; border: 1px solid color-mix(in srgb, var(--amber) 26%, var(--line)); border-radius: 9px; background: var(--amber-bg); color: var(--amber-ink); font-size: 11.5px; }
+.inline-status svg { width: 14px; height: 14px; }
+.disc-workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; min-width: 0; }
+.site-rail { background: color-mix(in srgb, var(--panel-2) 32%, var(--panel)); border-right: 1px solid var(--line); padding: 10px 8px; display: grid; align-content: start; gap: 2px; min-width: 0; }
+.rail-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 8px 8px; color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+.rail-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); font-size: 9.5px; letter-spacing: 0; }
+.site-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px 10px; border: 0; border-radius: 10px; background: transparent; text-align: left; color: var(--ink-2); }
+.site-row:hover { background: color-mix(in srgb, var(--panel) 60%, transparent); }
+.site-row.active { background: var(--panel); color: var(--ink); box-shadow: inset 2px 0 0 var(--purple), var(--shadow-soft); }
+.site-row strong { display: block; font-size: 13px; font-weight: 700; }
+.site-row small { display: block; margin-top: 1px; font-size: 10.5px; color: var(--muted); }
+.site-row .site-state { font-size: 9.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 6px; white-space: nowrap; }
+.site-row.active .site-state { border-color: color-mix(in srgb, var(--purple) 28%, var(--line)); color: var(--purple); }
+.disc-editor { min-width: 0; background: var(--panel); }
+.editor-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 20px 13px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.editor-head-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.editor-note { color: var(--muted); font-size: 10.5px; white-space: nowrap; }
+.editor-head h3 { margin: 0; display: flex; align-items: center; gap: 9px; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+.editor-head p { margin: 4px 0 0; font-size: 11.5px; color: var(--muted); }
+.unsaved { font-size: 11px; color: var(--amber-ink); background: var(--amber-bg); border: 1px solid color-mix(in srgb, var(--amber) 26%, var(--line)); border-radius: 999px; padding: 4px 9px; white-space: nowrap; }
+.unsaved.clean { visibility: hidden; }
+.editor-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; padding: 18px 20px 20px; }
+.form-col { display: grid; gap: 16px; align-content: start; min-width: 0; }
+.toggle-card { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--sunken); }
+.toggle-card .toggle-copy { display: grid; gap: 2px; min-width: 0; }
+.toggle-card .toggle-copy strong { font-size: 12.5px; }
+.toggle-card .toggle-copy small { font-size: 10.5px; color: var(--muted); line-height: 1.4; }
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch .track { position: relative; width: 38px; height: 22px; border-radius: 999px; background: var(--line-strong); transition: background .15s ease; flex: 0 0 auto; }
+.switch .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.18); transition: transform .15s ease; }
+.switch input:checked + .track { background: var(--purple); }
+.switch input:checked + .track::after { transform: translateX(16px); }
+.interval-row { display: flex; align-items: center; gap: 8px; max-width: 220px; }
+.interval-row input { width: 120px; }
+.interval-row .suffix { font-size: 12px; color: var(--muted); }
+.range-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 420px)); gap: 7px; justify-content: start; }
+.range-row { display: grid; grid-template-columns: minmax(0, 420px) 34px; gap: 7px; width: min(100%, 461px); }
+.range-row input { height: 38px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--sunken); font-size: 12px; outline: none; }
+.range-row input:focus { border-color: var(--purple); box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 15%, transparent); }
+.range-row .icon-btn { width: 34px; height: 38px; border-radius: 9px; }
+.field-head { display: grid; gap: 2px; }
+.field-head strong { font-size: 12px; }
+.field-head small { font-size: 11px; color: var(--muted); font-weight: 400; }
+.readonly-box { display: grid; gap: 3px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--panel-2) 50%, var(--panel)); }
+.readonly-box small { font-size: 10px; color: var(--muted); }
+.readonly-box span { font-size: 11.5px; overflow-wrap: anywhere; }
+.field-error { min-height: 16px; margin: 0; color: var(--red-ink); font-size: 11px; font-weight: 400; }
+.disc-details { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); background: color-mix(in srgb, var(--panel-2) 32%, var(--panel)); min-width: 0; }
+.detail-section { min-width: 0; padding: 14px 16px; border-left: 1px solid var(--line); }
+.detail-section:first-child { border-left: 0; }
+.detail-section h4 { margin: 0 0 9px; display: flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 700; color: var(--ink-2); }
+.detail-section h4 svg { width: 14px; height: 14px; color: var(--muted); }
+.chip-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { display: inline-flex; align-items: center; height: 23px; padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 10.5px; color: var(--ink-2); font-family: var(--mono); }
+.detail-list { display: grid; gap: 9px; }
+.detail-item { display: grid; gap: 2px; min-width: 0; }
+.detail-item strong { font-size: 11.5px; font-weight: 650; }
+.detail-item small { font-size: 10px; color: var(--muted); overflow-wrap: anywhere; }
+.nodeclass-row { display: grid; gap: 4px; padding: 9px 0; border-top: 1px solid var(--line); }
+.nodeclass-row:first-of-type { border-top: 0; padding-top: 0; }
+.nodeclass-row strong { font-size: 11.5px; }
+.nodeclass-row small { font-size: 10px; color: var(--muted); }
+.nonrobot-note { margin-top: 9px; padding: 8px 9px; border-radius: 8px; background: var(--info-bg); color: var(--info-ink); font-size: 10.5px; line-height: 1.5; }
+.form-col > .nonrobot-note { max-width: 720px; }
+.detail-section > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; font-size: 11.5px; font-weight: 650; list-style: none; }
+.detail-section > summary::-webkit-details-marker { display: none; }
+.detail-section[open] > summary { margin-bottom: 9px; }
+.fingerprint { display: block; margin-top: 6px; padding: 6px 7px; border-radius: 6px; background: var(--info-bg); color: var(--info-ink); font-family: var(--mono); font-size: 9.5px; line-height: 1.45; overflow-wrap: anywhere; }
+@media (min-width: 1750px) {
+  .disc-workspace { grid-template-columns: 220px minmax(0, 1fr) 340px; }
+  .disc-details { grid-column: auto; grid-template-columns: minmax(0, 1fr); border-top: 0; border-left: 1px solid var(--line); }
+  .detail-section { border-left: 0; border-top: 1px solid var(--line); }
+  .detail-section:first-child { border-top: 0; }
+}
+.rules-disclosure { margin-top: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.rules-disclosure > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; cursor: pointer; list-style: none; font-size: 12.5px; font-weight: 650; }
+.rules-disclosure > summary::-webkit-details-marker { display: none; }
+.rules-disclosure > summary .muted { font-size: 10.5px; font-weight: 400; }
+.rules { margin: 0; padding: 0 16px 14px 32px; display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+
+/* join toolbar */
+.join-toolbar { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); margin-bottom: 14px; }
+.toolbar-field { display: grid; gap: 5px; width: 320px; max-width: 100%; font-size: 10.5px; font-weight: 650; color: var(--muted); }
+.toolbar-field select { height: 38px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--sunken); font-size: 12.5px; color: var(--ink); outline: none; }
+.toolbar-field select:focus { border-color: var(--purple); box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 15%, transparent); }
+.method-seg { display: inline-flex; padding: 3px; gap: 2px; border: 1px solid var(--line); border-radius: 11px; background: var(--sunken); }
+.method-seg button { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.method-seg button svg { width: 14px; height: 14px; }
+.method-seg button[aria-selected="true"] { background: var(--panel); color: var(--ink); box-shadow: var(--shadow-soft); }
+.toolbar-context { margin-left: auto; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.site-hint { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--muted); }
+.join-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (min-width: 1600px) { .join-layout { grid-template-columns: minmax(0, 1fr) 380px; } }
+.join-main { min-width: 0; display: grid; gap: 14px; }
+.join-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; min-width: 0; overflow: visible; }
+.join-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 15px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.join-panel-head h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+.join-panel-head p { margin: 4px 0 0; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.count-pill { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2); font-size: 10px; font-weight: 650; color: var(--muted); }
+.panel-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.class-access { border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--panel-2) 34%, var(--panel)); }
+.class-access > summary { display: flex; align-items: center; gap: 10px; padding: 10px 16px; cursor: pointer; list-style: none; font-size: 11.5px; flex-wrap: wrap; }
+.class-access > summary::-webkit-details-marker { display: none; }
+.class-access .summary-title { display: inline-flex; align-items: center; gap: 7px; font-weight: 650; }
+.class-access .summary-title svg { width: 14px; height: 14px; color: var(--muted); }
+.class-access .summary-meta { color: var(--muted); font-size: 10.5px; }
+.class-access .summary-state { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.class-access-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; padding: 0 16px 14px; }
+.cred-row { display: grid; gap: 3px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+.cred-row strong { font-size: 11.5px; }
+.cred-row small { font-size: 10px; color: var(--muted); }
+.machine-filter { display: flex; gap: 6px; padding: 9px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; background: var(--panel); }
+.machine-filter button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); font-size: 11px; font-weight: 600; }
+.machine-filter button span { font-size: 10px; color: var(--soft); }
+.machine-filter button.active { background: var(--panel-2); color: var(--ink); border-color: var(--line-strong); }
+.machine-filter button.active span { color: var(--muted); }
+.source-tag { display: inline-flex; align-items: center; height: 16px; margin-left: 5px; padding: 0 5px; border-radius: 4px; background: var(--panel-2); color: var(--muted); font-size: 9px; font-weight: 650; vertical-align: 1px; }
+.class-access-note { grid-column: 1 / -1; margin: 0; padding-top: 2px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.bottom-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; align-items: stretch; }
+.bottom-card { display: flex; flex-direction: column; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.bottom-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+.bottom-card-head h3 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+.bottom-card-head p { margin: 3px 0 0; font-size: 10.5px; color: var(--muted); }
+.event-list { list-style: none; margin: 0; padding: 0; flex: 1; }
+.event-list li { display: grid; grid-template-columns: 60px 8px minmax(0, 1fr); gap: 9px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); color: var(--ink-2); font-size: 11px; }
+.event-list li:last-child { border-bottom: 0; }
+.event-list time { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.event-mark { width: 7px; height: 7px; border-radius: 50%; background: var(--soft); }
+.event-mark.ok { background: var(--green); }
+.event-mark.warn { background: var(--amber); }
+.event-mark.bad { background: var(--red); }
+.event-mark.info { background: var(--info); }
+.event-list span:last-child { overflow-wrap: anywhere; }
+.load-list { display: grid; gap: 13px; padding: 14px 16px; flex: 1; align-content: start; }
+.load-row { display: grid; gap: 5px; padding: 4px 6px; margin: -4px -6px; border-radius: 8px; cursor: pointer; }
+.load-row:hover { background: color-mix(in srgb, var(--panel-2) 45%, transparent); }
+.load-row:focus-visible { outline: 2px solid var(--purple); outline-offset: 1px; }
+.load-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 11px; }
+.load-row-head > span:first-child { display: flex; align-items: center; gap: 6px; min-width: 0; font-weight: 600; }
+.load-row-head small { color: var(--muted); font-size: 9.5px; font-weight: 400; }
+.load-row-head > span:last-child { color: var(--ink-2); font-size: 10.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.load-bar { height: 7px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.load-bar i { display: block; height: 100%; border-radius: inherit; background: var(--purple); transition: width .25s ease; }
+.load-foot { padding: 0 16px 14px; color: var(--muted); font-size: 10px; }
+.robot-hero { display: flex; align-items: baseline; gap: 8px; padding: 12px 16px 8px; }
+.robot-hero strong { font-size: 28px; line-height: 1; font-weight: 750; letter-spacing: -.04em; }
+.robot-hero > span:nth-child(2) { color: var(--muted); font-size: 11px; }
+.robot-hero .pill { margin-left: 4px; }
+.robot-facts { display: grid; gap: 0; margin: 0; padding: 0 16px; flex: 1; }
+.robot-facts > div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 10.5px; }
+.robot-facts dt { color: var(--muted); white-space: nowrap; }
+.robot-facts dd { margin: 0; min-width: 0; text-align: right; overflow-wrap: anywhere; }
+.robot-facts dd .dot { width: 6px; height: 6px; }
+.robot-card > .btn { align-self: flex-start; margin: 10px 16px 14px; }
+@media (max-width: 1200px) {
+  .bottom-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.machine-table-head { display: grid; grid-template-columns: 26px minmax(200px, 1.1fr) minmax(160px, .7fr) minmax(220px, .9fr) minmax(110px, .5fr) 92px; gap: 12px; padding: 9px 16px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--panel-2) 45%, var(--panel)); font-size: 10px; font-weight: 650; color: var(--muted); letter-spacing: .04em; }
+.machine-row { display: grid; grid-template-columns: 26px minmax(200px, 1.1fr) minmax(160px, .7fr) minmax(220px, .9fr) minmax(110px, .5fr) 92px; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); min-width: 0; }
+.machine-row:last-child { border-bottom: 0; }
+.machine-row:hover { background: color-mix(in srgb, var(--panel-2) 38%, transparent); }
+.machine-row.selected { background: color-mix(in srgb, var(--purple-bg) 38%, var(--panel)); box-shadow: inset 2px 0 0 var(--purple); }
+.machine-row.disabled { background: color-mix(in srgb, var(--canvas) 55%, var(--panel)); }
+.machine-row.disabled .machine-identity, .machine-row.disabled .machine-location, .machine-row.disabled .machine-reach { opacity: .72; }
+.machine-check { display: flex; align-items: flex-start; padding-top: 2px; }
+.machine-identity { display: grid; gap: 3px; min-width: 0; }
+.machine-identity strong { font-size: 12.5px; font-weight: 650; overflow-wrap: anywhere; }
+.machine-identity small { font-size: 10.5px; color: var(--muted); overflow-wrap: anywhere; }
+.machine-location { display: grid; gap: 2px; min-width: 0; font-size: 11.5px; }
+.machine-location small { font-size: 10.5px; color: var(--muted); overflow-wrap: anywhere; }
+.machine-reach { display: grid; gap: 4px; min-width: 0; }
+.reach-pair { display: flex; gap: 12px; flex-wrap: wrap; }
+.reach { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; }
+.reach .dot { width: 6px; height: 6px; }
+.reach.bad { color: var(--red-ink); }
+.reach.muted { color: var(--muted); }
+.reach-reason { margin: 0; font-size: 10px; color: var(--red-ink); line-height: 1.4; }
+.reach-reason.muted { color: var(--muted); }
+.machine-state { display: grid; justify-items: start; gap: 4px; min-width: 0; }
+.machine-state small { font-size: 10px; color: var(--muted); overflow-wrap: anywhere; }
+.machine-action { display: flex; justify-content: flex-end; }
+.machine-empty { padding: 34px 20px; text-align: center; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.machine-empty strong { display: block; margin-bottom: 4px; color: var(--ink); font-size: 13px; }
+.no-selectable { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--amber-bg) 40%, var(--panel)); flex-wrap: wrap; }
+.no-selectable div:first-child { display: grid; gap: 2px; }
+.no-selectable strong { font-size: 12px; }
+.no-selectable small { font-size: 10.5px; color: var(--muted); }
+.no-selectable-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+.selection-bar { position: static; z-index: 6; display: flex; align-items: center; justify-content: space-between; gap: 12px; width: min(100%, 560px); margin: 12px 16px 14px auto; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: color-mix(in srgb, var(--panel) 94%, transparent); box-shadow: var(--shadow); backdrop-filter: blur(8px); }
+.selection-bar.floating { position: sticky; bottom: 12px; }
+.selection-bar > div { display: flex; align-items: center; gap: 9px; }
+.selection-bar strong { font-size: 12px; }
+.selection-bar .muted { font-size: 10.5px; }
+
+/* ops rail */
+.ops-rail { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; min-width: 0; }
+@media (min-width: 1600px) { .ops-rail { position: sticky; top: 82px; max-height: calc(100vh - 100px); overflow: auto; } }
+.ops-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 15px 11px; border-bottom: 1px solid var(--line); }
+.ops-head h3 { margin: 0; font-size: 14px; font-weight: 700; }
+.ops-head p { margin: 3px 0 0; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
+.ops-chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 15px 0; }
+.ops-list { display: grid; gap: 8px; padding: 10px 12px 12px; }
+.op-card { display: grid; gap: 7px; padding: 11px; border: 1px solid var(--line); border-radius: 11px; background: color-mix(in srgb, var(--panel-2) 32%, var(--panel)); }
+.op-card.failed { border-color: color-mix(in srgb, var(--red) 26%, var(--line)); }
+.op-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.op-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.op-meta { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); flex-wrap: wrap; }
+.op-progress { display: flex; align-items: center; gap: 8px; }
+.op-progress span { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.progress { flex: 1; height: 4px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.progress > i { display: block; height: 100%; border-radius: inherit; background: var(--purple); transition: width .3s ease; }
+.op-reason { margin: 0; font-size: 10px; color: var(--red-ink); line-height: 1.4; }
+.op-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.op-actions small { font-size: 9.5px; color: var(--soft); }
+.ops-history { border-top: 1px solid var(--line); }
+.ops-history > summary { display: flex; align-items: center; justify-content: space-between; padding: 11px 15px; cursor: pointer; list-style: none; font-size: 11px; color: var(--muted); }
+.ops-history > summary::-webkit-details-marker { display: none; }
+.ops-history[open] > summary svg { transform: rotate(180deg); }
+.ops-history .ops-list { padding-top: 0; }
+.ops-empty { padding: 16px 15px; color: var(--muted); font-size: 11px; }
+
+/* ssh / code panels */
+.method-panel-body { padding: 16px 18px 18px; }
+.method-panel-head h3 { display: flex; align-items: center; gap: 8px; }
+.method-panel-head .pill { margin: 0; }
+.method-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+.method-form { display: grid; gap: 14px; min-width: 0; }
+.method-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.method-fields.is-code { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.method-fields .field input, .method-fields .field select { width: 100%; }
+.method-side { display: grid; gap: 12px; }
+.method-side-card { display: grid; gap: 9px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel-2); }
+.method-side-card h4 { margin: 0; font-size: 11.5px; font-weight: 700; }
+.method-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.method-steps li { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+.method-steps b { display: grid; place-items: center; width: 18px; height: 18px; flex: 0 0 auto; border-radius: 50%; background: var(--panel); border: 1px solid var(--line); color: var(--ink-2); font-size: 9px; }
+.method-note { display: flex; align-items: flex-start; gap: 7px; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
+.method-note svg { width: 14px; height: 14px; flex: 0 0 auto; margin-top: 1px; }
+.method-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
+.method-records { border-top: 1px solid var(--line); padding: 14px 18px 18px; }
+.method-records-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.method-records-head h4 { margin: 0; font-size: 12px; font-weight: 700; }
+.method-records-head span { color: var(--muted); font-size: 10px; }
+.record-table { display: grid; }
+.record-row { display: grid; grid-template-columns: minmax(150px, 1.2fr) minmax(140px, 1fr) minmax(130px, .8fr) 80px; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); font-size: 10.5px; }
+.record-head { border-top: 0; color: var(--muted); font-size: 9.5px; font-weight: 650; }
+.record-row:first-child { border-top: 0; }
+@media (max-width: 760px) {
+  .record-table { overflow-x: auto; }
+  .record-row { min-width: 560px; }
+}
+@media (max-width: 1250px) {
+  .method-layout { grid-template-columns: minmax(0, 1fr); }
+  .method-side { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .method-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .method-side { grid-template-columns: 1fr; }
+  .method-fields, .method-fields.is-code { grid-template-columns: 1fr; }
+}
+.code-box { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--sunken); }
+.code-box code { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; }
+.issued-card { display: grid; gap: 10px; padding: 14px; border: 1px solid color-mix(in srgb, var(--green) 26%, var(--line)); border-radius: 11px; background: color-mix(in srgb, var(--green-bg) 42%, var(--panel)); }
+.issued-card h4 { margin: 0; font-size: 12.5px; }
+.issued-card p { margin: 0; font-size: 10.5px; color: var(--muted); line-height: 1.5; }
+
+/* modal */
+.modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(15, 15, 14, .52); backdrop-filter: blur(3px); }
+.modal-backdrop[hidden] { display: none; }
+.modal { width: min(680px, 100%); max-height: 88vh; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; }
+.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
+.modal-head .eyebrow { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.modal-head h2 { margin: 5px 0 4px; font-size: 20px; line-height: 1.25; letter-spacing: -.02em; }
+.modal-head p { margin: 0; color: var(--muted); font-size: 11.5px; }
+.modal-body { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 16px 20px; display: grid; gap: 14px; }
+.modal-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px max(12px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.modal-foot .muted { font-size: 10.5px; }
+.modal-foot > div { display: flex; gap: 8px; }
+.selected-machines { display: flex; flex-wrap: wrap; gap: 6px; }
+.selected-machine { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); font-size: 10.5px; font-family: var(--mono); }
+.class-block { display: grid; gap: 11px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--panel-2) 30%, var(--panel)); }
+.class-block-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.class-block-head strong { font-size: 12.5px; }
+.class-block-head span { font-size: 10.5px; color: var(--muted); }
+.cred-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 11px; }
+.cred-status .cred-label { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.cred-status .cred-label svg { width: 14px; height: 14px; }
+.class-block .field input { background: var(--panel); }
+.class-hint { margin: 0; font-size: 10.5px; color: var(--muted); line-height: 1.5; }
+.dialog-result { display: grid; gap: 6px; padding: 10px 11px; border-radius: 9px; font-size: 11px; line-height: 1.45; }
+.dialog-result.bad { color: var(--red-ink); background: var(--red-bg); border: 1px solid color-mix(in srgb, var(--red) 24%, var(--line)); }
+.dialog-result.ok { color: var(--green-ink); background: var(--green-bg); border: 1px solid color-mix(in srgb, var(--green) 24%, var(--line)); }
+.demo-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding-top: 2px; }
+.demo-row label { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); }
+
+/* toasts */
+.toasts { position: fixed; right: 20px; bottom: 20px; z-index: 200; display: grid; gap: 8px; max-width: min(380px, calc(100vw - 40px)); }
+.toast { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: var(--shadow); font-size: 11.5px; color: var(--ink-2); animation: toast-in .18s ease; }
+.toast svg { width: 15px; height: 15px; flex: 0 0 auto; color: var(--green); margin-top: 1px; }
+.toast.bad svg { color: var(--red); }
+.toast.info svg { color: var(--info); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+/* responsive */
+@media (max-width: 1749px) {
+  .disc-details { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1599px) {
+  .editor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .col-ranges { grid-column: 1 / -1; }
+  .col-ranges .range-list { grid-template-columns: repeat(auto-fit, minmax(280px, 420px)); }
+}
+@media (max-width: 1250px) {
+  .editor-grid { gap: 18px; }
+  .form-grid.wide { grid-template-columns: repeat(2, minmax(0, 220px)); }
+}
+@media (max-width: 1099px) {
+  .disc-workspace { grid-template-columns: minmax(0, 1fr); }
+  .site-rail { display: flex; align-items: center; gap: 2px; overflow-x: auto; padding: 7px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .rail-head { flex: 0 0 auto; padding: 0 8px; }
+  .site-row { flex: 0 0 auto; min-width: 190px; }
+  .disc-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .editor-grid { grid-template-columns: minmax(0, 1fr); }
+  .col-ranges { grid-column: auto; }
+}
+@media (max-width: 999px) {
+  .page-head { gap: 14px; }
+  .discovery-health { flex-basis: 100%; }
+  .machine-table-head { display: none; }
+  .machine-row { grid-template-columns: 24px minmax(0, 1fr) auto; gap: 5px 10px; padding: 11px 13px; align-items: start; }
+  .machine-identity { grid-column: 2; grid-row: 1; }
+  .machine-location { grid-column: 2 / -1; grid-row: 2; display: flex; align-items: baseline; gap: 3px 8px; flex-wrap: wrap; }
+  .machine-location strong { font-size: 10.5px; color: var(--muted); }
+  .machine-location small { font-size: 10px; }
+  .machine-location small:last-child { margin-left: auto; }
+  .machine-reach { grid-column: 2 / -1; grid-row: 3; }
+  .machine-reach .reach-pair { gap: 10px; }
+  .machine-state { grid-column: 3; grid-row: 1; justify-items: end; }
+  .machine-action { display: none; }
+  .machine-row.manual .machine-action { display: flex; grid-column: 2 / -1; grid-row: 4; justify-content: flex-start; }
+  .machine-row:not(.disabled) .reach-reason.muted { display: none; }
+  .selection-bar { position: static; width: auto; margin: 10px 14px 12px; }
+  .selection-bar.floating { position: static; }
+  .ops-rail { max-height: none; }
+}
+@media (max-width: 900px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .sidebar { display: none; }
+  .topbar { padding: 0 16px; }
+  .page { padding: 18px 16px 42px; }
+  .page-head h2 { font-size: 25px; }
+  .page-switch { display: none; }
+  .mobile-page { display: block; }
+  .editor-grid { grid-template-columns: minmax(0, 1fr); }
+  .disc-details { grid-template-columns: minmax(0, 1fr); }
+  .class-access-body { grid-template-columns: minmax(0, 1fr); }
+  .editor-head { position: sticky; top: 68px; z-index: 5; background: var(--panel); }
+}
+@media (max-width: 760px) {
+  .env-chip, .avatar, .topbar .seg { display: none; }
+  .mobile-theme { display: grid; }
+  .topbar { height: 60px; }
+  .topbar h1 { font-size: 15px; }
+  .discovery-health { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .health-item:nth-child(2) { border-right: 0; }
+  .health-item:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  .form-grid, .form-grid.wide { grid-template-columns: minmax(0, 1fr); }
+  .join-toolbar { align-items: stretch; }
+  .toolbar-field { width: 100%; }
+  .method-seg { width: 100%; overflow-x: auto; }
+  .method-seg button { flex: 1 0 auto; justify-content: center; }
+  .toolbar-context { margin-left: 0; width: 100%; justify-content: space-between; }
+  .machine-row { grid-template-columns: 22px minmax(0, 1fr); }
+  .machine-state { grid-column: 2; grid-row: auto; justify-items: start; }
+  .machine-action { grid-column: 2; }
+  .selection-bar { align-items: stretch; flex-direction: column; }
+  .selection-bar > div { justify-content: space-between; }
+  .selection-bar .btn { width: 100%; }
+  .modal-backdrop { padding: 10px; align-items: end; }
+  .modal { max-height: 92vh; border-radius: 16px 16px 12px 12px; }
+  .modal-foot { align-items: stretch; flex-direction: column; }
+  .modal-foot > div { justify-content: flex-end; }
+  .editor-head { top: 60px; }
+  .editor-head-actions { width: 100%; justify-content: flex-start; }
+  .editor-note { display: none; }
+  .disc-details { grid-template-columns: minmax(0, 1fr); }
+  .detail-section { border-left: 0; border-top: 1px solid var(--line); }
+  .detail-section:first-child { border-top: 0; }
+  .toasts { right: 12px; bottom: 12px; }
+}
+@media (max-width: 620px) {
+  .page-head h2 { font-size: 23px; }
+  .page-head p { font-size: 12.5px; }
+  .search { min-width: 0; width: 100%; max-width: none; }
+  .join-panel-head { align-items: stretch; }
+  .panel-tools { width: 100%; }
+  .panel-tools .check-label { margin-left: auto; }
+  .range-row { width: 100%; grid-template-columns: minmax(0, 1fr) 34px; }
+  .interval-row { max-width: 100%; }
+  .interval-row input { flex: 1; width: auto; }
+  .health-item { padding: 9px 11px; }
+  .health-item small { white-space: normal; }
+}
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+  <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a16 16 0 0 1 0 18M12 3a16 16 0 0 0 0 18"/></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m21 15-5-5L5 21"/></symbol>
+  <symbol id="i-fingerprint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10a2 2 0 0 0-2 2c0 2.5-.5 4.5-1.5 6"/><path d="M12 6a6 6 0 0 0-6 6c0 2.2-.5 4.2-1.4 6"/><path d="M12 2a10 10 0 0 0-8.5 15"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M14 20c.8-1.7 1.2-3.7 1.2-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></symbol>
+  <symbol id="i-radar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19.07 4.93A10 10 0 1 0 12 22"/><path d="M15.54 8.46A5 5 0 1 0 12 17"/><path d="M12 12l7-7"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
+  <symbol id="i-braces" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1"/><path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+  <symbol id="i-network" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="6" rx="1"/><rect x="3" y="15" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M12 9v6M6 15v-3h12v3"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-route" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h5a4 4 0 0 0 0-8H9a4 4 0 0 1 0-8h7"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m11 12 8-8M16 3l5 5M14 5l4 4"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+</svg>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <img class="light" src="/rlark-logo-zh-light.png" alt="RLark">
+      <img class="dark" src="/rlark-logo-zh-dark.svg" alt="RLark">
+      <span class="tag">ADMIN</span>
+    </div>
+    <div class="nav">
+      <div class="nav-label">管理后台</div>
+      <button class="nav-item" data-static><svg class="icon"><use href="#i-grid"/></svg><span>管理工作台</span></button>
+      <button class="nav-item" data-static><svg class="icon"><use href="#i-layers"/></svg><span>集群管理</span></button>
+      <button class="nav-item" data-static><svg class="icon"><use href="#i-list"/></svg><span>任务管理</span><span class="count">18</span></button>
+      <button class="nav-item" data-static><svg class="icon"><use href="#i-globe"/></svg><span>网络域</span></button>
+      <button class="nav-item" data-static><svg class="icon"><use href="#i-db"/></svg><span>存储管理</span></button>
+      <button class="nav-item" data-static><svg class="icon"><use href="#i-image"/></svg><span>镜像管理</span></button>
+    </div>
+    <div class="nav">
+      <div class="nav-label">场站节点</div>
+      <button class="nav-item" data-static><svg class="icon"><use href="#i-fingerprint"/></svg><span>场站节点</span></button>
+      <button class="nav-item" data-page="join"><svg class="icon"><use href="#i-plus"/></svg><span>加入节点</span></button>
+      <button class="nav-item active" data-page="discovery"><svg class="icon"><use href="#i-radar"/></svg><span>扫描设置</span></button>
+    </div>
+    <div class="nav">
+      <button class="nav-item" data-static><svg class="icon"><use href="#i-terminal"/></svg><span>SSH 公钥</span></button>
+      <button class="nav-item" data-static><svg class="icon"><use href="#i-settings"/></svg><span>系统配置</span></button>
+    </div>
+    <div class="sidebar-bottom">
+      <div class="env-card">
+        <span class="env-icon"><svg class="icon"><use href="#i-server"/></svg></span>
+        <div><small>环境</small><strong>Mock 环境</strong></div>
+        <span class="live"></span>
+      </div>
+      <button class="side-link" data-static><svg class="icon sm"><use href="#i-shield"/></svg><span>管理员会话</span></button>
+      <button class="side-link" data-static><svg class="icon sm"><use href="#i-arrow"/></svg><span>收起侧栏</span></button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div>
+        <div class="crumb">场站节点 / <span id="crumb">扫描设置</span></div>
+        <h1 id="top-title">场站节点</h1>
+      </div>
+      <div class="topbar-actions">
+        <div class="page-switch" role="group" aria-label="原型页面">
+          <button class="active" data-page="discovery"><svg class="icon"><use href="#i-radar"/></svg>扫描设置</button>
+          <button data-page="join"><svg class="icon"><use href="#i-plus"/></svg>加入节点</button>
+        </div>
+        <select class="mobile-page" id="mobile-page" aria-label="切换页面">
+          <option value="discovery">扫描设置</option>
+          <option value="join">加入节点</option>
+        </select>
+        <span class="env-chip"><i class="dot ok"></i>Mock 环境</span>
+        <div class="seg" role="group" aria-label="主题">
+          <button data-theme-btn="light" class="active"><svg class="icon"><use href="#i-sun"/></svg>浅色</button>
+          <button data-theme-btn="dark"><svg class="icon"><use href="#i-moon"/></svg>深色</button>
+        </div>
+        <button class="icon-btn mobile-theme" id="mobile-theme" title="切换主题"><svg class="icon"><use href="#i-moon"/></svg></button>
+        <div class="avatar">AD</div>
+      </div>
+    </header>
+
+    <!-- ================= DISCOVERY ================= -->
+    <section class="page active" id="page-discovery">
+      <header class="page-head">
+        <div class="page-head-copy">
+          <h2>站点扫描设置</h2>
+          <p>查看全局网络状态，并逐个站点调整扫描范围与频率。修改会保留在各站点草稿里，保存后约 30 秒生效。</p>
+        </div>
+        <div class="discovery-health" aria-label="站点网络健康">
+          <div class="health-item" title="Ready · True · AllHubsHealthy">
+            <i class="dot ok"></i><span><small>网络就绪</small><strong>就绪</strong></span>
+          </div>
+          <div class="health-item" title="FullyConnected · True · AllPairsReachable">
+            <i class="dot ok"></i><span><small>全部互通</small><strong>全部可达</strong></span>
+          </div>
+          <div class="health-item" title="DiscoveryStale · False · HubsReport">
+            <i class="dot ok"></i><span><small>扫描新鲜度</small><strong>正常</strong></span>
+          </div>
+          <div class="health-item warn" id="gen-health" title="Generation · 30 / 31">
+            <i class="dot warn"></i><span><small>配置版本</small><strong id="gen-value">30 / 31</strong></span>
+          </div>
+        </div>
+        <div class="head-actions">
+          <button class="btn" data-page="join"><svg class="icon"><use href="#i-arrow"/></svg>返回入网</button>
+          <button class="btn" id="disc-refresh"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button>
+        </div>
+      </header>
+
+      <div class="inline-status" id="gen-banner"><svg class="icon"><use href="#i-alert"/></svg><span>网络仍在检查或配置尚未收敛（30 / 31）。保存后约 30 秒生效。</span></div>
+
+      <div class="disc-workspace">
+        <nav class="site-rail" id="disc-sites" role="tablist" aria-label="站点">
+          <div class="rail-head"><span>站点</span><span class="rail-count">3</span></div>
+          <button class="site-row active" role="tab" aria-selected="true" data-site="office">
+            <i class="dot ok"></i><span><strong>office</strong><small>2 Hub · 1 集群</small></span><span class="site-state">扫描中</span>
+          </button>
+          <button class="site-row" role="tab" aria-selected="false" data-site="lab">
+            <i class="dot ok"></i><span><strong>lab</strong><small>1 Hub · 1 集群</small></span><span class="site-state">扫描中</span>
+          </button>
+          <button class="site-row" role="tab" aria-selected="false" data-site="ksyun">
+            <i class="dot"></i><span><strong>ksyun</strong><small>2 Hub · 1 集群</small></span><span class="site-state">已关闭</span>
+          </button>
+        </nav>
+
+        <main class="disc-editor" id="disc-editor" role="tabpanel">
+          <header class="editor-head">
+            <div>
+              <h3><span id="disc-site">office</span><span class="pill ok" id="disc-status"><i class="dot ok"></i>正在扫描</span></h3>
+              <p><span id="disc-cluster">rlark-local-dev-gpu</span> · <span id="disc-hub-count">2 个 Hub</span></p>
+            </div>
+            <div class="editor-head-actions">
+              <span class="editor-note">保存后约 30 秒生效</span>
+              <span class="unsaved clean" id="disc-dirty">有未保存的更改</span>
+              <button class="btn sm" id="disc-cancel" disabled>取消</button>
+              <button class="btn primary sm" id="disc-save" disabled>保存设置</button>
+            </div>
+          </header>
+          <div class="editor-grid">
+            <section class="form-col col-scan">
+              <div class="toggle-card">
+                <label class="switch"><input type="checkbox" id="disc-enabled" checked><span class="track"></span></label>
+                <span class="toggle-copy"><strong>启用此站点扫描</strong><small id="disc-enabled-note">已开启，2 个 Hub 正在扫描</small></span>
+              </div>
+              <label class="field">扫描间隔
+                <span class="interval-row"><input id="disc-interval" type="number" min="10" max="3600" value="30"><span class="suffix">秒</span></span>
+                <small>10–3600 秒；Hub 按这个间隔上报发现的机器。</small>
+              </label>
+            </section>
+            <section class="form-col col-dial">
+              <label class="field">管理面拨号 Hub
+                <select id="disc-from"></select>
+                <small>station-controller 从这里拨号连接 Hub 中继；它不是负责扫描的 Hub。</small>
+              </label>
+              <div class="readonly-box"><small>当前拨号源</small><span id="disc-source">rlark-local-dev-gpu/cailiang · office · 10.254.240.1</span></div>
+            </section>
+            <section class="form-col col-ranges">
+              <div class="field-head"><strong>额外扫描网段</strong><small>Hub 直连私网会自动扫描，这里填写额外网段。</small></div>
+              <div class="range-list" id="disc-ranges"></div>
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <button class="btn sm" id="disc-add-range"><svg class="icon sm"><use href="#i-plus"/></svg>添加网段</button>
+                <span class="muted" style="font-size:10.5px">1–8 条 · /22 到 /32</span>
+              </div>
+              <p class="field-error" id="disc-range-error"></p>
+              <div class="nonrobot-note">扫描只覆盖声明了发现规则的入口设备（当前为 S1U 入口）。普通 x86/GPU 服务器请用 SSH 入网或入网码。</div>
+            </section>
+          </div>
+        </main>
+
+        <aside class="disc-details">
+          <section class="detail-section">
+            <h4><svg class="icon"><use href="#i-layers"/></svg>站点信息</h4>
+            <div class="chip-list" id="disc-cluster-chips"></div>
+            <div class="detail-list" style="margin-top:10px" id="disc-hubs"></div>
+          </section>
+          <section class="detail-section">
+            <h4><svg class="icon"><use href="#i-radar"/></svg>可发现类型</h4>
+            <div class="nodeclass-row">
+              <strong>S1U</strong>
+              <small>入口端口 22 · 访问已开启 · 发现已开启</small>
+            </div>
+            <div class="nonrobot-note">普通 x86/GPU 没有声明 discovery，不会出现在扫描列表。它们应使用 SSH 入网或入网码。</div>
+          </section>
+          <details class="detail-section">
+            <summary><span><svg class="icon"><use href="#i-fingerprint"/></svg> 工厂主机密钥（1）</span><svg class="icon sm"><use href="#i-chevron"/></svg></summary>
+            <code class="fingerprint">SHA256:xy6veDNQR/O7Dmft/4QouEn5/By6mE0O7tu3KN0/3To</code>
+          </details>
+        </aside>
+      </div>
+
+      <details class="rules-disclosure">
+        <summary><span>扫描范围与限制</span><span class="muted">5 条 · 所有站点共用</span></summary>
+        <ul class="rules">
+          <li>只发现 NodeClass.spec.discovery.hostKeyFingerprints 匹配的入口设备，不是所有 PC，也不是公司设备清单。</li>
+          <li>Hub 直连的私网也会扫描；大于 /22 的网段只扫描 Hub 所在的 /22。</li>
+          <li>多个站点网段重叠时可能出现重复 Machine。</li>
+          <li>设置约 30 秒生效；已有 Machine 不会自动删除。</li>
+          <li>没有已入网 Hub 的站点不会扫描。</li>
+        </ul>
+      </details>
+
+      <section class="bottom-grid">
+        <article class="bottom-card events-card">
+          <header class="bottom-card-head">
+            <div><h3>最近扫描事件</h3><p>扫描、Hub 与设置的最新变化</p></div>
+            <button class="btn sm" id="events-all">查看全部</button>
+          </header>
+          <ul class="event-list" id="scan-events">
+            <li><time>16:29:58</time><span class="event-mark ok"></span><span>office 本轮发现 5 台机器</span></li>
+            <li><time>16:29:40</time><span class="event-mark ok"></span><span>lab 本轮发现 2 台机器</span></li>
+            <li><time>16:20:11</time><span class="event-mark"></span><span>ksyun 扫描已关闭</span></li>
+            <li><time>15:58:02</time><span class="event-mark ok"></span><span>office Hub wendychen 重新上线</span></li>
+            <li><time>15:41:08</time><span class="event-mark info"></span><span>机型 S1U 工厂密钥校验通过</span></li>
+          </ul>
+        </article>
+
+        <article class="bottom-card load-card">
+          <header class="bottom-card-head"><div><h3>站点发现负载</h3><p>各站点本轮发现的机器</p></div></header>
+          <div class="load-list" id="scan-load"></div>
+          <div class="load-foot" id="scan-load-foot">2 个站点在扫描 · 最近发现 16:29:58</div>
+        </article>
+
+        <article class="bottom-card robot-card">
+          <header class="bottom-card-head">
+            <div><h3>Astribot 机器人</h3><p>在用、电源、相机与站点在线</p></div>
+            <span class="pill ok"><i class="dot ok"></i>实时</span>
+          </header>
+          <div class="robot-hero"><strong>1</strong><span>台在用</span><span class="pill purple"><i class="dot purple"></i>1 个 Run</span></div>
+          <dl class="robot-facts">
+            <div><dt>当前 Run</dt><dd class="mono">20261123_151954_rollout_s1u_02</dd></div>
+            <div><dt>电源</dt><dd><i class="dot ok"></i>2 正常 <i class="dot bad"></i>1 故障 <i class="dot"></i>1 未知</dd></div>
+            <div><dt>相机</dt><dd><i class="dot ok"></i>8/8 正常</dd></div>
+            <div><dt>站点在线</dt><dd>office 2/2 · lab 1/1 · ksyun 2/2</dd></div>
+          </dl>
+          <button class="btn sm" id="robot-status">查看机器人状态</button>
+        </article>
+      </section>
+    </section>
+
+    <!-- ================= JOIN ================= -->
+    <section class="page" id="page-join">
+      <header class="page-head">
+        <div class="page-head-copy">
+          <h2>加入节点</h2>
+          <p>把站点扫到的机器加入集群：勾选机器，确认 SSH 口令后交给 RLark 自动入网；新机器也可以用 SSH 或一次性入网码。</p>
+        </div>
+        <div class="head-actions"><button class="btn" data-static><svg class="icon"><use href="#i-arrow"/></svg>返回场站节点</button></div>
+      </header>
+
+      <div class="join-toolbar">
+        <label class="toolbar-field">目标集群
+          <select id="join-cluster">
+            <option value="rlark-local-dev-gpu">rlark-local-dev-gpu（office）</option>
+            <option value="rlark-robot-s1u-01">rlark-robot-s1u-01（lab）</option>
+            <option value="rlark-ksyun-gpu">rlark-ksyun-gpu（ksyun）</option>
+          </select>
+        </label>
+        <div class="method-seg" id="join-methods" role="tablist" aria-label="加入方式">
+          <button role="tab" aria-selected="true" data-method="machines"><svg class="icon"><use href="#i-list"/></svg>未加入的机器</button>
+          <button role="tab" aria-selected="false" data-method="ssh"><svg class="icon"><use href="#i-terminal"/></svg>SSH 入网</button>
+          <button role="tab" aria-selected="false" data-method="code"><svg class="icon"><use href="#i-key"/></svg>入网码</button>
+        </div>
+        <div class="toolbar-context">
+          <span class="site-hint"><i class="dot ok"></i><span id="join-site-hint">站点 office · 每 30 秒扫描</span></span>
+          <button class="btn sm" data-page="discovery"><svg class="icon sm"><use href="#i-radar"/></svg>扫描设置</button>
+        </div>
+      </div>
+
+      <div class="join-layout">
+        <main class="join-main">
+          <section class="join-panel" id="panel-machines">
+            <header class="join-panel-head">
+              <div>
+                <h3>未加入的机器 <span class="count-pill" id="machine-count">7 台</span></h3>
+                <p>扫描发现 <strong id="scanned-total">5</strong> 台 S1U 入口；手动添加 <strong id="manual-total">2</strong> 台普通电脑/GPU。普通电脑/GPU 不需要先被扫描发现，可直接用 SSH 或手动添加。</p>
+              </div>
+              <div class="panel-tools">
+                <button class="btn sm" id="add-manual"><svg class="icon sm"><use href="#i-plus"/></svg>添加普通电脑/GPU</button>
+                <label class="search"><svg class="icon"><use href="#i-search"/></svg><input id="machine-search" placeholder="搜索序列号、MAC、地址"></label>
+                <label class="check-label"><input class="check" type="checkbox" id="select-all">全选扫描机器</label>
+                <button class="icon-btn" id="refresh-machines" title="刷新"><svg class="icon"><use href="#i-refresh"/></svg></button>
+              </div>
+            </header>
+
+            <details class="class-access" id="class-access">
+              <summary>
+                <span class="summary-title"><svg class="icon"><use href="#i-key"/></svg>扫描机器型凭据</span>
+                <span class="summary-meta" id="class-access-summary">S1U · Orin 已配置 · x86 已配置</span>
+                <span class="summary-state"><span class="pill ok" id="class-access-pill"><i class="dot ok"></i>可加入</span><svg class="icon sm"><use href="#i-chevron"/></svg></span>
+              </summary>
+              <div class="class-access-body">
+                <div class="cred-row"><strong>Orin 入口口令</strong><small>来自 Secret s1u-access / password · 只显示是否已录入</small><span class="pill ok" style="justify-self:start"><i class="dot ok"></i>已配置</span></div>
+                <div class="cred-row"><strong>x86 登录口令</strong><small>来自 Secret s1u-access / x86_password · 由 cailiang 录入</small><span class="pill ok" style="justify-self:start"><i class="dot ok"></i>已配置</span></div>
+                <p class="class-access-note">手动添加的普通电脑/GPU 不使用机型凭据；它们用 SSH 表单里的账号和口令。</p>
+              </div>
+            </details>
+
+            <div class="machine-filter" id="machine-filter" role="group" aria-label="机器来源">
+              <button data-filter="all" class="active">全部 <span>7</span></button>
+              <button data-filter="scanned">扫描发现 <span>5</span></button>
+              <button data-filter="manual">手动添加 <span>2</span></button>
+            </div>
+
+            <div class="machine-table-head" aria-hidden="true">
+              <span></span><span>机器</span><span>位置</span><span>可达性</span><span>状态</span><span style="text-align:right">操作</span>
+            </div>
+            <div id="machine-list"></div>
+            <div class="machine-empty hidden" id="machine-empty"><strong>这个站点没有未加入的机器</strong>新机器接入后会在下一次扫描时出现；普通电脑/GPU 可以用 SSH 手动添加；场地第一台也可以用入网码。</div>
+            <div class="no-selectable hidden" id="no-selectable">
+              <div><strong>当前没有可勾选的机器</strong><small>先看机器行里的具体原因；检查网络或机型口令后刷新，也可以改用其他方式。</small></div>
+              <div class="no-selectable-actions"><button class="btn sm" data-method-jump="ssh">改用 SSH 入网</button><button class="btn sm" data-method-jump="code">生成入网码</button></div>
+            </div>
+            <footer class="selection-bar" id="selection-bar">
+              <div><strong id="selected-count">已选 0 台</strong><button class="link-btn" id="clear-selection">清空</button></div>
+              <button class="btn primary" id="join-selected" disabled>加入所选机器</button>
+            </footer>
+          </section>
+
+          <section class="join-panel hidden" id="panel-ssh">
+            <header class="join-panel-head method-panel-head">
+              <div><h3>SSH 入网 <span class="pill">独立方式</span></h3><p>提供地址和 SSH 凭据，由 RLark 远程完成入网。支持 S1U 机器人、普通电脑和 GPU 服务器。</p></div>
+            </header>
+            <div class="method-panel-body method-layout">
+              <form class="method-form" id="ssh-form">
+                <div class="method-fields">
+                  <label class="field">IP 地址<input id="ssh-address" placeholder="10.11.107.154"></label>
+                  <label class="field">账号<input id="ssh-user" placeholder="astribot"></label>
+                  <label class="field">密码<input id="ssh-password" type="password" placeholder="只用于这次入网"></label>
+                  <label class="field">机器类型<select id="ssh-kind"><option>普通电脑</option><option>GPU 服务器</option><option>S1U 机器人</option></select></label>
+                  <label class="field">节点名（可选）<input id="ssh-name" placeholder="不填取主机名"></label>
+                  <label class="field">SSH 端口<input id="ssh-port" value="22"></label>
+                </div>
+                <details class="join-advanced"><summary>高级：隧道公网端点</summary>
+                  <div class="method-fields" style="margin-top:10px">
+                    <label class="field">隧道公网端点（UDP）<input placeholder="不填为 IP:51820"></label>
+                  </div>
+                </details>
+                <div class="method-actions"><button type="submit" class="btn primary">一键入网</button></div>
+              </form>
+              <aside class="method-side">
+                <section class="method-side-card">
+                  <h4>入网流程</h4>
+                  <ol class="method-steps">
+                    <li><b>1</b><span>登录并预检 x86</span></li>
+                    <li><b>2</b><span>安装组件、建立隧道</span></li>
+                    <li><b>3</b><span>节点 Ready 并登记到 RLark</span></li>
+                  </ol>
+                </section>
+                <section class="method-side-card">
+                  <h4>说明</h4>
+                  <span class="method-note"><svg class="icon"><use href="#i-key"/></svg>密码只用于这次 SSH 入网，不保存。</span>
+                  <span class="method-note"><svg class="icon"><use href="#i-shield"/></svg>首次连接会记录主机指纹。</span>
+                  <span class="method-note"><svg class="icon"><use href="#i-clock"/></svg>分步入网；离开页面后服务端继续。</span>
+                  <span class="method-note"><svg class="icon"><use href="#i-plus"/></svg>提交后机器出现在列表的“手动添加”里。</span>
+                </section>
+              </aside>
+            </div>
+            <section class="method-records">
+              <header class="method-records-head"><h4>最近 SSH 入网</h4><span>3 条记录 · 服务端继续</span></header>
+              <div class="record-table">
+                <div class="record-row record-head"><span>机器</span><span>地址</span><span>阶段</span><span>时间</span></div>
+                <div class="record-row"><span>s1u-03</span><span class="mono">10.11.13.27</span><span><span class="pill ok">已入网</span></span><span>昨天 15:51</span></div>
+                <div class="record-row"><span>10.11.14.72</span><span class="mono">10.11.14.72</span><span><span class="pill bad">停在 precheck</span></span><span>16:02</span></div>
+                <div class="record-row"><span>10.11.14.50</span><span class="mono">10.11.14.50</span><span><span class="pill purple">进行中</span></span><span>刚刚</span></div>
+              </div>
+            </section>
+          </section>
+
+          <section class="join-panel hidden" id="panel-code">
+            <header class="join-panel-head method-panel-head">
+              <div><h3>入网码 <span class="pill">独立方式</span></h3><p>生成一次性入网码，在机器上执行一行命令；适合不能由 RLark 直接登录的机器。</p></div>
+            </header>
+            <div class="method-panel-body method-layout">
+              <form class="method-form" id="code-form">
+                <div class="method-fields is-code">
+                  <label class="field">节点名<input id="code-name" value="s1u-09-x86"></label>
+                  <label class="field">机器类型<select id="code-kind"><option>S1U 机器人</option><option>其他机器</option></select></label>
+                  <label class="field">场站<input id="code-site" value="office"></label>
+                  <label class="field">有效期<select id="code-ttl"><option>2 小时</option><option>24 小时</option><option>7 天</option></select></label>
+                </div>
+                <div class="method-actions"><button type="submit" class="btn primary">发入网码</button></div>
+                <div class="issued-card hidden" id="issued-card">
+                  <h4>入网码只显示这一次</h4>
+                  <p>在机器上以有 sudo 权限的用户执行；用过一次即失效。</p>
+                  <div class="code-box"><code id="issued-code">RLK-7Q2M-9X4B</code><button type="button" class="btn sm" id="copy-code"><svg class="icon sm"><use href="#i-copy"/></svg>复制</button></div>
+                  <div class="code-box"><code style="font-size:10.5px">curl -fsSL https://station.example/b/RLK-7Q2M-9X4B | sudo sh</code><button type="button" class="btn sm" id="copy-command"><svg class="icon sm"><use href="#i-copy"/></svg>复制</button></div>
+                </div>
+              </form>
+              <aside class="method-side">
+                <section class="method-side-card">
+                  <h4>入网流程</h4>
+                  <ol class="method-steps">
+                    <li><b>1</b><span>生成一次性入网码</span></li>
+                    <li><b>2</b><span>在机器上执行一行命令</span></li>
+                    <li><b>3</b><span>节点 Ready 并登记到 RLark</span></li>
+                  </ol>
+                </section>
+                <section class="method-side-card">
+                  <h4>说明</h4>
+                  <span class="method-note"><svg class="icon"><use href="#i-key"/></svg>RLark 只保存入网码的哈希。</span>
+                  <span class="method-note"><svg class="icon"><use href="#i-refresh"/></svg>同名节点再发码会替换原来的入网记录。</span>
+                  <span class="method-note"><svg class="icon"><use href="#i-clock"/></svg>等待使用不代表已入网；执行命令后才开始。</span>
+                </section>
+              </aside>
+            </div>
+            <section class="method-records">
+              <header class="method-records-head"><h4>最近入网码</h4><span>3 条记录</span></header>
+              <div class="record-table">
+                <div class="record-row record-head"><span>节点名</span><span>状态</span><span>有效期</span><span>操作</span></div>
+                <div class="record-row"><span>s1u-05</span><span><span class="pill ok">已加入</span></span><span>昨天 15:51</span><span><button class="link-btn" data-record-action>查看</button></span></div>
+                <div class="record-row"><span>s1u-09</span><span><span class="pill">待使用</span></span><span>2 小时内</span><span><button class="link-btn" data-record-action>作废</button></span></div>
+                <div class="record-row"><span>s1u-02</span><span><span class="pill bad">已过期</span></span><span>11 月 22 日</span><span><button class="link-btn" data-record-action>重发</button></span></div>
+              </div>
+            </section>
+          </section>
+        </main>
+
+        <aside class="ops-rail">
+          <header class="ops-head">
+            <div><h3>入网操作</h3><p>操作在服务端继续，离开页面不会中断。</p></div>
+            <button class="icon-btn" id="refresh-ops" title="刷新操作"><svg class="icon"><use href="#i-refresh"/></svg></button>
+          </header>
+          <div class="ops-chips" id="ops-chips">
+            <span class="pill purple"><i class="dot purple"></i>进行中 1</span>
+            <span class="pill"><i class="dot"></i>失败 0</span>
+            <span class="pill"><i class="dot"></i>待使用 0</span>
+          </div>
+          <div class="ops-list" id="ops-list">
+            <article class="op-card" data-op="s1u-07">
+              <div class="op-title"><strong title="s1u-07">s1u-07</strong><span class="pill purple"><i class="dot purple"></i>进行中</span></div>
+              <div class="op-meta"><span class="tag-chip">批量</span><span>Preflight · 登录 x86 预检</span></div>
+              <div class="op-progress"><span>3/8</span><div class="progress"><i style="width:37%"></i></div></div>
+              <div class="op-actions"><small>提交于 2 分钟前</small><button class="link-btn" data-op-stages>阶段</button></div>
+            </article>
+          </div>
+          <details class="ops-history">
+            <summary><span>已加入 2</span><svg class="icon sm"><use href="#i-chevron"/></svg></summary>
+            <div class="ops-list">
+              <article class="op-card">
+                <div class="op-title"><strong>s1u-05</strong><span class="pill ok"><i class="dot ok"></i>已加入</span></div>
+                <div class="op-meta"><span class="tag-chip">入网码</span><span>节点 Ready · 昨天 15:51</span></div>
+              </article>
+              <article class="op-card">
+                <div class="op-title"><strong>s1u-03</strong><span class="pill ok"><i class="dot ok"></i>已加入</span></div>
+                <div class="op-meta"><span class="tag-chip">SSH</span><span>节点 Ready · 11 月 22 日</span></div>
+              </article>
+            </div>
+          </details>
+        </aside>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ================= JOIN PASSWORD DIALOG ================= -->
+<div class="modal-backdrop" id="join-dialog" hidden>
+  <section class="modal" role="dialog" aria-modal="true" aria-labelledby="join-dialog-title" aria-describedby="join-dialog-desc">
+    <header class="modal-head">
+      <div>
+        <span class="eyebrow"><svg class="icon sm"><use href="#i-key"/></svg>确认入网</span>
+        <h2 id="join-dialog-title">加入 <span id="dialog-count">0</span> 台机器</h2>
+        <p id="join-dialog-desc">目标集群 <strong id="dialog-cluster">rlark-local-dev-gpu</strong> · 口令按机型分组填写。</p>
+      </div>
+      <button class="icon-btn" id="dialog-close" aria-label="关闭"><svg class="icon"><use href="#i-x"/></svg></button>
+    </header>
+    <div class="modal-body">
+      <div class="selected-machines" id="dialog-machines"></div>
+      <section class="class-block" id="dialog-class">
+        <div class="class-block-head"><strong>S1U</strong><span id="dialog-class-count">0 台</span></div>
+        <div class="cred-status"><span class="cred-label"><svg class="icon"><use href="#i-shield"/></svg>Orin 入口口令</span><span class="pill ok"><i class="dot ok"></i>已配置</span></div>
+        <div class="cred-status"><span class="cred-label"><svg class="icon"><use href="#i-key"/></svg>x86 登录口令</span><span class="pill ok" id="dialog-node-state"><i class="dot ok"></i>已配置</span></div>
+        <label class="field" id="dialog-password-field">x86 登录口令
+          <input id="dialog-password" type="password" autocomplete="new-password" placeholder="已保存；留空继续使用">
+          <small id="dialog-password-hint">留空使用已保存的机型凭据；填写会覆盖并保存。</small>
+        </label>
+        <label class="field">sudo 口令（可选）
+          <input id="dialog-sudo" type="password" autocomplete="new-password" placeholder="与登录口令相同则留空">
+        </label>
+        <p class="class-hint">口令保存为该机型的凭据；RLark 只显示是否已录入，不显示内容。下次同机型可留空。</p>
+      </section>
+      <div class="notice info"><svg class="icon"><use href="#i-key"/></svg><span>RLark 会用这份口令登录选中的机器并完成入网。普通 x86/GPU 请改用 SSH 入网。</span></div>
+      <div class="dialog-result hidden" id="dialog-result"></div>
+      <div class="demo-row">
+        <label><input class="check" type="checkbox" id="demo-unconfigured">演示：机型口令未配置</label>
+        <label><input class="check" type="checkbox" id="demo-fail">演示：提交后 1 台失败</label>
+      </div>
+    </div>
+    <footer class="modal-foot">
+      <span class="muted">密码不会出现在 URL 或日志中</span>
+      <div><button class="btn" id="dialog-cancel">取消</button><button class="btn primary" id="dialog-confirm">确认加入</button></div>
+    </footer>
+  </section>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* ================= page / theme ================= */
+const pageMeta = {
+  discovery: { title: "站点扫描设置", crumb: "扫描设置" },
+  join: { title: "加入节点", crumb: "加入节点" },
+};
+function showPage(name) {
+  if (!document.getElementById(`page-${name}`)) return;
+  document.querySelectorAll(".page").forEach((el) => el.classList.toggle("active", el.id === `page-${name}`));
+  document.querySelectorAll(".nav-item[data-page]").forEach((el) => el.classList.toggle("active", el.dataset.page === name));
+  document.querySelectorAll(".page-switch button").forEach((el) => el.classList.toggle("active", el.dataset.page === name));
+  const meta = pageMeta[name] || pageMeta.discovery;
+  document.getElementById("crumb").textContent = meta.crumb;
+  const mobilePage = document.getElementById("mobile-page");
+  if (mobilePage) mobilePage.value = name;
+  if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+document.querySelectorAll("[data-page]").forEach((el) => el.addEventListener("click", (event) => {
+  if (el.tagName !== "SELECT") showPage(el.dataset.page);
+}));
+document.querySelectorAll("[data-static]").forEach((el) => el.addEventListener("click", () => toast("原型未包含此页面", "info")));
+document.getElementById("mobile-page").addEventListener("change", (event) => showPage(event.target.value));
+document.querySelectorAll("[data-theme-btn]").forEach((el) => el.addEventListener("click", () => setTheme(el.dataset.themeBtn)));
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.querySelectorAll("[data-theme-btn]").forEach((el) => el.classList.toggle("active", el.dataset.themeBtn === theme));
+  const mobile = document.querySelector("#mobile-theme use");
+  if (mobile) mobile.setAttribute("href", theme === "dark" ? "#i-sun" : "#i-moon");
+  try { localStorage.setItem("rlark-pages-theme", theme); } catch {}
+}
+try { const saved = localStorage.getItem("rlark-pages-theme"); if (saved) setTheme(saved); } catch {}
+document.getElementById("mobile-theme").addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+
+function toast(text, tone = "ok") {
+  const wrap = document.getElementById("toasts");
+  const el = document.createElement("div");
+  el.className = `toast ${tone}`;
+  const icon = tone === "bad" ? "i-alert" : tone === "info" ? "i-shield" : "i-check";
+  el.innerHTML = `<svg class="icon"><use href="#${icon}"/></svg><span>${text}</span>`;
+  wrap.appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transform = "translateY(4px)"; el.style.transition = "all .2s"; setTimeout(() => el.remove(), 220); }, 3000);
+}
+
+/* ================= discovery ================= */
+const hubs = [
+  { value: "rlark-local-dev-gpu/cailiang", site: "office", label: "rlark-local-dev-gpu/cailiang · office · 10.254.240.1" },
+  { value: "rlark-local-dev-gpu/wendychen", site: "office", label: "rlark-local-dev-gpu/wendychen · office · 10.254.240.6" },
+  { value: "rlark-robot-s1u-01/alexfu", site: "lab", label: "rlark-robot-s1u-01/alexfu · lab · 10.254.240.5" },
+  { value: "rlark-ksyun-gpu/ksyun-01", site: "ksyun", label: "rlark-ksyun-gpu/ksyun-01 · ksyun · 10.254.240.21" },
+  { value: "rlark-ksyun-gpu/ksyun-02", site: "ksyun", label: "rlark-ksyun-gpu/ksyun-02 · ksyun · 10.254.240.22" },
+];
+const sites = {
+  office: { cluster: "rlark-local-dev-gpu", hubs: ["cailiang", "wendychen"], enabled: true, interval: 30, ranges: ["10.11.14.0/24"], from: "rlark-local-dev-gpu/cailiang", dirty: false, discovered: 5, lastScan: "16:29:58" },
+  lab: { cluster: "rlark-robot-s1u-01", hubs: ["alexfu"], enabled: true, interval: 30, ranges: ["192.168.31.0/24", "10.11.12.0/22"], from: "rlark-local-dev-gpu/cailiang", dirty: false, discovered: 2, lastScan: "16:29:40" },
+  ksyun: { cluster: "rlark-ksyun-gpu", hubs: ["ksyun-01", "ksyun-02"], enabled: false, interval: 30, ranges: [], from: "", dirty: false, discovered: 0, lastScan: "—" },
+};
+let discSite = "office";
+const siteHub = (site) => hubs.filter((hub) => hub.site === site);
+
+function renderSiteRail() {
+  document.querySelectorAll("#disc-sites .site-row").forEach((el) => {
+    const data = sites[el.dataset.site];
+    const active = el.dataset.site === discSite;
+    el.classList.toggle("active", active);
+    el.setAttribute("aria-selected", String(active));
+    const state = el.querySelector(".site-state");
+    const dot = el.querySelector(".dot");
+    dot.className = `dot ${data.enabled ? (data.hubs.length ? "ok" : "warn") : ""}`;
+    state.textContent = data.enabled ? (data.hubs.length ? "扫描中" : "无 Hub") : "已关闭";
+  });
+}
+
+function renderRanges() {
+  const data = sites[discSite];
+  const wrap = document.getElementById("disc-ranges");
+  wrap.innerHTML = data.ranges.length
+    ? data.ranges.map((range, index) => `<div class="range-row"><input data-range="${index}" value="${range}" placeholder="192.168.31.0/24" aria-label="网段 ${index + 1}"><button class="icon-btn" data-remove-range="${index}" title="删除网段"><svg class="icon sm"><use href="#i-x"/></svg></button></div>`).join("")
+    : `<div class="muted" style="font-size:11px">未配置额外网段；Hub 直连私网仍会自动扫描。</div>`;
+}
+
+function renderFrom() {
+  const data = sites[discSite];
+  const select = document.getElementById("disc-from");
+  select.innerHTML = `<option value="">选择网络中的 Hub</option>` + hubs.map((hub) => `<option value="${hub.value}">${hub.label}</option>`).join("");
+  select.value = data.from;
+  const selected = hubs.find((hub) => hub.value === data.from);
+  document.getElementById("disc-source").textContent = selected ? selected.label : "尚未选择";
+}
+
+function renderStatus() {
+  const data = sites[discSite];
+  const status = document.getElementById("disc-status");
+  if (!data.enabled) { status.className = "pill"; status.innerHTML = '<i class="dot"></i>已关闭'; }
+  else if (data.hubs.length) { status.className = "pill ok"; status.innerHTML = '<i class="dot ok"></i>正在扫描'; }
+  else { status.className = "pill warn"; status.innerHTML = '<i class="dot warn"></i>已开启，无 Hub 不会扫描'; }
+  document.getElementById("disc-enabled-note").textContent = data.enabled
+    ? data.hubs.length ? `已开启，${data.hubs.length} 个 Hub 正在扫描` : "已开启，但没有已入网 Hub，不会扫描"
+    : "已关闭；保留网段配置，已有 Machine 不会被删除";
+  document.getElementById("disc-hub-count").textContent = `${data.hubs.length} 个 Hub`;
+  document.getElementById("disc-dirty").classList.toggle("clean", !data.dirty);
+  document.getElementById("disc-save").disabled = !data.dirty;
+  document.getElementById("disc-cancel").disabled = !data.dirty;
+  renderBottom();
+}
+
+function siteState(data) {
+  if (!data.enabled) return { label: "已关闭", pill: "", dot: "" };
+  if (!data.hubs.length) return { label: "无 Hub", pill: "warn", dot: "warn" };
+  return { label: "扫描中", pill: "ok", dot: "ok" };
+}
+
+function renderBottom() {
+  const names = Object.keys(sites);
+  const max = Math.max(1, ...names.map((name) => sites[name].discovered));
+  const scanning = names.filter((name) => sites[name].enabled && sites[name].hubs.length).length;
+  document.getElementById("scan-load").innerHTML = names.map((name) => {
+    const data = sites[name];
+    const state = siteState(data);
+    return `<div class="load-row" data-load-site="${name}" role="button" tabindex="0">
+      <div class="load-row-head"><span><i class="dot ${state.dot}"></i>${name} <small>${data.cluster}</small></span><span>${data.discovered} 台 <small>· ${data.hubs.length} Hub</small></span></div>
+      <div class="load-bar"><i style="width:${Math.round(data.discovered / max * 100)}%"></i></div>
+    </div>`;
+  }).join("");
+  document.getElementById("scan-load-foot").textContent = `${scanning} 个站点在扫描 · 最近发现 ${sites.office.lastScan}`;
+}
+
+function addScanEvent(text, tone = "ok") {
+  const list = document.getElementById("scan-events");
+  const now = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  const item = document.createElement("li");
+  item.innerHTML = `<time>${now}</time><span class="event-mark ${tone}"></span><span>${text}</span>`;
+  list.prepend(item);
+  while (list.children.length > 6) list.lastElementChild.remove();
+}
+
+function renderDetails() {
+  const data = sites[discSite];
+  document.getElementById("disc-cluster").textContent = data.cluster;
+  document.getElementById("disc-cluster-chips").innerHTML = `<span class="chip">${data.cluster}</span>`;
+  const list = siteHub(discSite);
+  document.getElementById("disc-hubs").innerHTML = list.length
+    ? list.map((hub) => `<div class="detail-item"><strong>${hub.value.split("/")[1]}</strong><small>${hub.value.split("/")[0]} · ${hub.label.split(" · ").pop()}</small></div>`).join("")
+    : `<div class="detail-item muted" style="font-size:11px">无 Hub，不会扫描</div>`;
+}
+
+function renderDiscovery(site) {
+  discSite = site;
+  const data = sites[site];
+  document.getElementById("disc-site").textContent = site;
+  document.getElementById("disc-enabled").checked = data.enabled;
+  document.getElementById("disc-interval").value = data.interval;
+  renderSiteRail(); renderRanges(); renderFrom(); renderDetails(); renderStatus();
+  document.getElementById("disc-range-error").textContent = "";
+}
+
+document.querySelectorAll("#disc-sites .site-row").forEach((el) => {
+  el.addEventListener("click", () => { renderDiscovery(el.dataset.site); });
+  el.addEventListener("keydown", (event) => {
+    const rows = [...document.querySelectorAll("#disc-sites .site-row")];
+    const index = rows.indexOf(el);
+    const next = event.key === "ArrowRight" ? (index + 1) % rows.length : event.key === "ArrowLeft" ? (index + rows.length - 1) % rows.length : -1;
+    if (next >= 0) { event.preventDefault(); rows[next].focus(); rows[next].click(); }
+  });
+});
+document.getElementById("disc-enabled").addEventListener("change", (event) => { sites[discSite].enabled = event.target.checked; sites[discSite].dirty = true; renderStatus(); });
+document.getElementById("disc-interval").addEventListener("input", (event) => { sites[discSite].interval = Number(event.target.value); sites[discSite].dirty = true; renderStatus(); });
+document.getElementById("disc-from").addEventListener("change", (event) => { sites[discSite].from = event.target.value; sites[discSite].dirty = true; renderFrom(); renderStatus(); });
+document.getElementById("disc-add-range").addEventListener("click", () => { sites[discSite].ranges.push(""); sites[discSite].dirty = true; renderRanges(); renderStatus(); const inputs = document.querySelectorAll("#disc-ranges input"); inputs[inputs.length - 1]?.focus(); });
+document.getElementById("disc-ranges").addEventListener("input", (event) => { const input = event.target.closest("[data-range]"); if (!input) return; sites[discSite].ranges[Number(input.dataset.range)] = input.value; sites[discSite].dirty = true; renderStatus(); });
+document.getElementById("disc-ranges").addEventListener("click", (event) => { const remove = event.target.closest("[data-remove-range]"); if (!remove) return; sites[discSite].ranges.splice(Number(remove.dataset.removeRange), 1); sites[discSite].dirty = true; renderRanges(); renderStatus(); });
+document.getElementById("disc-cancel").addEventListener("click", () => { sites[discSite].dirty = false; renderDiscovery(discSite); toast("已放弃未保存的修改", "info"); });
+document.getElementById("disc-save").addEventListener("click", () => {
+  const data = sites[discSite];
+  const error = document.getElementById("disc-range-error");
+  const interval = Number(document.getElementById("disc-interval").value);
+  if (!Number.isInteger(interval) || interval < 10 || interval > 3600) { error.textContent = "扫描间隔必须在 10 到 3600 秒之间。"; return; }
+  const ranges = data.ranges.map((range) => range.trim()).filter(Boolean);
+  if (!ranges.length) { error.textContent = "至少填写一条额外网段；Hub 直连私网仍会自动扫描。"; return; }
+  for (const range of ranges) { if (!/^(\d{1,3}\.){3}\d{1,3}\/(2[2-9]|3[0-2])$/.test(range)) { error.textContent = `${range} 不是有效的 IPv4 /22 或更小网段。`; return; } }
+  error.textContent = "";
+  data.ranges = ranges; data.dirty = false; data.interval = interval;
+  document.getElementById("gen-value").textContent = "31 / 31";
+  document.getElementById("gen-health").className = "health-item";
+  document.getElementById("gen-health").querySelector(".dot").className = "dot ok";
+  document.getElementById("gen-banner").classList.add("hidden");
+  renderStatus();
+  addScanEvent(`${discSite} 扫描设置已保存`, "ok");
+  toast(`站点 ${discSite} 的扫描设置已保存，约 30 秒后生效`, "ok");
+});
+document.getElementById("disc-refresh").addEventListener("click", () => toast("已刷新站点网络（原型）", "info"));
+document.getElementById("scan-load").addEventListener("click", (event) => {
+  const row = event.target.closest("[data-load-site]");
+  if (!row) return;
+  renderDiscovery(row.dataset.loadSite);
+  document.getElementById("disc-editor").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+document.getElementById("scan-load").addEventListener("keydown", (event) => {
+  const row = event.target.closest("[data-load-site]");
+  if (!row || (event.key !== "Enter" && event.key !== " ")) return;
+  event.preventDefault();
+  row.click();
+});
+document.getElementById("events-all").addEventListener("click", () => toast("原型：事件列表未连接后端", "info"));
+document.getElementById("robot-status").addEventListener("click", () => toast("原型：机器人状态页未包含", "info"));
+document.querySelectorAll("[data-record-action]").forEach((el) => el.addEventListener("click", () => toast("原型：记录操作未连接后端", "info")));
+
+/* ================= join ================= */
+const clusterInfo = {
+  "rlark-local-dev-gpu": { site: "office", hubs: 2, interval: 30, name: "rlark-local-dev-gpu" },
+  "rlark-robot-s1u-01": { site: "lab", hubs: 1, interval: 30, name: "rlark-robot-s1u-01" },
+  "rlark-ksyun-gpu": { site: "ksyun", hubs: 2, interval: 30, name: "rlark-ksyun-gpu" },
+};
+const machineData = {
+  "rlark-local-dev-gpu": [
+    { id: "m1", serial: "1423225026100", mac: "3c:6d:66:b1:0c:a4", address: "10.11.13.20", orin: "ok", x86: "bad", reason: "x86 不通：先检查机器人电源与网络，或改用 SSH 入网", seen: "16:28:31", selectable: false, state: "不可选" },
+    { id: "m2", serial: "1423225026101", mac: "3c:6d:66:b1:0c:a5", address: "10.11.13.21", orin: "ok", x86: "ok", seen: "16:29:02", selectable: true, state: "可选择", node: "s1u-07" },
+    { id: "m3", serial: "1423225026102", mac: "3c:6d:66:b1:0c:a6", address: "10.11.13.22", orin: "ok", x86: "ok", seen: "16:29:18", selectable: true, state: "可选择" },
+    { id: "m4", serial: "1423225026103", mac: "3c:6d:66:b1:0c:a7", address: "10.11.13.23", orin: "ok", x86: "ok", seen: "16:29:45", selectable: true, state: "可选择" },
+    { id: "m5", serial: "1423225026104", mac: "3c:6d:66:b1:0c:a8", address: "10.11.13.24", orin: "ok", x86: "checking", reason: "等 RLark 登录读取完", seen: "16:30:02", selectable: false, state: "检查中" },
+  ],
+  "rlark-robot-s1u-01": [
+    { id: "l1", serial: "1423225026100", mac: "3c:6d:66:b1:0c:a4", address: "10.11.13.20", orin: "ok", x86: "bad", reason: "x86 不通：先检查机器人电源与网络，或改用 SSH 入网", seen: "16:28:29", selectable: false, state: "不可选" },
+    { id: "l2", serial: "1423225026107", mac: "3c:6d:66:b1:0c:ab", address: "10.11.13.27", orin: "ok", x86: "ok", seen: "16:29:40", selectable: true, state: "可选择" },
+  ],
+  "rlark-ksyun-gpu": [],
+};
+const manualData = {
+  "rlark-local-dev-gpu": [
+    { id: "p1", address: "10.11.14.50", user: "astribot", kind: "GPU 服务器", state: "待 SSH 加入" },
+    { id: "p2", address: "10.11.14.61", user: "astribot", kind: "普通电脑", state: "待 SSH 加入" },
+  ],
+  "rlark-robot-s1u-01": [
+    { id: "p3", address: "10.11.14.72", user: "astribot", kind: "GPU 服务器", state: "待 SSH 加入" },
+  ],
+  "rlark-ksyun-gpu": [],
+};
+let selected = new Set();
+let method = "machines";
+let machineFilter = "all";
+let dialogMachines = [];
+let ops = [
+  { name: "s1u-07", source: "批量", step: "Preflight · 登录 x86 预检", done: 3, total: 8, status: "running" },
+];
+
+function currentCluster() { return document.getElementById("join-cluster").value; }
+function scannedMachines() { return machineData[currentCluster()] || []; }
+function manualMachines() { return manualData[currentCluster()] || []; }
+function currentInfo() { return clusterInfo[currentCluster()] || { site: "office", hubs: 0, interval: 30 }; }
+function allMachines() {
+  return [
+    ...scannedMachines().map((machine) => ({ ...machine, source: "scanned" })),
+    ...manualMachines().map((machine) => ({ ...machine, source: "manual", manual: true })),
+  ];
+}
+
+function machineRow(m) {
+  const checked = selected.has(m.id);
+  if (m.source === "manual") {
+    return `<article class="machine-row manual" data-machine="${m.id}">
+      <span class="machine-check muted">—</span>
+      <div class="machine-identity"><strong>${m.address}</strong><small>${m.kind}<span class="source-tag">手动</span></small></div>
+      <div class="machine-location"><strong>${currentInfo().site}</strong><small>${m.user}@${m.address}</small><small>手动添加</small></div>
+      <div class="machine-reach"><span class="reach muted"><i class="dot"></i>${m.state === "SSH 进行中" ? "SSH 连接中" : "SSH 待连接"}</span></div>
+      <div class="machine-state"><span class="pill ${m.state === "SSH 进行中" ? "purple" : ""}"><i class="dot ${m.state === "SSH 进行中" ? "purple" : ""}"></i>${m.state}</span></div>
+      <div class="machine-action"><button class="link-btn" data-ssh-manual="${m.id}">${m.state === "SSH 进行中" ? "查看进度" : "SSH 加入"}</button></div>
+    </article>`;
+  }
+  const statePill = m.state === "可选择" ? "ok" : m.state === "检查中" ? "warn" : "bad";
+  return `<article class="machine-row${m.selectable ? "" : " disabled"}${checked ? " selected" : ""}" data-machine="${m.id}">
+    <label class="machine-check"><input class="check" type="checkbox" data-select="${m.id}" ${m.selectable ? "" : "disabled"} ${checked ? "checked" : ""} aria-label="${m.serial}"></label>
+    <div class="machine-identity"><strong>${m.serial}</strong><small>s1u · <span class="mono">${m.mac}</span><span class="source-tag">扫描</span></small></div>
+    <div class="machine-location"><strong>${currentInfo().site}</strong><small class="mono">${m.address}</small><small>最近发现 ${m.seen}</small></div>
+    <div class="machine-reach">
+      <div class="reach-pair"><span class="reach ${m.orin === "ok" ? "" : "bad"}"><i class="dot ${m.orin === "ok" ? "ok" : "bad"}"></i>Orin ${m.orin === "ok" ? "通" : "不通"}</span><span class="reach ${m.x86 === "ok" ? "" : m.x86 === "checking" ? "muted" : "bad"}"><i class="dot ${m.x86 === "ok" ? "ok" : m.x86 === "checking" ? "" : "bad"}"></i>x86 ${m.x86 === "ok" ? "通" : m.x86 === "checking" ? "检查中" : "不通"}</span></div>
+      ${m.reason ? `<p class="reach-reason">${m.reason}</p>` : `<p class="reach-reason muted">已读取主机密钥，可以加入</p>`}
+    </div>
+    <div class="machine-state"><span class="pill ${statePill}"><i class="dot ${statePill === "ok" ? "ok" : statePill === "warn" ? "warn" : "bad"}"></i>${m.state}</span>${m.node ? `<small>${m.node}</small>` : ""}</div>
+    <div class="machine-action">${m.selectable ? `<button class="link-btn" data-pick="${m.id}">${checked ? "已选择" : "选择"}</button>` : `<span class="muted" style="font-size:10px">—</span>`}</div>
+  </article>`;
+}
+
+function renderMachines() {
+  const all = allMachines();
+  const info = currentInfo();
+  const query = document.getElementById("machine-search").value.trim().toLowerCase();
+  const matches = all.filter((m) => [m.serial, m.mac, m.address, m.node, m.kind, m.user].some((value) => (value || "").toLowerCase().includes(query)));
+  const visible = matches.filter((m) => machineFilter === "all" || m.source === machineFilter);
+  const selectable = visible.filter((m) => m.source === "scanned" && m.selectable);
+  const scanned = all.filter((m) => m.source === "scanned").length;
+  const manual = all.filter((m) => m.source === "manual").length;
+  document.getElementById("machine-count").textContent = `${matches.length} 台`;
+  document.getElementById("scanned-total").textContent = String(scanned);
+  document.getElementById("manual-total").textContent = String(manual);
+  document.querySelectorAll("#machine-filter button").forEach((el) => {
+    el.classList.toggle("active", el.dataset.filter === machineFilter);
+    const count = el.dataset.filter === "all" ? all.length : el.dataset.filter === "scanned" ? scanned : manual;
+    el.querySelector("span").textContent = String(count);
+  });
+  document.getElementById("machine-list").innerHTML = visible.map(machineRow).join("");
+  document.getElementById("machine-empty").classList.toggle("hidden", visible.length > 0);
+  const none = visible.length > 0 && selectable.length === 0;
+  document.getElementById("no-selectable").classList.toggle("hidden", !none);
+  document.getElementById("selection-bar").classList.toggle("hidden", selectable.length === 0);
+  document.getElementById("selection-bar").classList.toggle("floating", selected.size > 0);
+  document.getElementById("selected-count").textContent = `已选 ${selected.size} 台`;
+  document.getElementById("join-selected").disabled = selected.size === 0;
+  const selectAll = document.getElementById("select-all");
+  selectAll.checked = selectable.length > 0 && selectable.every((m) => selected.has(m.id));
+  selectAll.disabled = selectable.length === 0;
+  document.getElementById("join-site-hint").textContent = `站点 ${info.site} · 每 ${info.interval} 秒扫描`;
+}
+
+function setMethod(next) {
+  method = next;
+  document.querySelectorAll("#join-methods button").forEach((el) => el.setAttribute("aria-selected", String(el.dataset.method === next)));
+  document.getElementById("panel-machines").classList.toggle("hidden", next !== "machines");
+  document.getElementById("panel-ssh").classList.toggle("hidden", next !== "ssh");
+  document.getElementById("panel-code").classList.toggle("hidden", next !== "code");
+}
+document.querySelectorAll("#join-methods button").forEach((el) => {
+  el.addEventListener("click", () => setMethod(el.dataset.method));
+  el.addEventListener("keydown", (event) => {
+    const tabs = [...document.querySelectorAll("#join-methods button")];
+    const index = tabs.indexOf(el);
+    const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : -1;
+    if (next >= 0) { event.preventDefault(); tabs[next].focus(); tabs[next].click(); }
+  });
+});
+document.querySelectorAll("[data-method-jump]").forEach((el) => el.addEventListener("click", () => setMethod(el.dataset.methodJump)));
+
+document.getElementById("join-cluster").addEventListener("change", () => { selected.clear(); renderMachines(); });
+document.getElementById("machine-search").addEventListener("input", renderMachines);
+document.querySelectorAll("#machine-filter button").forEach((el) => el.addEventListener("click", () => { machineFilter = el.dataset.filter; renderMachines(); }));
+document.getElementById("add-manual").addEventListener("click", () => {
+  setMethod("ssh");
+  document.getElementById("ssh-address").value = "";
+  document.getElementById("ssh-user").value = "astribot";
+  document.getElementById("ssh-password").value = "";
+  document.getElementById("ssh-kind").value = "普通电脑";
+  document.getElementById("ssh-address").focus();
+});
+document.getElementById("select-all").addEventListener("change", (event) => {
+  const query = document.getElementById("machine-search").value.trim().toLowerCase();
+  const visible = scannedMachines().filter((m) => [m.serial, m.mac, m.address, m.node].some((value) => (value || "").toLowerCase().includes(query)));
+  if (event.target.checked) visible.filter((m) => m.selectable).forEach((m) => selected.add(m.id));
+  else visible.forEach((m) => selected.delete(m.id));
+  renderMachines();
+});
+document.getElementById("clear-selection").addEventListener("click", () => { selected.clear(); renderMachines(); });
+document.getElementById("machine-list").addEventListener("change", (event) => {
+  const input = event.target.closest("[data-select]");
+  if (!input) return;
+  if (input.checked) selected.add(input.dataset.select); else selected.delete(input.dataset.select);
+  renderMachines();
+});
+document.getElementById("machine-list").addEventListener("click", (event) => {
+  const pick = event.target.closest("[data-pick]");
+  if (pick) {
+    if (selected.has(pick.dataset.pick)) selected.delete(pick.dataset.pick); else selected.add(pick.dataset.pick);
+    renderMachines();
+    return;
+  }
+  const manual = event.target.closest("[data-ssh-manual]");
+  if (manual) {
+    const machine = manualMachines().find((m) => m.id === manual.dataset.sshManual);
+    if (!machine) return;
+    setMethod("ssh");
+    document.getElementById("ssh-address").value = machine.address;
+    document.getElementById("ssh-user").value = machine.user;
+    document.getElementById("ssh-kind").value = machine.kind;
+    document.getElementById("ssh-password").value = "";
+    document.getElementById("ssh-password").focus();
+  }
+});
+document.getElementById("refresh-machines").addEventListener("click", () => { renderMachines(); toast("机器列表已刷新（原型）", "info"); });
+
+/* dialog */
+const dialog = document.getElementById("join-dialog");
+function selectedMachines() { return scannedMachines().filter((m) => selected.has(m.id)); }
+function openDialog() {
+  dialogMachines = selectedMachines();
+  if (!dialogMachines.length) return;
+  document.getElementById("dialog-count").textContent = String(dialogMachines.length);
+  document.getElementById("dialog-class-count").textContent = `${dialogMachines.length} 台`;
+  document.getElementById("dialog-cluster").textContent = currentCluster();
+  document.getElementById("dialog-machines").innerHTML = dialogMachines.map((m) => `<span class="selected-machine">${m.serial} · ${m.address}</span>`).join("");
+  document.getElementById("dialog-password").value = "";
+  document.getElementById("dialog-sudo").value = "";
+  document.getElementById("dialog-result").className = "dialog-result hidden";
+  document.getElementById("demo-unconfigured").checked = false;
+  document.getElementById("demo-fail").checked = false;
+  applyDemoState();
+  dialog.hidden = false;
+  setTimeout(() => document.getElementById("dialog-password").focus(), 40);
+}
+function closeDialog() { dialog.hidden = true; }
+function applyDemoState() {
+  const unconfigured = document.getElementById("demo-unconfigured").checked;
+  const state = document.getElementById("dialog-node-state");
+  state.className = unconfigured ? "pill bad" : "pill ok";
+  state.innerHTML = unconfigured ? '<i class="dot bad"></i>未配置' : '<i class="dot ok"></i>已配置';
+  const input = document.getElementById("dialog-password");
+  input.placeholder = unconfigured ? "必填：该机型还没有 x86 口令" : "已保存；留空继续使用";
+  document.getElementById("dialog-password-hint").textContent = unconfigured
+    ? "该机型还没有 x86 登录口令，填写后才能加入。"
+    : "留空使用已保存的机型凭据；填写会覆盖并保存。";
+  document.getElementById("dialog-password-field").classList.remove("error");
+}
+document.getElementById("join-selected").addEventListener("click", openDialog);
+document.getElementById("dialog-close").addEventListener("click", closeDialog);
+document.getElementById("dialog-cancel").addEventListener("click", closeDialog);
+document.getElementById("demo-unconfigured").addEventListener("change", applyDemoState);
+document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !dialog.hidden) closeDialog(); });
+
+document.getElementById("dialog-confirm").addEventListener("click", () => {
+  const password = document.getElementById("dialog-password").value;
+  const unconfigured = document.getElementById("demo-unconfigured").checked;
+  if (unconfigured && !password.trim()) {
+    document.getElementById("dialog-password-field").classList.add("error");
+    document.getElementById("dialog-password-hint").textContent = "请填写该机型的 x86 登录口令。";
+    document.getElementById("dialog-password").focus();
+    return;
+  }
+  const result = document.getElementById("dialog-result");
+  result.className = "dialog-result ok";
+  result.textContent = "正在保存口令并提交入网…";
+  const button = document.getElementById("dialog-confirm");
+  button.disabled = true; button.textContent = "提交中…";
+  setTimeout(() => {
+    button.disabled = false; button.textContent = "确认加入";
+    if (document.getElementById("demo-fail").checked) {
+      result.className = "dialog-result bad";
+      result.innerHTML = `<strong>1 台已提交，1 台失败</strong><span>${dialogMachines[0].serial}：x86 口令不符；其余机器已进入入网操作。</span>`;
+      addOperation(dialogMachines[0].serial, "failed", "x86 口令不符");
+      toast("部分机器提交失败，已保留原因", "bad");
+      return;
+    }
+    result.className = "dialog-result ok";
+    result.innerHTML = `<strong>已提交 ${dialogMachines.length} 台机器</strong><span>入网在服务端继续，进度在右侧「入网操作」里。</span>`;
+    dialogMachines.forEach((m) => addOperation(m.serial, "running", "Preflight · 登录 x86 预检"));
+    toast(`${dialogMachines.length} 台机器已提交加入`, "ok");
+    selected.clear(); renderMachines();
+    setTimeout(closeDialog, 650);
+  }, 850);
+});
+
+/* ops */
+function renderOps() {
+  const list = document.getElementById("ops-list");
+  const running = ops.filter((op) => op.status === "running").length;
+  const failed = ops.filter((op) => op.status === "failed").length;
+  document.getElementById("ops-chips").innerHTML = `<span class="pill purple"><i class="dot purple"></i>进行中 ${running}</span><span class="pill ${failed ? "bad" : ""}"><i class="dot ${failed ? "bad" : ""}"></i>失败 ${failed}</span><span class="pill"><i class="dot"></i>待使用 0</span>`;
+  list.innerHTML = ops.length ? ops.map((op) => `<article class="op-card ${op.status}">
+    <div class="op-title"><strong title="${op.name}">${op.name}</strong><span class="pill ${op.status === "failed" ? "bad" : op.status === "running" ? "purple" : "ok"}"><i class="dot ${op.status === "failed" ? "bad" : op.status === "running" ? "purple" : "ok"}"></i>${op.status === "failed" ? "失败" : op.status === "running" ? "进行中" : "已加入"}</span></div>
+    <div class="op-meta"><span class="tag-chip">${op.source}</span><span>${op.step}</span></div>
+    <div class="op-progress"><span>${op.done}/${op.total}</span><div class="progress"><i style="width:${Math.round(op.done / op.total * 100)}%"></i></div></div>
+    ${op.reason ? `<p class="op-reason">${op.reason}</p>` : ""}
+    <div class="op-actions"><small>提交于刚刚</small><button class="link-btn" data-op-stages>阶段</button></div>
+  </article>`).join("") : `<div class="ops-empty">暂无入网操作</div>`;
+}
+function addOperation(name, status = "running", reason = "", source = "批量") {
+  const op = { name, source, step: status === "running" ? (source === "SSH" ? "precheck · 登录并检查环境" : "Preflight · 登录 x86 预检") : "入网停住", done: status === "failed" ? 2 : 1, total: 8, status, reason };
+  ops.unshift(op); renderOps();
+  if (status === "running") {
+    setTimeout(() => { op.done = 4; op.step = "Install · 下发安装器"; renderOps(); }, 1600);
+    setTimeout(() => { op.done = 8; op.status = "success"; op.step = "节点 Ready"; op.reason = ""; renderOps(); toast(`${name} 已加入`, "ok"); }, 3600);
+  }
+}
+document.getElementById("refresh-ops").addEventListener("click", () => toast("入网操作已刷新（原型）", "info"));
+document.getElementById("ops-list").addEventListener("click", (event) => { if (event.target.closest("[data-op-stages]")) toast("原型：阶段详情未展开", "info"); });
+
+/* ssh + code */
+document.getElementById("ssh-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const password = document.getElementById("ssh-password");
+  if (!password.value.trim()) { toast("请填写 SSH 密码", "bad"); password.focus(); return; }
+  const address = document.getElementById("ssh-address").value.trim() || "10.11.13.20";
+  const kind = document.getElementById("ssh-kind").value;
+  const user = document.getElementById("ssh-user").value.trim() || "astribot";
+  const manual = manualData[currentCluster()] || (manualData[currentCluster()] = []);
+  const existing = manual.find((m) => m.address === address);
+  if (existing) {
+    existing.state = "SSH 进行中"; existing.kind = kind; existing.user = user;
+  } else {
+    manual.unshift({ id: `manual-${Date.now()}`, address, user, kind, state: "SSH 进行中" });
+  }
+  addOperation(`SSH · ${address}`, "running", "precheck · 登录并检查环境", "SSH");
+  const cluster = currentCluster();
+  setTimeout(() => {
+    manualData[cluster] = (manualData[cluster] || []).filter((m) => m.address !== address);
+    if (currentCluster() === cluster) renderMachines();
+  }, 3800);
+  password.value = "";
+  setMethod("machines");
+  machineFilter = "all";
+  renderMachines();
+  toast("SSH 入网已提交，机器已加入“手动添加”列表", "ok");
+});
+document.getElementById("code-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  document.getElementById("issued-card").classList.remove("hidden");
+  toast("入网码已生成，只显示这一次", "ok");
+});
+document.getElementById("copy-code").addEventListener("click", () => copyText(document.getElementById("issued-code").textContent, "入网码已复制"));
+document.getElementById("copy-command").addEventListener("click", () => copyText("curl -fsSL https://station.example/b/RLK-7Q2M-9X4B | sudo sh", "命令已复制"));
+function copyText(value, message) {
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(value).then(() => toast(message, "ok"), () => toast("复制失败，请手动选择文本", "bad"));
+  else toast("复制失败，请手动选择文本", "bad");
+}
+
+/* init */
+renderDiscovery("office");
+renderMachines();
+renderOps();
+const initial = location.hash === "#join" ? "join" : "discovery";
+showPage(initial);
+</script>
+</body>
+</html>

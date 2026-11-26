@@ -15,6 +15,36 @@ kind: Namespace
 metadata:
   name: rlark-release-member-credentials
 ---
+# Station controller and Station API read per-site Gateway relay tokens from
+# this management Secrets namespace. Extend resourceNames when adding a site.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-relay-tokens
+  namespace: default
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["station-relay-token-office", "station-relay-token-lab"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-relay-tokens
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-relay-tokens
+subjects:
+- kind: ServiceAccount
+  name: station-controller
+  namespace: station-system
+- kind: ServiceAccount
+  name: station-api
+  namespace: station-system
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -94,7 +124,7 @@ rules:
   verbs: ["get"]
 - apiGroups: ["station.rlark.io"]
   resources: ["machines"]
-  verbs: ["get", "create"]
+  verbs: ["get", "list", "create", "update"]
 - apiGroups: ["station.rlark.io"]
   resources: ["machines/status"]
   verbs: ["update"]
@@ -147,6 +177,15 @@ rules:
 - apiGroups: ["station.rlark.io"]
   resources: ["sitenetworks", "networkenrollments", "nodeadmissions", "nodeclasses"]
   verbs: ["get", "list", "watch"]
+- apiGroups: ["rlinf.io"]
+  resources: ["nodejoins"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["robotmodels"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["machines"]
+  verbs: ["delete"]
 # A node's record passes to the Node a new admission let in under its name.
 - apiGroups: ["station.rlark.io"]
   resources: ["networkenrollments"]

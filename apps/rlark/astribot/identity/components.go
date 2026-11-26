@@ -126,4 +126,7 @@ var gatewayRules = []rbacv1.PolicyRule{
 	// The namespaces of the member clusters' credentials a new cluster's are written into.
 	{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "create"}},
 	{APIGroups: []string{"station.rlark.io"}, Resources: []string{"networkenrollments", "nodeoperations", "nodeadmissions", "nodeclasses", "machines", "sitenetworks"}, Verbs: rw},
+	// The robot model catalog: the console lists models with their reference counts and deletes unreferenced
+	// ones. Models enter only by applying them to the management API, so no create or update here.
+	{APIGroups: []string{"station.rlark.io"}, Resources: []string{"robotmodels"}, Verbs: []string{"get", "list", "delete"}},
 }

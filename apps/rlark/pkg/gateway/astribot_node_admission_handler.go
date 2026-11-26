@@ -172,10 +172,11 @@ type issueNodeAdmissionRequest struct {
 	// out, where its site declares no leafUplink.
 	Uplink string `json:"uplink,omitempty"`
 	// NodeClass names the NodeClass of the machine; the node follows it.
-	NodeClass  string            `json:"node_class,omitempty"`
-	Taints     []string          `json:"taints,omitempty"`
-	Labels     map[string]string `json:"labels,omitempty"`
-	TTLSeconds int64             `json:"ttl_seconds,omitempty"`
+	NodeClass  string                 `json:"node_class,omitempty"`
+	Taints     []string               `json:"taints,omitempty"`
+	Labels     map[string]string      `json:"labels,omitempty"`
+	Machine    map[string]interface{} `json:"machine,omitempty"`
+	TTLSeconds int64                  `json:"ttl_seconds,omitempty"`
 }
 
 type reissueNodeAdmissionRequest struct {
@@ -592,6 +593,9 @@ func (g *Gateway) admitNode(ctx context.Context, actor, namespace string, reques
 			labels[key] = value
 		}
 		spec["labels"] = labels
+	}
+	if len(request.Machine) > 0 {
+		spec["machine"] = request.Machine
 	}
 	resource := g.stationClient.Resource(nodeAdmissionGVR).Namespace(namespace)
 	existing, err := resource.Get(ctx, request.NodeName, metav1.GetOptions{})

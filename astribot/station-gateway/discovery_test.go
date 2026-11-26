@@ -2,16 +2,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"io"
 	"net"
 	"net/netip"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -69,7 +73,8 @@ func TestScanReportsTheHostsWithAFactoryKeyAndAsksNoHostToAuthenticate(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []discoveredHost{{Address: "127.0.0.1", Port: robotPort, MAC: "48:b0:2d:5c:9a:11", HostKey: robotKey}}; !reflect.DeepEqual(found, want) {
+	if want := []discoveredHost{{Address: "127.0.0.1", Port: robotPort, MAC: "48:b0:2d:5c:9a:11", HostKey: robotKey,
+		HostKeyAlgorithm: ssh.KeyAlgoED25519, Banner: "SSH-2.0-Go"}}; !reflect.DeepEqual(found, want) {
 		t.Fatalf("found %+v", found)
 	}
 	if robotAttempts.Load() != 0 || otherAttempts.Load() != 0 {
@@ -200,5 +205,82 @@ func TestRelayConnectsOnePeerOnlyToTheRangesAndPortsOfTheDocument(t *testing.T) 
 	_ = conn.Close()
 	if answer != "" || dialed.Load() != before {
 		t.Fatalf("another peer: answered %q, %d hosts dialed for it", answer, dialed.Load()-before)
+	}
+}
+
+func TestGatewayRelayRequiresTokenAndRestrictsTargets(t *testing.T) {
+	echo, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		for {
+			conn, err := echo.Accept()
+			if err != nil {
+				return
+			}
+			go func() { _, _ = io.Copy(conn, conn); _ = conn.Close() }()
+		}
+	}()
+	port := echo.Addr().(*net.TCPAddr).Port
+	token := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x5a}, 32))
+	d := &discovery{Ranges: []string{"127.0.0.0/30"}, Ports: []int{22}, SSHPorts: []int{port}, RelayToken: token}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go d.relay(conn, nil)
+		}
+	}()
+
+	connect := func(line string) net.Conn {
+		t.Helper()
+		conn, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.SetDeadline(time.Now().Add(time.Second))
+		if _, err := io.WriteString(conn, line+"\n"); err != nil {
+			t.Fatal(err)
+		}
+		return conn
+	}
+	target := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	conn := connect("gateway " + token + " " + target)
+	ready := make([]byte, 3)
+	if _, err := io.ReadFull(conn, ready); err != nil || string(ready) != "ok\n" {
+		t.Fatalf("successful relay handshake: %q %v", ready, err)
+	}
+	if _, err := io.WriteString(conn, "authorized-data"); err != nil {
+		t.Fatal(err)
+	}
+	answer := make([]byte, len("authorized-data"))
+	if _, err := io.ReadFull(conn, answer); err != nil || string(answer) != "authorized-data" {
+		t.Fatalf("authenticated relay returned %q, %v", answer, err)
+	}
+	_ = conn.Close()
+
+	for _, line := range []string{
+		"gateway " + strings.Repeat("x", len(token)) + " " + target,
+		"gateway " + token + " 127.0.0.5:" + strconv.Itoa(port),
+		"gateway " + token + " 127.0.0.1:21",
+	} {
+		conn := connect(line)
+		if _, err := conn.Write([]byte{1}); err == nil {
+			_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			var b [1]byte
+			if _, err := conn.Read(b[:]); err == nil {
+				t.Errorf("failed gateway relay remained open for %q", strings.Split(line, " ")[0])
+			}
+		}
+		_ = conn.Close()
 	}
 }

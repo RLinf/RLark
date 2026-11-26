@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,10 +35,13 @@ const (
 	// machineLabelsAnnotation lists, on a NodeAdmission, the labels its
 	// machine has values of its own for; the class does not put them back.
 	machineLabelsAnnotation = "station.rlark.io/machine-labels"
+	// MachineNodeJoinLabel is written by the Gateway on a Server NodeJoin.
+	MachineNodeJoinLabel = "station.rlark.io/machine"
 	// A machine is on the network now if it was seen this recently.
 	machinePresent = 5 * time.Minute
 	// A machine that waits to be admitted is looked at again this often.
 	machineInspectEvery = 5 * time.Minute
+	machineCandidateTTL = 7 * 24 * time.Hour
 )
 
 // MachineInspection is what a login says a machine is.
@@ -117,7 +121,13 @@ func (r *MachineReconciler) now() time.Time {
 }
 
 func (r *MachineReconciler) SetupWithManager(mgr manager.Manager) error {
+	if err := registerMachineNodeJoinKinds(mgr.GetScheme()); err != nil {
+		return fmt.Errorf("register NodeJoin observation kind: %w", err)
+	}
 	ofMachine := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []reconcile.Request {
+		if name := object.GetLabels()[MachineNodeJoinLabel]; name != "" {
+			return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: r.Namespace, Name: name}}}
+		}
 		if name := object.GetLabels()[MachineLabel]; name != "" {
 			return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: r.Namespace, Name: name}}}
 		}
@@ -126,16 +136,46 @@ func (r *MachineReconciler) SetupWithManager(mgr manager.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).Named("machine").
 		For(&stationv1alpha1.Machine{}).
 		Watches(&stationv1alpha1.NodeOperation{}, ofMachine).
+		Watches(&machineNodeJoinResource{TypeMeta: metav1.TypeMeta{APIVersion: machineNodeJoinGV, Kind: "NodeJoin"}}, ofMachine).
 		// A class changes when an administrator enters its passwords: its machines are looked at anew.
 		Watches(&stationv1alpha1.NodeClass{}, handler.EnqueueRequestsFromMapFunc(r.ofClass)).
+		Watches(&stationv1alpha1.RobotModel{}, handler.EnqueueRequestsFromMapFunc(r.ofRobotModel)).
 		// A node's removal marks its admission: its machine can be admitted again.
 		Watches(&stationv1alpha1.NodeAdmission{}, handler.EnqueueRequestsFromMapFunc(r.ofAdmission)).
+		Watches(&stationv1alpha1.NetworkEnrollment{}, handler.EnqueueRequestsFromMapFunc(r.ofEnrollment)).
 		WithOptions(controller.Options{MaxConcurrentReconciles: 10}).
 		Complete(r)
 }
 
 func (r *MachineReconciler) ofClass(ctx context.Context, class client.Object) []reconcile.Request {
-	return r.machinesWhere(ctx, func(machine *stationv1alpha1.Machine) bool { return machine.Spec.NodeClass == class.GetName() })
+	return r.machinesWhere(ctx, func(machine *stationv1alpha1.Machine) bool {
+		return machineClassName(machine) == class.GetName()
+	})
+}
+
+func (r *MachineReconciler) ofRobotModel(ctx context.Context, object client.Object) []reconcile.Request {
+	classes := &stationv1alpha1.NodeClassList{}
+	if err := r.Reader.List(ctx, classes); err != nil {
+		return nil
+	}
+	classNames := map[string]struct{}{}
+	for i := range classes.Items {
+		_, model := effectiveNodeClassIdentity(&classes.Items[i])
+		if model == object.GetName() {
+			classNames[classes.Items[i].Name] = struct{}{}
+		}
+	}
+	return r.machinesWhere(ctx, func(machine *stationv1alpha1.Machine) bool {
+		_, referenced := classNames[machineClassName(machine)]
+		return referenced
+	})
+}
+
+func machineClassName(machine *stationv1alpha1.Machine) string {
+	if machine.Spec.Admit != nil && machine.Spec.Admit.NodeClass != "" {
+		return machine.Spec.Admit.NodeClass
+	}
+	return machine.Spec.NodeClass
 }
 
 func (r *MachineReconciler) ofAdmission(ctx context.Context, object client.Object) []reconcile.Request {
@@ -143,6 +183,13 @@ func (r *MachineReconciler) ofAdmission(ctx context.Context, object client.Objec
 	return r.machinesWhere(ctx, func(machine *stationv1alpha1.Machine) bool {
 		return admission.Spec.Serial != "" && machine.Status.Serial == admission.Spec.Serial ||
 			machine.Status.ClusterID == admission.Spec.ClusterID && machine.Status.NodeName == admission.Name
+	})
+}
+
+func (r *MachineReconciler) ofEnrollment(ctx context.Context, object client.Object) []reconcile.Request {
+	enrollment := object.(*stationv1alpha1.NetworkEnrollment)
+	return r.machinesWhere(ctx, func(machine *stationv1alpha1.Machine) bool {
+		return machine.Status.ClusterID == enrollment.Spec.ClusterID && machine.Status.NodeName == enrollment.Name
 	})
 }
 
@@ -167,19 +214,91 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req reconcile.Request
 	} else if err != nil {
 		return reconcile.Result{}, fmt.Errorf("read Machine: %w", err)
 	}
+	if machine.Spec.Source == "Discovery" && machine.Spec.NodeClass == "" && machine.Spec.Admit == nil &&
+		machine.Status.NodeJoin == nil && machine.Status.Operation == "" && machine.Status.NodeName == "" &&
+		(machine.Status.Phase == "" || machine.Status.Phase == stationv1alpha1.MachineDiscovered) {
+		expires := machine.CreationTimestamp.Add(machineCandidateTTL)
+		if machine.Status.Entry.LastSeen != nil {
+			expires = machine.Status.Entry.LastSeen.Add(machineCandidateTTL)
+		}
+		if !machine.CreationTimestamp.IsZero() && !r.now().Before(expires) {
+			return r.collectCandidate(ctx, machine)
+		}
+	}
 	before := machine.DeepCopy()
 	result, err := r.reconcile(ctx, machine)
-	if patchErr := r.Client.Status().Patch(ctx, machine, client.MergeFrom(before)); patchErr != nil {
-		return reconcile.Result{}, fmt.Errorf("write Machine status: %w", patchErr)
+	if !reflect.DeepEqual(before.Status, machine.Status) {
+		if patchErr := r.Client.Status().Patch(ctx, machine, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); patchErr != nil {
+			return reconcile.Result{}, fmt.Errorf("write Machine status: %w", patchErr)
+		}
 	}
 	return result, err
 }
 
+func candidateRequeue(machine *stationv1alpha1.Machine, now time.Time) time.Duration {
+	base := machine.CreationTimestamp.Time
+	if machine.Status.Entry.LastSeen != nil {
+		base = machine.Status.Entry.LastSeen.Time
+	}
+	if base.IsZero() {
+		return machineCandidateTTL
+	}
+	remaining := base.Add(machineCandidateTTL).Sub(now)
+	if remaining < time.Minute {
+		return time.Minute
+	}
+	return remaining
+}
+
 func (r *MachineReconciler) reconcile(ctx context.Context, machine *stationv1alpha1.Machine) (reconcile.Result, error) {
 	status := &machine.Status
+	if err := r.observeMachineIdentity(ctx, machine); err != nil {
+		return reconcile.Result{}, err
+	}
+	if machine.Spec.Admit != nil && machine.Spec.Admit.Type == stationv1alpha1.MachineTypeServer || status.NodeJoin != nil {
+		_, err := r.projectNodeJoin(ctx, machine)
+		return reconcile.Result{RequeueAfter: machineInspectEvery}, err
+	}
+	className := machineClassName(machine)
+	if className == "" {
+		// An unclassified candidate is only a sighting. It must never cause
+		// station-controller to try shared robot credentials against it.
+		if status.Phase == "" {
+			status.Phase = stationv1alpha1.MachineDiscovered
+		}
+		status.Problem, status.Message = "", ""
+		return reconcile.Result{RequeueAfter: machineCandidateTTL}, nil
+	}
 	class := &stationv1alpha1.NodeClass{}
-	if err := r.Reader.Get(ctx, types.NamespacedName{Name: machine.Spec.NodeClass}, class); err != nil && !apierrors.IsNotFound(err) {
-		return reconcile.Result{}, fmt.Errorf("read NodeClass %s: %w", machine.Spec.NodeClass, err)
+	if err := r.Reader.Get(ctx, types.NamespacedName{Name: className}, class); err != nil {
+		if apierrors.IsNotFound(err) {
+			status.Problem, status.Message = stationv1alpha1.MachineClassIncomplete, "NodeClass "+className+" does not exist"
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, fmt.Errorf("read NodeClass %s: %w", className, err)
+	}
+	if err := validateNodeClassModel(ctx, r.Reader, class); err != nil {
+		if errors.Is(err, errRobotModelNotFound) {
+			status.Problem, status.Message = stationv1alpha1.MachineUnknownModel, className+" refers to an unregistered RobotModel"
+			return reconcile.Result{}, nil
+		}
+		return reconcile.Result{}, fmt.Errorf("validate RobotModel for NodeClass %s: %w", className, err)
+	}
+	classKind, _ := effectiveNodeClassIdentity(class)
+	if classKind == string(stationv1alpha1.NodeClassKindServer) {
+		status.Problem, status.Message = stationv1alpha1.MachineClassIncomplete, "Server classes are not joined through Machine admission"
+		return reconcile.Result{}, nil
+	}
+	if machine.Spec.Admit != nil {
+		if machine.Spec.Admit.Type == stationv1alpha1.MachineTypeRobot && classKind != string(stationv1alpha1.NodeClassKindRobot) {
+			status.Problem, status.Message = stationv1alpha1.MachineClassIncomplete, "the selected NodeClass is not a Robot class"
+			return reconcile.Result{}, nil
+		}
+		classModel := effectiveModel(class)
+		if machine.Spec.Admit.Model != "" && classModel != "" && machine.Spec.Admit.Model != classModel {
+			status.Problem, status.Message = stationv1alpha1.MachineUnknownModel, "the selected model does not match the NodeClass model"
+			return reconcile.Result{}, nil
+		}
 	}
 	if class.Spec.Access == nil || class.Spec.Discovery == nil {
 		status.Problem, status.Message = stationv1alpha1.MachineClassIncomplete, "NodeClass "+machine.Spec.NodeClass+" declares no access or no discovery"
@@ -205,7 +324,9 @@ func (r *MachineReconciler) reconcile(ctx context.Context, machine *stationv1alp
 		if err := r.Reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: status.NodeName}, admission); err != nil && !apierrors.IsNotFound(err) {
 			return reconcile.Result{}, fmt.Errorf("read NodeAdmission %s: %w", status.NodeName, err)
 		}
-		ownKey = admission.Annotations[EntryHostKeyAnnotation]
+		if !apierrors.IsNotFound(err) {
+			ownKey = admission.Annotations[EntryHostKeyAnnotation]
+		}
 	}
 	if ownKey != "" && ownKey != status.Entry.HostKeyFingerprint &&
 		(status.Phase == stationv1alpha1.MachineJoined && !slices.Contains(factory, status.Entry.HostKeyFingerprint) || status.Problem == stationv1alpha1.MachineHostKeyChanged) {
@@ -380,6 +501,12 @@ func (r *MachineReconciler) admit(ctx context.Context, machine *stationv1alpha1.
 				own = append(own, key)
 			}
 		}
+		for key, value := range admit.Labels {
+			if _, declared := class.Spec.Labels[key]; !declared {
+				labels[key] = value
+				own = append(own, key)
+			}
+		}
 		for key, value := range class.Spec.Naming.Labels {
 			labels[key] = fmt.Sprintf(value, number)
 			own = append(own, key)
@@ -394,7 +521,8 @@ func (r *MachineReconciler) admit(ctx context.Context, machine *stationv1alpha1.
 		admission := &stationv1alpha1.NodeAdmission{
 			ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: candidate, Annotations: map[string]string{machineLabelsAnnotation: strings.Join(own, ",")}},
 			Spec: stationv1alpha1.NodeAdmissionSpec{ClusterID: admit.ClusterID, Site: machine.Spec.Site, CodeHash: hex.EncodeToString(digest[:]), ExpiresAt: metav1.NewTime(r.now()),
-				Labels: labels, Taints: class.Spec.Taints, NodeClass: class.Name, Serial: status.Serial, IssuedBy: admit.RequestedBy},
+				Labels: labels, Taints: class.Spec.Taints, NodeClass: class.Name, Serial: status.Serial, IssuedBy: admit.RequestedBy,
+				Machine: &stationv1alpha1.NodeMachine{Category: stationv1alpha1.MachineCategoryRobot, Model: effectiveModel(class), Body: admit.Labels["rlark.io/robot-body"]}},
 		}
 		if err := r.Client.Create(ctx, admission); apierrors.IsAlreadyExists(err) {
 			continue

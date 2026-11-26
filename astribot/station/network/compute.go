@@ -5,6 +5,7 @@ package network
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"slices"
@@ -81,12 +82,45 @@ type Discovery struct {
 	// one is reported; no host is asked to authenticate anybody.
 	Ports    []int    `json:"ports"`
 	HostKeys []string `json:"hostKeys"`
+	// Release 3 fields are serialized only when DiscoveryDocumentLevel is 3.
+	IncludeUnclassified    bool   `json:"-"`
+	SSHPorts               []int  `json:"-"`
+	RelayToken             string `json:"relayToken,omitempty"`
+	DiscoveryDocumentLevel int    `json:"-"`
 	// RelayPort is where the hub relays connections to Ports of Ranges and
 	// of the networks it is attached to, RelayFrom the one tunnel address it
 	// relays for: that of the node the management plane's
 	// station-controller dials from.
 	RelayPort int    `json:"relayPort"`
 	RelayFrom string `json:"relayFrom"`
+}
+
+// MarshalJSON emits the versioned discovery document understood by the Hub.
+func (d Discovery) MarshalJSON() ([]byte, error) {
+	type discoveryV2 struct {
+		Ranges          []string `json:"ranges"`
+		IntervalSeconds int      `json:"intervalSeconds"`
+		Ports           []int    `json:"ports"`
+		HostKeys        []string `json:"hostKeys"`
+		RelayPort       int      `json:"relayPort"`
+		RelayFrom       string   `json:"relayFrom"`
+	}
+	base, err := json.Marshal(discoveryV2{d.Ranges, d.IntervalSeconds, d.Ports, d.HostKeys, d.RelayPort, d.RelayFrom})
+	if err != nil || d.DiscoveryDocumentLevel < 3 {
+		return base, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(base, &fields); err != nil {
+		return nil, err
+	}
+	fields["includeUnclassified"], _ = json.Marshal(d.IncludeUnclassified)
+	if len(d.SSHPorts) > 0 {
+		fields["sshPorts"], _ = json.Marshal(d.SSHPorts)
+	}
+	if d.RelayToken != "" {
+		fields["relayToken"], _ = json.Marshal(d.RelayToken)
+	}
+	return json.Marshal(fields)
 }
 
 type Endpoint struct {
@@ -134,7 +168,7 @@ type Member struct {
 // that gives NodeConfig a field raises this, the gateway's level and the gate
 // of stage controller in apps/rlark/astribot/release/stages.yaml together, and the
 // gateways are rolled out before the controller that writes the field.
-const DocumentLevel = 3
+const DocumentLevel = 4
 
 // NodeConfig is the document station-gateway reconciles. Field names match
 // astribot/station-gateway.

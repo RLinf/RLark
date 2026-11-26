@@ -121,6 +121,40 @@ func TestANodesReportsMakeItBoundCountItsRebootsAndLetItGoOffline(t *testing.T) 
 	}
 }
 
+func TestNodeIdentityConditionComparesAuthenticatedObservationWithAdmission(t *testing.T) {
+	now := time.Date(2026, 11, 25, 3, 0, 0, 0, time.UTC)
+	enrollment := testNode("uid-a", "uid-a", now)
+	enrollment.Status.Observation.Identity = &stationv1alpha1.NodeIdentityObservation{Category: "Robot", Model: "s1u", Source: "node-labels", ReportedAt: metav1.NewTime(now)}
+	model := &stationv1alpha1.RobotModel{ObjectMeta: metav1.ObjectMeta{Name: "s1u"}, Spec: stationv1alpha1.RobotModelSpec{DisplayName: "S1U"}}
+	admission := &stationv1alpha1.NodeAdmission{ObjectMeta: metav1.ObjectMeta{Name: "node-a", Namespace: testNamespace}, Spec: stationv1alpha1.NodeAdmissionSpec{
+		ClusterID: "cluster-a", Machine: &stationv1alpha1.NodeMachine{Category: stationv1alpha1.MachineCategoryRobot, Model: "s1u"}}}
+	reconcileNode, c := newNodeTest(t, &now, enrollment, admission, model)
+	_, stored := reconcileNode()
+	condition := apimeta.FindStatusCondition(stored.Status.Node.Conditions, "IdentityVerified")
+	if condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "Matched" {
+		t.Fatalf("matching identity condition: %+v", condition)
+	}
+
+	report(t, c, stored, func(observation *stationv1alpha1.NodeObservation) {
+		observation.ReportedAt = metav1.NewTime(now.Add(time.Second))
+		observation.Identity.Model = "other"
+		observation.Identity.ReportedAt = metav1.NewTime(now.Add(time.Second))
+	})
+	now = now.Add(time.Second)
+	_, stored = reconcileNode()
+	condition = apimeta.FindStatusCondition(stored.Status.Node.Conditions, "IdentityVerified")
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "Mismatch" {
+		t.Fatalf("mismatched identity condition: %+v", condition)
+	}
+
+	now = now.Add(DefaultOfflineAfter)
+	_, stored = reconcileNode()
+	condition = apimeta.FindStatusCondition(stored.Status.Node.Conditions, "IdentityVerified")
+	if condition == nil || condition.Status != metav1.ConditionUnknown || condition.Reason != "ObservationStale" {
+		t.Fatalf("stale identity condition: %+v", condition)
+	}
+}
+
 func TestAnotherNodeOfTheNameTakesTheRecordOverOnlyByAnAdmission(t *testing.T) {
 	now := time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC)
 	seen := metav1.NewTime(now.Add(-time.Hour))

@@ -43,13 +43,23 @@ func TestGetSiteNodeJoinsIdentityNetworkAndRobot(t *testing.T) {
 		"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "agent-a", "labels": map[string]interface{}{"rlark.io/robot-id": "s1u-01"},
 			"annotations": map[string]interface{}{"rlark.io/cameras": `{"state":"ok"}`}},
 	}}
+	admission := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission",
+		"metadata": map[string]interface{}{"name": "s1u-01-x86", "namespace": "agent-a"},
+		"spec":     map[string]interface{}{"machine": map[string]interface{}{"category": "Robot", "model": "s1u"}},
+	}}
+	machine := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "station.rlark.io/v1alpha1", "kind": "Machine",
+		"metadata": map[string]interface{}{"name": "machine-1", "namespace": machineNamespace},
+		"status":   map[string]interface{}{"clusterID": "cluster-a", "nodeName": "s1u-01-x86", "observedIdentity": map[string]interface{}{"category": "Robot", "model": "s1u-v2"}, "identityVerified": "False", "identityReason": "ModelMismatch"},
+	}}
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		stationClusterGVR: "ClusterList", networkEnrollmentGVR: "NetworkEnrollmentList", siteNodeGVR: "NodeList",
-	}, stationHandlerCluster("cluster-a", "agent-a"), enrollment, node)
+		stationClusterGVR: "ClusterList", networkEnrollmentGVR: "NetworkEnrollmentList", siteNodeGVR: "NodeList", nodeAdmissionGVR: "NodeAdmissionList", machineGVR: "MachineList",
+	}, stationHandlerCluster("cluster-a", "agent-a"), enrollment, node, admission, machine)
 	gateway := &Gateway{astribotState: astribotState{stationClient: client}}
 
 	code, got := siteNodeRequest(t, gateway, "s1u-01-x86", "?cluster_id=cluster-a")
-	want := siteNode{ClusterID: "cluster-a", NodeName: "s1u-01-x86", NodeUID: "uid-1", Phase: "Bound", Online: true,
+	want := siteNode{ClusterID: "cluster-a", NodeName: "s1u-01-x86", NodeUID: "uid-1", Phase: "Bound", Online: true, DeclaredType: "Robot", DeclaredModel: "s1u", ObservedType: "Robot", ObservedModel: "s1u-v2", IdentityVerified: "False", IdentityReason: "ModelMismatch",
 		LastSeenTime: "2026-11-12T08:00:00Z", RobotID: "s1u-01", Cameras: `{"state":"ok"}`, Tunnel: "failed", RLarkNode: "unknown", BootTime: "2026-11-12T03:58:58Z", Reboots: 1}
 	if code != 200 || !reflect.DeepEqual(got.Network, &siteNodeNetwork{State: "Enrolled", Site: "lab", Role: "Leaf", Address: "10.254.240.3", TunnelAddress: "10.254.240.3", PublicKey: "key",
 		LinkSummary: "nothing arrives from this node at any hub it dials since 2026-11-12T07:50:00Z",

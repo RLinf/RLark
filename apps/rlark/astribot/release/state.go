@@ -148,6 +148,7 @@ func Changes(stage string, current, desired State) []Change {
 		changedService(stage, "rlark-server", current, desired, &out)
 		changedService(stage, "rlark-controller-manager", current, desired, &out)
 	case "console":
+		changedService(stage, "astribot-iam", current, desired, &out)
 		changedService(stage, "rlark-ui", current, desired, &out)
 	case "addons":
 		for _, name := range clusters {

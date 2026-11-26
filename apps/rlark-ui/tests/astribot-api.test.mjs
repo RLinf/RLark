@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { AUTH_TOKEN_KEY, ApiError, storeAuthSession } from "../dist/test/api.js";
 import { imageRegistriesApi } from "../dist/test/backend.js";
-import { nodeJoinsApi, registryBrowseApi, stationsApi } from "../dist/test/astribot/api.js";
+import { machinesApi, nodeJoinsApi, registryBrowseApi, robotModelsApi, siteNetworkApi, stationsApi } from "../dist/test/astribot/api.js";
 
 test("Station APIs encode Cluster IDs, names, and pagination parameters", async () => {
   globalThis.sessionStorage = storage();
@@ -24,6 +24,43 @@ test("Station APIs encode Cluster IDs, names, and pagination parameters", async 
   assert.equal(calls[1].input, "/api/v1/station/node-operations?cluster_id=cluster%2Fa&limit=100");
   assert.equal(calls[2].input, "/api/v1/station/node-operations/node-op%2Fa?cluster_id=cluster%2Fa");
   assert.ok(calls.filter((call) => call.init.signal).every((call) => call.init.signal === controller.signal));
+});
+
+test("site network reads and updates only the selected site's discovery route", async () => {
+  globalThis.sessionStorage = storage();
+  globalThis.window = { dispatchEvent() {} };
+  const calls = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({ input: String(input), init });
+    return new Response(JSON.stringify({ resourceVersion: "17", sites: [], members: [], nodeClasses: [], status: { conditions: [] } }), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    });
+  };
+  await siteNetworkApi.get();
+  const input = { resourceVersion: "17", discovery: { enabled: true, ranges: ["192.168.31.0/24"], intervalSeconds: 45, from: { clusterID: "office", nodeName: "hub/a" } } };
+  await siteNetworkApi.updateDiscovery("lab/a", input);
+  assert.equal(calls[0].input, "/api/v1/station/site-network");
+  assert.equal(calls[0].init.method, undefined);
+  assert.equal(calls[1].input, "/api/v1/station/site-network/sites/lab%2Fa/discovery");
+  assert.equal(calls[1].init.method, "PUT");
+  assert.deepEqual(JSON.parse(calls[1].init.body), input);
+});
+
+test("machine discovery lists only the selected cluster's site when one is given", async () => {
+  globalThis.sessionStorage = storage();
+  globalThis.window = { dispatchEvent() {} };
+  const calls = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({ input: String(input), init });
+    return new Response(JSON.stringify({ items: [], classes: {} }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  await machinesApi.list("office");
+  await machinesApi.list();
+  assert.equal(calls[0].input, "/api/v1/station/machines?site=office");
+  assert.equal(calls[1].input, "/api/v1/station/machines");
 });
 
 test("an SSH join sends the login once to its own route and reads the reason of a refusal", async () => {
@@ -49,6 +86,40 @@ test("an SSH join sends the login once to its own route and reads the reason of 
   storeAuthSession("token", "admin");
   await nodeJoinsApi.create({ cluster_id: "office", address: "10.0.0.9", user: "ops", password: "pw" }).catch(() => undefined);
   assert.equal(sessionStorage.getItem(AUTH_TOKEN_KEY), "token");
+});
+
+test("scanned server NodeJoin carries candidate identity without a relay address", async () => {
+  globalThis.sessionStorage = storage();
+  globalThis.window = { dispatchEvent() {} };
+  const calls = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({ input: String(input), init });
+    return new Response(JSON.stringify({ data: { metadata: { name: "office.box" } } }), { status: 201, headers: { "Content-Type": "application/json" } });
+  };
+  const input = { cluster_id: "office", machine_name: "candidate-1", machine_type: "Server", address: "192.168.1.20", port: 2222, host_key: "SHA256:pinned", host_key_algorithm: "ssh-ed25519", user: "ops", password: "login", sudo_password: "sudo" };
+  await nodeJoinsApi.create(input);
+  assert.equal(calls[0].input, "/api/v1/station/node-joins");
+  assert.equal(calls[0].init.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].init.body), input);
+  assert.equal(JSON.parse(calls[0].init.body).relay_address, undefined);
+});
+
+test("RobotModel management lists and deletes only through GET and DELETE", async () => {
+  globalThis.sessionStorage = storage();
+  globalThis.window = { dispatchEvent() {} };
+  const calls = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({ input: String(input), init });
+    return init?.method === "DELETE"
+      ? new Response(null, { status: 204 })
+      : new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  await robotModelsApi.list();
+  await robotModelsApi.delete("model/a");
+  assert.equal(calls[0].input, "/api/v1/station/robot-models");
+  assert.equal(calls[0].init.method, undefined);
+  assert.equal(calls[1].input, "/api/v1/station/robot-models/model%2Fa");
+  assert.equal(calls[1].init.method, "DELETE");
 });
 
 test("registry browse API encodes parameters and forwards cancellation", async () => {
