@@ -132,7 +132,18 @@ def test_the_service_answers_on_its_unix_socket_only(tmp_path):
         response = connection.getresponse()
         return response.status, json.loads(response.read())
 
-    assert call("GET", "/power")[1]["ready"]
+    status, body = call("GET", "/power")
+    assert status == 200 and body["ready"]
+    assert (body["desired"], body["waiting"], body["station"], body["station_mark"]) == ("powered", "", None, None)
+    mark = {"mark": "repair", "reason": "左臂异响", "by": "operator-1", "at": "2026-11-26T08:00:00Z"}
+    service.waiting = "emergency stop"
+    service.node.update(labels={"rlark.io/station": "S03", "rlark.io/station-mark": "repair"},
+                        annotations={"rlark.io/station-mark-set": json.dumps(mark)})
+    body = call("GET", "/power")[1]
+    assert (body["waiting"], body["station"], body["station_mark"]) == ("emergency stop", "S03", mark)
+    service.node.update(labels={}, annotations={})  # the mark cleared, the Station taken off
+    body = call("GET", "/power")[1]
+    assert (body["station"], body["station_mark"]) == (None, None)
     assert call("POST", "/power", {"action": "fly"})[0] == 400
     status, body = call("POST", "/power", {"action": "driver_off"})
     assert status == 200 and body["success"]

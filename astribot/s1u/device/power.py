@@ -25,7 +25,11 @@ It speaks ROS itself (rospy, the vendor's noetic) to the robot's master at S1U_R
 the node and decides who may press, and records who did.
 
     GET  /power   the state: monitor, powered, driver, emergency_stop, ready, errors, power_level, driver_level, power_wait_s,
-                  driver_stop_wait_s, restart (the last restart asked for at RLark and its phase, or null)
+                  driver_stop_wait_s, restart (the last restart asked for at RLark and its phase, or null), desired
+                  (off | powered | ready, the desired state in force), waiting (why it is not converging now, "" when
+                  nothing waits), station (the Node's label rlark.io/station, "S03", or null) and station_mark (the
+                  Node's record rlark.io/station-mark-set, {mark: disabled | repair, reason, by, at}, or null), the
+                  last two from the Node as last watched
     POST /power   {"action": power_on | power_off | driver_on | driver_off | restart | bring_up | shut_down,
                    "force": false, "reason": "..."}: 200 {sent, value, success, message, state}; 409 {reason, state}
                    when refused; 400 when force comes without a reason; 503 when the vendor's service failed; 504 when
@@ -133,6 +137,7 @@ VENDOR_WEB_PORT = 5141
 ACCOUNT = "/var/run/secrets/kubernetes.io/serviceaccount"
 ANNOTATION, STATE, WANTED = "rlark.io/power", "rlark.io/power-state", "rlark.io/robot-power"
 IN_FORCE, CLAIM = "rlark.io/power-desired", "rlark.io/robot-claim"
+STATION, STATION_MARK = "rlark.io/station", "rlark.io/station-mark-set"
 RESTART, RESTARTED = "rlark.io/robot-restart", "rlark.io/power.restart"
 RESTARTING = ("lowering", "raising")  # the phases of a restart under way
 
@@ -237,6 +242,8 @@ class Power:
         self.saving = threading.Lock()  # the restart's thread writes the record too
         # Why nothing converges now; the recoveries.
         self.waiting, self.recovered = "", []
+        # The Node as last watched: {"labels", "annotations"}, empty until it was read (watch).
+        self.node = {}
         self.tried, self.pause, self.retry_at, self.converged = None, RETRY_SECONDS[0], 0.0, False
 
     def keep(self, desired, applied):
@@ -591,8 +598,12 @@ def handler(power, pose):
             self.wfile.write(data)
 
         def do_GET(self):
-            self.reply(*((200, dict(power.state(), restart=power.restart)) if self.path == "/power" else
-                         (404, dict(detail="no such path"))))
+            if self.path != "/power":
+                return self.reply(404, dict(detail="no such path"))
+            labels, annotations = power.node.get("labels", {}), power.node.get("annotations", {})
+            mark = annotations.get(STATION_MARK)
+            self.reply(200, dict(power.state(), restart=power.restart, desired=power.desired, waiting=power.waiting,
+                                 station=labels.get(STATION), station_mark=json.loads(mark) if mark else None))
 
         def do_POST(self):
             if self.path not in ("/power", "/pose"):
@@ -684,7 +695,7 @@ def follow(power):
     """Every 5 s: a restart asked for at RLark started, the desired state from the Node as last watched (the last one
     seen while the API server is away), one step towards it, and what the robot is, why it is not converging and the
     restart's progress published when they change."""
-    published, seen = None, {}
+    published, seen = None, power.node
     vital(watch, seen)
     while True:
         label = seen["labels"].get(WANTED, "") if "labels" in seen else power.label

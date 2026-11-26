@@ -149,7 +149,7 @@ Addon 的包：装或更新时，Gateway（或发布命令）把“名字@版本
 |---|---|
 | 期望电源 | 节点标签 `rlark.io/robot-power` = `off`/`powered`/`ready`（没有按 `ready`），经 Gateway `PUT .../nodes/{name}/robot-power` 或控制台改 |
 | 电源现状 | 标签 `rlark.io/power-state`（`off`/`powered`/`ready`/`estop`/`fault`/`unknown`），注解 `rlark.io/power` |
-| 电源服务 | 本机 socket `/run/rlark/services/s1u-power.sock`（`GET /power`、`POST /power {action, force, reason}`、`POST /pose {pose, action}`：按住移动的初始姿势，网关 `POST nodes/{name}/robot-pose` 经 Server 的 `nodeproxy` 和该节点的节点 agent 转到这里） |
+| 电源服务 | 本机 socket `/run/rlark/services/s1u-power.sock`（`GET /power`：厂商状态码读出的状态、`restart`、`desired`（生效的期望 off/powered/ready）、`waiting`（为什么没在收敛，没有为空串）、`station`（节点标签 `rlark.io/station`，如 `S03`，没有为 null）、`station_mark`（节点注解 `rlark.io/station-mark-set` 的 `{mark: disabled/repair, reason, by, at}`，没有为 null），后两项取自最近一次 watch 到的节点；`POST /power {action, force, reason}`、`POST /pose {pose, action}`：按住移动的初始姿势，网关 `POST nodes/{name}/robot-pose` 经 Server 的 `nodeproxy` 和该节点的节点 agent 转到这里） |
 | 占用 | 节点标签 `rlark.io/robot-claim`；`power` 盯着自己的节点，一秒内写到 `/run/rlark/s1u/claim`（`{"holder"}`，没人持有时没有文件） |
 | 在用 | `/run/rlark/in-use/<组件>`：Station 服务 Run 时写 `fleet-station`，设备层有会话时写 `s1u-device`，内容写明 Run（`... Run <id> ...`）；上电、驱动在跑不算在用 |
 | 重启 | 认领者经 Gateway `POST .../nodes/{name}/robot-restart {level: driver/power, holder, request_id}` 写管理面注解 `rlark.io/robot-restart`，agent 带到集群 Node；`power` 每个 id 只做一次：停驱动 → 等手臂缓降（`S1U_DRIVER_STOP_SECONDS`）→［power：下电 → 等 10 s］→ 上电起驱动到 ready。认领不是 holder、有标记不属于它的 Run、有维护时失败并写原因。期望电源不动。进度在注解 `rlark.io/power.restart` 和 `rlark.io/power` 的 `restart`：`{id, level, holder, phase: lowering/raising/done/failed, error, at}`，socket 的 `GET /power` 也带 |
