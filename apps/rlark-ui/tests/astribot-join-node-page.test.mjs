@@ -11,6 +11,10 @@ test("the join page is a compact toolbar and one full-width workspace", () => {
   assert.match(page, /className="join-page-head"/);
   assert.match(page, /className="join-toolbar"/);
   assert.match(page, /className="join-method-tabs"/);
+  assert.match(page, /<small>\{entry.note\}<\/small>/);
+  assert.match(page, /className="join-machine-filters"/);
+  assert.match(page, /className="join-machine-blocker"/);
+  assert.match(page, /open=\{accessOpen \?\? \(scanClasses.length > 0 && !allClassesConfigured\)\}/);
   assert.match(page, /className="join-body"/);
   assert.match(page, /className="join-main"/);
   assert.match(page, /className="join-rail-wrap"/);
@@ -18,6 +22,8 @@ test("the join page is a compact toolbar and one full-width workspace", () => {
   assert.match(page, /className="join-machine-identity"/);
   assert.match(page, /className="join-machine-location"/);
   assert.match(page, /className="join-machine-reach"/);
+  assert.match(page, /hasRegisteredRobotClass\(machine, list\?\.classes \?\? \{\}\)/);
+  assert.match(page, /reach \? <>[\s\S]*Orin \{zh \? "上联" : "entry"\}[\s\S]*SSH ·/);
   assert.match(page, /className="join-machine-action"/);
   assert.match(page, /className={`join-selection-bar/);
   assert.doesNotMatch(page, /className="join-hero"/);

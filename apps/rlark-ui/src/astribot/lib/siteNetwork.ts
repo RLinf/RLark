@@ -1,4 +1,12 @@
-import type { SiteNetworkDiscovery, SiteNetworkView } from "../api.js";
+import type { SiteNetworkDiscovery, SiteNetworkSite, SiteNetworkView } from "../api.js";
+
+export function siteDisplay(site: SiteNetworkSite, displayNames: Record<string, string>) {
+  const clusterNames = site.clusters.map((id) => displayNames[id]?.trim() || id);
+  return {
+    title: clusterNames.length === 1 ? clusterNames[0] : site.name,
+    clusterNames,
+  };
+}
 
 export function validateDiscovery(discovery: SiteNetworkDiscovery, zh: boolean) {
   const ranges = discovery.ranges.map((range) => range.trim()).filter(Boolean);

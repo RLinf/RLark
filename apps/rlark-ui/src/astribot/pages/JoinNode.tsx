@@ -346,7 +346,7 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
       <header className="join-panel-head">
         <div>
           <h3>{zh ? "未加入的机器" : "Machines that have not joined"} <span className="count-pill">{visibleCount} {zh ? "台" : ""}</span></h3>
-          <p>{zh ? <>发现候选 <strong>{scanned.length}</strong> 台；手动 SSH 入网 <strong>{manual.length}</strong> 台。选择类型后再决定使用机器人配置或 SSH 入网。</> : <>Discovered candidates: <strong>{scanned.length}</strong>. Manual SSH joins: <strong>{manual.length}</strong>. Choose a type before selecting a robot profile or SSH join.</>}</p>
+          <p>{zh ? <>扫描发现 <strong>{scanned.length}</strong> 台，手动入网 <strong>{manual.length}</strong> 台。</> : <>Scanned: <strong>{scanned.length}</strong> · Manual joins: <strong>{manual.length}</strong>.</>}</p>
         </div>
         <div className="join-panel-tools">
           <button type="button" className="secondary-button" onClick={() => onUseMethod("ssh")}><Plus size={14} />{zh ? "添加普通电脑/GPU" : "Add computer/GPU"}</button>
@@ -356,11 +356,11 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
         </div>
       </header>
 
-      <details className="join-class-access-panel" open={accessOpen ?? !allClassesConfigured} onToggle={(event) => setAccessOpen((event.currentTarget).open)}>
+      <details className="join-class-access-panel" open={accessOpen ?? (scanClasses.length > 0 && !allClassesConfigured)} onToggle={(event) => setAccessOpen((event.currentTarget).open)}>
         <summary>
-          <span className="join-class-access-title"><KeyRound size={14} />{zh ? "扫描机器型凭据" : "Scanned-machine credentials"}</span>
+          <span className="join-class-access-title"><KeyRound size={14} />{zh ? "机型登录凭据" : "Scanned-machine credentials"}</span>
           <span className="join-class-access-summary">{scanClasses.length ? scanClasses.map(({ name, access }) => `${name === "s1u" ? "S1U" : name} ${access.node.configured ? (zh ? "已配置" : "configured") : (zh ? "未配置" : "missing")}`).join(" · ") : (zh ? "没有声明登录方式的机型" : "No NodeClass declares access")}</span>
-          <span className="join-class-access-state"><span className={`status ${allClassesConfigured ? "status-online" : "status-pending"}`}><i />{allClassesConfigured ? (zh ? "可加入" : "Ready") : scanClasses.length ? (zh ? "有未配置" : "Needs setup") : (zh ? "无凭据" : "No credentials")}</span><ChevronDown size={14} /></span>
+          <span className="join-class-access-state"><span className={`status ${allClassesConfigured ? "status-online" : "status-pending"}`}><i />{allClassesConfigured ? (zh ? "凭据已配置" : "Credentials configured") : scanClasses.length ? (zh ? "有未配置" : "Needs setup") : (zh ? "无凭据" : "No credentials")}</span><ChevronDown size={14} /></span>
         </summary>
         <div className="join-class-access-body">
           {scanClasses.length ? scanClasses.map(({ name, access }) => <ClassPasswords key={name} zh={zh} name={name} access={access} onSaved={() => load()} />) : <p className="muted">{zh ? "没有声明登录方式的机型；扫描到的机器无法自动登录。" : "No NodeClass declares how to log in; scanned machines cannot be joined automatically."}</p>}
@@ -368,13 +368,15 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
         </div>
       </details>
 
-      <div className="join-machine-filter" role="group" aria-label={zh ? "机器来源" : "Machine source"}>
-        <button type="button" className={source === "all" ? "is-active" : ""} onClick={() => setSource("all")}>{zh ? "全部" : "All"} <span>{scanned.length + manual.length}</span></button>
-        <button type="button" className={source === "scanned" ? "is-active" : ""} onClick={() => setSource("scanned")}>{zh ? "扫描发现" : "Scanned"} <span>{scanned.length}</span></button>
-        <button type="button" className={source === "manual" ? "is-active" : ""} onClick={() => setSource("manual")}>{zh ? "手动添加" : "Manual"} <span>{manual.length}</span></button>
-      </div>
-      <div className="join-machine-filter" role="group" aria-label={zh ? "机器类型" : "Machine type"}>
-        {(["all", "Robot", "Server", "Unknown"] as const).map((kind) => <button key={kind} type="button" className={kindFilter === kind ? "is-active" : ""} onClick={() => setKindFilter(kind)}>{kind === "all" ? (zh ? "全部类型" : "All types") : kind === "Robot" ? "Robot" : kind === "Server" ? "Server" : (zh ? "未知" : "Unknown")}<span>{kind === "all" ? scanned.length : scanned.filter((machine) => machine.machine_type === kind).length}</span></button>)}
+      <div className="join-machine-filters">
+        <div className="join-machine-filter" role="group" aria-label={zh ? "机器来源" : "Machine source"}>
+          <button type="button" className={source === "all" ? "is-active" : ""} onClick={() => setSource("all")}>{zh ? "全部" : "All"} <span>{scanned.length + manual.length}</span></button>
+          <button type="button" className={source === "scanned" ? "is-active" : ""} onClick={() => setSource("scanned")}>{zh ? "扫描发现" : "Scanned"} <span>{scanned.length}</span></button>
+          <button type="button" className={source === "manual" ? "is-active" : ""} onClick={() => setSource("manual")}>{zh ? "手动添加" : "Manual"} <span>{manual.length}</span></button>
+        </div>
+        <div className="join-machine-filter" role="group" aria-label={zh ? "机器类型" : "Machine type"}>
+          {(["all", "Robot", "Server", "Unknown"] as const).map((kind) => <button key={kind} type="button" className={kindFilter === kind ? "is-active" : ""} onClick={() => setKindFilter(kind)}>{kind === "all" ? (zh ? "全部类型" : "All types") : kind === "Robot" ? "Robot" : kind === "Server" ? "Server" : (zh ? "未知" : "Unknown")}<span>{kind === "all" ? scanned.length : scanned.filter((machine) => machine.machine_type === kind).length}</span></button>)}
+        </div>
       </div>
 
       <div className="join-machine-columns" aria-hidden="true">
@@ -408,12 +410,12 @@ function UnjoinedMachines({ zh, clusterID, clusterName, site, ticked, setTicked,
               <div className="join-machine-reach">
                 {reach ? <>
                   <div className="join-reach-pair"><div><small>Orin {zh ? "上联" : "entry"}</small><ReachCell zh={zh} reach={reach.orin} machine={machine} now={now} /></div><div><small>x86 {zh ? "计算机" : "computer"}</small><ReachCell zh={zh} reach={reach.x86} machine={machine} now={now} /></div></div>
-                  {why && <small className="join-reach-reason">{why}</small>}
                   {!inProgress && machine.phase === "Admitted" && <small className="join-reach-reason">{zh ? "入网停住了，勾选它再点加入，重新入网" : "Its join stopped: tick it and add it again to join it anew"}</small>}
                 </> : machine.port ? <small className="muted">SSH · {zh ? `端口 ${machine.port}` : `port ${machine.port}`}</small> : null}
               </div>
               <div className="join-machine-state">
-                {inProgress ? <span className="status status-pending"><i />{zh ? "已在入网中" : "Joining"}</span> : machine.admissible ? <span className="status status-online"><i />{zh ? "可选择" : "Selectable"}</span> : <span className="status status-failed"><i />{zh ? "不可选" : "Not selectable"}</span>}
+                {inProgress ? <span className="status status-pending"><i />{zh ? "已在入网中" : "Joining"}</span> : machine.admissible ? <span className="status status-online"><i />{zh ? "可选择" : "Selectable"}</span> : <span className="status status-failed"><i />{zh ? "暂不可加入" : "Cannot join yet"}</span>}
+                {why && <small className="join-machine-blocker">{why}</small>}
                 {machine.node_name && <small className="muted join-machine-node">{machine.node_name}</small>}
               </div>
               <div className="join-machine-action">
@@ -808,15 +810,15 @@ export function JoinNodePage({ zh, reissued, sshJoin, onBack, onScanSettings }: 
   const clusterSite = siteOfCluster(siteNetwork, clusterID);
 
   const methods: { id: Method; icon: ReactNode; title: string; note: string }[] = [
-    { id: "machines", icon: <ListChecks size={15} />, title: zh ? "未加入的机器" : "Discovered machines", note: zh ? "从场地网络发现的机器中选择，由 RLark 自动登录并入网。" : "Select discovered machines for RLark to log in and join." },
-    { id: "ssh", icon: <Terminal size={15} />, title: zh ? "SSH 入网" : "SSH join", note: zh ? "提供地址和 SSH 凭据，由 RLark 远程完成入网。" : "Provide an address and SSH credentials for RLark to join remotely." },
-    { id: "code", icon: <KeyRound size={15} />, title: zh ? "入网码" : "Join code", note: zh ? "生成一次性入网码，在机器上执行一行命令。" : "Generate a one-time code and run one command on the machine." },
+    { id: "machines", icon: <ListChecks size={15} />, title: zh ? "从扫描列表选择" : "Choose from scan", note: zh ? "选择已发现的机器" : "Select a discovered machine" },
+    { id: "ssh", icon: <Terminal size={15} />, title: zh ? "SSH 入网" : "SSH join", note: zh ? "已知机器地址和 SSH 凭据" : "Use a known address and SSH credentials" },
+    { id: "code", icon: <KeyRound size={15} />, title: zh ? "入网码" : "Join code", note: zh ? "在目标机器上运行入网命令" : "Run a command on the target machine" },
   ];
 
   const siteDiscovery = siteNetwork?.sites.find((site) => site.name === clusterSite)?.discovery;
   const siteHint = clusterSite
-    ? `站点 ${clusterSite}${siteDiscovery?.enabled ? ` · 每 ${siteDiscovery.intervalSeconds} 秒扫描` : " · 扫描未开启"}`
-    : "未关联站点";
+    ? (zh ? `站点 ${clusterSite}${siteDiscovery?.enabled ? ` · 间隔 ${siteDiscovery.intervalSeconds} 秒` : " · 扫描未开启"}` : `Site ${clusterSite}${siteDiscovery?.enabled ? ` · Every ${siteDiscovery.intervalSeconds}s` : " · Discovery off"}`)
+    : (zh ? "未关联站点" : "No linked site");
   const clusterName = clusters.find((cluster) => cluster.id === clusterID)?.name ?? clusterID;
 
   return <div className="page-content resource-page create-cluster-page join-node-page">
@@ -824,8 +826,8 @@ export function JoinNodePage({ zh, reissued, sshJoin, onBack, onScanSettings }: 
       <div>
         <h2>{zh ? "加入节点" : "Add a node"}</h2>
         <p>{zh
-          ? "把机器加入集群：勾选扫描发现的机器，确认 SSH 口令后交给 RLark 自动入网；普通电脑/GPU 可以直接用 SSH 或一次性入网码。"
-          : "Add machines to a cluster: tick discovered machines, confirm the SSH password and let RLark join them. Ordinary computers/GPUs can join over SSH or with a one-time code."}</p>
+          ? "先选择目标集群，再选择机器的入网方式。"
+          : "Select the destination cluster, then choose how to add the machine."}</p>
       </div>
       <div className="join-page-actions"><button type="button" className="secondary-button" onClick={onBack}><ChevronLeft size={16} />{zh ? "返回场站节点" : "Back to site nodes"}</button></div>
     </header>
@@ -837,15 +839,15 @@ export function JoinNodePage({ zh, reissued, sshJoin, onBack, onScanSettings }: 
           {clusters.map((cluster) => <option key={cluster.id} value={cluster.id}>{cluster.name} ({cluster.agentNamespace})</option>)}
         </select>
       </label>
-      <div className="join-method-tabs" role="tablist" aria-label={zh ? "加入方式" : "Join method"}>
-        {methods.map((entry) => <button key={entry.id} type="button" role="tab" id={`join-method-${entry.id}`} aria-controls={`join-panel-${entry.id}`} aria-selected={method === entry.id} tabIndex={method === entry.id ? 0 : -1} className={method === entry.id ? "is-active" : ""} onKeyDown={(event) => { const tabs = [...event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>("[role=tab]")]; const index = tabs.indexOf(event.currentTarget); const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : undefined; if (next) { event.preventDefault(); next.focus(); next.click(); } }} onClick={() => setMethod(entry.id)}>
-          <span className="join-method-icon">{entry.icon}</span>
-          <span className="join-method-copy"><strong>{entry.title}</strong></span>
-        </button>)}
-      </div>
       <div className="join-toolbar-context">
         <span className="join-site-hint"><i className={siteDiscovery?.enabled ? "is-on" : ""} />{siteHint}</span>
         <button type="button" className="secondary-button" onClick={onScanSettings}>{zh ? "扫描设置" : "Scan settings"}</button>
+      </div>
+      <div className="join-method-tabs" role="tablist" aria-label={zh ? "加入方式" : "Join method"}>
+        {methods.map((entry) => <button key={entry.id} type="button" role="tab" id={`join-method-${entry.id}`} aria-controls={`join-panel-${entry.id}`} aria-selected={method === entry.id} tabIndex={method === entry.id ? 0 : -1} className={method === entry.id ? "is-active" : ""} onKeyDown={(event) => { const tabs = [...event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>("[role=tab]")]; const index = tabs.indexOf(event.currentTarget); const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : undefined; if (next) { event.preventDefault(); next.focus(); next.click(); } }} onClick={() => setMethod(entry.id)}>
+          <span className="join-method-icon">{entry.icon}</span>
+          <span className="join-method-copy"><strong>{entry.title}</strong><small>{entry.note}</small></span>
+        </button>)}
       </div>
     </div>
     {error && <div className="cert-error" role="alert">{error}</div>}

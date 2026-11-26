@@ -4,6 +4,7 @@ import {
   admissionStateClass,
   admissionStateLabel,
   classPasswordLabel,
+  hasRegisteredRobotClass,
   isRobotNode,
   keyFingerprint,
   machineClassAccess,
@@ -38,6 +39,15 @@ test("the machine's model comes from its robot model, else its category", () => 
   assert.equal(machineModel({ "rlark.io/robot-model": "s1u", "rlark.io/node-category": "robot" }), "s1u");
   assert.equal(machineModel({ "rlark.io/node-category": "gpu" }), "gpu");
   assert.equal(machineModel(undefined), "");
+});
+
+test("entry reachability applies only to robot machines with a registered NodeClass", () => {
+  const classes = { s1u: { kind: "Robot" } };
+  assert.equal(hasRegisteredRobotClass({ node_class: "", machine_type: "Unknown" }, classes), false);
+  assert.equal(hasRegisteredRobotClass({ node_class: "s1u", machine_type: "Unknown" }, classes), false);
+  assert.equal(hasRegisteredRobotClass({ node_class: "s1u", machine_type: "Server" }, classes), false);
+  assert.equal(hasRegisteredRobotClass({ node_class: "missing", machine_type: "Robot" }, classes), false);
+  assert.equal(hasRegisteredRobotClass({ node_class: "s1u", machine_type: "Robot" }, classes), true);
 });
 
 test("label and taint lines are read one per line and a bad line is named", () => {
@@ -92,6 +102,8 @@ test("a class whose x86 password is not entered says so, and its machines cannot
   assert.deepEqual(shown.map((one) => one.name), ["s1u", "arm"]);
   assert.equal(classPasswordLabel(shown[0].access.entry, true), "已配置（来自 fleet-orin-access）");
   assert.equal(classPasswordLabel(shown[0].access.node, true), "未配置");
+  assert.equal(classPasswordLabel({ configured: true }, true), "已配置");
+  assert.equal(classPasswordLabel({ configured: true, set_by: "alice" }, false), "Entered by alice");
   assert.equal(classPasswordLabel(shown[1].access.node, true), "已配置（来自 fleet-orin-access，alice 录入）");
   // Once it is saved, the machine can be ticked.
   const after = unjoinedMachines([{ name: "lab-01", site: "lab", node_class: "s1u", source: "Discovery", phase: "Discovered", serial: "1794925030610", admissible: true }], "robots");

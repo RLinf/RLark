@@ -278,6 +278,12 @@ export function reachLabel(state: ReachState, zh: boolean): string {
   return { ok: zh ? "通" : "OK", fail: zh ? "不通" : "Unreachable", checking: zh ? "检查中" : "Checking", unknown: "—" }[state];
 }
 
+// Entry/x86 reachability describes robot machines with a registered class.
+export function hasRegisteredRobotClass(machine: Machine, classes: MachineList["classes"]): boolean {
+  return machine.machine_type === "Robot"
+    && Boolean(machine.node_class && Object.prototype.hasOwnProperty.call(classes, machine.node_class));
+}
+
 // Why a machine of the "add node" list cannot be ticked; empty when it can.
 export function machineNotTickable(machine: Machine, zh: boolean): string {
   if (machine.admissible) return "";
@@ -303,7 +309,10 @@ export function machineClassAccess(classes: MachineList["classes"]): Array<{ nam
 export function classPasswordLabel(password: NodeClassPassword, zh: boolean): string {
   if (!password.configured) return zh ? "未配置" : "Not entered";
   const by = password.set_by ? (zh ? `，${password.set_by} 录入` : `, entered by ${password.set_by}`) : "";
-  return zh ? `已配置（来自 ${password.secret}${by}）` : `Entered (in ${password.secret}${by})`;
+  const source = password.secret?.trim();
+  if (source) return zh ? `已配置（来自 ${source}${by}）` : `Entered (in ${source}${by})`;
+  if (password.set_by) return zh ? `已配置（${password.set_by} 录入）` : `Entered by ${password.set_by}`;
+  return zh ? "已配置" : "Entered";
 }
 
 // The labels an administrator may replace for the ticked machines: those
@@ -441,8 +450,3 @@ export const controlledRobot = (node: CRDNode): ControlledRobot => ({
   namespace: node.metadata.namespace ?? "",
   labels: node.metadata.labels,
 });
-
-export function hasRegisteredRobotClass(machine: Machine, classes: MachineList["classes"]): boolean {
-  return machine.machine_type === "Robot"
-    && Boolean(machine.node_class && Object.prototype.hasOwnProperty.call(classes, machine.node_class));
-}

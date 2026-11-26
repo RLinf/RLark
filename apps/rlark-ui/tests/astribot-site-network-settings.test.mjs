@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { validateDiscovery, isSiteNetworkConflict, siteOfCluster } from "../dist/test/astribot/lib/siteNetwork.js";
+import { validateDiscovery, isSiteNetworkConflict, siteDisplay, siteOfCluster } from "../dist/test/astribot/lib/siteNetwork.js";
 import { parseAdminRoute } from "../dist/test/utils/route.js";
 
 const discovery = (ranges = ["192.168.31.0/24"], intervalSeconds = 30) => ({
@@ -73,13 +73,24 @@ test("discovery workbench uses site tabs and a shared scanning rules panel", asy
   }
 });
 
-test("site rail shows mapped cluster IDs and keeps long subtitles contained", async () => {
+test("site labels follow cluster display names without losing their site identity", async () => {
+  const names = { "office-cluster": "深圳办公集群", "robot-cluster": "S1U 调试集群" };
+  assert.deepEqual(siteDisplay({ name: "office", clusters: ["office-cluster"] }, names), {
+    title: "深圳办公集群", clusterNames: ["深圳办公集群"],
+  });
+  assert.deepEqual(siteDisplay({ name: "shared", clusters: ["office-cluster", "robot-cluster"] }, names), {
+    title: "shared", clusterNames: ["深圳办公集群", "S1U 调试集群"],
+  });
+  assert.equal(siteDisplay({ name: "lab", clusters: ["unknown"] }, names).title, "unknown");
+  assert.equal(siteDisplay({ name: "lab", clusters: [] }, names).title, "lab");
+
   const source = await readFile(new URL("../src/astribot/pages/SiteNetworkSettings.tsx", import.meta.url), "utf8");
-  const styles = await readFile(new URL("../src/astribot/pages/SiteNetworkSettings.css", import.meta.url), "utf8");
-  assert.match(source, /const clusterNames = site\.clusters\.join\(" · "\)/);
-  assert.match(source, /title=\{site\.clusters\.length > 1 \? clusterNames : undefined\}/);
-  assert.match(source, /\{clusterNames \|\| \(zh \? "未关联集群" : "No clusters"\)\}/);
-  assert.match(styles, /\.site-network-site-copy small \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+  assert.match(source, /<strong title=\{display.title\}>\{display.title\}<\/strong>/);
+  assert.match(source, /const active = site.name === selectedSite/);
+  assert.match(source, /<p>\{selectedDisplay.title\}/);
+  assert.match(source, /selectedSiteData.discovery\?\.enabled/);
+  assert.match(source, /<details className="site-network-context">/);
+  assert.match(source, /<details className="site-network-activity">/);
 });
 
 test("the discovery page is one workbench with site activity cards at the bottom", async () => {
@@ -93,6 +104,11 @@ test("the discovery page is one workbench with site activity cards at the bottom
   assert.match(source, /machinesApi\.list\(\)/);
   assert.match(source, /siteNodesApi\.list\(cluster\)/);
   assert.match(styles, /\.site-network-bottom\s*\{[^}]*grid-template-columns/);
-  assert.match(styles, /\.site-network-rules-panel:not\(\[open\]\) > \.site-network-rules\s*\{\s*display: none/);
+  assert.match(styles, /\.site-network-rules-panel:not\(\[open\]\) > \.site-network-rules,/);
+  assert.match(styles, /\.site-network-sites\s*\{[^}]*repeat\(auto-fit/);
+  assert.match(source, /<footer className="site-network-editor-actions">[\s\S]+保存设置/);
+  assert.match(source, /<details className="site-network-diagnostics">[\s\S]+site-network-health/);
+  assert.match(source, /<details className="site-network-advanced">[\s\S]+draft.includeUnclassified/);
+  assert.match(source, /stale && \(zh \? "扫描结果已过期。"/);
   assert.match(styles, /\.site-network-page\s*\{[^}]*align-content: start/);
 });

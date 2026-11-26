@@ -177,7 +177,7 @@ The centered confirmation dialog summarizes the node and cluster, shows the node
 
 ## Joining a Node
 
-In Administrator Console → Site Nodes → Add node, choose a target cluster and one of three methods. The page opens with a compact header and a target-cluster selector; the machine workspace filters its rows by **All**, **Discovered**, or **Manual**.
+In Administrator Console → Site Nodes → Add node, choose a target cluster and one of three methods. Choose the cluster first, then use the method cards to pick discovery, SSH, or a join code. The machine list groups source and type filters. A machine that cannot join shows the reason beside its status.
 
 - Discovered machines are the entries the site's hubs found. They can be searched and batch-selected. **Join selected machines** opens a password dialog that groups the selection by NodeClass, shows whether the Orin entry-device password is configured, and accepts an x86 login password and an optional sudo password. An empty x86 field keeps the stored class credential; a typed value replaces and saves it. The dialog writes the class credentials first, then admits the machines. The passwords are class credentials, not one-time secrets, and RLark never shows their values.
 - Manual rows are SSH joins that are running or stopped; **Open SSH record** selects that record in the SSH method. **Add computer/GPU** opens the SSH form. A submitted SSH join appears under Manual. Ordinary x86/GPU servers are not discovered by the site scanner; use SSH or a join code.
@@ -187,13 +187,11 @@ In Administrator Console → Site Nodes → Add node, choose a target cluster an
 
 Open **Administrator Console → Site Nodes → Discovery Settings** (`/admin/stations/network`), or select **Discovery Settings** from **Add node**. The page is administrator-only: the Gateway rejects reading and saving with `403`, and the console shows a read-only notice. A `404` means the site network has yet to be initialized.
 
-The header carries the network health strip (Ready, FullyConnected, DiscoveryStale, observed/current generation) and **Back to joining** / **Refresh**. The workbench has three parts:
+The site selector sits above the editor. A site linked to one cluster uses the name shown in Cluster Management and keeps its site identifier visible. A site linked to several clusters uses the site identifier as its heading. The single form groups **Scan cadence**, **Scan scope**, and **Management connection** into separate rows. Expand **Unclassified SSH candidates** under Scan scope to configure those options. **Discard changes** and **Save settings** are at the bottom.
 
-- The left rail selects a site. The editor shows its status, clusters, and scanning Hubs; **Cancel** and **Save settings** are in the editor header and remain disabled until the draft changes. The form enables or disables scanning, sets the interval to 10–3600 seconds, accepts 1–8 unique extra IPv4 prefixes of `/22` to `/32`, and chooses the management-plane dial-out Hub (`from`) separately from the scanning Hubs.
-- The right-hand details show the clusters and Hubs, the discoverable NodeClasses with entry port and access/discovery flags, and all factory host-key fingerprints. On narrower screens the details move below the editor.
-- The shared **Scanning scope and limits** panel lists the five rules: discovery covers only entry devices matching `NodeClass.spec.discovery.hostKeyFingerprints`; hubs also scan connected private networks; overlapping ranges may duplicate Machines; changes take about 30 seconds; a site without an enrolled Hub does not scan.
+Stale discovery results, unreachable paths, and pending configuration appear above the form when reported. Expand **Network status and diagnostics** for network health, configuration generation, site and model details, scope limits, and recent activity.
 
-Below the workbench, three cards summarize the site network: **Recent scan activity**, **Site discovery load** (per-site machine counts, selectable to switch the editor), and **Astribot robots** (online robots, power, cameras, joining machines, and per-site online counts from site-node data). These cards only add status to Discovery Settings; the management dashboard is unchanged.
+The scan interval is 10–3600 seconds. Enter 1–8 unique additional IPv4 prefixes from `/22` to `/32`. Hubs also scan directly connected private networks. The management-plane dial-out Hub connects to the relay, while the site’s Hubs run discovery. Settings typically take effect in about 30 seconds, and existing Machine records are retained.
 
 Ordinary x86/GPU servers have no discovery declaration and never appear in the scan list. They join over SSH or with a join code; scanning them directly requires a separate direct/entry-only admission mode.
 
