@@ -1,5 +1,5 @@
 # Agent RBAC
-# Applied by quickstart.sh to each kind data plane cluster.
+# Applied by quickstart.sh and quickstart-dp.sh to each kind data plane cluster.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -14,6 +14,10 @@ rules:
 - apiGroups: [""]
   resources: ["nodes", "pods", "pods/log", "services", "configmaps", "secrets", "namespaces", "persistentvolumeclaims", "events"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# WebTerminal opens a container session with POST pods/exec.
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
 - apiGroups: ["apps"]
   resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
