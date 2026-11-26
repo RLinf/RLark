@@ -139,3 +139,12 @@ curl -X PUT "$GATEWAY/api/v1/rlinf.io/v1alpha1/nodes/s1u-01-x86/station?namespac
 ## 7. 回退
 
 `rlarkctl release apply -e environments/live.yaml --to /var/lib/rlark/release/runs/<时间>-before.json --back`。第二次 apply 之后回退到第一次即可；回退过第一次会回到第 3 级的 liangcai 网关，此时控制器若已是第 4 级会被门挡住，先退控制器（第二次的 before）。
+
+## 8. 实际上线（2026-11-26）
+
+两次都已 `every stage done`，现网记录 `rlark-system/rlark-release-current` = `ci-49580ee-64864d2-controller`。发布文件只比 §2 多了 §2 要求的 `orinPayloads`/`prewarm` 加回 lamp-bridge，阶段顺序没改。经过：
+
+- 第一次停在 `controller` 的门 `gateways-understand: 4`（run 20261126-040209）。不是顺序错：第一次里 `controller` 没有变化，门本来不查；但 SiteNetwork 在那次运行取基线之后才加了 `time.rlark.internal`，控制器（旧的）重写了机器人的文档，`documents-unchanged` 对旧基线不成立，阶段走“as stated but not settled: done again”，于是去查门、停下，什么也没改。同一命令再跑一次（新基线带新文档）即过。给 RLark 的要求：没有变化、只是没稳定的阶段不该再查门（门管的是“写新级别的东西”）。
+- 第二次换了 `station-controller` 后，新控制器按第 4 级重写 cailiang、wendychen、alexfu 的文档，同一次运行里 `station-agents` 的 `documents-unchanged` 对基线必然不成立，只能等 30 分钟超时。停掉该次（只在等，0 处改动），同一命令再跑：0 changes，写记录。给 RLark 的要求：`controller` 阶段换了控制器时，后面阶段的 `documents-unchanged` 用 `controller` 之后的读数做基线。
+- 管理机 cailiang 盘余量在 kubelet 的 imagefs 15% 门槛上下（liangcai 同时在机器上构建 e2e 镜像），DiskPressure 反复：驱逐了 Dashboard（jo-f706800a9a904c84）、它的数据库和 package-proxy；`station-agent-network` 在 cailiang 的拉取 Pod 被拒（`Evicted`），而 rollout 对一个 Failed 的拉取 Pod 永远等它（`apps/rlark/astribot/rollout/update.go` `pulled`），整个办公室集群的网关滚动卡住。处理：压力解除后删掉那个 Evicted 的拉取 Pod，agent 重建后拉取成功；`docker image prune --filter until=168h`（只删超过 7 天、无标签、无容器引用的镜像）腾出约 90 GB。给 RLark 的要求：拉取 Pod 失败（Evicted/Failed）时重建，并带 DaemonSet 的 priorityClass；管理机要有盘的清理/告警。
+- 运行中 liangcai 把 Addon `s1u-robot` 用 `kubectl replace` 改成 `v1.7.1-timing-8b84e07a8b72`（相机时序预览，ConfigMap `s1u-camera-timing-addon-8b84e07a8b72`），被这次 `addons` 阶段按用户“直接覆盖发布”换成 v1.7.2。原对象备份在管理机 `/var/lib/rlark/backup/liangcai-override-20261126/`。
