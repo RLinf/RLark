@@ -42,3 +42,8 @@ addons:
       csiProvisionerImage: "{{images.csi-provisioner}}"
       livenessProbeImage: "{{images.csi-livenessprobe}}"
       nodeDriverRegistrarImage: "{{images.csi-node-driver-registrar}}"
+  # Every site names its hub's tunnel address time.rlark.internal (SiteNetwork names); the hub's station-gateway
+  # serves its clock there (astribot/station-gateway/sntp.go), and the robots' clocks are held to it.
+  s1u-robot:
+    values:
+      timeSource: time.rlark.internal
