@@ -797,7 +797,7 @@ func prepareJobForCreate(body []byte) ([]byte, error) {
 	return json.Marshal(&job)
 }
 
-func prepareTenantResourceForCreate(body []byte, tenantID, createdBy string) ([]byte, error) {
+func prepareTenantResourceForCreate(body []byte, tenantID, createdBy string, submitter workloadSubmitter) ([]byte, error) {
 	var object map[string]any
 	if err := json.Unmarshal(body, &object); err != nil {
 		return nil, err
@@ -819,6 +819,14 @@ func prepareTenantResourceForCreate(body []byte, tenantID, createdBy string) ([]
 		metadata["annotations"] = annotations
 	}
 	annotations[tenant.CreatedByAnnotation] = createdBy
+	delete(annotations, tenant.SubmittedByAnnotation)
+	delete(annotations, tenant.SubmitterIDAnnotation)
+	if submitter.username != "" {
+		annotations[tenant.SubmittedByAnnotation] = submitter.username
+		if submitter.id != "" {
+			annotations[tenant.SubmitterIDAnnotation] = submitter.id
+		}
+	}
 	return json.Marshal(object)
 }
 
@@ -843,10 +851,12 @@ func preserveTenantIdentity(body []byte, existing metav1.Object) ([]byte, error)
 		annotations = map[string]any{}
 		metadata["annotations"] = annotations
 	}
-	if createdBy := existing.GetAnnotations()[tenant.CreatedByAnnotation]; createdBy != "" {
-		annotations[tenant.CreatedByAnnotation] = createdBy
-	} else {
-		delete(annotations, tenant.CreatedByAnnotation)
+	for _, key := range []string{tenant.CreatedByAnnotation, tenant.SubmittedByAnnotation, tenant.SubmitterIDAnnotation} {
+		if value := existing.GetAnnotations()[key]; value != "" {
+			annotations[key] = value
+		} else {
+			delete(annotations, key)
+		}
 	}
 	return json.Marshal(object)
 }
@@ -1157,6 +1167,11 @@ func (g *Gateway) handleKubeCreate(resource string) gin.HandlerFunc {
 			}
 		}
 		if isTenantResource(resource) {
+			submitter, err := g.verifiedSubmitter(c, resource)
+			if err != nil {
+				respondError(c, http.StatusUnauthorized, CodeUnauthorized, "invalid workload submission assertion")
+				return
+			}
 			scope, ok := g.tenantScopeFor(c, resource)
 			if !ok {
 				return
@@ -1181,7 +1196,7 @@ func (g *Gateway) handleKubeCreate(resource string) gin.HandlerFunc {
 				})
 				return
 			}
-			bodyBytes, err = prepareTenantResourceForCreate(bodyBytes, tenantID, c.GetString(authSubjectKey))
+			bodyBytes, err = prepareTenantResourceForCreate(bodyBytes, tenantID, c.GetString(authSubjectKey), submitter)
 			if err != nil {
 				respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 				return
@@ -1380,12 +1395,24 @@ func (g *Gateway) handleKubePatch(resource string) gin.HandlerFunc {
 				respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "invalid patch body")
 				return
 			}
-			if metadata, ok := patch["metadata"].(map[string]any); ok {
+			if value, present := patch["metadata"]; present {
+				metadata, ok := value.(map[string]any)
+				if !ok {
+					respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "metadata patch must be an object")
+					return
+				}
 				if labels, ok := metadata["labels"].(map[string]any); ok {
 					delete(labels, tenant.IDLabel)
 				}
-				if annotations, ok := metadata["annotations"].(map[string]any); ok {
+				if value, present := metadata["annotations"]; present {
+					annotations, ok := value.(map[string]any)
+					if !ok {
+						respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "annotations patch must be an object")
+						return
+					}
 					delete(annotations, tenant.CreatedByAnnotation)
+					delete(annotations, tenant.SubmittedByAnnotation)
+					delete(annotations, tenant.SubmitterIDAnnotation)
 				}
 			}
 			// Reject unsuspending a Task whose Cluster is cordoned, draining, or

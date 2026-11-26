@@ -10,6 +10,8 @@
 
 `--upstream-tokens` 读取含 `admin`、`operator`、`user` 字符串字段的 JSON 文件，权限必须为 0600 或更严格。缺少该文件时登录和 IAM 管理接口仍可用，`/internal/authorize` 对业务调用返回 503。服务不会读取 `rlark-ui-auth`。
 
+设置 `--submission-signing-key` 指向权限为 0600 或更严格的 PKCS#8 Ed25519 私钥 PEM，即可为任务和工作流创建请求签发身份声明。声明经 nginx 传给 Gateway，由 Gateway 使用配对公钥验证。
+
 ## HTTP API
 
 - `POST /api/iam/login` 和 `POST /api/v1/auth/login` 接收 `{ "username": "...", "password": "..." }`，返回不透明 token、角色、过期时间和不含密码哈希的用户 DTO。

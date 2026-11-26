@@ -120,7 +120,7 @@ export interface Job {
   displayName: string;
   type: JobType;
   phase: Phase;
-  owner: string;
+  submittedBy?: string;
   cluster: string;
   target: string;
   workers: number;

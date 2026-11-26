@@ -658,6 +658,7 @@ export function JobsPage({
               </th>
               <th>Worker</th>
               <th>{zh ? "角色数量" : "Roles"}</th>
+              <th>{zh ? "用户" : "Submitted by"}</th>
               <th>
                 <SortButton
                   label={zh ? "创建时间" : "Created"}
@@ -680,7 +681,7 @@ export function JobsPage({
           <tbody>
             {filtered.length === 0 && !loading && (
               <tr>
-                <td colSpan={9}>
+                <td colSpan={10}>
                   <div className="table-empty-state">
                     <span>
                       <Workflow size={22} />
@@ -795,6 +796,7 @@ export function JobsPage({
                     </span>
                   </td>
                   <td>{job.roleCount}</td>
+                  <td className="job-table-submitter">{job.submittedBy || "—"}</td>
                   <td>{formatTaskTime(job.submittedAt)}</td>
                   <td>{formatTaskTime(job.stoppedAt)}</td>
                   <td>

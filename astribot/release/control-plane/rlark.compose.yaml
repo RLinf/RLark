@@ -79,6 +79,7 @@ services:
       - --station-gateway-credential-file=/etc/rlark/station-service/token
       - --station-api-bootstrap-url=${STATION_API_BOOTSTRAP_URL:?the environment's station.bootstrapURL}
       - --jwt-token-ttl=${GATEWAY_TOKEN_TTL:?the environment's controlPlane.variables}
+      - --submission-verification-key=/etc/rlark/submission-public.pem
     ports: ["19000:8080"]
     volumes:
       - ${R}/registry-ca.crt:/etc/rlark/registry-ca.crt:ro
@@ -86,6 +87,11 @@ services:
       - ${R}/station-service-credential:/etc/rlark/station-service:ro
       - ${R}/identity/rlark-gateway:/etc/rlark/kcp:ro
       - ${R}/db-config.yaml:/etc/rlark/db-config.yaml:ro
+      - type: bind
+        source: ${R}/iam/submission-public.pem
+        target: /etc/rlark/submission-public.pem
+        read_only: true
+        bind: {create_host_path: false}
       - ${ADDONS:?the environment's addonCatalog}:/etc/rlark/addons:ro
     depends_on: [rlark-server]
 
@@ -99,6 +105,7 @@ services:
       - --addr=:8081
       - --db-config=/etc/rlark/db-config.yaml
       - --upstream-tokens=/etc/rlark/iam/upstream-tokens.json
+      - --submission-signing-key=/etc/rlark/iam/submission-private.pem
     volumes:
       - ${R}/db-config.yaml:/etc/rlark/db-config.yaml:ro
       - ${R}/iam:/etc/rlark/iam:ro

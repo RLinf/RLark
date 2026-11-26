@@ -2,6 +2,7 @@ package iam
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/rlinf/rlark/apps/rlark/pkg/submission"
 )
 
 type memoryStore struct {
@@ -403,6 +406,56 @@ func TestAuthorizeHeadersFailClosedAndMissingTokens(t *testing.T) {
 	missing.ServeHTTP(response, request)
 	if response.Code != 503 {
 		t.Fatalf("missing upstream credentials status=%d, want 503", response.Code)
+	}
+}
+
+func TestAuthorizeSignsWorkloadSubmissionFromSession(t *testing.T) {
+	store := newMemoryStore()
+	store.users["id-editor"] = User{ID: "id-editor", Username: "editor", Role: RoleOperator}
+	store.users["id-viewer"] = User{ID: "id-viewer", Username: "reader", Role: RoleViewer}
+	expires := time.Now().Add(time.Hour)
+	for _, id := range []string{"u_admin", "id-editor", "id-viewer"} {
+		hash := tokenHash(id)
+		store.sessions[hash] = Session{ID: hash, UserID: id, ExpiresAt: expires}
+	}
+	public, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServerWithSubmissionKey(store, time.Hour, false,
+		map[Role]string{RoleAdmin: "admin-token", RoleOperator: "operator-token", RoleViewer: "viewer-token"}, private).Handler()
+	for _, tc := range []struct {
+		id, username, account, method, resource string
+		status                                  int
+	}{
+		{"u_admin", "admin", "astribot-iam-admin", "POST", "jobs", 200},
+		{"id-editor", "editor", "astribot-iam-operator", "POST", "workflows", 200},
+		{"id-viewer", "", "", "POST", "jobs", 403},
+		{"id-editor", "", "", "GET", "jobs", 200},
+		{"id-editor", "", "", "POST", "jobs/example/start", 200},
+	} {
+		p := "/api/v1/rlinf.io/v1alpha1/" + tc.resource
+		request := httptest.NewRequest(http.MethodGet, "/internal/authorize", nil)
+		request.Header.Set("X-Original-Method", tc.method)
+		request.Header.Set("X-Original-URI", p)
+		request.Header.Set("Authorization", "Bearer "+tc.id)
+		request.Header.Set(submission.Header, "client-supplied")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != tc.status {
+			t.Fatalf("%s %s returned %d, want %d", tc.method, p, response.Code, tc.status)
+		}
+		raw := response.Header().Get(submission.Header)
+		if tc.username == "" {
+			if raw != "" {
+				t.Fatal("unexpected submission assertion")
+			}
+			continue
+		}
+		claims, err := submission.Verify(public, raw, tc.account, p)
+		if err != nil || claims.Subject != tc.id || claims.Username != tc.username {
+			t.Fatalf("submission assertion did not identify the authenticated user: %v", err)
+		}
 	}
 }
 

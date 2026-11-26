@@ -2,6 +2,7 @@ package iam
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,17 +19,20 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/rlinf/rlark/apps/rlark/pkg/submission"
 )
 
 const cookieName = "astribot_session"
 
 type Server struct {
-	store        Store
-	ttl          time.Duration
-	cookieSecure bool
-	upstream     map[Role]string
-	mu           sync.Mutex
-	failures     map[string]failureState
+	store         Store
+	ttl           time.Duration
+	cookieSecure  bool
+	upstream      map[Role]string
+	submissionKey ed25519.PrivateKey
+	mu            sync.Mutex
+	failures      map[string]failureState
 }
 
 type failureState struct {
@@ -37,10 +41,15 @@ type failureState struct {
 }
 
 func NewServer(store Store, ttl time.Duration, cookieSecure bool, upstream map[Role]string) *Server {
+	return NewServerWithSubmissionKey(store, ttl, cookieSecure, upstream, nil)
+}
+
+// NewServerWithSubmissionKey enables signed workload attribution when a key is configured.
+func NewServerWithSubmissionKey(store Store, ttl time.Duration, cookieSecure bool, upstream map[Role]string, key ed25519.PrivateKey) *Server {
 	if ttl <= 0 {
 		ttl = 7 * 24 * time.Hour
 	}
-	return &Server{store: store, ttl: ttl, cookieSecure: cookieSecure, upstream: upstream, failures: map[string]failureState{}}
+	return &Server{store: store, ttl: ttl, cookieSecure: cookieSecure, upstream: upstream, submissionKey: key, failures: map[string]failureState{}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -451,6 +460,19 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	if s.upstream == nil || s.upstream[a.user.Role] == "" {
 		w.WriteHeader(503)
 		return
+	}
+	if method == http.MethodPost && len(s.submissionKey) != 0 {
+		rawPath, _, _ := strings.Cut(uri, "?")
+		p, _ := safeAPIPath(rawPath)
+		if p == "/api/v1/rlinf.io/v1alpha1/jobs" || p == "/api/v1/rlinf.io/v1alpha1/workflows" {
+			assertion, err := submission.Sign(s.submissionKey, a.user.ID, a.user.Username, "astribot-iam-"+string(a.user.Role), p, time.Now())
+			if err != nil {
+				slog.Error("sign workload submission assertion", "error", err)
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set(submission.Header, assertion)
+		}
 	}
 	w.Header().Set("X-IAM-Upstream", s.upstream[a.user.Role])
 	w.Header().Set("X-IAM-User", a.user.Username)

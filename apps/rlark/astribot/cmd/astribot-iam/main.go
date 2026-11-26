@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,17 +15,27 @@ import (
 
 	"github.com/rlinf/rlark/apps/rlark/astribot/iam"
 	"github.com/rlinf/rlark/apps/rlark/pkg/db"
+	"github.com/rlinf/rlark/apps/rlark/pkg/submission"
 )
 
 func main() {
 	addr := flag.String("addr", ":8081", "HTTP listen address")
 	dbConfigPath := flag.String("db-config", "/etc/rlark/db-config.yaml", "PostgreSQL config file")
 	upstreamPath := flag.String("upstream-tokens", "/etc/rlark/iam/upstream-tokens.json", "IAM upstream service-account tokens file")
+	submissionKeyPath := flag.String("submission-signing-key", "", "Optional Ed25519 private key PEM for signing workload submissions")
 	ttl := flag.Duration("session-ttl", 168*time.Hour, "IAM session lifetime")
 	cookieSecure := flag.Bool("cookie-secure", false, "Set Secure on the IAM session cookie")
 	flag.Parse()
 	if *ttl <= 0 {
 		log.Fatal("--session-ttl must be positive")
+	}
+	var submissionKey ed25519.PrivateKey
+	if *submissionKeyPath != "" {
+		key, err := submission.LoadPrivateKey(*submissionKeyPath)
+		if err != nil {
+			log.Fatalf("load workload submission signing key: %v", err)
+		}
+		submissionKey = key
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -44,7 +55,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load IAM upstream tokens: %v", err)
 	}
-	httpServer := &http.Server{Addr: *addr, Handler: iam.NewServer(store, *ttl, *cookieSecure, tokens).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	httpServer := &http.Server{Addr: *addr, Handler: iam.NewServerWithSubmissionKey(store, *ttl, *cookieSecure, tokens, submissionKey).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
 		ticker := time.NewTicker(15 * time.Minute)
 		defer ticker.Stop()

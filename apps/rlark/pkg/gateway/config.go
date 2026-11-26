@@ -26,6 +26,9 @@ type Config struct {
 	// and its cookie's expiry. Nothing renews a token; a login lasts this long.
 	JWTTokenTTL time.Duration
 
+	// SubmissionVerificationKeyPath enables verification of Astribot IAM submitter claims.
+	SubmissionVerificationKeyPath string
+
 	// EnableSecretBackend 启用 Secret Backend（测试/CI 模式）。
 	// 未配置 PostgreSQL 时，用 K8s Secret 存归档快照。
 	EnableSecretBackend bool
@@ -55,6 +58,7 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.DBConfigPath, "db-config", c.DBConfigPath, "The file path to the database configuration (e.g., YAML or JSON).")
 	fs.StringVar(&c.ServerAddress, "server-address", c.ServerAddress, "The address of the rlark-server for certificate signing.")
 	fs.DurationVar(&c.JWTTokenTTL, "jwt-token-ttl", c.JWTTokenTTL, "How long a console login lasts: the access token's exp and its cookie's expiry (for example 8h, 168h).")
+	fs.StringVar(&c.SubmissionVerificationKeyPath, "submission-verification-key", c.SubmissionVerificationKeyPath, "Optional Ed25519 public key PEM for Astribot IAM workload submission assertions.")
 	fs.BoolVar(&c.EnableSecretBackend, "enable-secret-backend", c.EnableSecretBackend, "Use Kubernetes Secret as persistence backend (test/CI mode, only when PostgreSQL is not configured).")
 	fs.StringSliceVar(&c.SyncResources, "sync-resources", c.SyncResources, "Resources that query from persistence backend (jobs, tasks, workflows, nodes). Others query from KCP.")
 

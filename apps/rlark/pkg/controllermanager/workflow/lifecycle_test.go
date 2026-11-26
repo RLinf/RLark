@@ -16,8 +16,24 @@ import (
 
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"github.com/rlinf/rlark/apps/rlark/pkg/controllermanager/controller"
+	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 	"github.com/rlinf/rlark/apps/rlark/pkg/utils"
 )
+
+func TestBuildWorkflowJobInheritsSubmitter(t *testing.T) {
+	wf := &rlarkv1alpha1.Workflow{ObjectMeta: metav1.ObjectMeta{
+		Annotations: map[string]string{tenant.SubmittedByAnnotation: "alice", tenant.SubmitterIDAnnotation: "u-alice"},
+	}}
+	job := buildJob(wf, rlarkv1alpha1.WorkflowJobTemplate{Name: "train"}, "wf-train")
+	if job.Annotations[tenant.SubmittedByAnnotation] != "alice" || job.Annotations[tenant.SubmitterIDAnnotation] != "u-alice" {
+		t.Fatalf("job did not inherit submitter: %v", job.Annotations)
+	}
+	delete(wf.Annotations, tenant.SubmittedByAnnotation)
+	legacy := buildJob(wf, rlarkv1alpha1.WorkflowJobTemplate{Name: "train"}, "wf-train")
+	if legacy.Annotations[tenant.SubmittedByAnnotation] != "" || legacy.Annotations[tenant.SubmitterIDAnnotation] != "" {
+		t.Fatal("unexpected attribution for a legacy workflow without a recorded submitter")
+	}
+}
 
 func TestSyncJobStatusSnapshotIsExactAndOrdered(t *testing.T) {
 	wf := &rlarkv1alpha1.Workflow{

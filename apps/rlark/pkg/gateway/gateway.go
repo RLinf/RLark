@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/persistence"
+	"github.com/rlinf/rlark/apps/rlark/pkg/submission"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
@@ -58,6 +60,7 @@ type Gateway struct {
 
 	serverTransport *http.Transport
 	jwtSigningKey   []byte
+	submissionKey   ed25519.PublicKey
 	users           userProvider
 	tenants         tenant.Provider
 }
@@ -102,6 +105,13 @@ func (g *Gateway) Run(ctx context.Context) error {
 
 func (g *Gateway) init(ctx context.Context) error {
 	logger := log.FromContext(ctx)
+	if path := g.config.SubmissionVerificationKeyPath; path != "" {
+		key, err := submission.LoadPublicKey(path)
+		if err != nil {
+			return fmt.Errorf("load workload submission verification key: %w", err)
+		}
+		g.submissionKey = key
+	}
 	// init Kubernetes client
 	restConfig, err := g.config.KubeClientConfig.BuildRestConfig()
 	if err != nil {

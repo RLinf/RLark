@@ -33,6 +33,12 @@ func buildJob(wf *rlarkv1alpha1.Workflow, jt rlarkv1alpha1.WorkflowJobTemplate, 
 		Spec: jt.Spec,
 	}
 	tenant.Inherit(wf, result)
+	if submittedBy := wf.Annotations[tenant.SubmittedByAnnotation]; submittedBy != "" {
+		result.Annotations[tenant.SubmittedByAnnotation] = submittedBy
+		if id := wf.Annotations[tenant.SubmitterIDAnnotation]; id != "" {
+			result.Annotations[tenant.SubmitterIDAnnotation] = id
+		}
+	}
 	return result
 }
 

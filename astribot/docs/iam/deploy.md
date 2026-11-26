@@ -30,6 +30,10 @@ In compose, `astribot-iam` listens on 8081 inside the internal network only, wit
 
 ## First deployment
 
+Before applying a release that records workload submitters, run `sudo env R=/home/cailiang/.local/share/rlark-runtime astribot/release/iam-provision.sh --submission-keys-only` on the management host. This step is safe to repeat and reuses the existing key pair. Back up `${R}/iam/submission-private.pem` (mode 0600) with the IAM upstream credentials. The Gateway mounts only `submission-public.pem`.
+
+For Job and Workflow creation, IAM signs a short-lived assertion with the user ID and username. The Gateway verifies its signature, expiry, route, and service account, then records `rlark.io/submitted-by` and `rlark.io/submitter-id`. Gateway writes preserve these annotations on edits. During a mixed-version rollout, a request from a shared account without an assertion can still submit jobs, with no human attribution. Roll Gateway, the controller manager, IAM, and the console together, then verify that two different users and a Workflow-generated job have the expected submitters.
+
 1. Ship a normal release (`astribot/release/build.sh` + `rlarkctl release apply`). The apply console stage starts `astribot-iam` and then `rlark-ui`; first startup creates the tables (`astribot_iam_users/sessions/audit/schema_migrations`, guarded by an advisory lock) and bootstraps the two default accounts.
 2. Provision the upstream service accounts on the management machine as root (signing in to the gateway needs them; the script is idempotent and exits when valid tokens exist):
 

@@ -7,19 +7,47 @@ gateway_url=${ASTRIBOT_IAM_GATEWAY_URL:-http://127.0.0.1:19000}
 management_kubeconfig=${KUBECONFIG:-$R/identity/rlark-release/kubeconfig}
 iam_dir=$R/iam
 tokens_file=$iam_dir/upstream-tokens.json
+signing_key=$iam_dir/submission-private.pem
+verification_key=$iam_dir/submission-public.pem
+
+umask 077
+mkdir -p "$iam_dir"
+chmod 700 "$iam_dir"
+work_dir=$(mktemp -d "$iam_dir/.provision.XXXXXX")
+trap 'rm -rf "$work_dir"' EXIT
+
+# Publish the signing key first. If interrupted, the public key can be derived
+# on the next run without replacing the original signing key.
+(
+	flock 9
+	if [[ ! -e $signing_key ]]; then
+		if [[ -e $verification_key ]]; then
+			printf 'The public submission key exists without its signing key. Restore the matching private key before proceeding.\n' >&2
+			exit 1
+		fi
+		openssl genpkey -algorithm Ed25519 -out "$work_dir/submission-private.pem"
+		chmod 600 "$work_dir/submission-private.pem"
+		mv "$work_dir/submission-private.pem" "$signing_key"
+	fi
+	openssl pkey -in "$signing_key" -pubout -out "$work_dir/submission-public.pem"
+	if [[ ! -e $verification_key ]]; then
+		mv "$work_dir/submission-public.pem" "$verification_key"
+	elif ! cmp -s "$work_dir/submission-public.pem" "$verification_key"; then
+		printf 'IAM submission keys do not match. Restore the matching key pair before proceeding.\n' >&2
+		exit 1
+	fi
+) 9>"$iam_dir/.submission-keys.lock"
+
+if [[ ${1:-} == --submission-keys-only ]]; then
+	printf 'IAM submission keys are provisioned.\n'
+	exit 0
+fi
 
 if [[ -f $tokens_file && ! -L $tokens_file && $(stat -c '%a' "$tokens_file") == 600 ]] &&
   jq -e '(.admin | type == "string" and length > 0) and (.operator | type == "string" and length > 0) and (.user | type == "string" and length > 0)' "$tokens_file" >/dev/null; then
 	printf 'IAM upstream tokens are already provisioned.\n'
 	exit 0
 fi
-
-umask 077
-mkdir -p "$iam_dir"
-chmod 700 "$iam_dir"
-work_dir=$(mktemp -d "$iam_dir/.provision.XXXXXX")
-chmod 700 "$work_dir"
-trap 'rm -rf "$work_dir"' EXIT
 
 manual_commands() {
 	printf 'export GATEWAY_URL=%q\n' "$gateway_url" >&2

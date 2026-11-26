@@ -65,6 +65,17 @@ test("任务列表的角色数量列直接渲染 crdToJob 的 roleCount", () => 
   assert.match(jobsSource, /<td>\{job\.roleCount\}<\/td>/);
 });
 
+test("任务列表显示提交人并兼容无个人身份的历史任务", () => {
+  const job = (annotations) => crdToJob({ metadata: { annotations }, spec: { tasks: [] } });
+  assert.equal(job({ "rlark.io/submitted-by": "alice", "rlark.io/created-by": "service-account:astribot-iam-admin" }).submittedBy, "alice");
+  assert.equal(job({ "rlark.io/created-by": "bob" }).submittedBy, "bob");
+  assert.equal(job({ "rlark.io/created-by": "service-account:astribot-iam-operator" }).submittedBy, undefined);
+  assert.equal(job(undefined).submittedBy, undefined);
+  assert.match(jobsSource, /<th>\{zh \? "用户" : "Submitted by"\}<\/th>/);
+  assert.match(jobsSource, /<td className="job-table-submitter">\{job\.submittedBy \|\| "—"\}<\/td>\s*<td>\{formatTaskTime\(job\.submittedAt\)\}<\/td>/);
+  assert.match(jobsSource, /<td colSpan=\{10\}>\s*<div className="table-empty-state">/);
+});
+
 test("预填任务切换任务类型时不改写角色列表", () => {
   const onTypeChange = createJobSource.slice(
     createJobSource.indexOf("const onTypeChange = (next: JobType)"),

@@ -30,6 +30,10 @@ compose 里 `astribot-iam` 只在内部网络监听 8081，不发布宿主端口
 
 ## 首次部署
 
+应用记录任务提交人的发布前，在管理机执行 `sudo env R=/home/cailiang/.local/share/rlark-runtime astribot/release/iam-provision.sh --submission-keys-only`。可重复执行，它会复用已有密钥对。将 `${R}/iam/submission-private.pem`（权限 0600）与 IAM 上游凭据一起备份。Gateway 只挂载 `submission-public.pem`。
+
+创建任务或工作流时，IAM 用短时签名声明传递用户 ID 和用户名。Gateway 验证签名、有效期、路由和服务账号后，记录 `rlark.io/submitted-by` 和 `rlark.io/submitter-id`，资源编辑时保留这两项注解。混合版本发布期间，共享账号未携带声明时仍能提交任务，该任务缺少个人记录。协调更新 Gateway、Controller Manager、IAM 和控制台后，验证两个不同用户以及工作流生成的任务都显示预期提交人。
+
 1. 正常走发布（`astribot/release/build.sh` + `rlarkctl release apply`）。apply 的 console 阶段会按顺序启动 `astribot-iam`、`rlark-ui`；首次启动自动建表（`astribot_iam_users/sessions/audit/schema_migrations`，advisory lock 保护）并引导两个默认账号。
 2. 在管理机上以 root 供给上游 service account（登录网关需要它；脚本幂等，token 已存在则直接退出）：
 

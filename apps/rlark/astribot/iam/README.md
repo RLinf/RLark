@@ -10,6 +10,8 @@ The default listener is `:8081`. `--session-ttl` defaults to `168h`. Login issue
 
 `--upstream-tokens` reads a JSON object with `admin`, `operator`, and `user` string values. The file must be mode 0600 or stricter. Without it sign-in and IAM management keep working, while `/internal/authorize` answers 503 to business calls. The service never reads `rlark-ui-auth`.
 
+Set `--submission-signing-key` to a PKCS#8 Ed25519 private key PEM with mode 0600 or stricter to sign Job and Workflow creation assertions. The signed identity is sent to the Gateway through nginx. The Gateway verifies it with the matching public key.
+
 ## HTTP API
 
 - `POST /api/iam/login` and `POST /api/v1/auth/login` accept `{ "username": "...", "password": "..." }` and return an opaque token, role, expiry, and password-free user DTO.

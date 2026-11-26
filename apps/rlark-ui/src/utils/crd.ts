@@ -178,13 +178,17 @@ export function crdToJob(crd: CRDJob): Job {
         value: e.value ?? "",
       })) ?? [];
   const mounts = taskMounts(tasks[0]);
+  const annotations = crd.metadata?.annotations;
+  const creator = annotations?.["rlark.io/created-by"]?.trim();
+  const submittedBy = annotations?.["rlark.io/submitted-by"]?.trim() ||
+    (creator && !creator.startsWith("service-account:") ? creator : undefined);
   return {
     id: crd.metadata?.name ?? "",
     name: crd.metadata?.name ?? "",
     displayName,
     type: readJobType(crd, tasks),
     phase,
-    owner: "",
+    submittedBy,
     cluster: tasks
       .map((t) =>
         t.placement.nodeSelector
