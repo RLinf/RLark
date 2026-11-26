@@ -231,6 +231,10 @@ spec:
             - {name: host, mountPath: /host}
             # Whether the robot is in use: the clock jumps only while it is not.
             - {name: in-use, mountPath: /in-use, readOnly: true}
+            # The machine's own hosts file, not kubelet's copy of it from when the Pod started: the time source is a
+            # name the station-gateway keeps there (the site's names, written in place), so a site whose hub moves is
+            # followed at the next measurement without the Pod started again.
+            - {name: hosts, mountPath: /etc/hosts, readOnly: true}
         {{- if .Values.deviceImage }}
         # The robot's device layer (the Addon's deviceImage, whose /device/start it runs): the program that holds the
         # robot's SDK connection for the sessions of the site's application, which attach to it on the host
@@ -313,6 +317,8 @@ spec:
           emptyDir: {sizeLimit: 1Mi}
         - name: host
           hostPath: {path: /run/rlark/s1u, type: DirectoryOrCreate}
+        - name: hosts
+          hostPath: {path: /etc/hosts, type: File}
         # What must outlast a boot and is root's (the Orin's record).
         - name: state
           hostPath: {path: /var/lib/rlark/s1u, type: DirectoryOrCreate}

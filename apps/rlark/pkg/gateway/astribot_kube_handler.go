@@ -27,12 +27,18 @@ func nodeUpdateAllowed(c *gin.Context, a *resourceAccessor, namespace, name stri
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotPowerRefused)
 		return false
 	}
-	if value, _ := robotLabelIn(body, robotClaimLabel); value != labels[robotClaimLabel] {
+	annotations := existing.(metav1.Object).GetAnnotations()
+	if value, _ := robotLabelIn(body, robotClaimLabel); value != labels[robotClaimLabel] ||
+		nodeAnnotations(body)[robotClaimSetAnnotation] != annotations[robotClaimSetAnnotation] {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotClaimRefused)
 		return false
 	}
+	if nodeAnnotations(body)[robotRestartAnnotation] != annotations[robotRestartAnnotation] {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotRestartRefused)
+		return false
+	}
 	if value, _ := robotLabelIn(body, stationMarkLabel); value != labels[stationMarkLabel] ||
-		nodeAnnotations(body)[stationMarkAnnotation] != existing.(metav1.Object).GetAnnotations()[stationMarkAnnotation] {
+		nodeAnnotations(body)[stationMarkAnnotation] != annotations[stationMarkAnnotation] {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, stationMarkRefused)
 		return false
 	}
@@ -53,8 +59,13 @@ func nodePatchAllowed(c *gin.Context, a *resourceAccessor, namespace, name strin
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotPowerRefused)
 		return false
 	}
-	if _, named := robotLabelIn(body, robotClaimLabel); named {
+	_, claimed := robotLabelIn(body, robotClaimLabel)
+	if _, annotated := nodeAnnotations(body)[robotClaimSetAnnotation]; claimed || annotated {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotClaimRefused)
+		return false
+	}
+	if _, annotated := nodeAnnotations(body)[robotRestartAnnotation]; annotated {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, robotRestartRefused)
 		return false
 	}
 	_, marked := robotLabelIn(body, stationMarkLabel)

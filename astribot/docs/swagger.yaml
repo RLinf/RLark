@@ -1156,7 +1156,9 @@ paths:
       tags: [Node]
       summary: Restart a robot's driver, or its motors and driver, for the Run that holds it (audited with its actor)
       description: >-
-        Writes the annotation rlark.io/robot-restart {id, level, holder, by, at} on the Node; the agents carry it to
+        Only for the caller that made the robot's claim, or an administrator or operator. The Node's PATCH and PUT
+        refuse a body that would write the annotation. Writes the annotation rlark.io/robot-restart {id, level,
+        holder, by, at} on the Node; the agents carry it to
         the member cluster's Node, where the robot's power service (s1u-robot Addon) runs each new id once: the
         driver stopped and the arms let sink (the node profile's S1U_DRIVER_STOP_SECONDS), for level power the motors
         off for the vendor's 10 s, then powered and the driver started until ready. It runs only while the claim on
@@ -1182,7 +1184,7 @@ paths:
         '200': {description: "The request recorded: id, level, holder, by, at"}
         '400': {description: level, holder or request_id is invalid}
         '404': {description: Not Found}
-        '409': {description: "ROBOT_CLAIM_BUSY: the robot is not held by holder (details.current: its claim, null: none), or its station is marked (details.mark)"}
+        '409': {description: "ROBOT_CLAIM_BUSY: the robot is not held by holder for the caller (details.current: its claim, null: none), or its station is marked (details.mark)"}
   /api/v1/rlinf.io/v1alpha1/nodes/{name}/station:
     put:
       tags: [Node]
@@ -1216,7 +1218,7 @@ paths:
         '400': {description: station is not S and two or three digits, or the node is not a robot}
         '403': {description: Neither administrator nor operator}
         '404': {description: Not Found}
-        '409': {description: Another robot of the cluster stands at that Station, or the admission changed meanwhile}
+        '409': {description: Another robot of the cluster stands at that Station, the robot has no NodeAdmission, or the admission changed meanwhile}
   /api/v1/rlinf.io/v1alpha1/nodes/{name}/robot-power:
     put:
       tags: [Node]

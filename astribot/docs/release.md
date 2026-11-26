@@ -70,7 +70,7 @@ astribot/release/build.sh base <RLark 提交>                      # 安装器�
 - `s1u-robot` v1.7.0（相机归 RLark）：`bodies.json` 加了 `torso`，`video` 容器换成相机服务（端口 18891），`/services/s1u-video.sock`、`/viewers`、WebRTC 和 `orin` 读的 `/run/rlark/s1u/camera-reset-request` 都没有了。它要的 Fleet 是相机那次改动之后的 main：`torso` 是录制相机，设备层不再重启相机驱动、不再调 `camera_control_command`，Dashboard 经 Gateway 看相机。发布文件里 `deviceImage` 换成按那个 Fleet 提交构建的镜像、`--fleet` 写那个提交，和这个 Addon 版本一起 `apply`。Fleet main 还在 50d1eb37 时不要上这个版本。
 - `s1u-robot` v1.7.1（相机恢复按相机走）：每路相机各自的恢复阶梯；USB 复位后 5 分钟内又停即疑似硬件、直接 stuck；stuck 的相机只在机器人空闲（`/run/rlark/in-use` 为空）时每小时重启一次驱动，`video` 容器因此只读挂载 `/run/rlark/in-use`；stuck 带 `orin` 采的诊断，每路相机带 USB 位置和改接建议。清单变了（新挂载），所以 `rlarkctl` 和 agent 镜像要按这个提交重建（Addon 目录编译在里面）。不依赖 Fleet 的改动。
 
-- `s1u-robot` v1.7.2（Run 里重启、时钟）：电源容器执行认领者经 Gateway `POST nodes/{name}/robot-restart` 要的重启，只在每个在用标记都写着该 Run（`... Run <id> ...`）时做，所以要和在用标记写明 Run 的 Fleet 设备层（`deviceImage`）同一次 `apply`，旧设备层的标记会让重启以“in use by others”失败（不动机器人）。`clock` 容器只读挂载 `/run/rlark/in-use`，只在驱动停、没认领、没在用时跳；`timeSource` 由 `pinned.yaml` 带来（`time.rlark.internal`，每个站点在 SiteNetwork `names` 里指到本站 Hub）。新的 Gateway 和 agent（`rlark/agent`）同一次上线：agent 把管理面的 `rlark.io/robot-restart` 带到成员集群的节点上。
+- `s1u-robot` v1.7.2（Run 里重启、时钟）：电源容器执行认领者经 Gateway `POST nodes/{name}/robot-restart` 要的重启，只在每个在用标记都写着该 Run（`... Run <id> ...`）时做，所以要和在用标记写明 Run 的 Fleet 设备层（`deviceImage`）同一次 `apply`，旧设备层的标记会让重启以“in use by others”失败（不动机器人）。`clock` 容器只读挂载 `/run/rlark/in-use`，只在驱动停、没认领、没在用时跳；`timeSource` 由 `pinned.yaml` 带来（`time.rlark.internal`，每个站点在 SiteNetwork `names` 里指到本站 Hub；`clock` 容器挂机器自己的 `/etc/hosts`，Hub 换地址只改 `names`，不用重启 Pod）。新的 Gateway 和 agent（`rlark/agent`）同一次上线：agent 把管理面的 `rlark.io/robot-restart` 带到成员集群的节点上。
 
 ## 提高文档级别的改动（分两次 apply）
 

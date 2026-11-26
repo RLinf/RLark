@@ -16,7 +16,10 @@ import (
 // its claim holder asked for: {id, level, holder, by, at}. The agents carry it
 // to the cluster's Node (pullManagementAnnotations), where the robot's power
 // service runs each new id once and reports it in rlark.io/power.restart.
-const robotRestartAnnotation = "rlark.io/robot-restart"
+const (
+	robotRestartAnnotation = "rlark.io/robot-restart"
+	robotRestartRefused    = "a robot's restart (annotation " + robotRestartAnnotation + ") is asked for with POST /api/v1/rlinf.io/v1alpha1/nodes/{name}/robot-restart"
+)
 
 type robotRestart struct {
 	ID     string    `json:"id"`
@@ -31,7 +34,8 @@ type robotRestart struct {
 // the driver stopped, the arms let sink, the driver started) or also its
 // motors (level power: powered off between, as long as the vendor asks).
 // The desired power stays as it is. 409 unless the robot's claim names the
-// holder and its station is not marked. The same request_id asked again is
+// holder, was made by the caller (or the caller is an operator) and its
+// station is not marked. The same request_id asked again is
 // answered with the request it already is.
 func (g *Gateway) handleRobotRestart(c *gin.Context) {
 	var request struct {
@@ -57,12 +61,12 @@ func (g *Gateway) handleRobotRestart(c *gin.Context) {
 			respondErrorWithDetails(c, http.StatusConflict, CodeRobotClaimBusy, "the station is marked "+mark, map[string]any{"mark": mark})
 			return
 		}
-		if claim, held := robotClaimOf(node); !held || claim.Holder != request.Holder {
+		if claim, held := robotClaimOf(node); !held || claim.Holder != request.Holder || claim.By != actor && !isOperator(c) {
 			var current any
 			if held {
 				current = claim
 			}
-			respondErrorWithDetails(c, http.StatusConflict, CodeRobotClaimBusy, "the robot is not held by "+request.Holder, map[string]any{"current": current})
+			respondErrorWithDetails(c, http.StatusConflict, CodeRobotClaimBusy, "the robot is not held by "+request.Holder+" for "+actor, map[string]any{"current": current})
 			return
 		}
 		var previous robotRestart

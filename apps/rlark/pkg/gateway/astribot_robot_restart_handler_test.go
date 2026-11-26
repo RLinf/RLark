@@ -18,7 +18,7 @@ func TestRobotRestartIsTheClaimHoldersAndLeavesTheDesiredPower(t *testing.T) {
 	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name: "s1u-01-x86", Namespace: "robots", ResourceVersion: "7",
 		Labels:      map[string]string{"rlark.io/robot-id": "s1u_01", robotClaimLabel: "run_a", robotPowerLabel: "ready.1"},
-		Annotations: map[string]string{robotClaimSetAnnotation: `{"holder":"run_a"}`},
+		Annotations: map[string]string{robotClaimSetAnnotation: `{"holder":"run_a","by":"service-account:fleet-runner"}`},
 	}}
 	var patches []string
 	g := &Gateway{accessors: map[string]*resourceAccessor{"nodes": {
@@ -42,7 +42,8 @@ func TestRobotRestartIsTheClaimHoldersAndLeavesTheDesiredPower(t *testing.T) {
 		},
 	}}}
 	router := gin.New()
-	router.Use(func(c *gin.Context) { c.Set(authSubjectKey, "service-account:fleet-runner"); c.Next() })
+	actor, role := "service-account:fleet-runner", ""
+	router.Use(func(c *gin.Context) { c.Set(authSubjectKey, actor); c.Set(authRoleKey, role); c.Next() })
 	g.registerRobotRoutes(router.Group("/nodes"))
 	post := func(body string) *httptest.ResponseRecorder {
 		response := httptest.NewRecorder()
@@ -57,6 +58,11 @@ func TestRobotRestartIsTheClaimHoldersAndLeavesTheDesiredPower(t *testing.T) {
 	if response := post(`{"level":"driver","holder":"run_b","request_id":"20"}`); response.Code != 409 {
 		t.Fatalf("another Run restarted the robot: %d %s", response.Code, response.Body)
 	}
+	actor = "service-account:other"
+	if response := post(`{"level":"power","holder":"run_a","request_id":"19"}`); response.Code != 409 {
+		t.Fatalf("someone who did not claim the robot restarted it with the public holder: %d %s", response.Code, response.Body)
+	}
+	actor = "service-account:fleet-runner"
 	for range 2 {
 		if response := post(`{"level":"power","holder":"run_a","request_id":"20"}`); response.Code != 200 {
 			t.Fatalf("the holder's restart: %d %s", response.Code, response.Body)
@@ -69,6 +75,10 @@ func TestRobotRestartIsTheClaimHoldersAndLeavesTheDesiredPower(t *testing.T) {
 	}
 	if node.Labels[robotPowerLabel] != "ready.1" {
 		t.Fatalf("the desired power changed: %s", node.Labels[robotPowerLabel])
+	}
+	actor, role = "user:operator", roleOperator
+	if response := post(`{"level":"driver","holder":"run_a","request_id":"22"}`); response.Code != 200 {
+		t.Fatalf("an operator's restart for the holder: %d %s", response.Code, response.Body)
 	}
 	node.Labels[stationMarkLabel] = "repair"
 	if response := post(`{"level":"driver","holder":"run_a","request_id":"21"}`); response.Code != 409 {

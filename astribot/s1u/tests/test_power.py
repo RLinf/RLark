@@ -495,23 +495,23 @@ def test_a_restart_the_holder_asked_for_lowers_and_raises_the_robot_once_with_it
         clock[0] += seconds
         service.receive(",".join(service.codes))
 
-    service = power.Power(call, driver_stop_seconds=5.0)
+    service = power.Power(call, tmp_path / "power.json", driver_stop_seconds=5.0)
     service.receive("12000000,13000000")
     service.converge("ready", "", clock[0], NONE)
     run = dict(id="20", level="power", holder="run_a")
 
-    def restart(request, reported=None):
+    def restart(request):
         started = []
         monkeypatch.setattr(power.threading, "Thread", lambda target, args, daemon: started.append((target, args)) or
                             type("T", (), {"start": lambda self: None})())
-        service.restart_step(request, reported, sleep=tick)
+        service.restart_step(request, sleep=tick)
         for target, args in started:
             target(*args)
         return bool(started)
 
     # Another Run's mark, or another holder: refused with the reason, nothing sent.
     (tmp_path / "in-use" / "fleet-station").write_text("the Station serves Run run_a")
-    (tmp_path / "in-use" / "s1u-device").write_text("a session of Run run_b is attached to the device layer")
+    (tmp_path / "in-use" / "s1u-device").write_text("a session of Run run_a-b is attached to the device layer")
     assert restart(run) and service.restart["phase"] == "failed" and "s1u-device" in service.restart["error"] and not sent
     assert not restart(run)  # the same id is not run again
     (tmp_path / "in-use" / "s1u-device").write_text("a session of Run run_a is attached to the device layer")
@@ -527,11 +527,19 @@ def test_a_restart_the_holder_asked_for_lowers_and_raises_the_robot_once_with_it
     sent.clear()
     assert restart(dict(run, id="23", level="driver")) and service.restart["phase"] == "done"
     assert [(step[0], step[1]) for step in sent] == [("driver_command", False), ("driver_command", True)]
+    # The service restarted after a restart ended: the kept record says it ran, so it is not run again.
+    fresh = power.Power(call, tmp_path / "power.json", driver_stop_seconds=5.0)
+    sent.clear()
+    started = []
+    monkeypatch.setattr(power.threading, "Thread", lambda target, args, daemon: started.append(target) or
+                        type("T", (), {"start": lambda self: None})())
+    fresh.restart_step(dict(run, id="23", level="driver"))
+    assert fresh.restart["phase"] == "done" and not started
     # While a restart runs, the convergence waits and presses are refused.
-    service.restart = dict(service.restart, id="24", phase="lowering")
+    service.restart_step(dict(run, id="24"))
     service.converge("ready", "", clock[0], NONE)
     assert service.waiting == "restart 24: lowering" and service.act("driver_on")[1]["reason"] == "restarting"
-    # The service restarted during a restart: it reads its own report and does not run the request again.
-    fresh = power.Power(call, driver_stop_seconds=5.0)
-    fresh.restart_step(dict(run, id="24"), dict(service.restart))
-    assert fresh.restart["phase"] == "failed" and "restarted during it" in fresh.restart["error"]
+    # The service restarted during it: its kept record reads failed and the request is not run again.
+    fresh = power.Power(call, tmp_path / "power.json", driver_stop_seconds=5.0)
+    fresh.restart_step(dict(run, id="24"))
+    assert fresh.restart["phase"] == "failed" and "restarted during it" in fresh.restart["error"] and len(started) == 1

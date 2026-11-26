@@ -81,10 +81,12 @@ This service converges the robot on it every few seconds, for as long as the x86
   restarted, the tuner did not renew it), the robot is brought back to its desired state: one a person powered off
   stays off.
 - a restart the Run that holds the robot asks for at RLark (the Node's annotation rlark.io/robot-restart: {id,
-  level, holder}, written by the Gateway's POST nodes/{name}/robot-restart; restart_step) runs once per id, its
-  desired state untouched: the driver stopped and the arms let sink (the node profile's S1U_DRIVER_STOP_SECONDS),
+  level, holder}, written by the Gateway's POST nodes/{name}/robot-restart; restart_step) runs once per id (the last
+  one is kept on the host before it runs, so a restart of this service never runs it again), its desired state
+  untouched: the driver stopped and the arms let sink (the node profile's S1U_DRIVER_STOP_SECONDS),
   for level power the motors off for POWER_OFF_SECONDS, then brought up again to ready. Only while the claim names
-  that holder and every component's mark under /run/rlark/in-use names its Run ("... Run <holder> ..."), and no
+  that holder and every component's mark under /run/rlark/in-use names its Run ("... Run <holder> ...", the holder
+  not followed or preceded by a word character, "." or "-"), and no
   maintenance holds the robot; otherwise it fails with the reason. Nothing else lowers or raises the robot meanwhile
   (the convergence waits, a press is refused "restarting"). Its progress is the annotation rlark.io/power.restart,
   {id, level, holder, phase: lowering | raising | done | failed, error, at}, and "restart" in rlark.io/power.
@@ -170,7 +172,7 @@ def restart_refusal(holder, lease):
     held = json.loads(CLAIM_FILE.read_text())["holder"] if CLAIM_FILE.exists() else None
     if held != holder:
         return "the robot is held by %s, not by %s" % (held or "nobody", holder)
-    others = {name: why for name, why in marks().items() if not re.search(r"\bRun %s\b" % re.escape(holder), why)}
+    others = {name: why for name, why in marks().items() if not re.search(r"(?<![\w.-])Run %s(?![\w.-])" % re.escape(holder), why)}
     if others:
         return "in use by others: %s" % "; ".join("%s: %s" % mark for mark in others.items())
     return "maintenance: %s" % lease["why"] if lease and lease["kind"] else ""
@@ -221,20 +223,33 @@ class Power:
         # The label is None until the Node has been read once or a kept state says what it was: a robot whose desired
         # state is not known is left as it is.
         self.label, self.used = None, None
+        # The last restart a holder asked for and what became of it (published as RESTARTED), kept with the rest: a
+        # request whose id and holder it names is never run again, whatever the Node says. One that was under way when
+        # this service stopped did not end. A record from before restarts were kept has none.
+        self.restart = None
         if record is not None and record.exists():
             kept = json.loads(record.read_text())
             self.desired, self.applied, self.label, self.used = kept["desired"], kept["applied"], kept["label"], kept["used"]
+            self.restart = kept.get("restart")
+            if self.restart and self.restart["phase"] in RESTARTING:
+                self.restart = dict(self.restart, phase="failed", error="the power service restarted during it",
+                                    at=time.time())
+        self.saving = threading.Lock()  # the restart's thread writes the record too
         # Why nothing converges now; the recoveries.
         self.waiting, self.recovered = "", []
-        # The last restart a holder asked for and what became of it (RESTARTED); None until the Node was read.
-        self.restart = None
         self.tried, self.pause, self.retry_at, self.converged = None, RETRY_SECONDS[0], 0.0, False
 
     def keep(self, desired, applied):
         self.desired, self.applied = desired, applied
-        if self.record is not None:
+        self.save()
+
+    def save(self):
+        if self.record is None:
+            return
+        with self.saving:
             self.record.with_suffix(".new").write_text(json.dumps(dict(
-                desired=desired, applied=applied, label=self.label, used=self.used)) + "\n")
+                desired=self.desired, applied=self.applied, label=self.label, used=self.used,
+                restart=self.restart)) + "\n")
             os.replace(self.record.with_suffix(".new"), self.record)
 
     def receive(self, text):
@@ -343,19 +358,16 @@ class Power:
     def restarting(self):
         return self.restart is not None and self.restart["phase"] in RESTARTING
 
-    def restart_step(self, request, reported, sleep=time.sleep):
+    def restart_step(self, request, sleep=time.sleep):
         """A restart the holder asked for (``request``: the Node's RESTART) started on a thread of its own, unless it
-        is the last one (``reported``: RESTARTED as this service published it before it started) or one runs."""
-        if self.restart is None and reported:
-            # Under way when this service stopped: it did not end.
-            self.restart = reported if reported["phase"] not in RESTARTING else dict(
-                reported, phase="failed", error="the power service restarted during it", at=time.time())
+        is the last one (kept on the host before it is run) or one runs."""
         if request is None or self.restarting() or self.restart and (self.restart["id"], self.restart["holder"]) == (
                 request["id"], request["holder"]):
             return
         with self.lock:
             self.restart = dict(id=request["id"], level=request["level"], holder=request["holder"], phase="lowering",
                                 error="", at=time.time())
+            self.save()
         print("%s restart %s (%s) for %s" % (time.strftime("%F %T"), request["id"], request["level"], request["holder"]),
               flush=True)
         threading.Thread(target=self.restart_run, args=(maintenance(), sleep), daemon=True).start()
@@ -367,6 +379,7 @@ class Power:
 
         def phase(name, error=""):
             self.restart = dict(restart, phase=name, error=error, at=time.time())
+            self.save()
             if error:
                 print("%s restart %s failed: %s" % (time.strftime("%F %T"), restart["id"], error), flush=True)
 
@@ -675,9 +688,8 @@ def follow(power):
     vital(watch, seen)
     while True:
         label = seen["labels"].get(WANTED, "") if "labels" in seen else power.label
-        if "annotations" in seen:
-            power.restart_step(*(json.loads(seen["annotations"][key]) if key in seen["annotations"] else None
-                                 for key in (RESTART, RESTARTED)))
+        if "annotations" in seen and RESTART in seen["annotations"]:
+            power.restart_step(json.loads(seen["annotations"][RESTART]))
         try:
             power.converge(label, in_use(), time.monotonic(), maintenance())
         except Exception as error:  # the vendor's service is gone or failed: said, and tried again
@@ -691,10 +703,12 @@ def follow(power):
                 # Which of the vendor's codes made the state what it is: a fault or an emergency stop names them.
                 print("%s state %s%s" % (time.strftime("%F %T"), now[0], " (codes %s)" % ",".join(state["errors"])
                                          if state["errors"] else ""), flush=True)
+            annotations = {ANNOTATION: now[2]}
+            if power.restart:  # never written empty: a restart is not forgotten at the Node either
+                annotations[RESTARTED] = json.dumps(power.restart)
             try:
                 node("/" + os.environ["NODE_NAME"],
-                     dict(labels={STATE: now[0], IN_FORCE: now[1]}, annotations={
-                         ANNOTATION: now[2], RESTARTED: power.restart and json.dumps(power.restart)})).close()
+                     dict(labels={STATE: now[0], IN_FORCE: now[1]}, annotations=annotations)).close()
                 published = now
             except OSError as error:
                 print("the Node is not written: %s" % error, flush=True)

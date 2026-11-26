@@ -16,7 +16,8 @@ the vendor's driver is not running, and no Run holds the robot nor any component
 under /run/rlark/in-use, as the power service reads them): a Run's timestamps never jump. For a robot that sits
 unclaimed and idle with its driver running, the node tuner stops the driver for the jump (its maintenance "clock",
 tuner/node_tuner.py). The site's time source is a hub's tunnel address, where its station-gateway serves the hub's
-clock (astribot/station-gateway/sntp.go). Without a time source in the profile, or while none answers, it changes
+clock (astribot/station-gateway/sntp.go), usually by a name the site's network declares: the station-gateway keeps it
+in the machine's /etc/hosts, which this container mounts as its own, so every measurement resolves it anew. Without a time source in the profile, or while none answers, it changes
 nothing.
 
 The state is on the Node: label rlark.io/clock-state (locked | slewing | no_source | unreachable |

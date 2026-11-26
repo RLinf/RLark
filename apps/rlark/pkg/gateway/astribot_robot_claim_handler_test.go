@@ -180,6 +180,16 @@ func TestARobotIsHeldByOneRunAtATimeUntilItIsReleasedOrItsLeaseIsOver(t *testing
 	if status, _ := call(http.MethodPatch, "", "admin", roleAdmin, `{"metadata":{"labels":{"rlark.io/robot-claim":null}}}`); status != http.StatusBadRequest || node.Labels[robotClaimLabel] != "run-c" {
 		t.Fatalf("PATCH of the claim: %d", status)
 	}
+	// Nor who made it, nor a restart for its holder.
+	for _, annotations := range []string{`{"rlark.io/robot-claim-set":"{\"holder\":\"run-c\",\"by\":\"admin\"}"}`,
+		`{"rlark.io/robot-restart":"{\"id\":\"1\",\"level\":\"power\",\"holder\":\"run-c\"}"}`} {
+		if status, _ := call(http.MethodPatch, "", "admin", roleAdmin, `{"metadata":{"annotations":`+annotations+`}}`); status != http.StatusBadRequest {
+			t.Fatalf("PATCH of %s: %d", annotations, status)
+		}
+		if status, _ := call(http.MethodPut, "", "admin", roleAdmin, `{"metadata":{"labels":{"rlark.io/robot-claim":"run-c"},"annotations":`+annotations+`}}`); status != http.StatusBadRequest {
+			t.Fatalf("PUT with %s: %d", annotations, status)
+		}
+	}
 	for _, labels := range []string{`{}`, `{"rlark.io/robot-claim":"run-b"}`} {
 		if status, _ := call(http.MethodPut, "", "admin", roleAdmin, `{"metadata":{"labels":`+labels+`}}`); status != http.StatusBadRequest {
 			t.Fatalf("PUT with the labels %s: %d", labels, status)

@@ -79,7 +79,7 @@ $W/rlarkctl release copy -e environments/live.yaml --to source registry.rlark.in
 
 ## 3. 上线前：站点时间的名字
 
-机器人的 `timeSource` 是名字 `time.rlark.internal`，每个站点在 SiteNetwork 的 `sites[].names` 里把它指到本站 Hub 的隧道地址（实验室机器人所在的 `lab` 站点 → 办公室 Hub `cailiang` 的 `10.254.240.1`；搬到数采场时指到那里的 Hub）。改 RLark 自己的 SiteNetwork 对象（管理面，不是成员集群），在第一次 apply 之前，这样 s1u-robot 的 Pod 随 v1.7.2 新起时 `/etc/hosts` 里已经有这个名字：
+机器人的 `timeSource` 是名字 `time.rlark.internal`，每个站点在 SiteNetwork 的 `sites[].names` 里把它指到本站 Hub 的隧道地址（实验室机器人所在的 `lab` 站点 → 办公室 Hub `cailiang` 的 `10.254.240.1`；搬到数采场时指到那里的 Hub）。改 RLark 自己的 SiteNetwork 对象（管理面，不是成员集群），在第一次 apply 之前，这样 v1.7.2 的 `clock` 容器一起来就量得到。`clock` 容器把机器自己的 `/etc/hosts`（网关就地改写，行尾 `# rlark names`）挂成自己的 `/etc/hosts`，不用 kubelet 在 Pod 起时拷的那份，所以以后 Hub 换地址（搬数采场）只改 SiteNetwork 的 `names`，下一次测量就跟上，不用重启 s1u-robot 的 Pod：
 
 ```bash
 # 管理机，root；kubeconfig 是 live.yaml 的 management.kubeconfig（发布身份）

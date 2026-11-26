@@ -143,7 +143,14 @@ func allowedWorkload(role Role, method string, parts []string) bool {
 			return read
 		}
 		if len(parts) == 3 && role == RoleOperator {
-			return parts[2] == "robot-power" && method == "PUT" || parts[2] == "robot-pose" && method == "POST"
+			switch parts[2] {
+			case "robot-power", "station", "station-mark":
+				return method == "PUT"
+			case "robot-pose", "robot-restart":
+				return method == "POST"
+			case "station-logs":
+				return method == "GET"
+			}
 		}
 	case "domains":
 		return len(parts) <= 2 && read

@@ -20,7 +20,7 @@ import (
 func TestTheStationIsTheAdmissionsOwnLabelAndUniqueInTheCluster(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	nodes := map[string]*rlarkv1alpha1.Node{}
-	for name, station := range map[string]string{"s1u-01-x86": "", "s1u-02-x86": "S02"} {
+	for name, station := range map[string]string{"s1u-01-x86": "", "s1u-02-x86": "S02", "s1u-04-x86": ""} {
 		labels := map[string]string{"rlark.io/robot-id": name[:6]}
 		if station != "" {
 			labels[stationLabel] = station
@@ -66,9 +66,9 @@ func TestTheStationIsTheAdmissionsOwnLabelAndUniqueInTheCluster(t *testing.T) {
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set(authRoleKey, roleOperator); c.Set(authSubjectKey, "alice"); c.Next() })
 	g.registerRobotRoutes(router.Group("/nodes"))
-	put := func(body string) *httptest.ResponseRecorder {
+	put := func(body string, node ...string) *httptest.ResponseRecorder {
 		response := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPut, "/nodes/s1u-01-x86/station?namespace=agent-a", strings.NewReader(body))
+		req := httptest.NewRequest(http.MethodPut, "/nodes/"+append(node, "s1u-01-x86")[0]+"/station?namespace=agent-a", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(response, req)
 		return response
@@ -78,6 +78,10 @@ func TestTheStationIsTheAdmissionsOwnLabelAndUniqueInTheCluster(t *testing.T) {
 	}
 	if response := put(`{"station":"S02"}`); response.Code != 409 {
 		t.Fatalf("a second robot was put at S02: %d %s", response.Code, response.Body)
+	}
+	// A robot without an admission is given none: the station-controller would not see it taken.
+	if response := put(`{"station":"S04"}`, "s1u-04-x86"); response.Code != 409 || nodes["s1u-04-x86"].Labels[stationLabel] != "" {
+		t.Fatalf("a Station kept outside the admissions: %d %s", response.Code, response.Body)
 	}
 	if response := put(`{"station":"S01"}`); response.Code != 200 || nodes["s1u-01-x86"].Labels[stationLabel] != "S01" {
 		t.Fatalf("set S01: %d %s", response.Code, response.Body)

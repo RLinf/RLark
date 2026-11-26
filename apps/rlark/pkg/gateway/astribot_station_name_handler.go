@@ -32,7 +32,8 @@ var stationNamePattern = regexp.MustCompile(`^S[0-9]{2,3}$`)
 // the Station a robot stands at, unique in its cluster. The node's
 // NodeAdmission takes it as the machine's own label, so that its NodeClass
 // keeps it and a machine joined again is at the same Station, and the RLark
-// Node carries it at once. Every call is in the audit log with its actor.
+// Node carries it at once. A robot without a NodeAdmission has no Station (409).
+// Every call is in the audit log with its actor.
 func (g *Gateway) handleSetStation(c *gin.Context) {
 	var request struct {
 		Station string `json:"station"`
@@ -80,37 +81,40 @@ func (g *Gateway) handleSetStation(c *gin.Context) {
 			return
 		}
 	}
-	if admission != nil {
-		labels, _, _ := unstructured.NestedStringMap(admission.Object, "spec", "labels")
-		if labels == nil {
-			labels = map[string]string{}
+	if admission == nil {
+		// The admissions are where the station-controller sees which Stations are taken.
+		respondError(c, http.StatusConflict, CodeResourceConflict, name+" has no NodeAdmission to keep its Station")
+		return
+	}
+	labels, _, _ := unstructured.NestedStringMap(admission.Object, "spec", "labels")
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[stationLabel] = request.Station
+	_ = unstructured.SetNestedStringMap(admission.Object, labels, "spec", "labels")
+	annotations := admission.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	own := strings.FieldsFunc(annotations[admissionOwnLabels], func(r rune) bool { return r == ',' })
+	if !slices.Contains(own, stationLabel) {
+		own = append(own, stationLabel)
+		slices.Sort(own)
+		annotations[admissionOwnLabels] = strings.Join(own, ",")
+		admission.SetAnnotations(annotations)
+	}
+	if _, err := admissions.Update(ctx, admission, metav1.UpdateOptions{}); err != nil {
+		if apierrors.IsConflict(err) {
+			respondError(c, http.StatusConflict, CodeResourceConflict, "the admission changed meanwhile; try again")
+		} else {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "NodeAdmission request failed"})
 		}
-		labels[stationLabel] = request.Station
-		_ = unstructured.SetNestedStringMap(admission.Object, labels, "spec", "labels")
-		annotations := admission.GetAnnotations()
-		if annotations == nil {
-			annotations = map[string]string{}
-		}
-		own := strings.FieldsFunc(annotations[admissionOwnLabels], func(r rune) bool { return r == ',' })
-		if !slices.Contains(own, stationLabel) {
-			own = append(own, stationLabel)
-			slices.Sort(own)
-			annotations[admissionOwnLabels] = strings.Join(own, ",")
-			admission.SetAnnotations(annotations)
-		}
-		if _, err := admissions.Update(ctx, admission, metav1.UpdateOptions{}); err != nil {
-			if apierrors.IsConflict(err) {
-				respondError(c, http.StatusConflict, CodeResourceConflict, "the admission changed meanwhile; try again")
-			} else {
-				c.JSON(http.StatusBadGateway, gin.H{"error": "NodeAdmission request failed"})
-			}
-			return
-		}
+		return
 	}
 	patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"labels": map[string]string{stationLabel: request.Station}}})
 	result, err := nodes.patch(ctx, namespace, name, patch)
 	log.FromContext(ctx).WithName("audit").Info("robot station", "actor", actor, "namespace", namespace, "node", name,
-		"was", was, "now", request.Station, "admission", admission != nil, "set", err == nil)
+		"was", was, "now", request.Station, "set", err == nil)
 	if err != nil {
 		respondCreateError(c, err)
 		return
