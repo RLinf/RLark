@@ -6,7 +6,7 @@ Astribot IAM (`astribot-iam`) is the identity layer of the RLark console: human 
 
 Since 2026-11-25 the console's nginx (`astribot/release/rlark-ui.nginx.conf`) asks IAM's `/internal/admit` for page requests and `/internal/authorize` for requests matched by its `/api/` location. People sign in at `/login`:
 
-- `/login` is a static page in the console image (`astribot/release/login.html`). A page asked for without a session is answered `302 /login?next=<address>`; after signing in the browser returns to that address. An address under `/admin` is returned to only by the admin role. `next` is read as the rest of the query, so it has to be the last parameter. Opening `/login` also clears the browser's IAM session cookie, including when IAM did not confirm revocation during sign-out; the page is never cached, so this holds on a revisit.
+- `/login` is a static page in the console image (`astribot/release/login.html`). On desktop, the **Sign in** form sits beside the product name and robot illustration in a centered panel. On narrow screens, the product panel sits above the form. Use **Show** or **Hide** to check the password. A failed attempt shows a localized message and enables **Sign in** again. A page asked for without a session is answered `302 /login?next=<address>`. After signing in from the home page or directly at `/login`, administrators land at `/admin` and other roles land at `/`. Sign-in preserves deep links, with `/admin` links reserved for administrators. `next` is read as the rest of the query, so it has to be the last parameter. Opening `/login` also clears the browser's IAM session cookie, including when IAM did not confirm revocation during sign-out; the page is never cached, so this holds on a revisit.
 - The console image built by `astribot/release/rlark-ui.Dockerfile` sets `VITE_IAM_PORTAL=1`, which turns on the portal guard (`apps/rlark-ui/src/astribot/iam/portal.ts`). The guard:
   - starts every tab from the cookie's session (`GET /api/iam/session`): a new tab, a bookmark, or a tab that still holds an older token enters without the password again, and a tab that holds a token renders with it when IAM cannot be reached;
   - takes the console's own "Sign out" (the avatar menu, on every page): it revokes the session (`POST /api/iam/logout`), returns to `/login`, and the other tabs of the origin leave as well;
@@ -70,11 +70,16 @@ Both defaults are weak: change them right after the first sign-in under **My pro
 
 ## Day-2 operations
 
+The Astribot console sidebar displays the Astribot and RLark logos in both light and dark themes. The compact sidebar shows the Astribot mark.
+
 - **Users and roles**: administrators create (admin/operator/viewer), edit, disable/enable, delete, and reset users under "Identity & Access → Users". Operators read and write the business plane only, viewers read only; the IAM management endpoints are admin-only.
+- **Create user** opens a side panel above the console header. Use the close button, **Cancel**, or Escape to return to the user list.
+- Use the **Role** and **Status** dropdowns above the user list to filter accounts. Each dropdown has a down arrow on the right in both themes.
 - **Audit**: the "Audit" page records successful and failed sign-ins, sign-outs, user create/edit/delete, password resets and changes, and authorization denials; filter by actor, action, result, and time.
 - **Sessions**: sessions last 7 days; a password change, reset, disable, or revoke invalidates the affected sessions immediately. Established WebSocket terminals are untouched until their next handshake.
 - **Rolling IAM, the sign-in page, or the portal guard alone**: `astribot-iam` also builds as a standalone image (`astribot/release/astribot-iam.Dockerfile`; the service is one binary), and the console image builds from `astribot/release/rlark-ui.Dockerfile`. Publish each into the control plane's pull registry by digest, name it in the release's `images` (`astribot-iam`, `rlark-ui`), and run `rlarkctl release apply`: the console stage makes `astribot-iam` anew and then `rlark-ui` (nginx resolves the address at startup). Rolling IAM signs nobody out: the sessions are in PostgreSQL.
 - **Upstream token rotation**: delete or rotate `${R}/iam/upstream-tokens.json` by re-running `iam-provision.sh` (existing accounts with a matching role go through the rotation endpoint), then restart `astribot-iam`. IAM stores only hashes of its own sessions; the upstream token file is the only plaintext on disk — keep it at 0600 and include it in backups or rotate per above.
+- **Recovering the console after a host reboot** — If the home page responds with 500 and `/api/iam/session` with 502, check that IAM and Gateway are running. Restart `rlark-ui` with `docker restart rlark-ui` so nginx resolves their current container addresses. Without a cookie, the home page should redirect to `/login` and the session endpoint should respond with 401.
 
 ## Backup and recovery
 

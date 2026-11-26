@@ -21,6 +21,8 @@ RLark 有两个登录入口：
 
 ## 控制台导航
 
+Astribot 版控制台的侧栏显示 Astribot 标识，RLark 标识位于页脚的 **RLark Open Source** 旁。
+
 ### 业务平台页面
 
 | 页面     | 用途                                       |

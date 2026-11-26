@@ -5,62 +5,243 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Astribot Post-Training RL 管理平台</title>
 <style>
-  :root { --ink: #1d1d1f; --muted: #6b6580; --accent: #5b4bc4; --line: #d9d5ee; --danger: #b4423a; }
+  :root {
+    color-scheme: light;
+    --ink: #211b32;
+    --muted: #665d76;
+    --accent: #553bb6;
+    --accent-hover: #442b9d;
+    --line: #dcd6e8;
+    font-family: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; display: flex; font: 14px/1.5 Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; color: var(--ink); background: #f4f2fb; }
-  .hero { flex: 1.1; min-width: 0; position: relative; overflow: hidden; background: center / cover no-repeat url("/login-hero.jpg"), linear-gradient(160deg, #cfc7f2 0%, #e6e2fa 55%, #d5cff0 100%); }
-  .hero .shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(250,249,255,.6) 0%, rgba(250,249,255,0) 40%); }
-  .pane { flex: 0 0 min(480px, 100vw); display: grid; place-items: center; padding: 40px clamp(24px, 5vw, 64px); background: #fff; }
-  @media (max-width: 860px) { body { flex-direction: column; } .hero { min-height: 180px; flex: none; } .pane { flex: 1; } }
-  .card { width: min(100%, 380px); display: grid; gap: 18px; }
-  .brand { display: flex; align-items: center; justify-content: center; gap: 12px; }
-  .brand img { height: 34px; width: auto; }
-  .brand img + img { padding-left: 12px; border-left: 1px solid var(--line); }
-  h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.03em; text-align: center; }
-  .sub { margin: -10px 0 0; color: var(--muted); font-size: 13px; text-align: center; }
-  label { display: grid; gap: 5px; font-size: 12px; font-weight: 650; color: #454060; }
-  .input { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 12px; border: 1px solid #c9c4e2; border-radius: 10px; background: #faf9ff; }
-  .input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,75,196,.13); }
-  .input input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; font: inherit; }
-  .toggle { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 4px; }
-  button.primary { height: 46px; border: 0; border-radius: 10px; background: linear-gradient(100deg, #5b4bc4, #7163cf); color: #fff; font: inherit; font-weight: 650; cursor: pointer; }
-  button.primary:disabled { opacity: .7; cursor: default; }
-  .error { margin: 0; padding: 9px 11px; border-radius: 8px; background: #fbe9e7; color: var(--danger); font-size: 13px; display: none; }
-  .foot { margin-top: 6px; display: flex; justify-content: center; gap: 16px; font-size: 11px; color: var(--muted); }
-  .foot a { color: inherit; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: clamp(24px, 5vw, 72px);
+    background: radial-gradient(ellipse at 15% 80%, #eae4f7, transparent 56%), #f5f3fa;
+    color: var(--ink);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(360px, 1fr);
+    width: min(100%, 1200px);
+    min-height: 630px;
+    padding: 12px;
+    border: 1px solid #e8e2f1;
+    border-radius: 30px;
+    background: #fff;
+    box-shadow: 0 24px 64px #35235514;
+  }
+  .hero {
+    position: relative;
+    isolation: isolate;
+    min-width: 0;
+    overflow: hidden;
+    padding: clamp(28px, 4vw, 52px);
+    border-radius: 20px;
+    background: #e8e2f5 url("/login-hero.jpg") right center / cover no-repeat;
+  }
+  .hero::before {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    background: linear-gradient(90deg, #f3f0fa 10%, #f3f0facc 30%, transparent 59%);
+    content: "";
+  }
+  .hero::after {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    background: linear-gradient(#7556b653 1px, transparent 1px),
+                linear-gradient(90deg, #7556b653 1px, transparent 1px);
+    background-size: 30px 30px;
+    mask-image: radial-gradient(ellipse 49% 51% at 4% 88%, #0009, transparent);
+    content: "";
+  }
+  .hero-copy { position: relative; width: fit-content; max-width: 61%; }
+  .hero-brand { margin: 0 0 13px; color: var(--accent); font-size: 14px; font-weight: 750; }
+  .hero-title { margin: 0; font-size: clamp(25px, 3.15vw, 44px); font-weight: 720; line-height: 1.08; letter-spacing: -.045em; }
+  .pane {
+    min-width: 0;
+    display: grid;
+    place-items: center;
+    padding: 44px clamp(32px, 5vw, 72px);
+  }
+  .card { width: min(100%, 392px); }
+  .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 32px; }
+  .brand img { display: block; width: auto; height: 27px; max-width: 44%; object-fit: contain; }
+  .brand-divider { width: 1px; height: 24px; background: var(--line); }
+  h1 {
+    margin: 0;
+    font-size: clamp(30px, 3.15vw, 43px);
+    line-height: 1.15;
+    font-weight: 750;
+    letter-spacing: -.045em;
+  }
+  form { display: grid; margin-top: 34px; }
+  .field { display: grid; gap: 7px; min-width: 0; }
+  .field + .field, .primary, .error:not(:empty) { margin-top: 18px; }
+  label { font-size: 13px; font-weight: 650; }
+  .input {
+    display: flex;
+    align-items: center;
+    min-height: 50px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: #fff;
+  }
+  .input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px #553bb620; }
+  .input input {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    min-height: 48px;
+    padding: 0 13px;
+    border: 0;
+    border-radius: inherit;
+    outline: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 16px;
+  }
+  .toggle {
+    align-self: stretch;
+    padding: 0 13px;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+  button.primary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 50px;
+    border: 0;
+    border-radius: 11px;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .primary:disabled { cursor: wait; }
+  .primary:disabled::before {
+    content: "";
+    width: 14px;
+    height: 14px;
+    border: 2px solid #ffffff66;
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .primary:disabled::before { animation: none; }
+  }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .error {
+    margin: 0;
+    color: #9b302a;
+    font-size: 13px;
+  }
+  .error:not(:empty) {
+    padding: 10px 12px;
+    border: 1px solid #f0cbc8;
+    border-radius: 9px;
+    background: #fff2f0;
+  }
+  .foot {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    margin-top: 27px;
+    padding-top: 17px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .foot a { color: inherit; text-decoration: none; }
+  .foot a:hover { color: var(--accent); text-decoration: underline; }
+  @media (max-width: 960px) {
+    body { padding: 14px; }
+    .shell {
+      grid-template-columns: 1fr;
+      width: min(100%, 520px);
+      min-height: 0;
+      padding: 8px;
+      border-radius: 22px;
+    }
+    .hero {
+      min-height: clamp(116px, 23svh, 220px);
+      padding: 22px;
+      border-radius: 14px;
+      background-position: right 15%;
+    }
+    .hero-brand { margin-bottom: 8px; font-size: 12px; }
+    .hero-title { font-size: clamp(19px, 5.3vw, 28px); }
+    .pane { align-items: start; padding: 26px clamp(14px, 5vw, 30px); }
+    .brand { margin-bottom: 22px; }
+    form { margin-top: 25px; }
+  }
 </style>
 </head>
 <body>
-  <div class="hero" aria-hidden="true"><div class="shade"></div></div>
-  <main class="pane">
-    <form class="card" id="form" autocomplete="on">
-      <div class="brand">
-        <img src="/astribot-logo-light.png" alt="Astribot" />
-        <img src="/rlark-logo-zh-light.png" alt="RLark" id="rlark-logo" />
+  <main class="shell">
+    <div class="hero">
+      <div class="hero-copy" lang="en">
+        <p class="hero-brand">Astribot</p>
+        <p class="hero-title">Post-Training<br />RL Platform</p>
       </div>
-      <h1 id="t">登录管理平台</h1>
-      <p class="sub" id="s">Astribot Post-Training RL · 统一身份</p>
-      <label><span id="lu">用户名</span>
-        <span class="input"><input id="username" name="username" autocomplete="username" required autofocus /></span>
-      </label>
-      <label><span id="lp">密码</span>
-        <span class="input"><input id="password" name="password" type="password" autocomplete="current-password" required />
-        <button type="button" class="toggle" id="show" aria-label="显示密码">👁</button></span>
-      </label>
-      <p class="error" id="err" role="alert"></p>
-      <button class="primary" id="go" type="submit"><span id="lg">登录</span></button>
-      <div class="foot">
-        <a href="https://www.astribot.com/" target="_blank" rel="noreferrer">Astribot</a>
-        <a href="https://github.com/RLinf/RLark" target="_blank" rel="noreferrer">RLark Open Source</a>
+    </div>
+    <section class="pane" aria-labelledby="t">
+      <div class="card">
+        <div class="brand">
+          <img src="/astribot-logo-light.png" alt="Astribot" />
+          <span class="brand-divider" aria-hidden="true"></span>
+          <img src="/rlark-logo-zh-light.png" alt="RLark" id="rlark-logo" />
+        </div>
+        <h1 id="t">登陆</h1>
+        <form id="form" method="post" autocomplete="on">
+          <div class="field">
+            <label id="lu" for="username">用户名</label>
+            <div class="input"><input id="username" name="username" autocomplete="username" required /></div>
+          </div>
+          <div class="field">
+            <label id="lp" for="password">密码</label>
+            <div class="input">
+              <input id="password" name="password" type="password" autocomplete="current-password" required />
+              <button type="button" class="toggle" id="show" aria-controls="password" aria-label="显示密码">显示</button>
+            </div>
+          </div>
+          <p class="error" id="err" role="alert"></p>
+          <button class="primary" id="go" type="submit"><span id="lg">登录</span></button>
+        </form>
+        <footer class="foot">
+          <a href="https://www.astribot.com/" target="_blank" rel="noreferrer">Astribot</a>
+          <a href="https://github.com/RLinf/RLark" target="_blank" rel="noreferrer">RLark Open Source</a>
+        </footer>
       </div>
-    </form>
+    </section>
   </main>
 <script>
 (function () {
   var zh = (navigator.language || "").toLowerCase().indexOf("zh") === 0;
   var t = {
-    title: zh ? "登录管理平台" : "Sign in to the platform",
-    sub: zh ? "Astribot Post-Training RL · 统一身份" : "Astribot Post-Training RL · unified identity",
+    title: zh ? "登陆" : "Sign in",
     user: zh ? "用户名" : "Username",
     pass: zh ? "密码" : "Password",
     login: zh ? "登录" : "Sign in",
@@ -68,18 +249,20 @@
     bad: zh ? "账号或密码错误" : "Invalid credentials",
     disabled: zh ? "账号已停用" : "Account disabled",
     rate: zh ? "尝试过于频繁，请稍后再试" : "Too many attempts, try again shortly",
-    failed: zh ? "登录失败，请重试" : "Sign-in failed, try again",
-    show: zh ? "显示密码" : "Show password"
+    failed: zh ? "暂时无法登录，请稍后重试" : "Sign-in is temporarily unavailable. Try again shortly.",
+    show: zh ? "显示" : "Show",
+    hide: zh ? "隐藏" : "Hide",
+    showPassword: zh ? "显示密码" : "Show password",
+    hidePassword: zh ? "隐藏密码" : "Hide password"
   };
   if (!zh) {
+    document.documentElement.lang = "en";
     document.title = "Astribot Post-Training RL Platform";
     document.getElementById("rlark-logo").src = "/rlark-logo-en-light.png";
     document.getElementById("t").textContent = t.title;
-    document.getElementById("s").textContent = t.sub;
     document.getElementById("lu").textContent = t.user;
     document.getElementById("lp").textContent = t.pass;
     document.getElementById("lg").textContent = t.login;
-    document.getElementById("show").setAttribute("aria-label", t.show);
   }
   // Where to return to after signing in. A redirect carries the address as the browser wrote it (nginx: next=$request_uri;
   // the console: encodeURIComponent), always as the last parameter of the query. Only a path of this origin.
@@ -93,30 +276,48 @@
     if (value.charAt(0) !== "/" || value.charAt(1) === "/" || value.charAt(1) === "\\") return "/";
     return value;
   }
-  var next = readNext();
+  function landingPath(next, admin) {
+    if (admin && /^\/([?#]|$)/.test(next)) return "/admin";
+    if (!admin && /^\/admin(?:[\/?#]|$)/.test(next)) return "/";
+    return next;
+  }
   var show = document.getElementById("show"), pwd = document.getElementById("password");
+  function updatePasswordToggle() {
+    var visible = pwd.type === "text";
+    show.textContent = visible ? t.hide : t.show;
+    show.setAttribute("aria-label", visible ? t.hidePassword : t.showPassword);
+  }
+  updatePasswordToggle();
   show.addEventListener("click", function () {
     pwd.type = pwd.type === "password" ? "text" : "password";
+    updatePasswordToggle();
   });
   var err = document.getElementById("err"), go = document.getElementById("go"), form = document.getElementById("form");
-  function fail(msg) { err.textContent = msg; err.style.display = "block"; go.disabled = false; }
-  form.addEventListener("submit", function (ev) {
+  var submitLabel = document.getElementById("lg");
+  function fail(msg) {
+    err.textContent = msg;
+    go.disabled = false;
+    submitLabel.textContent = t.login;
+  }
+  form.addEventListener("submit", async function (ev) {
     ev.preventDefault();
-    err.style.display = "none";
+    if (go.disabled) return;
+    err.textContent = "";
     go.disabled = true;
-    document.getElementById("lg").textContent = t.busy;
-    fetch("/api/iam/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ username: document.getElementById("username").value.trim(), password: pwd.value })
-    }).then(function (r) {
-      if (r.status === 401) throw new Error(t.bad);
-      if (r.status === 403) throw new Error(t.disabled);
-      if (r.status === 429) throw new Error(t.rate);
-      if (!r.ok) throw new Error(t.failed);
-      return r.json();
-    }).then(function (o) {
+    submitLabel.textContent = t.busy;
+    try {
+      var r = await fetch("/api/iam/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ username: document.getElementById("username").value.trim(), password: pwd.value })
+      });
+      if (!r.ok) {
+        var errors = { 401: t.bad, 403: t.disabled, 429: t.rate };
+        fail(errors[r.status] || t.failed);
+        return;
+      }
+      var o = await r.json();
       var admin = o.role === "admin";
       try {
         sessionStorage.setItem("rlark-auth-token", o.token);
@@ -129,10 +330,10 @@
           sessionStorage.setItem("rlark-user-name", o.user && o.user.username || "");
         }
       } catch (e) {}
-      // The admin console admits the admin role only.
-      if (!admin && /^\/admin(?:[\/?]|$)/.test(next)) next = "/";
-      window.location.replace(next);
-    }).catch(function (e) { fail(e.message || t.failed); });
+      window.location.replace(landingPath(readNext(), admin));
+    } catch (e) {
+      fail(t.failed);
+    }
   });
 })();
 </script>

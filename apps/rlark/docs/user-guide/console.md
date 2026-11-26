@@ -21,6 +21,8 @@ RLark has two login entry points:
 
 ## Console Navigation
 
+In the Astribot edition, the sidebar shows the Astribot logo, and the RLark logo appears by **RLark Open Source** in the footer.
+
 ### Platform Console Pages
 
 | Page     | Purpose                                                        |

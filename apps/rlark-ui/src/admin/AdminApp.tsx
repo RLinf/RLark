@@ -468,7 +468,7 @@ export function AdminApp() {
         {adminPage === "ssh-keys" && (
           <SSHKeysPage copy={c} userName={userName} />
         )}
-        <PlatformFooter />
+        <PlatformFooter lang={lang} />
       </main>
       </RemovalProgressProvider>
     </div>

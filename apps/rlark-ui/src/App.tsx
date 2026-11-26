@@ -381,7 +381,7 @@ export default function App() {
           />
         )}
         {page === "ssh-keys" && <SSHKeysPage copy={c} userName={userName} />}
-        <PlatformFooter />
+        <PlatformFooter lang={lang} />
       </main>
       {createOpen && (
         <CreateJobModal

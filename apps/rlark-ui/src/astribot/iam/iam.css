@@ -26,7 +26,8 @@
 .iam-page button:hover:not(:disabled) { background: var(--iam-subtle); }
 .iam-page button:disabled { cursor: not-allowed; opacity: .56; }
 .iam-page button:focus-visible, .iam-page input:focus-visible, .iam-page select:focus-visible { outline: 2px solid var(--iam-accent); outline-offset: 2px; }
-.iam-page input, .iam-page select { width: 100%; height: 42px; min-width: 0; padding: 0 11px; border: 1px solid var(--iam-line-strong); border-radius: 9px; background: var(--iam-panel); color: var(--iam-ink); font-size: 13px; }
+/* Preserve the shared select arrow and its positioning in both themes. */
+.iam-page input, .iam-page select { width: 100%; height: 42px; min-width: 0; padding: 0 11px; border: 1px solid var(--iam-line-strong); border-radius: 9px; background-color: var(--iam-panel); color: var(--iam-ink); font-size: 13px; }
 .iam-page h1, .iam-page h2, .iam-page h3, .iam-page p { margin: 0; }
 .iam-page code { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
 .iam-primary { background: var(--iam-ink) !important; border-color: var(--iam-ink) !important; color: var(--iam-panel) !important; }
@@ -303,8 +304,9 @@
 
 /* Drawers and dialogs */
 .iam-drawer-backdrop, .iam-modal-backdrop { position: fixed; inset: 0; display: flex; justify-content: flex-end; background: color-mix(in srgb, #111 35%, transparent); }
-.iam-drawer-backdrop { z-index: 850; }
-.iam-modal-backdrop { z-index: 900; }
+/* Keep the full-screen overlays above the sticky console topbar. */
+.iam-drawer-backdrop { z-index: 1260; }
+.iam-modal-backdrop { z-index: 1261; }
 .iam-drawer { width: min(480px, 100vw); height: 100%; overflow-y: auto; padding: 22px; border-left: 1px solid var(--iam-line); background: var(--iam-panel); color: var(--iam-ink); box-shadow: var(--shadow); }
 .iam-drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--iam-line); }
 .iam-drawer-head h2 { margin-top: 4px; font-size: 21px; letter-spacing: -.025em; }
