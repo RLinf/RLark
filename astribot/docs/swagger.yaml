@@ -1183,6 +1183,40 @@ paths:
         '400': {description: level, holder or request_id is invalid}
         '404': {description: Not Found}
         '409': {description: "ROBOT_CLAIM_BUSY: the robot is not held by holder (details.current: its claim, null: none), or its station is marked (details.mark)"}
+  /api/v1/rlinf.io/v1alpha1/nodes/{name}/station:
+    put:
+      tags: [Node]
+      summary: Set the robot Station a robot stands at (administrator or operator; audited with its actor)
+      description: >-
+        The label rlark.io/station (S01, S02, …), unique among the cluster's robots. station-controller gives a robot
+        the first free one when it admits the machine; this changes it. The node's NodeAdmission takes it as one of
+        the machine's own labels (station.rlark.io/machine-labels), so that its NodeClass keeps it and the machine
+        joined again stands at the same Station, and the RLark Node carries it at once. The Node's PATCH and PUT
+        refuse a body that would change the label.
+      parameters:
+        - $ref: '#/components/parameters/namespace'
+        - $ref: '#/components/parameters/name'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [station]
+              properties:
+                station: {type: string, pattern: '^S[0-9]{2,3}$'}
+            example: {station: S01}
+      responses:
+        '200':
+          description: The Node with its new label
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '400': {description: station is not S and two or three digits, or the node is not a robot}
+        '403': {description: Neither administrator nor operator}
+        '404': {description: Not Found}
+        '409': {description: Another robot of the cluster stands at that Station, or the admission changed meanwhile}
   /api/v1/rlinf.io/v1alpha1/nodes/{name}/robot-power:
     put:
       tags: [Node]
@@ -1438,6 +1472,17 @@ paths:
 
 components:
   schemas:
+    Node:
+      description: >-
+        What a robot's Node carries for its users besides the official fields. Labels: rlark.io/robot-id,
+        rlark.io/robot-body, rlark.io/robot-model; rlark.io/station, the Station it stands at (S01, …; PUT
+        nodes/{name}/station); rlark.io/robot-claim; rlark.io/station-mark; rlark.io/robot-power (desired),
+        rlark.io/power-state; rlark.io/clock-state (the clock container: locked within 50 ms of the site's time source, slewing, no_source, unreachable, no_hardware_clock).
+        Annotations: rlark.io/power ({desired, used_by_a_run, state, waiting, recovered, errors, restart}),
+        rlark.io/power.restart (the last restart asked for, POST nodes/{name}/robot-restart), rlark.io/robot-claim-set,
+        rlark.io/station-mark-set, rlark.io/cameras, rlark.io/self-check, rlark.io/clock-report ({offset_ms: the robot
+        ahead of the source, frequency_ppm, source, device, at}). status.addresses: the address of type InternalIP is the one the node reaches its cluster at,
+        for a robot its WireGuard tunnel address (10.254.240.x), at which its device layer and vendor page answer.
     SiteNetworkView:
       type: object
       required: [resourceVersion, generation, sites, members, nodeClasses, status]

@@ -1028,3 +1028,36 @@ def test_the_host_boots_cgroup_v2_and_a_v1_host_is_told_to_restart_and_still_rep
     assert run(memory) == ["ok     Pods' memory limit (MiB): 6144", "ok     free space on /: 40 %"]
     run("kubelet")
     assert not allowance.exists()
+
+
+def test_an_unclaimed_idle_robot_whose_clock_is_off_has_its_driver_stopped_for_the_jump(tmp_path, monkeypatch):
+    """C8: a clock more than 100 ms off the site's is jumped, and the clock container jumps only with the driver
+    stopped: the tuner lowers a robot nobody holds or uses to powered for it, and lets it up again once it is."""
+    robot = Tuned(monkeypatch, tmp_path, status="ok     everything\n")
+
+    def follow(offset_ms, seconds=60.0):
+        robot.now += seconds
+        robot.calls.clear()
+        (tmp_path / "clock.json").write_text(json.dumps(dict(offset_ms=offset_ms, at=robot.now - 5)))
+        node_tuner.follow("p1", "10.254.240.1")
+
+    (tmp_path / "claim").write_text(json.dumps(dict(holder="run_a")))
+    follow(6082.6)
+    assert robot.maintenance() == ("waiting", "Run run_a holds the robot") and robot.lease()["kind"] == ""
+    (tmp_path / "claim").unlink()
+    robot.said[("up", "clock")] = "astribot_driver runs\n"
+    follow(6082.6)
+    lease = robot.lease()
+    assert (lease["kind"], lease["power"], lease["held"]) == ("clock", "powered", True)
+    assert robot.maintenance() == ("lowering", "astribot_driver runs")
+    robot.said[("up", "clock")] = ""
+    follow(6082.6)
+    assert robot.maintenance()[0] == "acting" and robot.lease()["held"]
+    # Jumped: the lease is given up and the power service brings the driver back.
+    follow(3.1)
+    assert robot.maintenance() == ("none", "") and robot.lease()["kind"] == ""
+    # A jump that does not come is given up, the driver let up again.
+    follow(-250.0)
+    follow(-250.0)
+    follow(-250.0, seconds=node_tuner.CLOCK_SECONDS)
+    assert robot.maintenance()[0] == "failed" and robot.lease()["kind"] == ""

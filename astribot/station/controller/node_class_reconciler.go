@@ -25,6 +25,8 @@ const (
 	// nodeClassLabelsAnnotation lists, on a management Node, the label keys
 	// its class gave it, so that a key the class drops is taken off again.
 	nodeClassLabelsAnnotation = "station.rlark.io/node-class-labels"
+	// stationLabel is the robot Station a node stands at (S01, S02, …).
+	stationLabel = "rlark.io/station"
 )
 
 // NodeClassReconciler keeps every node of a class at what the class declares
@@ -61,6 +63,11 @@ func (r *NodeClassReconciler) Reconcile(ctx context.Context, req reconcile.Reque
 	var admissions stationv1alpha1.NodeAdmissionList
 	if err := r.Reader.List(ctx, &admissions); err != nil {
 		return reconcile.Result{}, fmt.Errorf("list the NodeAdmissions of NodeClass %s: %w", class.Name, err)
+	}
+	if kind, _ := effectiveNodeClassIdentity(&class); kind == string(stationv1alpha1.NodeClassKindRobot) {
+		if err := r.giveStations(ctx, &class, admissions.Items); err != nil {
+			return reconcile.Result{}, err
+		}
 	}
 	for i := range admissions.Items {
 		admission := &admissions.Items[i]
@@ -116,4 +123,50 @@ func (r *NodeClassReconciler) Reconcile(ctx context.Context, req reconcile.Reque
 	}
 	// A label changed by hand on a management Node is put back at the next pass.
 	return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
+}
+
+// giveStations gives every robot of the class that has none a Station of its
+// own in its cluster, as one of the machine's own labels: the one of its node's
+// number (s1u-03-x86 stands at S03) while no other admission of the cluster
+// has that, else the first free one. A Station changed since (the Gateway's PUT
+// nodes/{name}/station) stays. One reconcile at a time: two robots never take
+// the same.
+func (r *NodeClassReconciler) giveStations(ctx context.Context, class *stationv1alpha1.NodeClass, admissions []stationv1alpha1.NodeAdmission) error {
+	taken := map[string]bool{}
+	for _, admission := range admissions {
+		if station := admission.Spec.Labels[stationLabel]; station != "" {
+			taken[admission.Namespace+"/"+station] = true
+		}
+	}
+	for i := range admissions {
+		admission := &admissions[i]
+		if admission.Spec.NodeClass != class.Name || admission.Spec.Labels[stationLabel] != "" {
+			continue
+		}
+		station := ""
+		if number := 0; class.Spec.Naming != nil {
+			if _, err := fmt.Sscanf(admission.Name, class.Spec.Naming.NodeName, &number); err == nil && !taken[admission.Namespace+"/"+fmt.Sprintf("S%02d", number)] {
+				station = fmt.Sprintf("S%02d", number)
+			}
+		}
+		for number := 1; station == ""; number++ {
+			if !taken[admission.Namespace+"/"+fmt.Sprintf("S%02d", number)] {
+				station = fmt.Sprintf("S%02d", number)
+			}
+		}
+		taken[admission.Namespace+"/"+station] = true
+		if admission.Spec.Labels == nil {
+			admission.Spec.Labels = map[string]string{}
+		}
+		admission.Spec.Labels[stationLabel] = station
+		if admission.Annotations == nil {
+			admission.Annotations = map[string]string{}
+		}
+		own := strings.FieldsFunc(admission.Annotations[machineLabelsAnnotation], func(r rune) bool { return r == ',' })
+		admission.Annotations[machineLabelsAnnotation] = strings.Join(slices.Sorted(slices.Values(append(own, stationLabel))), ",")
+		if err := r.Client.Update(ctx, admission); err != nil {
+			return fmt.Errorf("give NodeAdmission %s/%s the Station %s: %w", admission.Namespace, admission.Name, station, err)
+		}
+	}
+	return nil
 }

@@ -11,8 +11,12 @@ This trims the root: every PERIOD_SECONDS it measures the system clock against t
 (S1U_SITE_TIME_SOURCE, the Addon's parameter timeSource: the site's, not the robot model's; the best
 of a few exchanges) and sets the frequency of the hardware clock phc2sys reads (a
 PI servo, within LIMIT_PPM). The vendor's chain carries the correction to the system clock and to the Orin. It only
-changes the rate: 1 s is made up in about 35 minutes. A jump is made only while the vendor's driver is not running
-and the clock is more than STEP_SECONDS off. Without a time source in the profile, or while none answers, it changes
+changes the rate: 1 s is made up in about 35 minutes. A jump is made only while the clock is more than STEP_SECONDS off,
+the vendor's driver is not running, and no Run holds the robot nor any component uses it (the claim file and the marks
+under /run/rlark/in-use, as the power service reads them): a Run's timestamps never jump. For a robot that sits
+unclaimed and idle with its driver running, the node tuner stops the driver for the jump (its maintenance "clock",
+tuner/node_tuner.py). The site's time source is a hub's tunnel address, where its station-gateway serves the hub's
+clock (astribot/station-gateway/sntp.go). Without a time source in the profile, or while none answers, it changes
 nothing.
 
 The state is on the Node: label rlark.io/clock-state (locked | slewing | no_source | unreachable |
@@ -37,6 +41,7 @@ LIMIT_PPM = 500.0
 LOCKED_SECONDS = 0.05  # the profile's promise: within 50 ms of the site
 STEP_SECONDS = 0.1
 NTP_EPOCH = 2208988800  # seconds from 1900 to 1970
+CLAIM, IN_USE = "/host/claim", "/in-use"  # the Run that holds the robot; each component's mark of its use
 ADJ_FREQUENCY, ADJ_SETOFFSET, ADJ_NANO = 0x0002, 0x0100, 0x2000
 
 
@@ -172,10 +177,10 @@ def main():
             else:
                 failures = 0
                 runs = any(command and os.path.basename(command[0]) == driver for command in commands)
-                if abs(offset) > STEP_SECONDS and not runs:
+                if abs(offset) > STEP_SECONDS and not runs and not os.path.exists(CLAIM) and not os.listdir(IN_USE):
                     adjust(device, step=-offset)
                     servo = Servo()
-                    print("Stepped %s by %+.3f s (the driver is not running)" % (device, -offset), flush=True)
+                    print("Stepped %s by %+.3f s (the robot is idle, its driver stopped)" % (device, -offset), flush=True)
                 ppm = servo.frequency(offset)
                 adjust(device, ppm=ppm)
                 now = "locked" if abs(offset) <= LOCKED_SECONDS else "slewing"

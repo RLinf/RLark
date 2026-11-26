@@ -9,7 +9,10 @@ the cluster the result, with no shell on the box:
 - does by itself, while nobody uses the robot, what would end a use of it (maintenance): the restart of the whole
   robot its profile needs (kernel command line, systemd's default affinity; S1U_NODE_REBOOT "idle", the Addon's
   default) or a person asks for, the restart of kubelet alone (a new kubelet configuration of the profile; the Pods
-  keep running), and the Orin container's switch of a payload's version. A robot is in use while a component marks
+  keep running), the Orin container's switch of a payload's version, and the jump of a clock that is more than
+  STEP_SECONDS off the site's time (the clock container's report, /run/rlark/s1u/clock.json: it jumps only while the
+  driver is stopped, so a robot kept ready would otherwise make the seconds up at 500 ppm for hours), only while no Run
+  holds the robot (its claim file). A robot is in use while a component marks
   it under /run/rlark/in-use: a Station that serves a Run, a session attached to its device layer. Powered motors and
   a running driver are no use: a robot is kept ready all the time (user 11-15), and one that waited for its motors to
   be off never restarted (11-16). While the robot is in use the maintenance waits, as long as that takes;
@@ -32,7 +35,7 @@ the cluster the result, with no shell on the box:
   are off, a new one before its first restart among them, is restarted either way, and so is one a person asks
   to have restarted (below). Where the robot is with it is on its Node:
   label rlark.io/maintenance-state = none | waiting | queued | lowering | acting | failed, annotation
-  rlark.io/maintenance {"kind": host | kubelet | payload, "of": what it is done for, "state", "why", "since",
+  rlark.io/maintenance {"kind": host | kubelet | payload | clock, "of": what it is done for, "state", "why", "since",
   "change": the image, "retry": when a failed one is begun again};
 - each restart's attempt is recorded on the Node (annotation rlark.io/node-profile-restart) with what the restart
   changes, the boot's identifier or kubelet's start: changed and the rules still do not hold, it is not repeated for
@@ -107,7 +110,9 @@ ATTEMPTS, RESTART_SECONDS = 3, 300  # tries of a restart that does not happen, a
 # A maintenance (the module's words): where the robot is with it on its Node, and what each kind lowers the robot to
 # while its lease is held (the power service's desired states).
 MAINTENANCE, MAINTENANCE_STATE = "rlark.io/maintenance", "rlark.io/maintenance-state"
-CEILING = {"host": "off", "kubelet": "powered", "payload": "ready"}
+CEILING = {"host": "off", "kubelet": "powered", "payload": "ready", "clock": "powered"}
+STEP_SECONDS = 0.1  # clock/clock.py's: a clock this far off the site's is jumped, its driver stopped
+CLOCK_SECONDS = 120  # the clock is jumped within this long of the driver's stop (it measures every 16 s)
 LEASE_SECONDS = 600  # a lease this container has not renewed for this long is over: the tuner is gone
 LOWER_SECONDS, LOWER_PASS_SECONDS = 300, 90  # the robot comes down within this long; waited for in one pass
 PAYLOAD_SECONDS = 600  # the Orin container switches its payloads within this long
@@ -341,6 +346,10 @@ def follow(profile, source):
                     record=REQUESTED, key=request)
     elif switching:
         work = dict(kind="payload", of="payload %s" % ", ".join(switching), why="switching the Orin to %s" % ", ".join(switching))
+    elif source and os.path.exists(f"{HOST}/clock.json"):
+        clocked = json.load(open(f"{HOST}/clock.json"))
+        if now - clocked["at"] < 60 and abs(clocked["offset_ms"]) > STEP_SECONDS * 1e3:
+            work = dict(kind="clock", of="clock", why="jumping the clock %+.0f ms to the site's time" % -clocked["offset_ms"])
     before, held = json.loads(annotations.get(MAINTENANCE, "{}")), {}
     if os.path.exists(f"{HOST}/maintenance"):
         held = json.load(open(f"{HOST}/maintenance"))
@@ -360,7 +369,9 @@ def follow(profile, source):
             # Not begun: its wave (a person's request has none), the emergency stop or an error, somebody using the
             # robot, motors nobody is there to see go off, its place among the site's robots.
             marked = "; ".join(host("marked", quiet=True)[1].splitlines())
-            why = ("" if work["of"].startswith("request") else wave) or (
+            claim = json.load(open(f"{HOST}/claim"))["holder"] if os.path.exists(f"{HOST}/claim") else ""
+            why = ("" if work["of"].startswith("request") or work["kind"] == "clock" else wave) or (
+                "Run %s holds the robot" % claim if work["kind"] == "clock" and claim else "") or (
                 "the robot is in %s" % labels[POWER_STATE] if labels.get(POWER_STATE) in ("estop", "fault") else "") or (
                 "in use (%s)" % marked if marked else "") or (
                 "its motors are on and powering them off is a person's (the Addon's parameter powerOff): power the "
@@ -394,6 +405,8 @@ def follow(profile, source):
                     where, why, retry = "failed", "the robot did not come down within %d s: %s" % (LOWER_SECONDS, up), now + FAILED_SECONDS
                 elif up:
                     where, why = "lowering", up
+                elif work["kind"] == "clock" and now - held["since"] > CLOCK_SECONDS:
+                    where, why, retry = "failed", "the clock was not jumped within %d s of the driver's stop" % CLOCK_SECONDS, now + FAILED_SECONDS
         if where != "acting":
             attempt = None  # the restart is asked for under a held lease, of a robot that is down
     if work and work["kind"] == "host" and where in ("waiting", "queued") and labels.get(POWER_STATE) not in ("powered", "ready"):

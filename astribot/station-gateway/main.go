@@ -676,6 +676,10 @@ func main() {
 			return d
 		}, filepath.Dir(*configPath), key)
 	}
+	go timeService(func() *desired {
+		_, d, _, _ := from.read()
+		return d
+	})
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	ticker := time.NewTicker(10 * time.Second)

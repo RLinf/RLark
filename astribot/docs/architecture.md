@@ -157,6 +157,9 @@ Addon 的包：装或更新时，Gateway（或发布命令）把“名字@版本
 | 相机 | 标签 `rlark.io/camera-state`（`ok`/`recovering`/`degraded`/`stuck`），注解 `rlark.io/cameras`（和 `GET /cameras` 同一份 JSON），只在变化时写；节点事件 `CameraDriverRestart`、`CameraUsbReset`、`CameraStuck`、`CameraBack`；看画面经 Gateway `GET .../nodes/{name}/cameras…`（下面） |
 | 自检 | 设备层写 `/run/rlark/s1u/self-check.json`；标签 `rlark.io/self-check-state`，注解 `rlark.io/self-check` |
 | 机器人是谁 | tuner 从标签 `rlark.io/robot-id`、`rlark.io/robot-body` 写 `/run/rlark/s1u/robot.json` |
+| Station 名 | 管理面节点标签 `rlark.io/station`（`S01`、`S02`…）：station-controller 准入机器时给第一个空着的，记在 NodeAdmission 的机器自有标签里；经 Gateway `PUT .../nodes/{name}/station` 改（集群内唯一，准入记录和节点一起改） |
+| 地址 | 节点 `status.addresses` 里 `InternalIP`：机器人的隧道地址（10.254.240.x），设备层 `:33334`、厂商页面 `:5141` 在这个地址上 |
+| 时钟 | `clock` 容器按 `timeSource`（站点 Hub 的隧道地址；每台节点的 station-gateway 在自己隧道地址的 udp/123 用 SNTP 给出本机时间，Hub 的就是站点时间）微调网卡时钟；差 100 ms 以上时跳，只在驱动没跑、没认领、没在用时；没人认领又空闲的由 tuner 做维护 `clock`（停驱动 → 跳 → 放开）。标签 `rlark.io/clock-state`（`locked` = 50 ms 内），注解 `rlark.io/clock-report`（`offset_ms`…） |
 | 规格和机体 | `/etc/rlark/s1u/node_profile.env`、`bodies.json` |
 | Orin 主机密钥 | 标签 `s1u.rlark.io/orin-state`；密钥变了由人把注解 `s1u.rlark.io/orin-host-key-confirm` 设成新指纹 |
 | 重启机器人 | 节点标签 `rlark.io/restart-request` 设一个新值（同一个值只做一次），作为一次维护做；结果在注解 `rlark.io/restart-request-state` |

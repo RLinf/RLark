@@ -36,6 +36,10 @@ func nodeUpdateAllowed(c *gin.Context, a *resourceAccessor, namespace, name stri
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, stationMarkRefused)
 		return false
 	}
+	if value, _ := robotLabelIn(body, stationLabel); value != labels[stationLabel] {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, stationLabelRefused)
+		return false
+	}
 	if value, _ := displayNameIn(body); value != existing.(*rlarkiov1alpha1.Node).Spec.DisplayName {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, nodeDisplayNameRefused)
 		return false
@@ -56,6 +60,10 @@ func nodePatchAllowed(c *gin.Context, a *resourceAccessor, namespace, name strin
 	_, marked := robotLabelIn(body, stationMarkLabel)
 	if _, annotated := nodeAnnotations(body)[stationMarkAnnotation]; marked || annotated {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, stationMarkRefused)
+		return false
+	}
+	if _, named := robotLabelIn(body, stationLabel); named {
+		respondError(c, http.StatusBadRequest, CodeInvalidRequest, stationLabelRefused)
 		return false
 	}
 	value, named := displayNameIn(body)

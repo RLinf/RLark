@@ -68,6 +68,7 @@ func (g *Gateway) registerRobotRoutes(nodes gin.IRouter) {
 	nodes.PUT("/:name/robot-power", requireOperator(), g.handleSetRobotPower)
 	nodes.PUT("/:name/station-mark", requireOperator(), g.handleSetStationMark)
 	nodes.POST("/:name/robot-restart", g.handleRobotRestart)
+	nodes.PUT("/:name/station", requireOperator(), g.handleSetStation)
 	nodes.POST("/:name/robot-pose", requireOperator(), g.handleRobotPose)
 	nodes.PUT("/:name/robot-claim", g.handleClaimRobot)
 	nodes.DELETE("/:name/robot-claim", g.handleReleaseRobot)

@@ -149,6 +149,7 @@ spec:
         - name: STATION_API_CA_FILE
           value: /var/run/secrets/station-api-ca/ca.crt
         # NET_RAW: iptables reads the tables of a node whose rules are in the legacy backend through a raw socket.
+        # NET_BIND_SERVICE: the site's time is served on the tunnel address's udp/123 (sntp.go).
         securityContext:
           runAsUser: 0
           allowPrivilegeEscalation: false
@@ -158,6 +159,7 @@ spec:
             add:
             - NET_ADMIN
             - NET_RAW
+            - NET_BIND_SERVICE
         volumeMounts:
         - name: station-api-ca
           mountPath: /var/run/secrets/station-api-ca

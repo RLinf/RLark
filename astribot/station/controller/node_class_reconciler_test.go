@@ -21,7 +21,8 @@ func TestNodeClassReconcilerKeepsNodesAtTheirClass(t *testing.T) {
 		t.Fatal(err)
 	}
 	class := &stationv1alpha1.NodeClass{ObjectMeta: metav1.ObjectMeta{Name: "robot-s1u"}, Spec: stationv1alpha1.NodeClassSpec{
-		Labels: map[string]string{"rlark.io/robot-model": "s1u", "rlark.io/node-category": "robot"}, Taints: []string{"rlark.io/node-category=robot:NoSchedule"}}}
+		Labels: map[string]string{"rlark.io/robot-model": "s1u", "rlark.io/node-category": "robot"}, Taints: []string{"rlark.io/node-category=robot:NoSchedule"},
+		Naming: &stationv1alpha1.NodeClassNaming{NodeName: "s1u-%02d-x86"}}}
 	admission := func(name string, labels map[string]string) *stationv1alpha1.NodeAdmission {
 		return &stationv1alpha1.NodeAdmission{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "agents-robot", Name: name},
@@ -43,6 +44,8 @@ func TestNodeClassReconcilerKeepsNodesAtTheirClass(t *testing.T) {
 	// s1u-05 came in from the list of machines with a number and a body of its own.
 	numbered := admission("s1u-05-x86", map[string]string{"rlark.io/robot-model": "old", "rlark.io/robot-id": "s1u-05", "rlark.io/node-category": "observer"})
 	numbered.Annotations = map[string]string{machineLabelsAnnotation: "rlark.io/node-category,rlark.io/robot-id"}
+	// s1u-04's number is a Station someone gave s1u-01 by hand: it takes the first free one.
+	byHand.Spec.Labels[stationLabel] = "S04"
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(class,
 		admission("s1u-03-x86", map[string]string{"rlark.io/robot-model": "s1u", "rlark.io/robot-body": "shadow"}),
 		admission("s1u-04-x86", nil), byHand, numbered,
@@ -57,24 +60,25 @@ func TestNodeClassReconcilerKeepsNodesAtTheirClass(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"s1u-03-x86", "s1u-04-x86"} {
+	for name, station := range map[string]string{"s1u-03-x86": "S03", "s1u-04-x86": "S01"} {
 		var stored stationv1alpha1.NodeAdmission
 		if err := c.Get(ctx, client.ObjectKey{Namespace: "agents-robot", Name: name}, &stored); err != nil ||
-			!reflect.DeepEqual(stored.Spec.Labels, class.Spec.Labels) || !reflect.DeepEqual(stored.Spec.Taints, class.Spec.Taints) {
-			t.Fatalf("admission %s after the class changed: %+v %v", name, stored.Spec, err)
+			!reflect.DeepEqual(stored.Spec.Labels, map[string]string{"rlark.io/robot-model": "s1u", "rlark.io/node-category": "robot", stationLabel: station}) ||
+			!reflect.DeepEqual(stored.Spec.Taints, class.Spec.Taints) || stored.Annotations[machineLabelsAnnotation] != stationLabel {
+			t.Fatalf("admission %s after the class changed: %+v %v %v", name, stored.Spec, stored.Annotations, err)
 		}
 	}
 	var kept stationv1alpha1.NodeAdmission
 	if err := c.Get(ctx, client.ObjectKey{Namespace: "agents-robot", Name: "s1u-05-x86"}, &kept); err != nil ||
-		!reflect.DeepEqual(kept.Spec.Labels, map[string]string{"rlark.io/robot-model": "s1u", "rlark.io/robot-id": "s1u-05", "rlark.io/node-category": "observer"}) {
+		!reflect.DeepEqual(kept.Spec.Labels, map[string]string{"rlark.io/robot-model": "s1u", "rlark.io/robot-id": "s1u-05", "rlark.io/node-category": "observer", stationLabel: "S05"}) {
 		t.Fatalf("the labels a machine has of its own stay: %+v %v", kept.Spec.Labels, err)
 	}
 	got := node("s1u-03-x86", nil, nil)
 	if err := c.Get(ctx, client.ObjectKeyFromObject(got), got); err != nil {
 		t.Fatal(err)
 	}
-	if want := map[string]string{"rlark.io/robot-model": "s1u", "rlark.io/node-category": "robot", "kubernetes.io/hostname": "s1u-03-x86"}; !reflect.DeepEqual(got.GetLabels(), want) ||
-		got.GetAnnotations()[nodeClassLabelsAnnotation] != "rlark.io/node-category,rlark.io/robot-model" {
+	if want := map[string]string{"rlark.io/robot-model": "s1u", "rlark.io/node-category": "robot", "kubernetes.io/hostname": "s1u-03-x86", stationLabel: "S03"}; !reflect.DeepEqual(got.GetLabels(), want) ||
+		got.GetAnnotations()[nodeClassLabelsAnnotation] != "rlark.io/node-category,rlark.io/robot-model,rlark.io/station" {
 		t.Fatalf("management Node of s1u-03: %v %v", got.GetLabels(), got.GetAnnotations())
 	}
 	untouched := node("s1u-01-x86", nil, nil)
