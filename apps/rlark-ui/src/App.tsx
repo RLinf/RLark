@@ -183,7 +183,9 @@ export default function App({ iamState }: AppProps = {}) {
     if (portalView.kind === "pending")
       return (
         <PortalStatus
-          message={lang === "zh" ? "正在确认登录状态…" : "Confirming your session…"}
+          message={
+            lang === "zh" ? "正在确认登录状态…" : "Confirming your session…"
+          }
         />
       );
     if (portalView.kind === "home")
@@ -206,7 +208,9 @@ export default function App({ iamState }: AppProps = {}) {
   if (!loggedIn && !(isTerminal && terminalLoggedIn)) {
     return portalView ? (
       <PortalStatus
-        message={lang === "zh" ? "正在确认登录状态…" : "Confirming your session…"}
+        message={
+          lang === "zh" ? "正在确认登录状态…" : "Confirming your session…"
+        }
       />
     ) : (
       <UserLogin

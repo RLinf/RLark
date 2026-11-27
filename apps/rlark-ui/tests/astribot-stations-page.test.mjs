@@ -366,8 +366,8 @@ test("robot telemetry starts visible and metadata shares one closed disclosure",
   assert.match(panel, /<StationBodyStatePanel[^>]*\/>\}[\s\S]*?<details className="station-detail-metadata">[\s\S]*?<div className="station-detail-columns">[\s\S]*?<NodeLinks[\s\S]*?<\/details>/);
   assert.match(body, /<section className="station-body"/);
   assert.doesNotMatch(body, /<details|onToggle/);
-  assert.match(body, /<table className="station-body-table station-body-poses"[\s\S]*?<table className="station-body-table station-body-joints"/);
-  assert.match(body, /<PoseValues axes=\{positionAxes\}[\s\S]*?<PoseValues axes=\{orientationAxes\}/);
+  assert.match(body, /<table\s+className="station-body-table station-body-poses"[\s\S]*?<table\s+className="station-body-table station-body-joints"/);
+  assert.match(body, /<PoseValues\s+axes=\{positionAxes\}[\s\S]*?<PoseValues\s+axes=\{orientationAxes\}/);
   assert.match(models, /<article className="robot-model-card"[\s\S]*?<header className="robot-model-header">[\s\S]*?<div className="robot-model-capabilities">[\s\S]*?<\/article>/);
 });
 
@@ -448,7 +448,7 @@ test("an online S1U robot offers a confirmed whole-machine restart through the o
   assert.doesNotMatch(page, /wake-on-lan|WakeOnLan/i);
   // A read that passed the outstanding check pins the write: 409 asks for a re-check and is never retried.
   assert.match(restartHook, /resourceVersion = node\.metadata\?\.resourceVersion/);
-  assert.match(restartHook, /remained[\s\S]*?requestRestart|requestRestart\(target\.node, target\.namespace, requestID, resourceVersion\)/);
+  assert.match(restartHook, /remained[\s\S]*?requestRestart|requestRestart\(\s*target\.node,\s*target\.namespace,\s*requestID,\s*resourceVersion,?\s*\)/);
   assert.match(restartHook, /ApiError/);
   assert.match(restartHook, /status === 409/);
   assert.match(restartHook, /不会自动重试写入|not retried automatically/);
