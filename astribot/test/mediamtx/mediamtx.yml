@@ -1,0 +1,48 @@
+logLevel: info
+
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
+hls: false
+rtmp: false
+playback: false
+srt: false
+moq: false
+
+api: true
+apiAddress: 10.61.0.2:9997
+metrics: false
+pprof: false
+
+authMethod: internal
+authInternalUsers:
+  - user: whep-reader
+    pass: read-test-only
+    ips: []
+    permissions:
+      - action: read
+        path: demo-agent/demo-node/front
+  - user: synthetic-publisher
+    pass: publish-test-only
+    ips: []
+    permissions:
+      - action: publish
+        path: demo-agent/demo-node/front
+  - user: media-controller
+    pass: control-test-only
+    ips: []
+    permissions:
+      - action: api
+
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: false
+webrtcAllowOrigins: []
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: ""
+webrtcIPsFromInterfaces: true
+webrtcAdditionalHosts: []
+
+paths:
+  demo-agent/demo-node/front:
+    source: publisher
