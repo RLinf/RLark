@@ -114,3 +114,5 @@ StorageClass 接口管理控制面声明。Replication 和 Delivery 控制器会
 `GET /api/v1/station/summary` 会遍历所有 `NetworkEnrollment` 分页，可选传入 `cluster_id`。Gateway 会按 namespace 和同名 RLark Node 关联入网记录。阶段统计读取 `status.node.state`，`Retired` 优先。机器人、电源、占用、自检和相机统计读取该 Node 的标签、注解及条件。Node 缺失时回退到入网记录自身的元数据和条件。
 
 `GET /api/v1/station/stations` 支持 `q`、`phase`、`model`、`zone`、`power_state`、`occupancy`、`alert_only` 和 `sort` 参数。带过滤条件的请求会聚合全部分页后再应用现有 `limit`（1–500）和数字偏移量 `continue`，响应包含 `totalMatched`。`phase` 参数不区分大小写。不带过滤条件时继续使用 Kubernetes 原生 continuation token。
+
+指定的集群缺少唯一的 `spec.agentNamespace` 映射时，两个接口均返回 `409 Conflict`。查询全场站汇总或筛选列表时，如果多个集群共用的命名空间内有入网记录，也会返回 `409 Conflict`。请为各集群分配独立的 agent 命名空间后重试。

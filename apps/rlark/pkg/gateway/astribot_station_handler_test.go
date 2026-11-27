@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -10,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	kubetesting "k8s.io/client-go/testing"
 )
 
 func stationHandlerClient(objects ...runtime.Object) *dynamicfake.FakeDynamicClient {
@@ -101,6 +104,66 @@ func TestGetStationRequiresCluster(t *testing.T) {
 	gateway.handleGetStation(ctx)
 	if recorder.Code != 400 {
 		t.Fatalf("missing cluster ID status=%d", recorder.Code)
+	}
+}
+
+func TestStationNamespaceConflict(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	healthy := stationHandlerRecord("node-c", "agent-c")
+	if err := unstructured.SetNestedField(healthy.Object, "cluster-c", "spec", "clusterID"); err != nil {
+		t.Fatal(err)
+	}
+	g := &Gateway{astribotState: astribotState{stationClient: stationHandlerClient(
+		stationHandlerCluster("cluster-a", "agent-a"),
+		stationHandlerCluster("cluster-b", "agent-a"),
+		stationHandlerCluster("cluster-c", "agent-c"),
+		stationHandlerRecord("node-a", "agent-a"),
+		healthy,
+	)}}
+
+	for _, tt := range []struct {
+		name    string
+		path    string
+		handler gin.HandlerFunc
+		want    int
+	}{
+		{"scoped list", "/api/v1/station/stations?cluster_id=cluster-a", g.handleListStations, http.StatusConflict},
+		{"scoped filtered list", "/api/v1/station/stations?cluster_id=cluster-a&q=node", g.handleListStations, http.StatusConflict},
+		{"scoped summary", "/api/v1/station/summary?cluster_id=cluster-a", g.handleStationSummary, http.StatusConflict},
+		{"all clusters filtered list", "/api/v1/station/stations?q=node", g.handleListStations, http.StatusConflict},
+		{"all clusters summary", "/api/v1/station/summary", g.handleStationSummary, http.StatusConflict},
+		{"healthy cluster list", "/api/v1/station/stations?cluster_id=cluster-c", g.handleListStations, http.StatusOK},
+		{"healthy cluster filtered list", "/api/v1/station/stations?cluster_id=cluster-c&q=node", g.handleListStations, http.StatusOK},
+		{"healthy cluster summary", "/api/v1/station/summary?cluster_id=cluster-c", g.handleStationSummary, http.StatusOK},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodGet, tt.path, nil)
+			tt.handler(ctx)
+			if recorder.Code != tt.want {
+				t.Fatalf("status = %d, want %d", recorder.Code, tt.want)
+			}
+		})
+	}
+}
+
+func TestListStationsScopedUpstreamListFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	client := stationHandlerClient(stationHandlerCluster("cluster-a", "agent-a"))
+	client.PrependReactor("list", networkEnrollmentGVR.Resource, func(action kubetesting.Action) (bool, runtime.Object, error) {
+		if namespace := action.GetNamespace(); namespace != "agent-a" {
+			t.Fatalf("List namespace = %q, want agent-a", namespace)
+		}
+		return true, nil, errors.New("upstream list failed")
+	})
+	g := &Gateway{astribotState: astribotState{stationClient: client}}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/v1/station/stations?cluster_id=cluster-a", nil)
+	g.handleListStations(ctx)
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadGateway)
 	}
 }
 

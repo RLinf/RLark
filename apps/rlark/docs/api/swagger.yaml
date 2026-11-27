@@ -62,6 +62,8 @@ paths:
                   occupied: {type: integer}
                   clusters: {type: array, items: {type: object}}
                   generatedAt: {type: string, format: date-time}
+        '409':
+          description: The requested cluster has no unique agent namespace, or the fleet includes enrollments in a shared cluster namespace.
 
   /api/v1/images:
     get:

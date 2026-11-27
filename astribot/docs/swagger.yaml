@@ -836,6 +836,10 @@ paths:
                   continue: {type: string}
         '400': {description: Invalid list limit}
         '403': {description: Administrator role required}
+        '409':
+          description: >-
+            The requested cluster has no unique agent namespace, or a fleet-wide
+            filtered list includes enrollments in a shared cluster namespace.
         '502': {description: Management Kubernetes API unavailable}
   /api/v1/station/stations/{name}:
     get:

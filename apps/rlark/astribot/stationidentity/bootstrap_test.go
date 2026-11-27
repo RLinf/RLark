@@ -434,8 +434,7 @@ func TestServerJoinCodeBootstrapsWithoutRobotLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored.Object["status"] = map[string]interface{}{"phase": "Redeemed", "address": "10.254.240.3", "publicKey": key, "config": `{"address":"10.254.240.3/32"}`}
-	stored, err = resource.Update(ctx, stored, metav1.UpdateOptions{})
-	if err != nil {
+	if _, err := resource.Update(ctx, stored, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	answer, status, err := b.Redeem(ctx, code, key)

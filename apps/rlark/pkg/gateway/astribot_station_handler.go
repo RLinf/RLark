@@ -56,17 +56,19 @@ func (g *Gateway) handleListStations(c *gin.Context) {
 		return
 	}
 	resource := g.stationClient.Resource(networkEnrollmentGVR)
-	var records *unstructured.UnstructuredList
-	var err error
+	var scope dynamic.ResourceInterface = resource
 	if clusterID := c.Query("cluster_id"); clusterID != "" {
-		namespace, err := g.stationNamespace(c, clusterID)
-		if err != nil {
+		clusters, ok := g.stationQueryClusters(c)
+		if !ok {
 			return
 		}
-		records, err = resource.Namespace(namespace).List(c.Request.Context(), options)
-	} else {
-		records, err = resource.List(c.Request.Context(), options)
+		namespace, ok := clusters.namespace(c, clusterID)
+		if !ok {
+			return
+		}
+		scope = resource.Namespace(namespace)
 	}
+	records, err := scope.List(c.Request.Context(), options)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Station API request failed"})
 		return
@@ -218,30 +220,57 @@ func stationNestedString(record *unstructured.Unstructured, fields ...string) st
 	return value
 }
 
-func stationClusterSortNames(c *gin.Context, client dynamic.Interface) (map[string]string, error) {
-	clusters, err := listAllStations(c, client.Resource(stationClusterGVR))
+type stationQueryClusters struct {
+	namespaces map[string]string
+	owners     map[string]string // An empty owner marks a namespace claimed by multiple clusters.
+	names      map[string]string
+}
+
+func (g *Gateway) stationQueryClusters(c *gin.Context) (stationQueryClusters, bool) {
+	clusters, err := listAllStations(c, g.stationClient.Resource(stationClusterGVR))
 	if err != nil {
-		return nil, err
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Cluster API request failed"})
+		return stationQueryClusters{}, false
 	}
-	names := make(map[string]string, len(clusters))
-	ambiguous := make(map[string]bool)
+	index := stationQueryClusters{
+		namespaces: make(map[string]string, len(clusters)),
+		owners:     make(map[string]string, len(clusters)),
+		names:      make(map[string]string, len(clusters)),
+	}
 	for i := range clusters {
-		namespace := stationNestedString(&clusters[i], "spec", "agentNamespace")
-		name := stationNestedString(&clusters[i], "spec", "displayName")
+		cluster := &clusters[i]
+		id := cluster.GetName()
+		namespace := stationNestedString(cluster, "spec", "agentNamespace")
+		index.namespaces[id] = namespace
+		if namespace == "" {
+			continue
+		}
+		if _, exists := index.owners[namespace]; exists {
+			index.owners[namespace] = ""
+			delete(index.names, namespace)
+			continue
+		}
+		index.owners[namespace] = id
+		name := stationNestedString(cluster, "spec", "displayName")
 		if name == "" {
-			name = clusters[i].GetName()
+			name = id
 		}
-		if namespace == "" || ambiguous[namespace] {
-			continue
-		}
-		if _, exists := names[namespace]; exists {
-			delete(names, namespace)
-			ambiguous[namespace] = true
-			continue
-		}
-		names[namespace] = name
+		index.names[namespace] = name
 	}
-	return names, nil
+	return index, true
+}
+
+func (index stationQueryClusters) namespace(c *gin.Context, clusterID string) (string, bool) {
+	namespace, exists := index.namespaces[clusterID]
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Cluster not found"})
+		return "", false
+	}
+	if namespace == "" || index.owners[namespace] != clusterID {
+		c.JSON(http.StatusConflict, gin.H{"error": "Cluster namespace mapping is invalid or ambiguous"})
+		return "", false
+	}
+	return namespace, true
 }
 
 func enrichStationNodes(c *gin.Context, client dynamic.Interface, items []unstructured.Unstructured) error {
@@ -328,24 +357,36 @@ func enrichStationNodes(c *gin.Context, client dynamic.Interface, items []unstru
 	return nil
 }
 
-func (g *Gateway) stationRecords(c *gin.Context) ([]unstructured.Unstructured, error) {
+func (g *Gateway) stationRecords(c *gin.Context) ([]unstructured.Unstructured, map[string]string, bool) {
+	clusters, ok := g.stationQueryClusters(c)
+	if !ok {
+		return nil, nil, false
+	}
 	resource := g.stationClient.Resource(networkEnrollmentGVR)
+	var scope dynamic.ResourceInterface = resource
 	if clusterID := c.Query("cluster_id"); clusterID != "" {
-		namespace, err := g.stationNamespace(c, clusterID)
-		if err != nil {
-			return nil, err
+		namespace, ok := clusters.namespace(c, clusterID)
+		if !ok {
+			return nil, nil, false
 		}
-		items, err := listAllStations(c, resource.Namespace(namespace))
-		if err != nil {
-			return nil, err
-		}
-		return items, enrichStationNodes(c, g.stationClient, items)
+		scope = resource.Namespace(namespace)
 	}
-	items, err := listAllStations(c, resource)
+	items, err := listAllStations(c, scope)
 	if err != nil {
-		return nil, err
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Station API request failed"})
+		return nil, nil, false
 	}
-	return items, enrichStationNodes(c, g.stationClient, items)
+	for i := range items {
+		if owner, known := clusters.owners[items[i].GetNamespace()]; known && owner == "" {
+			c.JSON(http.StatusConflict, gin.H{"error": "Station records belong to an ambiguous cluster namespace"})
+			return nil, nil, false
+		}
+	}
+	if err := enrichStationNodes(c, g.stationClient, items); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Station API request failed"})
+		return nil, nil, false
+	}
+	return items, clusters.names, true
 }
 
 func (g *Gateway) handleFilteredStations(c *gin.Context) {
@@ -380,17 +421,8 @@ func (g *Gateway) handleFilteredStations(c *gin.Context) {
 		}
 		limit = n
 	}
-	items, err := g.stationRecords(c)
-	if err != nil {
-		if c.Writer.Written() {
-			return
-		}
-		c.JSON(502, gin.H{"error": "Station API request failed"})
-		return
-	}
-	clusterNames, err := stationClusterSortNames(c, g.stationClient)
-	if err != nil {
-		c.JSON(502, gin.H{"error": "Cluster API request failed"})
+	items, clusterNames, ok := g.stationRecords(c)
+	if !ok {
 		return
 	}
 	query := strings.ToLower(strings.TrimSpace(c.Query("q")))
@@ -508,12 +540,8 @@ func (g *Gateway) handleFilteredStations(c *gin.Context) {
 }
 
 func (g *Gateway) handleStationSummary(c *gin.Context) {
-	items, err := g.stationRecords(c)
-	if err != nil {
-		if c.Writer.Written() {
-			return
-		}
-		c.JSON(502, gin.H{"error": "Station API request failed"})
+	items, _, ok := g.stationRecords(c)
+	if !ok {
 		return
 	}
 	type clusterSummary struct {
