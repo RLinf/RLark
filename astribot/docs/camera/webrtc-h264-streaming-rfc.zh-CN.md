@@ -1,180 +1,163 @@
-# RFC：面向 100+ 机器人相机的 H.264 媒体流架构
+# RFC：方案 2 相机 H.264 / WebRTC 媒体流
 
-- 状态：提案，待机器人本体、中间件、后端、前端和运维评审
-- 范围：以 Astribot S1U 和 RLark 控制台为首个落地对象，目标规模 100–500 台机器人
-- 方案：H.264 + 独立媒体网关（MediaMTX / go2rtc）+ WebRTC 或 MSE
-- 核心约束：媒体面与控制面、本体控制面严格解耦
+- 状态：首期架构已定稿，组件版本与性能门槛待实测确认
+- 范围：Astribot S1U 与 RLark 控制台的相机只读媒体路径
+- 首期选型：MediaMTX、机器人主动出站 RTSP over TCP（interleaved）、同源 WHEP/WebRTC
+- 架构约束：媒体面与控制面、本体控制面严格隔离
 
-本文描述目标架构，不表示仓库当前已经支持 H.264、WebRTC、WHEP、MSE 或播放票据。下文端口、配置名和资源数字是提案值，实施前须以选定组件版本、浏览器矩阵和压测结果定稿。
+本文定义拟议目标架构和验收条件，不表示仓库现已具备 H.264、WebRTC、WHEP、媒体票据、租约或服务端强制撤销运行时能力。所有端口、时限、并发、性能和资源数字均为目标门槛（待实测），不能作为已测结果或正式 SLA。当前工作仅为 RFC，不新增生产部署配置。
 
-## 1. 背景与问题量化
+## 1. 背景与范围
 
-### 1.1 当前实现
+当前 S1U 相机服务由 `s1u-robot` Addon 在机器人集群的 `rlark-system` 命名空间提供，Gateway 通过集群 API Server Pod proxy 转发单帧 JPEG 和 MJPEG。控制台的 `cameraMediaScheduler` 管理本地流优先级与并发。连续媒体经过 Gateway 和 Kubernetes API Server 会占用代理连接、缓冲、协程与带宽，并可能与管理 API 争用资源。
 
-当前发布的 S1U 相机服务来自 `s1u-robot` Addon，在机器人所在集群的 `rlark-system` 命名空间中运行，服务端口为 `18891`。Gateway 注册只读路由 `GET /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras`、`.../cameras/{view}.jpg` 和 `.../cameras/{camera}/stream`，根据 Node 所属集群查找该 Node 上运行的 `s1u-robot` Pod，再通过 Kubernetes API Server 的 Pod proxy 转发到相机服务。现有响应是 JPEG/MJPEG，控制台会拉取状态、单帧 JPEG 或 multipart 流，并通过 `cameraMediaScheduler` 限制本地活动流数。Gateway 默认并发流上限为全局 64、单用户 12。
+首期方案将连续视频从 Gateway 媒体代理路径移出。Gateway 负责授权、配额、租约和控制面元数据，媒体服务负责只读媒体接入与扇出，机器人只在获准观看时编码和主动推流。现有 `cameraFramePath` 快照仍是第一降级路径，既有 MJPEG 仅作为有严格预算的连续流降级选项。
 
-控制台部署在裸 IP HTTP 地址（例如 `http://10.11.14.128`），没有域名或 TLS 终止。UI Nginx 对 `/api/` 使用 IAM `auth_request`，鉴权成功后注入对应角色的 Gateway service-account Bearer token，并透传流式响应所需的 HTTP/1.1 Upgrade 与长超时设置。机器人局域网地址不应被浏览器直接访问，也不应将 Kubernetes API Server 当作媒体中继。
+## 2. 不可跨越的边界与目标架构
 
-### 1.2 规模瓶颈
+### 2.1 控制面隔离
 
-以下估算用于说明量级。MJPEG 单帧大小受分辨率、画面内容和质量设置影响，实施前应从实际机器人采样；此处用 720p JPEG 每帧 100–250 KB、每路 5–10 fps 估算。
+急停、电源、驱动、心跳、告警、控制指令、认领/释放和入网均绝不进入 MediaMTX、媒体票据或 WebRTC DataChannel。媒体服务不反控机器人本体。控制操作继续由既有 Gateway/IAM 控制路径处理，媒体服务故障不能阻断控制面。
 
-| 瓶颈 | 假设和估算 | 影响 |
-| --- | --- | --- |
-| 浏览器 HTTP/1.1 连接 | 同源 HTTP/1.1 常见每浏览器约 6 条并发连接。若相机墙一屏 4 路、每路分别请求状态、快照或长连接，多个视图和后台请求会争抢连接槽位。HTTP/2 可缓解连接数，但不会降低媒体字节量或 Gateway 的逐帧处理。 | 100 个操作者各看 4 路会形成约 400 路观看订阅；同源长连接可让 API 请求排队，连接槽位也限制同一用户打开多机器人、多视图。 |
-| MJPEG 带宽 | 100–250 KB/帧 × 5–10 fps = 每路约 4–20 Mbps。100 台同时推送约 0.4–2 Gbps，500 台约 2–10 Gbps，尚未计 TCP/IP、TLS 和重传开销。典型 H.264 子码流 0.3–1 Mbps，较 MJPEG 通常可降低约 10–20 倍，具体取决于场景、编码参数和画质。 | 若每路都持续采集/推送，即使无人观看也消耗机器人 CPU、USB/编码器和上行带宽。MJPEG 每帧独立 JPEG，缺少帧间预测压缩。 |
-| Gateway / Kubernetes API Proxy | 当前每条流都经 Gateway -> 成员集群 Kubernetes API Server Pod proxy -> `s1u-robot:18891`，Gateway 按 64 KiB 缓冲并逐块 Flush。每名观看者都会占用一路端到端连接和 Gateway 代理协程/文件描述符。100 台各自 4 名观看者意味着 400 路重复中转，若单路 2 Mbps 即约 800 Mbps 中心出入流量；机器人源端也可能被重复拉取。 | API Server 与 Gateway 同时承担管理 API 和长时媒体字节转发，扩大故障面、连接数、带宽和反向代理压力。Gateway 当前限制只能拒绝超额请求，不能完成媒体扇出。 |
-
-HTTP/1.1 的约 6 连接是常见浏览器行为而非所有浏览器的硬性标准。MSE/WebRTC 应改为媒体网关连接或有界订阅，并让调度器为多宫格分配低码率子码流。
-
-## 2. 核心原则：媒体面与控制/本体面严格解耦
-
-### 2.1 不可跨越的边界
-
-本体信息和本体操作包括急停、电源、驱动、心跳、告警、控制指令、认领/释放以及入网。这些内容**绝不**进入 MediaMTX/go2rtc 的媒体协议、媒体 Token 或 DataChannel。它们继续通过 Gateway 控制面走 HTTP，后续需要事件推送时使用受控的 SSE/Watch 通道；在 Gateway/IAM 侧执行授权、审计、冲突处理和可靠状态读写。媒体网关不可代理或执行机器人控制指令，也不能成为控制器的依赖。
-
-该边界保证视频网关故障、网络抖动或媒体订阅过载不会阻断急停和管理 API；控制面仍有审计主体、动作结果与授权链，媒体服务只承载授权后的只读图像流。播放票据签发只证明“此用户可在短时间内观看某视图”，不代表用户可以操作机器人。
+首期 WebRTC DataChannel 不承载任何控制或状态协议。单机遥操作如需低延迟输入，须另立方案，定义独立鉴权、权限、序列号、过期、审计和急停语义。
 
 ### 2.2 目标架构
 
 ```mermaid
 flowchart LR
     subgraph Robot["机器人本体与集群"]
-        Camera["相机与硬件编码器"] --> Source["S1U 媒体发布器\nH.264 主/子码流"]
-        Source -->|"RTSP 或 WHIP，仅媒体"| Media["中心媒体网关\nMediaMTX 或 go2rtc"]
-        Body["急停、电源、驱动、心跳、告警"] --> Agent["RLark Agent / Station"]
-        Clock["NTP/PTP 时间源"]
+        Camera["相机与硬件编码器"] --> Source["机端发布器（H.264 主/子码流）"]
+        Source -->|"RTSP over TCP interleaved（主动出站）"| Media["媒体网关（MediaMTX）"]
+        Agent["RLark Agent / 相机服务"] -->|"来源租约与保活"| AgentCtl["Gateway / Agent 控制路径"]
+        EStop["急停、电源、驱动、心跳、告警"] --> ControlAPI["独立控制 API"]
     end
     subgraph Control["控制面"]
-        UI["浏览器控制台"] -->|"HTTP 控制 API"| Nginx["rlark-ui Nginx"]
-        Nginx -->|"鉴权与 API 代理"| IAM["Astribot IAM"]
-        Nginx -->|"HTTP + 后续 SSE/Watch"| Gateway["RLark Gateway"]
-        Gateway -->|"Kubernetes API / Agent 路径"| Agent
-        IAM -->|"短时只读播放票据"| Nginx
+        Browser["浏览器控制台"] -->|"POST 播放票据"| Nginx["UI Nginx（auth_request）"]
+        Nginx --> IAM["IAM（会话校验与可信身份头）"]
+        Nginx --> Gateway["RLark Gateway（授权、配额、租约）"]
+        Media -->|"媒体授权内部回调"| Gateway
+        Gateway -->|"控制 API：断开读者会话"| Media
+        Gateway -->|"相机能力与来源租约"| AgentCtl
+        ControlAPI --> Gateway
     end
-    UI -->|"WHEP 或 ws:// MSE 播放"| Media
-    Media -->|"authHTTPAddress 校验票据"| IAM
-    Source -. "NTP/PTP 对时" .-> Clock
+    Browser -->|"同源 WHEP 信令（Bearer 票据）"| Nginx
+    Nginx -->|"反代 WHEP 信令"| Media
+    Browser -->|"WebRTC ICE：UDP 优先，TCP 兜底"| Media
 ```
 
-媒体源按需发布到中心网关，网关负责单源多人 Fan-out。控制台仍从 Gateway 获取相机能力、在线状态、故障诊断和采集时间等元数据，再向媒体网关建立独立播放会话。
+媒体传输的目标为 UDP 优先，默认候选 `8189/UDP`，受控 TCP ICE 兜底候选 `8189/TCP`。WHEP 信令经 UI Nginx 同源路径 `/media/whep/<opaque-path>` 反代。机端主动向中心 MediaMTX 推送 RTSP over TCP interleaved。跨不可信二层或跨站点的机端发布预留 RTSPS（TLS），具体证书、端口和网络拓扑待实测锁定。
 
-### 2.3 唯一衔接点与 DataChannel 边界
+MediaMTX 的管理 API 和鉴权回调仅在内网开放。媒体服务独立容器部署并设置独立资源限额，初始压测预算目标为 `4 vCPU / 4–8 GiB`（待实测校准）。本 RFC 不修改 Compose、Nginx 或其他生产部署文件。
 
-媒体面与控制面只通过两个明确定义的衔接点相遇：
+### 2.3 首期路径与备选边界
 
-1. Astribot IAM 根据用户会话和 `admin` / `operator` / `viewer` 角色签发短时、只读播放票据。票据绑定 `cluster`、`node`、`view`、过期时间 `exp` 和签发者，媒体网关在建连时通过 `authHTTPAddress` 回调校验。票据不得复用 Gateway 的长效上游 service-account Token。
-2. 视频采集时间戳与 Gateway 状态时间需要关联时，机器人与服务端使用 NTP/PTP 对时；流帧携带采集时间，前端在统一时间基准下显示状态与画面延迟。时钟偏差要可观测，不能仅依赖浏览器到达时间推断采集时间。
+首期采用 MediaMTX + RTSP/TCP 主动出站 + WHEP/WebRTC。若实测发现目标浏览器无法兼容 WHEP，或受限网络同时阻断 UDP 与 TCP ICE，再评估二期 `go2rtc` / MSE 的鉴权、规模、运维与安全边界。
 
-WebRTC DataChannel 只在单台机器人遥操作需要 50–100 Hz 低延迟输入时另行评估，且须复用独立的控制协议鉴权、序列号、过期、审计、急停语义和权限边界。百台机群看板只需要视频播放和低频状态 API，不使用 DataChannel 承载控制。
+### 2.4 回退顺序
 
-## 3. 端到端技术选型与对比
+WHEP 信令因媒体服务不可用而失败、ICE 进入 failed，或首帧超过 `5s` 首帧超时目标门槛（待实测确认）时，先回退至低频单帧快照，例如沿用 `cameraFramePath` 按 `1 fps` 轮询（均为目标门槛，待实测）。仅在确需连续画面且配额允许时才降级为现有 MJPEG。降级路径继续执行会话及目标相机授权，收到授权拒绝时停止播放与自动降级。降级场景的单用户 MJPEG 并发上限目标为 `≤ 4` 路（待实测），避免 ICE 故障同时触发大量 MJPEG 请求并压垮控制面。
 
-### 3.1 机器人端：S1U x86 / 边缘本体
+## 3. 身份、授权与播放票据
 
-- **编码**：优先使用硬件 H.264 编码。S1U x86 可评估 Intel VAAPI / QuickSync，具备 NVIDIA GPU 的边缘机评估 NVENC；必须确认设备驱动、容器设备映射、编码实例数、温度与持续运行能力。CPU 软件编码仅作为低路数兼容路径，并设定 CPU 上限。
-- **双码流**：主码流 720p/1080p，仅在用户放大弹窗或单路查看时拉起；子码流 360p/480p、5–10 fps 用于监控墙。不同相机型号可声明真实支持的档位，不能只在 UI 假定存在。
-- **传输**：初始候选为机器人向中心媒体网关推 RTSP（实现简单、TCP/UDP 选择灵活），或以 WHIP 发布 WebRTC（NAT/实时性更好，但需要确认目标网关版本、鉴权和重连语义）。如果由媒体网关按需反向拉 RTSP，需网络允许中心到机器人入站，且不符合默认的机器人主动出站网络模型。应优先机器人出站推流，并让媒体网关通过按需发布/发布许可策略控制会话。
-- **On-Demand**：没有有效观看者时停止编码器和视频发布，做到零推流、零编码开销；首次观看时启动，最后一个观看者离开后经短暂宽限期停止，避免 UI 切换造成启停抖动。源端需处理媒体网关重启、断网重连和观看者竞态。
-- **能力协商**：由 Gateway 可读的节点注解或能力资源声明编码格式、路径、主/子流、分辨率与播放模式。建议以明确字段表达，避免把动态 Secret 或媒体 URL 写入公开注解。
+### 3.1 票据签发闭环
 
-### 3.2 中心媒体网关：MediaMTX 与 go2rtc
+1. 浏览器以 JSON `POST /api/v1/station/media-tokens` 请求票据，不使用携带长凭证的 GET URL。请求只表达目标 `cluster`、`node`、`view` 和播放档位，不接受客户端指定媒体 URL。
+2. 请求经 UI Nginx `auth_request` 到 IAM。IAM 校验会话未过期且账号未禁用，并强制覆写可信 `X-IAM-User` 与 `X-IAM-Role`，不得透传或信任客户端同名头。
+3. Gateway 是票据签发与授权决策责任方。Gateway 复用现有租户 Node 授权，校验唯一 `cluster -> agentNamespace` 归属（namespace 冲突即拒绝）、相机 capability 视图、服务端并发配额和有效读者租约，再签发只读短时票据。
+4. 票据建议 TTL `30–60s`（目标门槛，待实测），绑定 `jti`、`sub`、`role`、`cluster`、`node`、`view`、`tier`、`action=read` 和 `exp`。票据不含控制权限、机器人凭据或长效 service-account 凭据。
+5. MediaMTX `authHTTPAddress` 调用 Gateway 的内部鉴权端点。该端点只允许内网访问，读操作校验签名、有效期、精确媒体 path 绑定、会话租约和配额。发布动作使用完全独立的机端发布凭据与来源网段 ACL，浏览器 `read` 票据绝不能用于 `publish`。
+6. WHEP 优先使用 `Authorization: Bearer <ticket>`。若锁定版本或客户端限制迫使票据走 query，则 `jti` 必须单次消费，Nginx 对媒体路径关闭 query 访问日志或确保日志脱敏。任何日志、指标和错误响应均不得记录票据原文。
 
-| 比较项 | MediaMTX | go2rtc |
-| --- | --- | --- |
-| 单源多人扇出 | 面向多协议实时媒体服务器，RTSP、WebRTC/WHEP 等协议和按路径发布/读取适合独立媒体层。需验证选定版本的按需源与 reader 生命周期。 | 面向摄像头/流桥接，配置源和浏览器输出较轻便，具备 WebRTC 与 MSE 接入。需验证规模化 Fan-out、源拉起/停止条件与管理 API 暴露面。 |
-| 源接入 | 机器人 RTSP 发布较自然；也可按版本能力评估 WHIP。可配置路径级发布权限与读取授权。 | RTSP、WebRTC 等源适配灵活；机器人发布协议、授权方式及连接重试须基于目标版本确认。 |
-| 按需拉源 | 支持路径/源按读者需求连接的能力需结合版本和配置实测；避免对所有 100–500 台常驻拉源。 | 常用于按请求拉取/代理源，适合节省无人观看时资源；需验证读者断开后上游源是否按预期关闭。 |
-| WHEP / MSE | 提供 WebRTC 浏览器播放入口；本次核对的官方文档未确认原生 MSE/fMP4 WebSocket 播放入口，不应假定 MediaMTX 自带该路径。若需要 MSE，应由 go2rtc 或专门的 fMP4/MSE 服务提供。 | 提供 WebRTC 与 MSE 浏览器播放，MSE 使用其 HTTP/API 服务的 WebSocket 接口；WHEP 兼容和实际协议能力应对照锁定版本，不能仅凭产品名称假定。 |
-| 资源与运维 | 单一媒体服务职责明确，适合集中 Fan-out 与统一鉴权；部署规模、内存和 TURN 需求通过压测确定。 | 部署较轻、摄像头接入能力丰富；集中管理能力、API 安全和高并发上限须专门验证。 |
+IAM 负责用户会话真实性和可信身份头，Gateway 负责租户资源授权、归属、能力、配额、租约及票据签发，MediaMTX 仅按 Gateway 内部回调结果执行媒体读写许可。三者职责不可互相替代。
 
-建议先以 MediaMTX 作为规模化媒体面候选，并用 go2rtc 做兼容性/资源对照试验后定案。任何选型都必须证明共享上游源的扇出，而不是让每个浏览器各自重新拉机器人源；验证掉线恢复、单节点重启、权限拒绝及 20 路并发观看。
+### 3.2 服务端强制撤销 SLA
 
-### 3.3 裸 IP HTTP 下的浏览器播放与网络
+短时票据过期只阻止建立新连接，不会自动断开已建立的 WebRTC PeerConnection。撤销 SLA 只有在服务端对活跃读者租约到期或撤销并执行强制断流时才成立，绝不能依赖前端关闭 PeerConnection。
 
-现有控制台使用 `http://<IP>/`。浏览器以 HTTP 页面访问同源 WHEP 信令（普通 HTTP 请求）或 `ws://` MSE WebSocket，不会触发 HTTPS 页面连接不安全媒体端点的 mixed-content 阻断；`getUserMedia` 摄像头/麦克风采集要求安全上下文，本方案不需要浏览器采集。WebRTC 接收播放使用 `RTCPeerConnection` 和 ICE，不调用 `getUserMedia`，常见桌面浏览器可在 HTTP 页面完成接收播放。由于该项目的浏览器版本尚未在仓库中锁定，裸 IP、不同浏览器版本、企业策略和目标 WHEP 客户端必须做实际验收，不能把这一点当成所有嵌入式 WebView 的保证。
+首期必须实现服务端强制执行机制并通过集成测试。读者租约到期、用户会话注销或禁用、租户授权撤回、角色权限收回时，Gateway 须原子禁止相关会话继续续期或使用其票据建连，再调用仅内网开放的 MediaMTX 控制 API 断开对应会话。会话在确认断开前继续计入硬配额，断流失败时保留待回收状态并重试或对账。撤销 SLA 窗口数值须在实测后锁定。
 
-优先将播放入口通过现有 UI Nginx 暴露为同源路径，例如 `/media/whep/<opaque-path>` 与 `/media/mse/<opaque-path>`，再反代到内网媒体网关。若直接暴露媒体网关，则 WHEP HTTP 和 WebSocket 都需匹配页面的协议、主机与端口策略，并配置 CORS、Origin 校验和鉴权，不能让 `http` 页面连接不受信任的公网端点。`ws://` 应限于受控内网；跨网部署推荐 TLS 域名和 `wss://`。
+必测用例包括模拟拒不关闭连接的客户端及冻结标签页。服务端必须在约定撤销 SLA 窗口内终止媒体流并释放配额。仅验证浏览器收到过期状态、仅验证新建连接被拒绝，均不满足验收。
 
-在无公网 STUN/TURN 的同一可路由内网，ICE host candidate 通常可直连。MediaMTX 默认 WebRTC HTTP/WHEP listener 为 TCP 8889，默认 ICE UDP listener 为 8189；TCP ICE listener 可配置为 8189，但默认关闭，且拥塞时 TCP 的实时性通常较差。配置 `webrtcAdditionalHosts` 或相应接口地址，让客户端拿到可路由的内网地址，并按部署拓扑开放 UDP 8189。企业网络阻断 UDP 时，显式启用 TCP ICE listener 并开放其端口，或回退同源 `ws://` MSE。go2rtc 默认 HTTP/API（同时承载 WebSocket/MSE）为 TCP 1984，RTSP 为 TCP 8554，WebRTC 使用 TCP/UDP 8555。Nginx 同源反代可隐藏 HTTP/WebSocket 上游端口，但不能替代 WebRTC ICE 媒体端口的网络可达性。未配置公网 STUN 时不要假设跨 NAT/跨站点一定可达；跨站点需路由/VPN 或受控 TURN 中继。
+## 4. 双层租约与重启恢复
 
-前端适配以 `cameraMediaScheduler` 的现有授予/撤销和优先级机制为入口：调度器获准后申请票据并建立 WebRTC/MSE 播放器，撤销时关闭 PeerConnection/WebSocket、释放票据相关资源；弹窗 `dialog` 优先于 `pinned`，再优先于 `card`。调度器当前默认最多 3 路活动流，应由配置和服务端策略共同约束，快照回退仍使用 `cameraFramePath`。播放器适配层需统一暴露 `start`、`stop`、首帧、采集时间、重连和错误事件，使 UI 状态沿用现有 `cameras.ts` 的视图/能力模型。
+### 4.1 每读者会话租约（Per-Reader Session Lease）
 
-### 3.4 安全与鉴权：衔接 Scheme B
+每个观看会话单独建租约，绑定 `reader_session_id`、`sub`、`role`、`cluster`、`node`、`view`、`tier`、`expires_at`。签发票据时先创建计入配额的短期预留，WHEP 建连时由服务端绑定对应的 MediaMTX 会话 ID，每份预留最多绑定一个读者。未建连的预留到期时释放。租约 ID 与媒体会话 ID 的关联须可在 Gateway 重启后恢复或对账。
 
-现有入口链路是 `rlark-ui` Nginx -> Astribot IAM `/_iam_api` 内部授权 -> Gateway；IAM `/internal/authorize` 根据会话与 `admin` / `operator` / `viewer` 判断方法和路径，再返回对应角色上游 Token。Gateway 相机 GET 路由为已登录用户开放只读读取，读取 Node 时仍执行租户对象授权。IAM 现有接口没有媒体票据或媒体网关 `authHTTPAddress` 回调处理。
+`cameraMediaScheduler` 负责前端 UX 优先级裁剪，顺序为 `dialog > pinned > card`。Gateway 持有权威硬配额并对获取、续期、释放、过期回收执行原子操作，防止多标签页并发竞态超发。单用户 `4–6` 路、全局 `20–32` 路为可配置目标门槛（待实测），不是已实现默认值或 SLA。周期续期须重新校验 IAM 会话和租户授权。
 
-建议的 Scheme B 流程如下：
+到期或撤销时服务端强制断流并回收配额。MediaMTX 重启导致活跃读会话全部断开时，旧读者租约依靠短 TTL 自动过期回收并释放配额，客户端退避后重建。Gateway 重启时须从共享/持久化租约状态恢复，并查询 MediaMTX 活跃会话进行对账；无主或超期孤儿 WebRTC 会话在宽限期后由服务端强制断流，防止配额泄漏或越权残留。共享状态、对账窗口和失败恢复需在实现设计中明确并测试。
 
-1. 浏览器调用新增的 Gateway 播放票据签发 API，并携带现有 IAM 会话。请求包括 `cluster`、`node`、`view` 和期望播放协议，不接受客户端指定媒体 URL。
-2. IAM 验证会话未过期、账号未禁用、角色为允许观看的 `admin` / `operator` / `viewer`，并由 Gateway 校验该用户对目标 Node 的租户可见性、Node 所属 `cluster` 及能力声明中的视图。租户边界不能由前端过滤替代。
-3. IAM 或 Gateway 生成不可伪造、短时（建议 30–120 秒）且只读的票据，至少绑定 `cluster`、`node`、`view`、`exp`、签发者和随机唯一标识。不得含有机器人控制权限或长效上游凭证。URL/query 中出现的票据需采用单次/短时策略，并避免写入访问日志、Referer 和浏览器持久存储。
-4. 浏览器通过媒体 URL 建立 WebRTC/MSE 会话。媒体网关以 `authHTTPAddress` 回调 IAM 专用内部端点，提交票据、媒体路径、协议和动作（publish/read）。IAM 验签/查验有效期与资源绑定，并只允许 read；发布端身份由单独的机器人凭据或网络 ACL 校验，不能使用浏览器播放票据发布。
-5. Nginx 对新增票据 API 按 `/api/` 现有 `auth_request` 链路授权；媒体回调仅在内部网络可达，不公开绕过 Nginx 的 IAM 管理接口。媒体网关应拒绝无票据、过期、路径不匹配、角色不允许及发布动作，审计失败原因但不记录票据原文。
+### 4.2 来源级按需租约（Source-Level On-Demand Lease）
 
-播放票据有效期需覆盖连接建立。长时间播放的续期由前端在到期前重新申请并无缝切换，或由网关验证后授权现有会话续期。撤销用户会话与立即断开已建立媒体会话的语义需要评审拍板，不能假设短时票据自动提供即时撤销。
+来源租约按 `(cluster, node, view, tier)` 聚合对应的有效读者预留与已建连租约。首份预留即由 Gateway 经 Agent/相机服务下发机端推流租约，以便在 WHEP 建连前启动硬件编码并向媒体网关 RTSP/TCP 推流。此控制指令只管理媒体采集状态，媒体网关绝不反控机器人本体。
 
-## 4. 部署与网络变更清单
+活跃读者从 `1 → 0` 后进入宽限期，`15–30s` 为目标门槛（待实测），到期回收来源租约并让机端停编停推，实现无读者时零编码、零媒体上行。机端须维护本地租约 TTL 看门狗，Gateway 重启或控制面失联而未续租时，TTL 到期自动停编停推，避免僵尸推流。
 
-以下是面向 `astribot/release/control-plane/rlark.compose.yaml` 和 `astribot/release/rlark-ui.nginx.conf` 的拟议变更，文件本身在本 RFC 中不修改。
+MediaMTX 重启后，仍持有有效来源租约的机端以指数退避重连推流；没有有效来源租约的机端保持静默。Gateway 与 Agent 重试、幂等更新和租约状态对账以当前权威状态为准，不能依赖单次事件成功送达。
 
-- 在 Compose 增加独立媒体服务容器，镜像版本固定并纳入发布物校验；挂载只读配置和 TLS/签名信任材料，配置健康检查、重启策略、日志轮转、CPU/内存限制及优雅退出。媒体服务与 Gateway 共用内网网络，但分别设置访问控制。
-- 为 Nginx 配置媒体 HTTP/WHEP 与 WebSocket MSE 反代位置，设置 Upgrade、长读超时、关闭响应缓冲、正确传递 Host/Origin 和播放票据。外部页面仍可保持裸 IP HTTP 部署，但这是受限内网场景；公网或跨不可信网络应启用 TLS。
-- 以 MediaMTX 方案初估：默认 WHEP/HTTP 8889/TCP、ICE UDP 8189；ICE TCP 可配置在 8189，但默认关闭。MediaMTX 方案暂按 WebRTC 播放设计，不把 MSE 当作其内建能力。若选择 go2rtc 提供 MSE，其默认 HTTP/API 与 MSE WebSocket 为 1984/TCP、WebRTC 为 8555/TCP+UDP、RTSP 为 8554/TCP。最终映射仍以锁定镜像版本和实测配置为准。MSE 若经 Nginx 同源 WebSocket，可不另开放浏览器可见的媒体 HTTP 端口；WebRTC ICE 媒体端口仍须从浏览器网段可达。机器人 RTSP/WHIP 发布端口只对机器人网段与媒体网关开放。
-- 禁止将媒体网关管理 API、源发布端口和无鉴权播放端点暴露到用户网段或公网。Gateway 19000:8080 和 UI 80:80 是当前 Compose 映射，媒体端口应按网络部署模型单独评审。
+## 5. 编码档位与浏览器网络
 
-### 4.1 资源预算初值
+### 5.1 H.264 编码约束
 
-规划基线为 100 台机器人在线，20 路并发观看，观看流以 480p 子码流 0.3–0.8 Mbps 为主，每个操作者的媒体订阅由前端调度器限流。网关需将每个机器人源拉取/接收一次并 Fan-out，不能每个观看者重建一个机器人上游连接。
+浏览器 WebRTC 默认档为 **Constrained Baseline Profile**。Main Profile 仅在目标浏览器矩阵实测通过后作为可选优化。强制 `bframes=0`，每个 IDR 携带 SPS/PPS。GOP 以秒定义为 `1–2s`，关键帧间隔按 `keyint = ceil(gop_seconds × fps)` 计算：
 
-| 项目 | 估算区间 | 说明 |
-| --- | --- | --- |
-| 观看下行带宽 | 6–16 Mbps 媒体有效载荷，建议预留 10–25 Mbps | 20 × 0.3–0.8 Mbps，含协议开销与短时码率峰值余量。 |
-| 机器人上行媒体 | 约 30–80 Mbps，若 100 路子码流均持续发布 | On-Demand 应使未观看源不发送数据；实际值由同时观看的机器人数量决定。 |
-| 媒体网关 CPU | 初始压测机型 4 vCPU，按 20 路 WebRTC 转发验证 | 若只做转发，主要成本是协议、加密和连接数；转码会显著改变预算，首期避免服务端转码。 |
-| 媒体网关内存 | 初始 4–8 GiB 预算 | 取决于活跃源数、观看者数、缓冲和 WebRTC 会话数量。 |
-| Gateway / Kubernetes API Proxy | 预期媒体字节从其路径移除 | Gateway 仍处理能力/状态查询、Node 授权与票据签发，不再代理连续视频帧。 |
+| 帧率 | 1 秒 GOP | 2 秒 GOP |
+| --- | ---: | ---: |
+| 5 fps | 5 帧 | 10 帧 |
+| 10 fps | 10 帧 | 20 帧 |
+| 15 fps | 15 帧 | 30 帧 |
+| 20 fps | 20 帧 | 40 帧 |
 
-这些数值不是 SLA。验收测试至少覆盖 20 路并发、100 路源注册、扇出倍率、首帧时延、弱网重连、CPU/内存、NIC 吞吐、UDP 丢包、TCP fallback、票据拒绝和媒体服务重启恢复。另以 500 台注册规模验证连接/配置和无人观看时的资源占用。
+以下均为目标门槛（待实测），需按设备 capability 验证，不得视为已具备能力：子码流 `480p @ 5–10 fps, 400–800 kbps`；主码流 `720p @ 15–20 fps, 1.5–2.5 Mbps`；硬件编码新增 CPU `≤ 15%`；软编兜底单路 CPU `≤ 25%`。未声明能力的相机不得由 UI 假定支持档位。
 
-## 5. 渐进迁移与回滚
+### 5.2 WHEP 与 ICE
 
-1. **能力声明与观测**：机器人按 capability/annotation 声明 `h264`、主/子流和传输能力。先以只读探测和小规模试点采集硬编成功率、源在线率、首帧时间、码率和网关负载，不改变现有 MJPEG 默认路径。
-2. **双轨灰度**：前端检测节点能力后优先尝试 WebRTC/MSE；票据拒绝、ICE 失败、编解码不兼容或首帧超时后自动回退现有 MJPEG，并保留现有 JPEG 抽帧/快照状态路径。未声明 H.264 的旧机器人继续走旧路径。
-3. **逐步扩面**：按机器人 capability、站点或百分比放量，设置服务端并发、用户配额和可观测指标。确认 Gateway/Kubernetes API Proxy 的 MJPEG 流量下降、媒体网关 Fan-out 正常，再提高 H.264 比例。
-4. **回滚**：前端可通过发布配置关闭 H.264 优先逻辑，立即全部回到 MJPEG；机器人端停止发布/编码并回退旧相机容器版本；媒体容器可独立停止或回滚，不触碰 Gateway 控制 API 和机器人控制通道。回滚前维持兼容旧机器人与 MJPEG 路由，直到全量稳定并完成退役评审。
+播放信令经同源 `/media/whep/<opaque-path>`，浏览器通过 WHEP 建立 WebRTC 接收会话。媒体 UDP 优先，默认候选 `8189/UDP`；受控 TCP ICE 兜底候选 `8189/TCP`，须在网络策略中显式启用并限制来源。Nginx 反代 WHEP 信令不等于转发 ICE 媒体流，浏览器网段仍须能到达媒体 ICE 地址。
 
-回滚开关必须是可审计的发布配置或功能开关，默认关闭/开启策略由灰度阶段确定；不要以长期双写把控制面重新变成媒体代理。
+跨不可信站点不得假设无公网 STUN/TURN 时 ICE 可达。需验证 VPN/路由、受控 TURN 或 RTSPS 源接入等拓扑。跨不可信二层或跨站点的机器人发布链路预留 RTSPS（TLS）。裸 IP HTTP、企业浏览器策略和嵌入式 WebView 均需在目标矩阵实测，不视作通用保证。
 
-## 6. Review Checklist
+## 6. 目标门槛与验收
 
-### 本体 / 嵌入式组
+本节所有数值均明确为目标门槛（Target / To-Be-Measured），不是测量结果或正式 SLA。测试须分别报告配置、环境、样本数、分位数、失败数和复测结果。
 
-- S1U x86 实际 CPU、GPU、驱动和容器权限下，VAAPI/QuickSync/NVENC 各自能否持续运行几路 H.264 编码？功耗、温度和 CPU 预算是什么？
-- 主码流与 360p/480p 子码流的分辨率、帧率、码率、GOP/关键帧间隔及相机视图映射应如何定为 capability 契约？
-- On-Demand 编码启停由谁触发与仲裁，采用机器人出站 RTSP/WHIP 哪条路径，断网或网关重启后如何重连并保证无人观看时停流？
+| 验收项 | 目标门槛（待实测） |
+| --- | --- |
+| 首帧时间 | 已有媒体源 P95 `≤ 1.5s`；来源冷启动 P95 `≤ 3.5s`；`5s` 首帧超时后按快照优先顺序降级 |
+| 端到端延迟 | UDP G2G P95 `≤ 500ms`；TCP ICE G2G P95 `≤ 1.0s` |
+| 并发与扇出 | 20 路播放分别测试 `5×4`（5 个源各 4 读者）与 `20×1`（20 个独立源）两种模型 |
+| 注册规模 | 100+ 台在线注册；另验证 500 台注册时无人观看的控制连接与资源占用 |
+| 媒体网关 | 初始预算 `4 vCPU / 4–8 GiB`；CPU P95 `≤ 60%` |
+| 控制面隔离 | 压测期间控制面 P99 退化 `≤ 10%`、控制 API 错误率 `0` |
+| 媒体代理收益 | 切换后 Gateway MJPEG 代理流量下降 `≥ 90%` |
+| 撤销 | 服务端强制断流在撤销 SLA 窗口内完成，冻结/拒不关闭客户端仍可终止并释放配额；窗口待实测锁定 |
+| 稳定性 | 切换 50 次无会话或配额泄漏 |
+| 回滚 | 一键切回既有 Scheme B 链路 `≤ 1 分钟`，停媒体容器对控制面零影响 |
+| 编码档位 | 子码流 `480p @ 5–10 fps, 400–800 kbps`；主码流 `720p @ 15–20 fps, 1.5–2.5 Mbps` |
+| 机端开销 | 硬编新增 CPU `≤ 15%`；软编兜底单路 `≤ 25%` |
 
-### 后端 / 基础设施组
+压测与隔离验证必须在 **隔离 Mock 环境（Isolated Mock）** 中执行。急停及电源控制面隔离验证严禁对真实物理机器人或现网环境执行急停/电源故障注入或压测。隔离 Mock 应模拟控制 API、身份与租户授权、媒体会话、冻结客户端和 Agent 租约行为，不得连接真实执行器或现网机器人。
 
-- 播放票据由 IAM 直接签发还是由 Gateway 发起授权后签发？如何绑定 `cluster/node/view/exp`、支持撤销和续期，并避免票据进入日志？
-- MediaMTX 与 go2rtc 的最终选择是什么？选定版本的 `authHTTPAddress` 请求格式、WHEP/MSE 支持、Fan-out、按需源和 HA 行为如何通过集成测试证明？
-- 当前租户 Node 授权逻辑如何复用到票据签发，媒体网关回调如何获得权威的 Node/cluster 状态，避免仅依赖客户端路径或可伪造标签？
+首期集成测试至少覆盖票据伪造/过期/path 不匹配、publish/read 凭据隔离、租户和 namespace 冲突拒绝、原子配额并发竞争、续期授权撤回、强制 kick、冻结客户端配额释放、Gateway/MediaMTX 重启对账、机端 TTL 停推、退避重连、无人观看停编停推、UDP/TCP ICE、快照优先回退和受限 MJPEG 配额。
 
-### 前端组
+## 7. 灰度与回滚
 
-- `cameraMediaScheduler` 的全局默认并发 3 路是否适用于媒体服务，调度单位按机器人还是视图，主/子码流和弹窗优先级如何选择？
-- WebRTC/WHEP 与 `ws://` MSE 的首选顺序、浏览器兼容矩阵、超时与自动回退阈值如何定义？裸 IP 部署是否覆盖目标 Chromium/Firefox 版本？
-- 首帧、采集时间戳、重连、权限过期和错误状态如何接入现有 `cameras.ts` 状态模型，并确保关闭视图释放 PeerConnection/WebSocket？
+保持 Scheme B 控制面独立。按站点和相机 capability 提供可审计灰度开关，未启用或未具备 capability 的节点继续使用已有相机路径。先在隔离 Mock 和可控试点环境完成认证、租约、撤销、恢复、网络与资源验收，再分站点放量并观测媒体指标和控制面指标。
 
-### 运维 / 网络组
+发生媒体服务、鉴权、ICE、机端资源或控制面隔离验收失败时，关闭媒体灰度开关，将观看退回快照；只有需要连续视频且预算允许时才使用受限 MJPEG。可停止媒体容器并一键无损回到既有 Scheme B 链路，控制 API、认领/释放和机器人控制通道不依赖媒体服务。回滚开关与回滚步骤须经实施阶段验证，目标耗时 `≤ 1 分钟`（待实测）。
 
-- 控制面宿主机和站点网络能否为 WebRTC UDP 8189 配置允许的入站/出站规则？是否需要 TCP fallback、VPN 路由或 TURN，以及各自成本？
-- 播放路径是否统一经 Nginx 同源反代？裸 IP HTTP 与跨站点访问的边界、TLS 终止、Origin/CORS、管理端口隔离如何落地？
-- 100 台在线、20 路并发和 500 台注册的压测环境、带宽/CPU/内存告警阈值、媒体服务故障演练与发布回滚责任人是谁？
+## 8. 仍待实测与锁定项
 
-### 核对来源
+1. 目标相机和浏览器/WebView 矩阵、Constrained Baseline 实际编码能力、双码流参数、设备驱动和持续运行开销。
+2. 锁定 MediaMTX 镜像版本及 WHEP、`authHTTPAddress`、活跃读者查询、控制 API kick、RTSP/TCP 发布和重启恢复语义。
+3. UDP/TCP ICE 端口可达性、跨站点路由、RTSPS 证书模型及是否确需 TURN。
+4. IAM 身份头契约、Gateway 内部票据签发/校验端点、签名密钥轮换、单次 `jti` 语义、撤销 SLA 窗口和审计字段。
+5. 共享/持久化租约存储、配额原子性、Gateway 重启对账宽限期、来源租约 TTL 与零读者宽限期。
+6. 上表全部目标门槛在隔离 Mock 与受控测试环境的测量结果、容量边界、告警阈值和灰度/回滚演练记录。
 
-- [MediaMTX WebRTC connectivity 配置说明](https://mediamtx.org/docs/usage/webrtc-specific-features)：内网额外公布地址、UDP 8189、TCP ICE listener 配置与 STUN/TURN 行为。
-- [MediaMTX 当前配置参考](https://mediamtx.org/docs/references/configuration-file)：当前文档版本列出 WebRTC HTTP 地址 `:8889`、UDP 地址 `:8189`，TCP listener 默认空值关闭。
-- [go2rtc 官方仓库 README](https://github.com/AlexxIT/go2rtc)：默认 API 1984/TCP、RTSP 8554/TCP、WebRTC 8555/TCP+UDP。
-- [MDN getUserMedia](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)：浏览器本地摄像头/麦克风采集需要安全上下文；该限制与远端视频接收播放不同。
+## 附录：参考资料
+
+- [MediaMTX WebRTC connectivity](https://mediamtx.org/docs/usage/webrtc-specific-features)
+- [MediaMTX configuration reference](https://mediamtx.org/docs/references/configuration-file)
+- [go2rtc 官方仓库](https://github.com/AlexxIT/go2rtc)
+- [MDN `getUserMedia`](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)
