@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	clientset "github.com/rlinf/rlark/api/kubeclients/clientset/versioned/fake"
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -257,6 +259,87 @@ func TestIssueNodeAdmissionForADeclaredKeyRedeemsThroughTheTunnel(t *testing.T) 
 		}
 		if strings.Count(issued.Command, "https://"+address+"/") != 2 {
 			t.Fatalf("%s: command %s, want Station API at %s", node, issued.Command, address)
+		}
+	}
+}
+
+func TestIssueServerNodeAdmissionWithoutNodeClass(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	g, bootstrap := nodeAdmissionGateway()
+	status, body := nodeAdmissionCall(t, g.handleIssueNodeAdmission, "POST", "/api/v1/station/node-admissions", "",
+		`{"cluster_id":"cluster-a","node_name":"office-server-01","machine":{"category":"Server"}}`)
+	var issued issuedNodeAdmission
+	if status != 201 || json.Unmarshal(body, &issued) != nil ||
+		!strings.HasPrefix(issued.Command, "c=$(mktemp)") || issued.Admission.State != "Pending" ||
+		strings.Join(bootstrap.paths, ",") != "/v1/bootstrap/ca" {
+		t.Fatalf("server admission did not return a direct bootstrap command: HTTP %d", status)
+	}
+	stored := storedAdmission(t, g, "office-server-01")
+	category, _, _ := unstructured.NestedString(stored.Object, "spec", "machine", "category")
+	class, _, _ := unstructured.NestedString(stored.Object, "spec", "nodeClass")
+	if category != "Server" || class != "" {
+		t.Fatalf("admission records category %q and NodeClass %q", category, class)
+	}
+}
+
+func TestIndexNodeJoinsUsesLastMatch(t *testing.T) {
+	joins := []rlarkv1alpha1.NodeJoin{{Spec: rlarkv1alpha1.NodeJoinSpec{NodeName: "node-a"}}, {Spec: rlarkv1alpha1.NodeJoinSpec{NodeName: "node-b"}}, {Spec: rlarkv1alpha1.NodeJoinSpec{NodeName: "node-a"}}}
+	got := indexNodeJoins(joins)
+	if len(got) != 2 || got["node-a"].Status.Stage != joins[2].Status.Stage {
+		t.Fatalf("join index = %#v", got)
+	}
+}
+
+func TestListNodeAdmissionsPaginatesAndUsesIndexedJoin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	makeAdmission := func(name, issued string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission",
+			"metadata": map[string]interface{}{"name": name, "namespace": "agent-a"},
+			"spec":     map[string]interface{}{"clusterID": "cluster-a", "issuedAt": issued, "expiresAt": "2099-01-01T00:00:00Z"},
+		}}
+	}
+	g, _ := nodeAdmissionGateway(makeAdmission("node-old", "2026-11-01T00:00:00Z"), makeAdmission("node-new", "2026-11-02T00:00:00Z"))
+	g.kubeClient = clientset.NewSimpleClientset(
+		&rlarkv1alpha1.NodeJoin{ObjectMeta: metav1.ObjectMeta{Name: "join-new", Labels: map[string]string{nodeJoinClusterLabel: "cluster-a"}}, Spec: rlarkv1alpha1.NodeJoinSpec{ClusterID: "cluster-a", NodeName: "node-new"}, Status: rlarkv1alpha1.NodeJoinStatus{Phase: rlarkv1alpha1.ClusterProvisionRunning, Stage: "configure"}},
+	)
+	call := func(path string) (int, []byte) {
+		return nodeAdmissionCall(t, g.handleListNodeAdmissions, "GET", path, "", "")
+	}
+	status, body := call("/api/v1/station/node-admissions?cluster_id=cluster-a&limit=1")
+	var first struct {
+		Items    []nodeAdmission `json:"items"`
+		Continue string          `json:"continue"`
+		Total    int             `json:"totalMatched"`
+	}
+	if err := json.Unmarshal(body, &first); status != 200 || err != nil || len(first.Items) != 1 || first.Items[0].NodeName != "node-new" || first.Items[0].JoinPhase != string(rlarkv1alpha1.ClusterProvisionRunning) || first.Items[0].JoinStage != "configure" || first.Continue != "1" || first.Total != 2 {
+		t.Fatalf("page one status=%d body=%s decoded=%+v", status, body, first)
+	}
+	status, body = call("/api/v1/station/node-admissions?cluster_id=cluster-a&limit=1&continue=" + first.Continue)
+	var second struct {
+		Items    []nodeAdmission `json:"items"`
+		Continue string          `json:"continue"`
+		Total    int             `json:"totalMatched"`
+	}
+	if err := json.Unmarshal(body, &second); status != 200 || err != nil || len(second.Items) != 1 || second.Items[0].NodeName != "node-old" || second.Continue != "" || second.Total != 2 {
+		t.Fatalf("page two status=%d body=%s decoded=%+v", status, body, second)
+	}
+}
+
+func BenchmarkListNodeAdmissionsJoin(b *testing.B) {
+	joins := make([]rlarkv1alpha1.NodeJoin, 500)
+	for i := range joins {
+		joins[i].Spec.NodeName = fmt.Sprintf("node-%d", i)
+	}
+	admissions := make([]string, 500)
+	for i := range admissions {
+		admissions[i] = fmt.Sprintf("node-%d", i)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		byNode := indexNodeJoins(joins)
+		for _, node := range admissions {
+			_ = byNode[node]
 		}
 	}
 }

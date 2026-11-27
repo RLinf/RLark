@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
@@ -26,6 +27,7 @@ func TestARobotsCamerasArePassedOnFromItsPodPartByPart(t *testing.T) {
 	var mu sync.Mutex
 	var asked []string
 	parts := make(chan string)
+	partsBob := make(chan string)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		asked = append(asked, r.URL.RequestURI())
@@ -65,6 +67,13 @@ func TestARobotsCamerasArePassedOnFromItsPodPartByPart(t *testing.T) {
 				_, _ = io.WriteString(w, part)
 				w.(http.Flusher).Flush()
 			}
+		case "/s1u-robot-x7k2p:18891/proxy/cameras/wrist_left/stream":
+			w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=s1ucamera")
+			w.(http.Flusher).Flush()
+			for part := range partsBob {
+				_, _ = io.WriteString(w, part)
+				w.(http.Flusher).Flush()
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -72,7 +81,7 @@ func TestARobotsCamerasArePassedOnFromItsPodPartByPart(t *testing.T) {
 	defer upstream.Close()
 
 	node := &rlarkv1alpha1.Node{ObjectMeta: metav1.ObjectMeta{Namespace: "rlark-robot", Name: "s1u-03-x86"}}
-	g := &Gateway{config: Config{ServerAddress: upstream.URL}, serverTransport: http.DefaultTransport.(*http.Transport),
+	g := &Gateway{config: Config{ServerAddress: upstream.URL, CameraMaxLiveStreams: 2, CameraMaxLiveStreamsPerUser: 1}, serverTransport: http.DefaultTransport.(*http.Transport),
 		accessors: map[string]*resourceAccessor{"nodes": {get: func(_ context.Context, namespace, name string, _ metav1.GetOptions) (any, error) {
 			if namespace != node.Namespace || name != node.Name {
 				return nil, apierrors.NewNotFound(schema.GroupResource{Group: "rlinf.io", Resource: "nodes"}, name)
@@ -80,16 +89,30 @@ func TestARobotsCamerasArePassedOnFromItsPodPartByPart(t *testing.T) {
 			return node, nil
 		}}}}
 	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(authSubjectKey, c.GetHeader("X-Test-Auth-Subject"))
+		c.Next()
+	})
 	g.registerRobotRoutes(router.Group("/nodes"))
 	gateway := httptest.NewServer(router)
 	defer gateway.Close()
-	get := func(path string) *http.Response {
-		response, err := http.Get(gateway.URL + "/nodes/" + path)
+	getWithSubject := func(path, user, subject string) *http.Response {
+		request, err := http.NewRequest(http.MethodGet, gateway.URL+"/nodes/"+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("X-IAM-User", user)
+		request.Header.Set("X-Test-Auth-Subject", subject)
+		response, err := http.DefaultClient.Do(request)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return response
 	}
+	getAs := func(path, user string) *http.Response {
+		return getWithSubject(path, user, "service-account:astribot-iam-admin")
+	}
+	get := func(path string) *http.Response { return getAs(path, "alice") }
 	read := func(response *http.Response) string {
 		defer func() { _ = response.Body.Close() }()
 		body, _ := io.ReadAll(response.Body)
@@ -155,6 +178,24 @@ func TestARobotsCamerasArePassedOnFromItsPodPartByPart(t *testing.T) {
 		response.Header.Get("X-Accel-Buffering") != "no" {
 		t.Fatalf("stream: %d %v", response.StatusCode, response.Header)
 	}
+	limited := get("s1u-03-x86/cameras/head/stream?namespace=rlark-robot")
+	assertCameraStreamLimited(t, limited, "per-user limit")
+	if snapshot := get("s1u-03-x86/cameras/head.jpg?namespace=rlark-robot"); snapshot.StatusCode != http.StatusOK {
+		t.Fatalf("snapshot while stream active: %d", snapshot.StatusCode)
+	} else {
+		_ = snapshot.Body.Close()
+	}
+	if listing := get("s1u-03-x86/cameras?namespace=rlark-robot"); listing.StatusCode != http.StatusOK {
+		t.Fatalf("camera list while stream active: %d", listing.StatusCode)
+	} else {
+		_ = listing.Body.Close()
+	}
+	bob := getAs("s1u-03-x86/cameras/wrist_left/stream?namespace=rlark-robot", "bob")
+	if bob.StatusCode != http.StatusOK {
+		t.Fatalf("second user's stream: %d", bob.StatusCode)
+	}
+	limited = getAs("s1u-03-x86/cameras/torso/stream?namespace=rlark-robot", "carol")
+	assertCameraStreamLimited(t, limited, "global limit")
 	reader := bufio.NewReader(response.Body)
 	for _, part := range []string{"--s1ucamera\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\nJPEG\r\n", "--s1ucamera\r\n"} {
 		parts <- part
@@ -163,5 +204,106 @@ func TestARobotsCamerasArePassedOnFromItsPodPartByPart(t *testing.T) {
 			t.Fatalf("part %q: %q %v", part, got, err)
 		}
 	}
+	_ = response.Body.Close()
+	_ = bob.Body.Close()
+	// Closing downstream streams cancels their proxy requests and releases their slots.
 	close(parts)
+	close(partsBob)
+	var reopened *http.Response
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		reopened = getWithSubject("s1u-03-x86/cameras/head/stream?namespace=rlark-robot", "forged", "alice")
+		if reopened.StatusCode == http.StatusOK {
+			break
+		}
+		_ = reopened.Body.Close()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if reopened == nil || reopened.StatusCode != http.StatusOK {
+		t.Fatal("camera stream quota was not released after disconnect")
+	}
+	_ = reopened.Body.Close()
+}
+
+func TestCameraStreamOwnerTrustsIAMInjectedUserOnlyForIAMServiceAccounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	owner := func(subject, iamUser string) string {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+		ctx.Request.RemoteAddr = "192.0.2.8:12345"
+		ctx.Request.Header.Set("X-IAM-User", iamUser)
+		ctx.Set(authSubjectKey, subject)
+		return cameraStreamOwner(ctx)
+	}
+	iamAlice := owner("service-account:astribot-iam-operator", "alice")
+	iamBob := owner("service-account:astribot-iam-operator", "bob")
+	if iamAlice != "alice" || iamBob != "bob" {
+		t.Fatalf("IAM subjects use owners %q and %q", iamAlice, iamBob)
+	}
+	ordinary := owner("alice", "bob")
+	spoofed := owner("alice", "charlie")
+	var limiter cameraStreamLimiter
+	if ordinary != "alice" || spoofed != ordinary {
+		t.Fatalf("ordinary subject owners differ: %q and %q", ordinary, spoofed)
+	}
+	if !limiter.acquire(ordinary, 0, 1) {
+		t.Fatal("first ordinary stream refused")
+	}
+	if limiter.acquire(spoofed, 0, 1) {
+		t.Fatal("forged X-IAM-User bypassed the ordinary user's quota")
+	}
+}
+
+func assertCameraStreamLimited(t *testing.T, response *http.Response, label string) {
+	t.Helper()
+	defer response.Body.Close()
+	var body ErrorResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("%s response: %v", label, err)
+	}
+	if response.StatusCode != http.StatusTooManyRequests || response.Header.Get("Retry-After") != "2" || body.Code != "camera_stream_limit_exceeded" {
+		t.Fatalf("%s response: HTTP %d retry=%q body=%+v", label, response.StatusCode, response.Header.Get("Retry-After"), body)
+	}
+}
+
+func TestCameraStreamLimiterEnforcesAndReleasesLimits(t *testing.T) {
+	var limiter cameraStreamLimiter
+	if !limiter.acquire("alice", 2, 1) {
+		t.Fatal("first stream refused")
+	}
+	if limiter.acquire("alice", 2, 1) {
+		t.Fatal("per-user limit was not enforced")
+	}
+	if !limiter.acquire("bob", 2, 1) {
+		t.Fatal("second user stream refused")
+	}
+	if limiter.acquire("carol", 2, 1) {
+		t.Fatal("global limit was not enforced")
+	}
+	limiter.release("alice")
+	if !limiter.acquire("alice", 2, 1) {
+		t.Fatal("released slot was not reusable")
+	}
+}
+
+func TestCameraStreamLimiterConcurrentAcquisitions(t *testing.T) {
+	var limiter cameraStreamLimiter
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	accepted := 0
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if limiter.acquire("shared", 10, 10) {
+				mu.Lock()
+				accepted++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if accepted != 10 {
+		t.Fatalf("accepted %d concurrent streams, want 10", accepted)
+	}
 }

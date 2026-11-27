@@ -193,3 +193,39 @@ test("API reference is loaded from Gateway", async () => {
   const reference = await apiReferenceApi.get();
   assert.equal(reference.title.en, "API Reference");
 });
+
+test("a 401 answering a replaced token leaves the newer session alone", async () => {
+  globalThis.sessionStorage = storage();
+  let eventType = "";
+  globalThis.window = { dispatchEvent: (event) => (eventType = event.type) };
+  sessionStorage.setItem(AUTH_TOKEN_KEY, "stale-token");
+  sessionStorage.setItem(AUTH_ROLE_KEY, "user");
+  globalThis.fetch = async () => {
+    // A newer sign-in lands while the older request is still in flight.
+    storeAuthSession("fresh-token", "admin");
+    return new Response(null, { status: 401 });
+  };
+
+  await assert.rejects(() => request("/api/v1/clusters"));
+  assert.equal(sessionStorage.getItem(AUTH_TOKEN_KEY), "fresh-token");
+  assert.equal(sessionStorage.getItem(AUTH_ROLE_KEY), "admin");
+  assert.equal(eventType, "");
+});
+
+test("a 403 is reported without signing the caller out", async () => {
+  globalThis.sessionStorage = storage();
+  let dispatched = 0;
+  globalThis.window = { dispatchEvent: () => { dispatched += 1; } };
+  storeAuthSession("admin-token", "admin");
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ message: "forbidden" }), { status: 403 });
+
+  const error = await request("/api/v1/clusters").then(
+    () => null,
+    (reason) => reason,
+  );
+  assert.ok(error instanceof ApiError);
+  assert.equal(error.status, 403);
+  assert.equal(hasAuthSession("admin"), true);
+  assert.equal(dispatched, 0);
+});

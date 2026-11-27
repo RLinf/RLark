@@ -35,7 +35,7 @@
 
 - 入网码只回答一次；NodeAdmission 只存它的 SHA-256，记发码人和时间。
 - 命令先下载 Station API 的 CA 并核对摘要，再 `curl https://<Station API>/b/<码> | sudo sh`。机器在自带上联设备后面（NodeClass 的 `uplink.setup`，如机器人的 Orin）时，命令先 SSH 到那台设备放行。
-- 扫到的机器：场站声明了 `discovery` 时，枢纽的网关在声明的 `ranges` 和枢纽自己接着的每个私有 IPv4 网段（如办公网 10.11.12.0/22、Wi-Fi，比 /22 大的只扫自己地址所在的 /22；不含公网、隧道、容器和集群网络）里找认得出的机器，报给 Station API，成为 `Machine`；它的转发口让管理面 SSH 过去（同样只到这些网段）。机器人插上枢纽所在的任何网都能被扫到，不用先把网段写进 `ranges`。控制台“场站节点 → 扫描设置”可改 `discovery` 的 `enabled`、`ranges`、`intervalSeconds`；`from` 是管理面拨号源，不是扫描器；该 site 的所有 Hub 执行扫描。
+- 扫到的机器：场站已保存 `discovery` 设置且管理员点击“开始扫描”后，本站已配置的 Hub在声明的 `ranges` 和枢纽自己接着的每个私有 IPv4 网段（如办公网 10.11.12.0/22、Wi-Fi，比 /22 大的只扫自己地址所在的 /22；不含公网、隧道、容器和集群网络）里找认得出的机器，报给 Station API，成为 `Machine`；它的转发口让管理面 SSH 过去（同样只到这些网段）。机器人插上枢纽所在的任何网都能被扫到，不用先把网段写进 `ranges`。在“场站节点 → 扫描设置”保存网段和管理面拨号源（`from`）。可在扫描设置或加入节点页面开始扫描，并查看 Hub 返回结果的进度。任务可在结束或 5 分钟超时后重试。
 - SSH 入网在机器上以 systemd 单元 `rlark-join` 运行，日志 `/var/log/rlark-join.log`；Gateway 断开不影响它。
 
 ## 安装器做什么
@@ -51,6 +51,7 @@
 7. 节点注解 `rlark.io/node-install-spec`、`rlark.io/node-install-state`、`rlark.io/node-volumes`。
 
 要注意的点：
+- 普通工作节点安装前，`/var/lib` 所在文件系统在扣除新节点卷所需空间后需至少有 10% 可用。kubelet 和 containerd 都配置独立卷时，宿主文件系统需要能容纳这些卷。控制面安装仍要求 20%，运行时磁盘压力阈值由 kubelet 配置决定。
 - kubelet ≥1.35 默认不在 cgroup v1 上启动。机器还是 v1（机器人在节点规格重启之前）时，安装器写 `90-rlark-cgroup-v1.conf`（`failCgroupV1: false`）并让 kubeadm 跳过 `SystemVerification`；`s1u-robot` 把机器换到 v2 后删掉它。
 - kubeadm 预检忽略 `Swap`：机器的 swap 不动。
 - 加入失败的 `kubeadm join` 会当场 `reset`，下次可以直接重来。

@@ -4,7 +4,7 @@ import { nodeAdmissionsApi, selfHealApi, stationsApi, type NodeOperation } from 
 import type { ClusterSummary } from "../../types";
 import { formatChinaDateTime } from "../../utils/time.js";
 import { NodeName, type NodeRef } from "../components/NodeName";
-import { joinStageLabel } from "../lib/nodeJoin";
+import { joinStageLabel, type NodeJoinTarget } from "../lib/nodeJoin";
 import {
   admissionStateClass,
   admissionStateLabel,
@@ -117,7 +117,7 @@ export function AdmissionRecords({ admissions, clusters, loadError, zh, onJoin, 
   // Why the admissions of a cluster could not be read.
   loadError: string;
   zh: boolean;
-  onJoin: (reissued?: IssuedNodeAdmission, sshJoin?: { clusterID: string; name: string }) => void;
+  onJoin: (reissued?: IssuedNodeAdmission, sshJoin?: NodeJoinTarget) => void;
   onChanged: () => Promise<void>;
 }) {
   const [pending, setPending] = useState("");

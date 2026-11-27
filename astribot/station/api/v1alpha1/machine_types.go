@@ -182,6 +182,9 @@ type MachineEntry struct {
 	// +kubebuilder:validation:MaxLength=21
 	Via      string       `json:"via,omitempty"`
 	LastSeen *metav1.Time `json:"lastSeen,omitempty"`
+	// DiscoveryScanID identifies the manual scan that last observed this entry.
+	// +kubebuilder:validation:MaxLength=36
+	DiscoveryScanID string `json:"discoveryScanID,omitempty"`
 }
 
 // +kubebuilder:validation:Enum=Robot;Server

@@ -694,49 +694,13 @@ func (r *NetworkReconciler) reconcile(ctx context.Context) (reconcile.Result, er
 		}
 	}
 
-	// A hub of a site with discovery that has stopped reporting what it finds:
-	// the list of machines that have not joined is no longer that site's of now.
-	stale := metav1.Condition{Type: "DiscoveryStale", Status: metav1.ConditionFalse, Reason: "HubsReport", Message: "every hub of a site with discovery reports what it finds"}
-	looking := false
-	for _, site := range topology.Sites {
-		if site.Discovery == nil {
-			continue
-		}
-		interval := time.Duration(site.Discovery.IntervalSeconds) * time.Second
-		if interval < again {
-			again = interval
-		}
-		for i := range enrollments.Items {
-			hub := &enrollments.Items[i]
-			if hub.Status.Site != site.Name || hub.Status.Role != string(network.RoleHub) || hub.Status.Phase != stationv1alpha1.NetworkEnrollmentEnrolled {
-				continue
-			}
-			looking = true
-			reported, err := time.Parse(time.RFC3339, hub.Annotations[DiscoveryReportedAnnotation])
-			last := "never"
-			if err == nil {
-				last = "last at " + reported.UTC().Format(time.RFC3339)
-			}
-			if err != nil || r.now().Sub(reported) > 3*interval {
-				message := fmt.Sprintf("site %s: hub %s/%s has not reported what it finds for three intervals (%s)", site.Name, hub.Spec.ClusterID, hub.Name, last)
-				if stale.Status == metav1.ConditionTrue {
-					message = stale.Message + "; " + message
-				}
-				stale.Status, stale.Reason, stale.Message = metav1.ConditionTrue, "HubSilent", message
-			}
-		}
-	}
 	conditions := []metav1.Condition{ready, connected}
 	if relayEnabled {
 		conditions = append(conditions, relayCondition)
 	} else {
 		apimeta.RemoveStatusCondition(&status.Conditions, "GatewayRelayReady")
 	}
-	if looking {
-		conditions = append(conditions, stale)
-	} else {
-		apimeta.RemoveStatusCondition(&status.Conditions, "DiscoveryStale")
-	}
+	apimeta.RemoveStatusCondition(&status.Conditions, "DiscoveryStale")
 	status.ObservedGeneration = siteNetwork.Generation
 	for _, condition := range conditions {
 		condition.ObservedGeneration = siteNetwork.Generation
@@ -782,10 +746,6 @@ func joinStep(admission *stationv1alpha1.NodeAdmission, enrollment *stationv1alp
 		return "节点已上报，等它以自己的身份登记隧道"
 	}
 }
-
-// DiscoveryReportedAnnotation is, on the NetworkEnrollment of a hub, when the
-// hub last reported what it found on its site's network (Station API writes it).
-const DiscoveryReportedAnnotation = "station.rlark.io/discovery-reported-at"
 
 // document is a node's configuration as it is served, and its SHA-256.
 func document(config network.NodeConfig) (string, string) {

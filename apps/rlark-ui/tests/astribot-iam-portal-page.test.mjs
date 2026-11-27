@@ -5,6 +5,10 @@ import { runInNewContext } from "node:vm";
 
 const login = await readFile(new URL("../../../astribot/release/login.html", import.meta.url), "utf8");
 const nginx = await readFile(new URL("../../../astribot/release/rlark-ui.nginx.conf", import.meta.url), "utf8");
+const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+const adminAppSource = await readFile(new URL("../src/admin/AdminApp.tsx", import.meta.url), "utf8");
+const userLoginSource = await readFile(new URL("../src/pages/Login.tsx", import.meta.url), "utf8");
+const iamPageSource = await readFile(new URL("../src/astribot/iam/IAMPage.tsx", import.meta.url), "utf8");
 
 function startLoginPage(fetch, language = "zh-CN") {
   const elements = new Map();
@@ -135,7 +139,7 @@ test("a request without a session is redirected to the portal, carrying its addr
 test("the console shell is always confirmed with the server", () => {
   assert.match(
     nginx,
-    /location = \/index\.html \{\s+auth_request \/_iam_page;\s+error_page 401 = @iam_login;\s+add_header Cache-Control "no-cache";/,
+    /location = \/index\.html \{\s+auth_request \/_iam_page;\s+error_page 401 = @iam_login;\s+error_page 403 = @iam_home;\s+add_header Cache-Control "no-cache";/,
   );
 });
 
@@ -154,4 +158,52 @@ test("the proxy takes the workload submitter assertion from IAM", () => {
 test("the portal page is always fetched, so that it can end the browser's session", () => {
   // A copy replayed from the browser's cache carries no Set-Cookie.
   assert.match(nginx, /location = \/login \{[\s\S]*?add_header Set-Cookie "astribot_session=;[^"]*" always;\s+(?:#[^\n]*\n\s*)?add_header Cache-Control "no-store" always;/);
+});
+
+test("every startup state is answered before a native form can be rendered", () => {
+  assert.match(
+    appSource,
+    /import \{\s+addressPath,\s+portalHomeRedirect,\s+resolvePortalView,[\s\S]*?\} from "\.\/astribot\/iam\/portal";/,
+  );
+  assert.match(appSource, /const portalView = portalState\s+\? resolvePortalView\(portalState, window\.location\.pathname\)/);
+  // The three states that must not reach a form each return their own screen.
+  assert.match(appSource, /if \(portalView\.kind === "error"\)\s+return \(\s+<PortalError/);
+  assert.match(appSource, /if \(portalView\.kind === "pending"\)\s+return \(\s+<PortalStatus/);
+  assert.match(appSource, /if \(portalView\.kind === "home"\)\s+return \(\s+<PortalStatus/);
+  // A role without admin access is sent home once, never to AdminLogin.
+  assert.match(appSource, /const target = portalView \? portalHomeRedirect\(portalView\) : undefined;/);
+  assert.match(appSource, /window\.location\.replace\(target\)/);
+  assert.match(appSource, /<AdminApp\s+portalRole=\{portalView\?\.kind === "admin" \? "admin" : undefined\}/);
+});
+
+test("the native user form is mounted only outside portal mode", () => {
+  assert.equal(appSource.match(/<UserLogin/g)?.length, 1);
+  assert.match(appSource, /return portalView \? \(\s*<PortalStatus[\s\S]*?\)\s*:\s*\(\s*<UserLogin/);
+});
+
+test("the admin console never mounts its native form behind the portal", () => {
+  assert.equal(adminAppSource.match(/<AdminLogin/g)?.length, 1);
+  assert.match(adminAppSource, /const portal = iamPortalEnabled\(\) \|\| portalRole !== undefined;/);
+  assert.match(adminAppSource, /if \(!loggedIn\) \{\s+if \(portal\) \{\s+return \(/);
+  assert.match(adminAppSource, /if \(portal && !loggedIn\) void returnToPortal\(addressPath\(window\.location\)\)/);
+  assert.match(adminAppSource, /if \(portal\) \{\s+void signOutOfConsole\(addressPath\(window\.location\)\)/);
+});
+
+test("both native forms switch themselves off in the portal build", () => {
+  assert.match(userLoginSource, /if \(iamPortalEnabled\(\)\) return null;/);
+  assert.match(adminAppSource, /if \(iamPortalEnabled\(\)\) return null;/);
+});
+
+test("the IAM page never mounts its own credentials form behind the portal", () => {
+  // A 403, a 5xx or an unreachable IAM renders the retry screen instead of the form.
+  assert.match(iamPageSource, /if \(iamPortalEnabled\(\)\) return renderPortalSession\(\);/);
+  assert.match(iamPageSource, /iamPortalEnabled\(\) \? renderPortalSession\(\) : renderLogin\(\)/);
+  assert.equal(iamPageSource.match(/<section className="iam-login-screen"/g)?.length, 1);
+});
+
+test("the release proxy refuses the native credentials endpoint", () => {
+  assert.match(
+    nginx,
+    /location = \/api\/v1\/auth\/login \{[\s\S]{0,160}?return 403 '\{"(?:code|error)":"native_login_disabled"/,
+  );
 });

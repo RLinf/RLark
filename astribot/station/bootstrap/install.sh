@@ -23,7 +23,7 @@ SOCKET=/run/containerd-fleet/containerd.sock
 # (name, tunnel address, labels) is not among them.
 SETTINGS="worker api=$JOIN_API_SERVER interface=$TUNNEL_INTERFACE"
 modprobe wireguard || fail "the kernel has no wireguard module"
-disk
+disk 10
 
 # 0. A machine that is a node already leaves its cluster first (RLARK_MIGRATE,
 #    set by migrate-node.sh). It keeps its container runtime, and with it the

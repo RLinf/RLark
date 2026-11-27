@@ -18,10 +18,12 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	rlarkv1alpha1 "github.com/rlinf/rlark/api/rlark.io/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -457,14 +459,13 @@ func (g *Gateway) handleListNodeAdmissions(c *gin.Context) {
 		respondKubeError(c, "list node joins: "+err.Error(), err)
 		return
 	}
+	joinByNode := indexNodeJoins(joins)
 	now := time.Now()
 	items := make([]nodeAdmission, 0, len(list.Items))
 	for i := range list.Items {
 		view := nodeAdmissionView(&list.Items[i], now)
-		for _, j := range joins {
-			if j.Spec.NodeName == view.NodeName {
-				view.JoinPhase, view.JoinStage = string(j.Status.Phase), j.Status.Stage
-			}
+		if j, found := joinByNode[view.NodeName]; found {
+			view.JoinPhase, view.JoinStage = string(j.Status.Phase), j.Status.Stage
 		}
 		items = append(items, view)
 	}
@@ -474,8 +475,47 @@ func (g *Gateway) handleListNodeAdmissions(c *gin.Context) {
 		}
 		return items[i].NodeName < items[j].NodeName
 	})
+	_, hasLimit := c.GetQuery("limit")
+	_, hasContinue := c.GetQuery("continue")
+	if hasLimit || hasContinue {
+		limit := int64(200)
+		if raw := c.Query("limit"); raw != "" {
+			parsed, parseErr := strconv.ParseInt(raw, 10, 64)
+			if parseErr != nil || parsed < 1 || parsed > 500 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be between 1 and 500"})
+				return
+			}
+			limit = parsed
+		}
+		offset := int64(0)
+		if raw := c.Query("continue"); raw != "" {
+			parsed, parseErr := strconv.ParseInt(raw, 10, 64)
+			if parseErr != nil || parsed < 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid continue"})
+				return
+			}
+			offset = parsed
+		}
+		start := min(int(offset), len(items))
+		end := min(start+int(limit), len(items))
+		next := ""
+		if end < len(items) {
+			next = strconv.Itoa(end)
+		}
+		c.Header("Cache-Control", "no-store")
+		c.JSON(http.StatusOK, gin.H{"items": items[start:end], "continue": next, "totalMatched": len(items)})
+		return
+	}
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func indexNodeJoins(joins []rlarkv1alpha1.NodeJoin) map[string]rlarkv1alpha1.NodeJoin {
+	byNode := make(map[string]rlarkv1alpha1.NodeJoin, len(joins))
+	for _, join := range joins {
+		byNode[join.Spec.NodeName] = join
+	}
+	return byNode
 }
 
 // handleIssueNodeAdmission answers POST /api/v1/station/node-admissions: it admits a

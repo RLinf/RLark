@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Box, RefreshCw, Trash2 } from "lucide-react";
+import { Activity, Box, Camera, RefreshCw, Trash2 } from "lucide-react";
 import { robotModelsApi, type RobotModelItem } from "../api";
+import { partLabel } from "../lib/bodyCapabilities";
 import "./RobotModels.css";
 
 const referenceSummary = (model: RobotModelItem, zh: boolean) => {
@@ -59,13 +60,39 @@ export function RobotModelsPage({ zh, navigate }: { zh: boolean; navigate: (id: 
     {loading ? <p className="muted" role="status">{zh ? "加载中…" : "Loading…"}</p> : models.length === 0 ? <p className="muted">{zh ? "目录为空。" : "The catalog is empty."}</p> : <div className="robot-model-grid">
       {models.map((model) => {
         const guarded = model.references.nodeClasses + model.references.nodes + model.references.machines + model.references.nodeAdmissions + model.references.nodeJoins > 0;
-        return <div className="robot-model-tile" key={model.name}>
-          <div className="robot-model-open">
-            <span className="robot-model-tile-icon"><Box size={18} /></span>
-            <span className="robot-model-tile-copy"><strong>{model.displayName || model.name}</strong><small>{model.vendor ? `${model.vendor} · ` : ""}<code>{model.name}</code></small><span>{referenceSummary(model, zh)}</span></span>
-          </div>
-          <button type="button" className="robot-model-delete" title={guarded ? (zh ? "有引用的型号不能删除" : "Referenced models cannot be deleted") : (zh ? "删除" : "Delete")} disabled={guarded || busy === model.name} onClick={() => remove(model)}>{busy === model.name ? "…" : <Trash2 size={15} />}</button>
-        </div>;
+        return <article className="robot-model-card" key={model.name}>
+          <header className="robot-model-header">
+            <span className="robot-model-icon"><Box size={20} aria-hidden="true" /></span>
+            <div className="robot-model-identity">
+              <h2>{model.displayName || model.name}</h2>
+              <small>{model.vendor ? `${model.vendor} · ` : ""}<code>{model.name}</code></small>
+            </div>
+            <span className="robot-model-references">{referenceSummary(model, zh)}</span>
+            <button type="button" className="robot-model-delete" title={guarded ? (zh ? "有引用的型号不能删除" : "Referenced models cannot be deleted") : (zh ? "删除" : "Delete")} disabled={guarded || busy === model.name} onClick={() => remove(model)}>{busy === model.name ? "…" : <Trash2 size={15} />}</button>
+          </header>
+          {model.capabilities && <div className="robot-model-capabilities">
+            <section>
+              <h3><Camera size={16} aria-hidden="true" />{zh ? "相机" : "Cameras"}</h3>
+              <dl className="robot-model-variants">{model.capabilities.variants.map((variant) => <div key={variant.id}>
+                <dt><code>{variant.id}</code><small>{variant.cameras.length}{zh ? " 路彩色 JPEG" : " color JPEG views"}</small></dt>
+                <dd>{variant.cameras.map((camera) => <span key={camera}>{partLabel(camera, zh)}</span>)}</dd>
+              </div>)}</dl>
+              <h4>{zh ? "末端与部件端点" : "End effectors and component endpoints"}</h4>
+              <p>{model.capabilities.endpoints.map((point) => partLabel(point, zh)).join(zh ? "、" : ", ")}</p>
+              <p>{zh ? "位置 3 维（XYZ） · 姿态 4 维（四元数 XYZW）" : "Position 3D (XYZ) · Orientation 4D (XYZW quaternion)"}</p>
+            </section>
+            <section>
+              <h3><Activity size={16} aria-hidden="true" />{zh ? "本体关节" : "Body joints"}</h3>
+              <table className="robot-model-joints">
+                <thead><tr><th scope="col">{zh ? "部件" : "Component"}</th><th scope="col">{zh ? "维度" : "Dimensions"}</th><th scope="col">{zh ? "位置 / 速度" : "Position / velocity"}</th></tr></thead>
+                <tbody>{model.capabilities.jointGroups.map((group) => <tr key={group.id}>
+                  <th scope="row">{partLabel(group.id, zh)}</th><td>{group.dimensions}</td>
+                  <td>{group.positionUnit && group.velocityUnit ? `${group.positionUnit} / ${group.velocityUnit}` : zh ? "驱动原始值" : "Raw driver values"}</td>
+                </tr>)}</tbody>
+              </table>
+            </section>
+          </div>}
+        </article>;
       })}
     </div>}
   </section>;

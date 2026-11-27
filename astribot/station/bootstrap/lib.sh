@@ -244,12 +244,10 @@ CONF
   cmp -s "$B/10-rlark.conf" /etc/kubernetes/kubelet.conf.d/10-rlark.conf || { cp "$B/10-rlark.conf" /etc/kubernetes/kubelet.conf.d/10-rlark.conf; changed=kubelet; }
 }
 
-# disk: the kubelet evicts pods and removes images when the filesystem of its
-# data or its runtime's has less than 15 % free. A machine that starts
-# below 20 % is one step from it, and its node would not hold what the
-# installer gives it. The node's volumes still to be made are taken from it
-# first; where the kubelet's data and its runtime's are both in volumes, the
-# 15 % are counted in them, and this filesystem only has to hold the volumes.
+# disk [MIN_FREE_PERCENT]: check /var/lib after reserving space for new
+# volumes. The control-plane installer uses the default of 20 percent.
+# If both kubelet and containerd-fleet have declared volumes, the parent
+# filesystem only has to fit those volumes.
 disk() {
   need=0
   for volume in $(echo "${NODE_VOLUMES:-}" | tr , ' '); do
@@ -260,12 +258,12 @@ disk() {
   done
   free=$(df -P -k /var/lib | awk -v need=$need 'NR == 2 {print int(($4 - need) * 100 / $2)}')
   at=$(df -P /var/lib | awk 'NR == 2 {print $6}')
-  floor=20
+  floor=${1:-20}
   echo ",${NODE_VOLUMES:-}," | grep -q ':/var/lib/kubelet,' && echo ",${NODE_VOLUMES:-}," | grep -q ':/var/lib/containerd-fleet,' && floor=0
   [ "$free" -ge $floor ] ||
-    fail "the filesystem of /var/lib ($at) has $free % free${NODE_VOLUMES:+ once the node's volumes are made ($NODE_VOLUMES)}: a kubelet evicts its pods and removes their images below 15 %, and the installer asks for 20. Free space on it, or give the kubelet's data and its runtime's volumes of their own (NODE_VOLUMES)"
+    fail "the filesystem of /var/lib ($at) has $free % free${NODE_VOLUMES:+ once the node's volumes are made ($NODE_VOLUMES)}: the installer requires at least $floor % free. Free space on it, or give the kubelet's data and its runtime their own volumes (NODE_VOLUMES)"
   [ $floor = 0 ] || [ "$at" != "$(df -P /home | awk 'NR == 2 {print $6}')" ] ||
-    stamp "note: /var/lib shares its filesystem ($at, $free % free) with /home: what people and builds put there counts against the node's 15 %"
+    stamp "note: /var/lib shares its filesystem ($at, $free % free) with /home: files written there also reduce the disk space available to the node"
 }
 
 # volumes: the node's volumes, NODE_VOLUMES="NAME=SIZE:PATH,..." (SIZE as

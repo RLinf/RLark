@@ -295,6 +295,54 @@ func TestSessionRestoresTheTokenOfTheCookie(t *testing.T) {
 	}
 }
 
+func TestAdmitRequiresSessionAndRestrictsAdminPages(t *testing.T) {
+	store := newMemoryStore()
+	operatorHash, _ := bcrypt.GenerateFromPassword([]byte("operator-pass"), bcrypt.MinCost)
+	store.users["u_operator"] = User{ID: "u_operator", Username: "operator", Role: RoleOperator, PasswordHash: string(operatorHash)}
+	store.byName["operator"] = "u_operator"
+	server := NewServer(store, time.Hour, false, nil)
+	now := time.Now().UTC()
+	adminToken, operatorToken := "admin-session", "operator-session"
+	_ = store.CreateSession(context.Background(), Session{ID: tokenHash(adminToken), UserID: "u_admin", ExpiresAt: now.Add(time.Hour)})
+	_ = store.CreateSession(context.Background(), Session{ID: tokenHash(operatorToken), UserID: "u_operator", ExpiresAt: now.Add(time.Hour)})
+	handler := server.Handler()
+	check := func(uri, token string) int {
+		req := httptest.NewRequest(http.MethodGet, "/internal/admit", nil)
+		req.Header.Set("X-Original-Method", "GET")
+		req.Header.Set("X-Original-URI", uri)
+		if token != "" {
+			req.AddCookie(&http.Cookie{Name: cookieName, Value: token})
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response.Code
+	}
+	for _, test := range []struct {
+		uri, token string
+		want       int
+	}{
+		{"/admin", "", http.StatusUnauthorized},
+		{"/admin", adminToken, http.StatusOK},
+		{"/admin/iam", adminToken, http.StatusOK},
+		{"/admin", operatorToken, http.StatusForbidden},
+		{"/admin/", operatorToken, http.StatusForbidden},
+		{"/admin?foo=1", operatorToken, http.StatusForbidden},
+		{"//admin", operatorToken, http.StatusForbidden},
+		{"/admin/iam", operatorToken, http.StatusForbidden},
+		{"/admin/assets/app.js", operatorToken, http.StatusForbidden},
+		{"/Admin", operatorToken, http.StatusForbidden},
+		{"/ADMIN/iam", operatorToken, http.StatusForbidden},
+		{"/%61dmin%2Fiam", operatorToken, http.StatusForbidden},
+		{"/", operatorToken, http.StatusOK},
+		{"/assets/app.js", operatorToken, http.StatusOK},
+		{"/api/iam/me", operatorToken, http.StatusOK},
+	} {
+		if got := check(test.uri, test.token); got != test.want {
+			t.Errorf("admit %s token-present=%t: got %d, want %d", test.uri, test.token != "", got, test.want)
+		}
+	}
+}
+
 func TestLoginFailureAndExpiredSession(t *testing.T) {
 	store := newMemoryStore()
 	handler := NewServer(store, time.Hour, false, nil).Handler()

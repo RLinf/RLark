@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Copy } from "../i18n";
 import type { IssuedNodeAdmission } from "./lib/siteNodeDisplay";
+import type { NodeJoinTarget } from "./lib/nodeJoin";
 import { JoinNodePage } from "./pages/JoinNode";
 import { StationsPage } from "./pages/Stations";
 import { SiteNetworkSettingsPage } from "./pages/SiteNetworkSettings";
@@ -17,8 +18,9 @@ export function AstribotAdminPages({ page, sub, copy, zh, navigate }: {
 }) {
   // A reissued code, shown once on the page that adds a node.
   const [reissued, setReissued] = useState<IssuedNodeAdmission>();
-  // An SSH join to show on that page, from the admission records.
-  const [sshJoin, setSSHJoin] = useState<{ clusterID: string; name: string }>();
+  // An SSH join to show on that page, or the target a station's Rejoin opens (from the admission records, or the
+  // station's own cluster, node name and mapped login).
+  const [sshJoin, setSSHJoin] = useState<NodeJoinTarget>();
   if (page === "iam") return <IAMPage zh={zh} />;
   if (page !== "stations") return null;
   if (sub === "network") return <SiteNetworkSettingsPage zh={zh} navigate={navigate} />;

@@ -18,9 +18,6 @@ export function validateDiscovery(discovery: SiteNetworkDiscovery, zh: boolean) 
     }
   }
   if (new Set(ranges).size !== ranges.length) return zh ? "网段不能重复。" : "Ranges must be unique.";
-  if (!Number.isInteger(discovery.intervalSeconds) || discovery.intervalSeconds < 10 || discovery.intervalSeconds > 3600) {
-    return zh ? "扫描间隔必须在 10 到 3600 秒之间。" : "Interval must be between 10 and 3600 seconds.";
-  }
   if (!discovery.from.clusterID || !discovery.from.nodeName) return zh ? "请选择管理面拨号 Hub。" : "Select a management-plane Hub.";
   const ports = discovery.sshPorts ?? [];
   if (ports.length > 4 || ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535) || new Set(ports).size !== ports.length) {

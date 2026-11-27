@@ -3,6 +3,43 @@ import { stagesView, type Lang } from "./clusterProvision.js";
 
 export type NodeJoin = INodeJoin;
 
+// A join page opened for one known machine: the cluster, an SSH join to show when one already exists, and the
+// values the SSH form starts with when none does. Nothing here submits a join; the operator still does that.
+export interface NodeJoinTarget {
+  clusterID?: string;
+  // An existing NodeJoin's metadata.name (cluster.node), to open instead of a blank form.
+  name?: string;
+  nodeName?: string;
+  address?: string;
+  user?: string;
+  port?: string;
+}
+
+// user@host:port, as the Gateway records an SSH join's login (net.JoinHostPort brackets IPv6).
+export function parseSSHLogin(login?: string): { address: string; user?: string; port?: string } | undefined {
+  const value = (login ?? "").trim();
+  if (!value) return undefined;
+  const at = value.indexOf("@");
+  const user = at >= 0 ? value.slice(0, at).trim() : "";
+  const host = (at >= 0 ? value.slice(at + 1) : value).trim();
+  if (!host) return undefined;
+  // A port follows the last colon; an IPv6 host keeps its colons inside brackets.
+  const colon = host.lastIndexOf(":");
+  const bracketed = host.startsWith("[");
+  let address = host;
+  let port = "";
+  if (colon > 0 && (!bracketed || host.indexOf("]") < colon)) {
+    const tail = host.slice(colon + 1);
+    if (/^\d+$/.test(tail)) {
+      address = host.slice(0, colon);
+      port = tail;
+    }
+  }
+  address = address.replace(/^\[|\]$/g, "");
+  if (!address) return undefined;
+  return { address, ...(user ? { user } : {}), ...(port ? { port } : {}) };
+}
+
 // The stages the Gateway joins a machine over SSH in, in order (astribot_node_join.go).
 export const joinStages: { name: string; zh: string; en: string }[] = [
   { name: "precheck", zh: "登录和预检", en: "Login and pre-check" },

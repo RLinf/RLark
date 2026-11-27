@@ -1,0 +1,34 @@
+.station-discovery-control {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.station-discovery-btn {
+  flex: none;
+  white-space: nowrap;
+}
+
+.station-discovery-btn.is-running .station-discovery-icon {
+  animation: station-scan-spin 2s linear infinite;
+}
+
+@keyframes station-scan-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.station-discovery-detail {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.station-discovery-error {
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.4;
+}

@@ -1,5 +1,6 @@
 """The robot's camera service (astribot/s1u/device/cameras.py): a body's views, what each camera is, the ladder that
 brings cameras back, what the Node is told, the HTTP it serves."""
+from contextlib import closing
 import http.client
 import json
 import struct
@@ -29,6 +30,19 @@ def wrap(jpeg):
     frame = b"head_rgbd_color_optical_frame"
     return (struct.pack("<3I", 7, 1795000000, 5) + struct.pack("<I", len(frame)) + frame + struct.pack("<I", 4) + b"jpeg"
             + struct.pack("<I", len(jpeg)) + jpeg)
+
+
+def test_capture_timestamp_is_taken_from_the_matching_ros_frame():
+    raw = wrap(b"test jpeg")
+    wall = 1795000000.050
+    camera = cameras.Cameras(["head"], clock=lambda: 10, wall=lambda: wall)
+    camera.receive("head", raw)
+    jpeg, _, _, capture = camera.next("head", None)
+    assert jpeg == b"test jpeg"
+    assert capture == pytest.approx(1795000000000, abs=0.001)
+    assert cameras.capture_time_ms(raw, (wall + 6) * 1000) is None
+    assert cameras.capture_time_ms(raw, (wall - 1) * 1000) is None
+    assert cameras.capture_time_ms(bytes(16), wall * 1000) is None
 
 
 class Robot:
@@ -469,7 +483,7 @@ def test_the_node_is_written_when_the_state_changes_and_not_for_rates_and_ages(t
 
 @pytest.fixture
 def served(tmp_path):
-    cameras_ = cameras.Cameras(BODIES["s1u_observer"])
+    cameras_ = cameras.Cameras(BODIES["s1u_observer"], wall=lambda: 1795000000.05)
     recovery = cameras.Recovery(cameras_, lambda: None, tmp_path, lambda *event: None)
     server = ThreadingHTTPServer(("127.0.0.1", 0), cameras.handler(cameras_, recovery))
     server.daemon_threads = True
@@ -501,9 +515,35 @@ def part(response):
     return headers, jpeg
 
 
+def test_body_route_becomes_available_without_changing_camera_report(tmp_path):
+    observed = None
+    cameras_ = cameras.Cameras(BODIES["s1u_observer"], wall=lambda: 1795000000.05)
+    recovery = cameras.Recovery(cameras_, lambda: None, tmp_path, lambda *event: None)
+    with ThreadingHTTPServer(("127.0.0.1", 0), cameras.handler(cameras_, recovery, body_state=lambda: observed)) as server:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            with closing(http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)) as connection:
+                connection.request("GET", "/body-state")
+                response = connection.getresponse()
+                assert response.status == 404
+                response.read()
+            observed = {"body": "s1u_observer", "nodeUID": "node-instance", "version": 1, "joints": [], "endpoints": []}
+            with closing(http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)) as connection:
+                connection.request("GET", "/body-state")
+                response = connection.getresponse()
+                assert response.status == 200 and json.loads(response.read()) == observed
+            with closing(http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)) as connection:
+                connection.request("GET", "/cameras")
+                response = connection.getresponse()
+                assert response.status == 200 and set(json.loads(response.read())["cameras"]) == {"head", "torso"}
+        finally:
+            server.shutdown()
+
+
 def test_the_port_serves_the_state_each_views_jpeg_its_stream_and_the_wall(served):
     cameras_, get = served
     said = json.loads(get("/cameras").read())
+    assert 0 < said["clock"]["received_ms"] <= said["clock"]["sent_ms"]
     assert said["state"] == "recovering" and said["cameras"]["torso"]["state"] == "absent"
     assert get("/cameras/head.jpg").status == 503 and get("/cameras/head/stream").status == 503  # no frame yet
     assert get("/cameras/wrist_left.jpg").status == 404 and get("/cameras/wrist_left/stream").status == 404  # not this body's
@@ -521,6 +561,7 @@ def test_the_port_serves_the_state_each_views_jpeg_its_stream_and_the_wall(serve
     assert response.getheader("Content-Type") == "multipart/x-mixed-replace; boundary=s1ucamera"
     assert response.getheader("X-Accel-Buffering") == "no"
     headers, first = part(response)
+    assert float(headers["X-Camera-Capture-Ms"]) == pytest.approx(1795000000000, abs=0.001)
     assert first == jpeg and headers["Content-Type"] == "image/jpeg" and float(headers["X-Age-Seconds"]) < 2
     other, second_jpeg = message((30, 200, 30))
     cameras_.receive("head", other)

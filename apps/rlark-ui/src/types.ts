@@ -215,6 +215,9 @@ export interface CRDNode {
     annotations?: Record<string, string>;
     creationTimestamp?: string;
     generation?: number;
+    // The stored object's version: a merge patch that carries it is applied only if the object has not changed
+    // meanwhile, so two administrators cannot silently overwrite each other's restart request.
+    resourceVersion?: string;
   };
   spec: {
     agentType?: string;
@@ -228,6 +231,9 @@ export interface CRDNode {
   };
   status?: {
     phase?: string;
+    // The UID of the data-plane Kubernetes Node the Agent observes: the identity a station record is bound to
+    // (spec.nodeUID). A same-named Node reporting another UID is a replacement machine.
+    kubernetesNodeUID?: string;
     conditions?: Array<{
       type: string;
       status: "True" | "False" | "Unknown";

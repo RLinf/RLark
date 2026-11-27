@@ -26,6 +26,9 @@ type Config struct {
 	// and its cookie's expiry. Nothing renews a token; a login lasts this long.
 	JWTTokenTTL time.Duration
 
+	// DisableNativeLogin disables username/password login while retaining JWT and service-account authentication.
+	DisableNativeLogin bool
+
 	// SubmissionVerificationKeyPath enables verification of Astribot IAM submitter claims.
 	SubmissionVerificationKeyPath string
 
@@ -36,7 +39,9 @@ type Config struct {
 	// SyncResources 指定哪些资源走持久化 Backend 查询（PG 或 Secret）。
 	// 默认已同步的资源：jobs, tasks, workflows, nodes。
 	// 未列出的资源（如 pods, domains, addons）走 KCP 查询。
-	SyncResources []string
+	SyncResources               []string
+	CameraMaxLiveStreams        int
+	CameraMaxLiveStreamsPerUser int
 
 	AstribotConfig
 }
@@ -44,11 +49,14 @@ type Config struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		Address:          ":8080",
-		ServerAddress:    "https://rlark-server.rlark-system.svc:8443",
-		JWTTokenTTL:      8 * time.Hour,
-		KubeClientConfig: configs.DefaultKubernetesClientConfig(),
-		SyncResources:    []string{"jobs", "tasks", "workflows", "nodes"},
+		Address:                     ":8080",
+		ServerAddress:               "https://rlark-server.rlark-system.svc:8443",
+		JWTTokenTTL:                 8 * time.Hour,
+		DisableNativeLogin:          false,
+		KubeClientConfig:            configs.DefaultKubernetesClientConfig(),
+		SyncResources:               []string{"jobs", "tasks", "workflows", "nodes"},
+		CameraMaxLiveStreams:        64,
+		CameraMaxLiveStreamsPerUser: 12,
 	}
 }
 
@@ -58,9 +66,12 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.DBConfigPath, "db-config", c.DBConfigPath, "The file path to the database configuration (e.g., YAML or JSON).")
 	fs.StringVar(&c.ServerAddress, "server-address", c.ServerAddress, "The address of the rlark-server for certificate signing.")
 	fs.DurationVar(&c.JWTTokenTTL, "jwt-token-ttl", c.JWTTokenTTL, "How long a console login lasts: the access token's exp and its cookie's expiry (for example 8h, 168h).")
+	fs.BoolVar(&c.DisableNativeLogin, "disable-native-login", c.DisableNativeLogin, "Disable username/password login at /api/v1/auth/login.")
 	fs.StringVar(&c.SubmissionVerificationKeyPath, "submission-verification-key", c.SubmissionVerificationKeyPath, "Optional Ed25519 public key PEM for Astribot IAM workload submission assertions.")
 	fs.BoolVar(&c.EnableSecretBackend, "enable-secret-backend", c.EnableSecretBackend, "Use Kubernetes Secret as persistence backend (test/CI mode, only when PostgreSQL is not configured).")
 	fs.StringSliceVar(&c.SyncResources, "sync-resources", c.SyncResources, "Resources that query from persistence backend (jobs, tasks, workflows, nodes). Others query from KCP.")
+	fs.IntVar(&c.CameraMaxLiveStreams, "camera-max-live-streams", c.CameraMaxLiveStreams, "Maximum concurrent robot camera streams, 0 for unlimited.")
+	fs.IntVar(&c.CameraMaxLiveStreamsPerUser, "camera-max-live-streams-per-user", c.CameraMaxLiveStreamsPerUser, "Maximum concurrent robot camera streams per user, 0 for unlimited.")
 
 	c.KubeClientConfig.SetupFlags(fs)
 	c.AstribotConfig.setupFlags(fs)

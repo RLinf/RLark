@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { machineJoinProgress, machineJoinSteps, machineJoinSummary } from "../dist/test/astribot/lib/machineJoin.js";
-import { seenTime, unseenFor } from "../dist/test/astribot/lib/siteNodeDisplay.js";
+import { scanJoinMachines, seenTime, unseenFor } from "../dist/test/astribot/lib/siteNodeDisplay.js";
 
 // Local times, as the page shows them.
 const now = new Date(2026, 10, 20, 16, 0, 0).getTime();
@@ -9,6 +9,22 @@ const at = (day, hour, minute) => new Date(2026, 10, day, hour, minute, 0).toISO
 const machine = (name, fields) => ({
   name, site: "lab", node_class: "s1u", phase: "Discovered", admissible: false, address: "192.168.31.100", serial: `S-${name}`,
   last_seen: at(20, 15, 59), admit_cluster_id: "robots", requested_at: at(20, 15, 50), ...fields,
+});
+
+test("the scan list shows only recent results from the latest run and active joins", () => {
+  const recent = machine("recent", { discovery_scan_id: "run-b", admissible: true, last_seen: at(20, 15, 51) });
+  const expired = machine("expired", { discovery_scan_id: "run-b", admissible: true, last_seen: at(20, 15, 50) });
+  const previous = machine("previous", { discovery_scan_id: "run-a", last_seen: at(20, 15, 59) });
+  const legacy = machine("legacy", {});
+  const absent = machine("absent", { discovery_scan_id: "run-b", last_seen: undefined });
+  const joining = machine("joining", { joining: true, last_seen: at(20, 5, 0) });
+  const joined = machine("joined", { discovery_scan_id: "run-b", phase: "Joined" });
+  const names = (items) => items.map((item) => item.name);
+  const records = [expired, joined, recent, previous, legacy, absent, joining];
+  assert.deepEqual(names(scanJoinMachines(records, "robots", now)), ["joining"]);
+  assert.deepEqual(names(scanJoinMachines(records, "robots", now, "run-b")), ["recent", "joining"]);
+  assert.deepEqual(names(scanJoinMachines(records, "office", now, "run-b")), ["recent"]);
+  assert.deepEqual(names(scanJoinMachines(records, "robots", now, "run-c")), ["joining"]);
 });
 
 test("each admitted machine says the step it has reached, and the batch how many joined", () => {

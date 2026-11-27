@@ -12,13 +12,14 @@ import "./JoinMachinesDialog.css";
 // Confirms the batch before admitting it: one password block per NodeClass, because every machine of a class logs in
 // with the same accounts. A stored password may be kept by leaving the field empty; a new one is written to the class
 // and used for this join. Nothing typed here is read back.
-export function JoinMachinesDialog({ zh, clusterID, clusterName, machines, classes, labels, onClose, onJoined, onUseCode }: {
+export function JoinMachinesDialog({ zh, clusterID, clusterName, machines, classes, labels, canSubmitMachines, onClose, onJoined, onUseCode }: {
   zh: boolean;
   clusterID: string;
   clusterName: string;
   machines: Machine[];
   classes: MachineList["classes"];
   labels: Record<string, string>;
+  canSubmitMachines: () => boolean;
   onUseCode: () => void;
   onClose: () => void;
   onJoined: () => Promise<unknown> | void;
@@ -104,6 +105,10 @@ export function JoinMachinesDialog({ zh, clusterID, clusterName, machines, class
 
   const submit = () => {
     if (pending) return;
+    if (!canSubmitMachines()) {
+      setProblem(zh ? "所选机器的发现记录已过期或已不可加入。请返回列表重新选择。" : "A selected machine is no longer recently seen or joinable. Return to the list and select again.");
+      return;
+    }
     if (machineType === "Unknown") {
       setProblem(zh ? "请选择机器人或普通服务器。" : "Choose Robot or Server.");
       return;
@@ -232,14 +237,19 @@ export function JoinMachinesDialog({ zh, clusterID, clusterName, machines, class
           </>}
 
           {machineType === "Server" && selectedMachine && <section className="join-machines-class">
-            <strong>{selectedMachine.serial || selectedMachine.name}</strong>
-            <small>{selectedMachine.address}:{selectedMachine.port ?? 22} · {selectedMachine.host_key_algorithm} · {selectedMachine.host_key}</small>
-            <p>{zh ? "直连失败时，Gateway 会通过站点中继重试。" : "If direct SSH is unreachable, Gateway retries through the site relay."}</p>
+            <div className="join-machines-class-head">
+              <strong>{selectedMachine.serial || selectedMachine.name}</strong>
+              <span className="mono">{selectedMachine.address}:{selectedMachine.port ?? 22}</span>
+            </div>
+            <small className="join-machines-fingerprint">{selectedMachine.host_key_algorithm} · {selectedMachine.host_key}</small>
+            <p className="join-machines-hint">{zh ? "直连失败时，Gateway 会通过站点中继重试。" : "If direct SSH is unreachable, Gateway retries through the site relay."}</p>
             {pending && <p className="site-network-inline-status" role="status">{relayRetrying ? (zh ? "直连失败，正在通过站点中继重试" : "Direct SSH failed. Retrying through the site relay.") : (zh ? "正在尝试直连 SSH…" : "Trying direct SSH…")}</p>}
-            <label className="join-machines-field"><span>{zh ? "SSH 账号" : "SSH account"}<input value={server.user} onChange={(event) => setServer((current) => ({ ...current, user: event.target.value }))} disabled={pending} /></span></label>
-            <label className="join-machines-field"><span>{zh ? "SSH 口令" : "SSH password"}<input type="password" autoComplete="new-password" value={server.password} onChange={(event) => setServer((current) => ({ ...current, password: event.target.value }))} disabled={pending} /></span></label>
-            <label className="join-machines-field"><span>{zh ? "sudo 口令（可选）" : "sudo password (optional)"}<input type="password" autoComplete="new-password" value={server.sudo} onChange={(event) => setServer((current) => ({ ...current, sudo: event.target.value }))} disabled={pending} /></span></label>
-            <label className="join-machines-field"><span>{zh ? "节点名（可选）" : "Node name (optional)"}<input value={server.nodeName} onChange={(event) => setServer((current) => ({ ...current, nodeName: event.target.value }))} disabled={pending} /></span></label>
+            <div className="join-machines-server-grid">
+              <label className="join-machines-field"><span>{zh ? "SSH 账号" : "SSH account"}</span><input value={server.user} onChange={(event) => setServer((current) => ({ ...current, user: event.target.value }))} disabled={pending} /></label>
+              <label className="join-machines-field"><span>{zh ? "SSH 口令" : "SSH password"}</span><input type="password" autoComplete="new-password" value={server.password} onChange={(event) => setServer((current) => ({ ...current, password: event.target.value }))} disabled={pending} /></label>
+              <label className="join-machines-field"><span>{zh ? "sudo 口令（可选）" : "sudo password (optional)"}</span><input type="password" autoComplete="new-password" value={server.sudo} onChange={(event) => setServer((current) => ({ ...current, sudo: event.target.value }))} disabled={pending} /></label>
+              <label className="join-machines-field"><span>{zh ? "节点名（可选）" : "Node name (optional)"}</span><input value={server.nodeName} onChange={(event) => setServer((current) => ({ ...current, nodeName: event.target.value }))} disabled={pending} /></label>
+            </div>
           </section>}
 
           {machineType === "Robot" && groups.map((group, index) => {
@@ -284,10 +294,14 @@ export function JoinMachinesDialog({ zh, clusterID, clusterName, machines, class
             </section>;
           })}
 
-          <div className="join-machines-note">
+          {machineType === "Robot" && <div className="join-machines-note">
             <KeyRound size={15} />
             <span>{zh ? "口令保存为该机型的凭据；RLark 只显示是否已录入，不显示内容。下次同机型可留空。" : "The password is saved as the class credential. RLark only shows whether it is stored, never its value. Later joins of the class can leave it empty."}</span>
-          </div>
+          </div>}
+          {machineType === "Server" && <div className="join-machines-note">
+            <KeyRound size={15} />
+            <span>{zh ? "SSH 口令仅用于此次远程入网，RLark 不会保存。" : "The SSH password is used for this join only and is not stored."}</span>
+          </div>}
 
           {problem && <div className="join-machines-error" role="alert">{problem}</div>}
           {actionError && <div className="join-machines-error" role="alert">{actionError}</div>}

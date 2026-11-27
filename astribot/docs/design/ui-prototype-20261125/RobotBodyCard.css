@@ -1,0 +1,28 @@
+.robot-body-card-badge { display: inline-flex; align-items: center; align-self: center; padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 9px; line-height: 1.35; white-space: nowrap; }
+.robot-body-card-badge.is-matched { border-color: color-mix(in srgb, var(--green) 34%, var(--line)); background: color-mix(in srgb, var(--green-soft) 62%, var(--panel)); color: var(--green-ink); }
+.robot-body-card-badge.is-mismatch { border-color: color-mix(in srgb, var(--red) 36%, var(--line)); background: color-mix(in srgb, var(--danger-soft) 70%, var(--panel)); color: var(--danger); }
+.robot-body-card-badge.is-unknown { border-color: color-mix(in srgb, var(--amber) 34%, var(--line)); background: color-mix(in srgb, var(--amber-bg) 60%, var(--panel)); color: var(--amber-ink); }
+.robot-body-card-comparison { display: grid; gap: 9px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: color-mix(in srgb, var(--panel-2) 35%, var(--panel)); }
+.robot-body-card-comparison > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 5px 10px; }
+.robot-body-card-comparison > header strong { color: var(--ink); font-size: 11px; }
+.robot-body-card-comparison > header small, .robot-body-card-source { color: var(--muted); font-size: 9px; }
+.robot-body-card-rows { display: grid; gap: 5px; min-width: 0; }
+.robot-body-card-row { display: grid; grid-template-columns: minmax(110px, .8fr) minmax(125px, 1fr) minmax(125px, 1fr); align-items: center; gap: 7px 10px; min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.robot-body-card-row > span { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-width: 0; }
+.robot-body-card-row code { color: var(--ink); font-size: 9px; overflow-wrap: anywhere; }
+.robot-body-card-row small { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; color: var(--ink-2); font-size: 9px; overflow-wrap: anywhere; }
+.robot-body-card-row small b { color: var(--muted); font-size: 8px; font-weight: 600; }
+.robot-body-difference-dot { padding: 2px 5px; border-radius: 999px; background: color-mix(in srgb, var(--amber-bg) 70%, var(--panel)); color: var(--amber-ink); font-size: 8px; font-style: normal; white-space: nowrap; }
+.robot-body-difference-dot.is-conflict, .robot-body-difference-dot.is-missing { background: color-mix(in srgb, var(--danger-soft) 78%, var(--panel)); color: var(--danger); }
+.robot-body-difference-dot.is-evidence { background: color-mix(in srgb, var(--amber-bg) 72%, var(--panel)); color: var(--amber-ink); }
+.robot-body-card-empty, .robot-body-card-evidence { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.robot-body-card-evidence { color: var(--amber-ink); }
+.robot-body-card-source { overflow-wrap: anywhere; }
+.theme-dark .robot-body-card-comparison { background: color-mix(in srgb, var(--panel-2) 54%, var(--panel)); }
+
+@media (max-width: 650px) {
+  .station-card-head { flex-wrap: wrap; }
+  .robot-body-card-badge { margin-left: auto; }
+  .robot-body-card-row { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .robot-body-card-row > span { padding-bottom: 2px; }
+}

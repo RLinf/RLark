@@ -13,6 +13,8 @@ verification_key=$iam_dir/submission-public.pem
 umask 077
 mkdir -p "$iam_dir"
 chmod 700 "$iam_dir"
+exec 8>"$iam_dir/.upstream-tokens.lock"
+flock 8
 work_dir=$(mktemp -d "$iam_dir/.provision.XXXXXX")
 trap 'rm -rf "$work_dir"' EXIT
 
@@ -43,107 +45,114 @@ if [[ ${1:-} == --submission-keys-only ]]; then
 	exit 0
 fi
 
-if [[ -f $tokens_file && ! -L $tokens_file && $(stat -c '%a' "$tokens_file") == 600 ]] &&
-  jq -e '(.admin | type == "string" and length > 0) and (.operator | type == "string" and length > 0) and (.user | type == "string" and length > 0)' "$tokens_file" >/dev/null; then
-	printf 'IAM upstream tokens are already provisioned.\n'
-	exit 0
+if [[ ${1:-} == --rotate-upstream-tokens ]]; then
+	force_rotate=true
+else
+	force_rotate=false
 fi
+namespace=${RLARK_MANAGEMENT_NAMESPACE:-default}
+accounts=('astribot-iam-admin admin admin' 'astribot-iam-operator operator operator' 'astribot-iam-user user user')
+declare -A old_exists old_digest
 
-manual_commands() {
-	printf 'export GATEWAY_URL=%q\n' "$gateway_url" >&2
-	cat >&2 <<'EOF'
-IAM service-account provisioning did not complete. No token file was written.
-The Gateway supports one-time token creation and rotation at these endpoints.
-After obtaining an admin Gateway JWT, run these commands with GATEWAY_TOKEN set:
-  GATEWAY_TOKEN=$(ADMIN_PASSWORD="$ADMIN_PASSWORD" jq -n '{username:"admin",password:env.ADMIN_PASSWORD}' | curl -fsS -H 'Content-Type: application/json' --data-binary @- "$GATEWAY_URL/api/v1/auth/login" | jq -r '.token')
-  curl -fsS -H "Authorization: Bearer $GATEWAY_TOKEN" -H 'Content-Type: application/json' -d '{"name":"astribot-iam-admin","role":"admin"}' "$GATEWAY_URL/api/v1/service-accounts"
-  curl -fsS -H "Authorization: Bearer $GATEWAY_TOKEN" -H 'Content-Type: application/json' -d '{"name":"astribot-iam-operator","role":"operator"}' "$GATEWAY_URL/api/v1/service-accounts"
-  curl -fsS -H "Authorization: Bearer $GATEWAY_TOKEN" -H 'Content-Type: application/json' -d '{"name":"astribot-iam-user","role":"user"}' "$GATEWAY_URL/api/v1/service-accounts"
-  curl -fsS -X POST -H "Authorization: Bearer $GATEWAY_TOKEN" "$GATEWAY_URL/api/v1/service-accounts/astribot-iam-admin/token"
-  curl -fsS -X POST -H "Authorization: Bearer $GATEWAY_TOKEN" "$GATEWAY_URL/api/v1/service-accounts/astribot-iam-operator/token"
-  curl -fsS -X POST -H "Authorization: Bearer $GATEWAY_TOKEN" "$GATEWAY_URL/api/v1/service-accounts/astribot-iam-user/token"
-Use the create commands for absent accounts and the rotation commands for existing accounts. Capture each returned token directly into the corresponding JSON field; do not put tokens in shell history.
-EOF
-}
-
-if ! admin_password=$(kubectl --kubeconfig "$management_kubeconfig" -n default get secret rlark-ui-auth -o jsonpath='{.data.admin-password}' | base64 --decode); then
-	printf 'Could not read admin-password from default/rlark-ui-auth using the release kubeconfig.\n' >&2
-	manual_commands
-	exit 1
-fi
-if [[ -z $admin_password ]]; then
-	printf 'default/rlark-ui-auth has no admin-password.\n' >&2
-	manual_commands
-	exit 1
-fi
-
-ADMIN_PASSWORD=$admin_password jq -n '{username:"admin",password:env.ADMIN_PASSWORD}' >"$work_dir/login.json"
-unset admin_password
-if ! curl -fsS -H 'Content-Type: application/json' --data-binary "@$work_dir/login.json" \
-	"$gateway_url/api/v1/auth/login" -o "$work_dir/login-response.json"; then
-	printf 'Could not log in to the Gateway at %s.\n' "$gateway_url" >&2
-	manual_commands
-	exit 1
-fi
-rm -f "$work_dir/login.json"
-gateway_token=$(jq -er '.token | select(type == "string" and length > 0)' "$work_dir/login-response.json") || {
-	printf 'The Gateway login response did not contain a token.\n' >&2
-	manual_commands
-	exit 1
-}
-rm -f "$work_dir/login-response.json"
-printf 'header = "Authorization: Bearer %s"\n' "$gateway_token" >"$work_dir/curl-auth.conf"
-chmod 600 "$work_dir/curl-auth.conf"
-
-declare -A tokens
-for account in 'astribot-iam-admin admin' 'astribot-iam-operator operator' 'astribot-iam-user user'; do
-	read -r name role <<<"$account"
-	jq -n --arg name "$name" --arg role "$role" \
-		'{name:$name,role:$role}' >"$work_dir/request.json"
-	if ! status=$(curl -sS -o "$work_dir/response.json" -w '%{http_code}' \
-		--config "$work_dir/curl-auth.conf" -H 'Content-Type: application/json' \
-		--data-binary "@$work_dir/request.json" "$gateway_url/api/v1/service-accounts"); then
-		printf 'Gateway service-account creation request failed for %s.\n' "$name" >&2
-		manual_commands
-		exit 1
-	fi
-	if [[ $status == 409 ]]; then
-		if ! curl -fsS --config "$work_dir/curl-auth.conf" \
-			"$gateway_url/api/v1/service-accounts" -o "$work_dir/accounts.json" ||
-			! jq -e --arg name "$name" --arg role "$role" 'any(.data[]; .name == $name and .role == $role)' "$work_dir/accounts.json" >/dev/null; then
-			printf 'Existing service account %s is missing or has a different role; refusing to rotate it.\n' "$name" >&2
-			manual_commands
+# Snapshot every old object before generating or applying any replacement.
+for entry in "${accounts[@]}"; do
+	read -r name role token_key <<<"$entry"
+	secret_name="rlark-service-account-$name"
+	if kubectl --kubeconfig "$management_kubeconfig" -n "$namespace" get secret "$secret_name" -o json \
+		>"$work_dir/$name.old.json" 2>"$work_dir/$name.get-error"; then
+		old_exists[$name]=true
+		if ! jq -e '.data["token-sha256"] | strings' "$work_dir/$name.old.json" >/dev/null; then
+			printf 'Existing service account %s has no token-sha256 digest; refusing to continue.\n' "$name" >&2
 			exit 1
 		fi
-		if ! status=$(curl -sS -o "$work_dir/response.json" -w '%{http_code}' -X POST \
-			--config "$work_dir/curl-auth.conf" "$gateway_url/api/v1/service-accounts/$name/token"); then
-			printf 'Gateway token rotation request failed for %s.\n' "$name" >&2
-			manual_commands
+		if ! old_digest[$name]=$(jq -r '.data["token-sha256"]' "$work_dir/$name.old.json" | base64 --decode 2>"$work_dir/$name.decode-error"); then
+			printf 'Could not decode token-sha256 for service account %s.\n' "$name" >&2
+			cat "$work_dir/$name.decode-error" >&2
 			exit 1
 		fi
+	else
+		if ! grep -Fqi 'Error from server (NotFound): secrets' "$work_dir/$name.get-error"; then
+			printf 'Could not read Gateway service account %s in namespace %s.\n' "$name" "$namespace" >&2
+			cat "$work_dir/$name.get-error" >&2
+			exit 1
+		fi
+		old_exists[$name]=false
+		old_digest[$name]=""
+		rm -f "$work_dir/$name.old.json"
 	fi
-	if [[ $status != 201 && $status != 200 ]]; then
-		printf 'Gateway returned HTTP %s while provisioning %s.\n' "$status" "$name" >&2
-		manual_commands
-		exit 1
-	fi
-	token=$(jq -er '.token | select(type == "string" and length > 0)' "$work_dir/response.json") || {
-		printf 'Gateway did not return a token for %s.\n' "$name" >&2
-		manual_commands
-		exit 1
-	}
-	case $role in
-		admin) tokens[admin]=$token ;;
-		operator) tokens[operator]=$token ;;
-		user) tokens[user]=$token ;;
-	esac
-	unset token
-	printf 'Provisioned Gateway service account %s.\n' "$name"
 done
-unset gateway_token
 
-IAM_ADMIN_TOKEN=${tokens[admin]} IAM_OPERATOR_TOKEN=${tokens[operator]} IAM_USER_TOKEN=${tokens[user]} \
-	jq -n '{admin:env.IAM_ADMIN_TOKEN,operator:env.IAM_OPERATOR_TOKEN,user:env.IAM_USER_TOKEN}' >"$work_dir/upstream-tokens.json"
+if [[ -L $tokens_file || -e $tokens_file ]]; then
+	if [[ -L $tokens_file || ! -f $tokens_file || $(stat -c '%a' "$tokens_file") != 600 ]] ||
+		! jq -e '(.admin | type == "string" and length > 0) and (.operator | type == "string" and length > 0) and (.user | type == "string" and length > 0)' "$tokens_file" >/dev/null; then
+		printf 'Existing IAM upstream token file is invalid or has unsafe permissions; refusing to rotate.\n' >&2
+		exit 1
+	fi
+fi
+
+if [[ $force_rotate == false && -f $tokens_file ]]; then
+	all_tokens_match=true
+	for entry in "${accounts[@]}"; do
+		read -r name role token_key <<<"$entry"
+		token=$(jq -r --arg key "$token_key" '.[$key]' "$tokens_file")
+		expected_digest=$(printf '%s' "$token" | sha256sum | cut -d ' ' -f1)
+		if [[ ${old_exists[$name]} != true || ${old_digest[$name]} != "$expected_digest" ]]; then
+			all_tokens_match=false
+		fi
+	done
+	if [[ $all_tokens_match == true ]]; then
+		printf 'IAM upstream tokens are already provisioned. Use --rotate-upstream-tokens to rotate them.\n'
+		exit 0
+	fi
+fi
+
+# Gateway service-account credentials are random bearer tokens. Only their
+# SHA-256 digests are written to the management namespace.
+for entry in "${accounts[@]}"; do
+	read -r name role token_key <<<"$entry"
+	random=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')
+	token="rlsa.$name.$random"
+	digest=$(printf '%s' "$token" | sha256sum | cut -d ' ' -f1)
+	printf '%s' "$token" >"$work_dir/token-$token_key"
+	chmod 600 "$work_dir/token-$token_key"
+	if [[ ${old_exists[$name]} == true ]]; then
+		jq --arg digest "$digest" '.data["token-sha256"] = ($digest | @base64)' "$work_dir/$name.old.json" >"$work_dir/$name.json"
+	else
+		jq -n --arg name "$name" --arg role "$role" --arg digest "$digest" --arg namespace "$namespace" \
+			'{apiVersion:"v1",kind:"Secret",metadata:{name:("rlark-service-account-"+$name),namespace:$namespace,labels:{"rlark.io/service-account":"true"}},type:"Opaque",data:{name:($name|@base64),description:("Astribot IAM "+$role|@base64),role:($role|@base64),"tenant-ids":("default"|@base64),"token-sha256":($digest|@base64)}}' \
+			>"$work_dir/$name.json"
+	fi
+	unset token random digest
+done
+
+attempted=()
+for entry in "${accounts[@]}"; do
+	read -r name role token_key <<<"$entry"
+	attempted+=("$name")
+	if kubectl --kubeconfig "$management_kubeconfig" apply -f "$work_dir/$name.json" >/dev/null; then
+		continue
+	fi
+	printf 'Could not provision Gateway service account %s in namespace %s; restoring prior Secret state.\n' "$name" "$namespace" >&2
+	rollback_failed=false
+	for rollback_name in "${attempted[@]}"; do
+		if [[ ${old_exists[$rollback_name]} == true ]]; then
+			if ! kubectl --kubeconfig "$management_kubeconfig" apply -f "$work_dir/$rollback_name.old.json" >/dev/null; then
+				printf 'Failed to restore prior Secret %s.\n' "$rollback_name" >&2
+				rollback_failed=true
+			fi
+		elif ! kubectl --kubeconfig "$management_kubeconfig" -n "$namespace" delete secret "rlark-service-account-$rollback_name" --ignore-not-found >/dev/null; then
+			printf 'Failed to remove newly created Secret %s.\n' "$rollback_name" >&2
+			rollback_failed=true
+		fi
+	done
+	if [[ $rollback_failed == true ]]; then
+		printf 'Secret rollback was incomplete; inspect the management namespace before retrying.\n' >&2
+	fi
+	exit 1
+done
+
+jq -n --rawfile admin "$work_dir/token-admin" --rawfile operator "$work_dir/token-operator" --rawfile user "$work_dir/token-user" \
+	'{admin:$admin,operator:$operator,user:$user}' >"$work_dir/upstream-tokens.json"
 chmod 600 "$work_dir/upstream-tokens.json"
 mv -f "$work_dir/upstream-tokens.json" "$tokens_file"
-printf 'Wrote %s with mode 0600.\n' "$tokens_file"
+printf 'Provisioned IAM upstream service accounts and wrote %s with mode 0600. Restart astribot-iam to load the new tokens.\n' "$tokens_file"

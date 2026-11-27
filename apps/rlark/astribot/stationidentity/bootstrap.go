@@ -497,6 +497,9 @@ func (b *Bootstrap) Redeem(ctx context.Context, code, publicKey string) (Bootstr
 		labels = map[string]string{}
 	}
 	labels["rlark.io/enabled"], labels["rlark.io/cluster-id"] = "true", clusterID
+	if text("spec", "machine", "category") == "Server" {
+		labels["station.rlark.io/machine-type"] = "server"
+	}
 	// A machine installed anew under a name the management plane knows has a
 	// management Node already, with the labels declared for it before: the
 	// agent would put those back over what this admission declares.

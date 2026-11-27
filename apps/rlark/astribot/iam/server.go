@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -481,8 +483,8 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 
 // handleAdmit answers for one of the console's pages (nginx's other locations).
 // The pages are static and each business call authorizes on its own, so a
-// session is the whole of it; nothing is written through a page. A page view
-// is not audited.
+// session is the whole of it; nothing is written through a page. Successful
+// page views are not audited, while role denials are.
 func (s *Server) handleAdmit(w http.ResponseWriter, r *http.Request) {
 	method, uri, ok := originalRequest(r)
 	if !ok {
@@ -497,6 +499,17 @@ func (s *Server) handleAdmit(w http.ResponseWriter, r *http.Request) {
 	if method != "GET" && method != "HEAD" {
 		s.audit(r, a.user.Username, a.user.ID, "authorization", uri, "denied", map[string]any{"method": method, "reason": "a page is only read"})
 		w.WriteHeader(403)
+		return
+	}
+	pagePath, err := url.PathUnescape(strings.SplitN(uri, "?", 2)[0])
+	if err != nil {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	pagePath = strings.ToLower(path.Clean("/" + strings.TrimLeft(pagePath, "/")))
+	if a.user.Role != RoleAdmin && (pagePath == "/admin" || strings.HasPrefix(pagePath, "/admin/")) {
+		s.audit(r, a.user.Username, a.user.ID, "authorization", uri, "denied", map[string]any{"reason": "admin page requires admin role"})
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	w.Header().Set("X-IAM-User", a.user.Username)

@@ -1213,8 +1213,8 @@ export function AdminPage({
             ? `确认对节点“${node.metadata.name}”执行暂停调度吗？执行后将停止把新的 RLark 任务调度到该节点，节点上的其他工作负载不受影响，已运行任务也不会被终止。`
             : `Pause scheduling on node "${node.metadata.name}"? New RLark tasks will stop being scheduled to it. Other workloads on the node are unaffected and running tasks remain active.`
           : zh
-            ? `确认对节点“${node.metadata.name}”执行恢复调度吗？仅恢复向该节点调度新任务；被排空停止的任务需先取消驱逐才会恢复。`
-            : `Resume scheduling on node "${node.metadata.name}"? This only allows new tasks to be scheduled to it; tasks stopped by a drain resume only after you cancel the drain.`,
+            ? `确认恢复节点“${node.metadata.name}”的调度吗？被排空停止的任务需要显式启动对应的任务（Job）才会恢复。`
+            : `Resume scheduling on node "${node.metadata.name}"? Explicitly start the corresponding Job to resume tasks stopped by the drain.`,
       )
     )
       return;
@@ -1283,8 +1283,8 @@ export function AdminPage({
     if (
       !confirm(
         zh
-          ? `确认对节点"${node.metadata.name}"执行排空？将停止该节点接收新任务，并尝试将现有任务重调度到其他节点。该操作会同时暂停节点调度（Cordon）。`
-          : `Drain node "${node.metadata.name}"? This will stop the node from accepting new tasks and attempt to reschedule running tasks. It will also cordon the node.`,
+          ? `确认排空节点“${node.metadata.name}”吗？系统会暂停向该节点调度新任务，并停止该节点上受排空影响的 RLark 任务。请显式启动对应的任务（Job）以恢复运行。`
+          : `Drain node "${node.metadata.name}"? This pauses new scheduling and stops affected RLark tasks on the node. Explicitly start the corresponding Job to resume them.`,
       )
     )
       return;

@@ -69,6 +69,43 @@ func TestLoginIssuesJWTAndProtectedRoutesValidateIt(t *testing.T) {
 	}
 }
 
+func TestLoginCanBeDisabledWithoutAffectingServiceAccountAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	key := []byte("01234567890123456789012345678901")
+	g := &Gateway{config: Config{DisableNativeLogin: true, KubeClientConfig: configs.KubernetesClientConfig{Namespace: "test"}}, rawClient: fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "rlark-service-account-fleet", Namespace: "test", Labels: map[string]string{serviceAccountLabel: "true"}},
+		Data:       map[string][]byte{"name": []byte("fleet"), "role": []byte("user"), "tenant-ids": []byte("default")},
+	}), jwtSigningKey: key}
+	token, digest, err := newServiceAccountToken("fleet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := g.rawClient.CoreV1().Secrets("test").Get(t.Context(), serviceAccountSecretName("fleet"), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret.Data["token-sha256"] = []byte(digest)
+	if _, err := g.rawClient.CoreV1().Secrets("test").Update(t.Context(), secret, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	router.POST("/api/v1/auth/login", g.handleLogin)
+	router.GET("/api/v1/protected", g.requireJWT(), func(c *gin.Context) { c.Status(http.StatusOK) })
+	login := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"password"}`))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, login)
+	if response.Code != http.StatusForbidden || response.Header().Get("Set-Cookie") != "" || !strings.Contains(response.Body.String(), `"code":"native_login_disabled"`) {
+		t.Fatalf("disabled login response = %d, headers=%v, body=%s", response.Code, response.Header(), response.Body.String())
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/protected", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("service account status = %d, body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestJWTMiddlewareRejectsMissingExpiredAndWrongAlgorithmTokens(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	key := []byte("01234567890123456789012345678901")

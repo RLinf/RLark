@@ -32,3 +32,11 @@ test("terminal requires an access token", () => {
   assert.equal(hasTerminalSession(storage({ "rlark-user-auth": "1" })), false);
   assert.equal(hasTerminalSession(storage({})), false);
 });
+
+test("the identity page keeps its address on direct visits, refreshes and deep links", () => {
+  assert.deepEqual(parseAdminRoute("/admin/iam"), { page: "iam", sub: "" });
+  assert.deepEqual(parseAdminRoute("/admin/iam/audit"), {
+    page: "iam",
+    sub: "audit",
+  });
+});

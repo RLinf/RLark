@@ -23,6 +23,10 @@ type authClaims struct {
 }
 
 func (g *Gateway) handleLogin(c *gin.Context) {
+	if g.config.DisableNativeLogin {
+		respondError(c, http.StatusForbidden, "native_login_disabled", "Native username/password login is disabled; use IAM authentication")
+		return
+	}
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, "invalid request body")

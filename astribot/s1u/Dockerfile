@@ -18,6 +18,7 @@ COPY astribot/s1u/tuner /s1u/tuner
 COPY astribot/s1u/orin /s1u/orin
 COPY astribot/s1u/clock /s1u/clock
 COPY astribot/s1u/device /s1u/device
+COPY apps/rlark/pkg/gateway/astribot_s1u_capabilities.json /s1u/device/capabilities.json
 ENTRYPOINT []
 
 # The Addon's tests, in the image its programs run in (--target test; a release's build runs them first, astribot/release/run.sh).
@@ -26,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3-pytest 
 COPY astribot/s1u /src/astribot/s1u
 # The Addon's catalog entry, whose Orin uplink script the tests hold orin.py to.
 COPY apps/rlark/pkg/addons/catalog/s1u-robot /src/apps/rlark/pkg/addons/catalog/s1u-robot
+COPY apps/rlark/pkg/gateway/astribot_s1u_capabilities.json /src/apps/rlark/pkg/gateway/astribot_s1u_capabilities.json
 RUN cd /src && python3 -m pytest -q astribot/s1u/tests
 
 FROM image

@@ -289,6 +289,12 @@ Controller 和分布式组件的测试不能只覆盖成功路径，应包括：
 - Provider 一致性；
 - REST 与 UI 行为一致性。
 
+### Astribot 扩展
+
+Astribot 专属的新实现、测试和配置应放在就近的独立目录。Go 扩展使用 `apps/rlark/astribot/`，前端扩展使用 `apps/rlark-ui/src/astribot/`，场站服务、机器人集成及部署文件使用 `astribot/`。共享 RLark 代码只保留路由注册、类型化接入点、导航和共同 API 契约等必要改动。因包依赖需要留在共享包的扩展使用 `astribot_*` 文件名并说明原因。共同契约修改后，从来源重新生成代码和清单。
+
+每次跟随上游时，核对完整的提交范围，并从 Astribot 实际入口运行上游回归测试。检查 API、Schema 与生成 Client、RBAC、控制器与 Agent、UI 和部署产物。分别记录源码覆盖和环境验收。当前基线及验收项见[上游升级核对](astribot-upstream-upgrade.md)。
+
 ## Agent 设计检查清单
 
 开始实现前，Agent 应回答：

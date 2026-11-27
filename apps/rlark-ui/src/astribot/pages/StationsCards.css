@@ -282,6 +282,10 @@
   object-fit: cover;
 }
 
+/* The big view's <img> waits in the DOM for its first streamed frame; the explicit rule beats the frame's
+   display:block so no empty image box shows before then. */
+.stations-page .station-camera-frame img[hidden] { display: none; }
+
 .stations-page .station-camera-frame svg { color: var(--muted); }
 
 .stations-page .station-camera.is-missing {
@@ -502,6 +506,18 @@
   gap: 10px;
 }
 
+/* The same recovery boundary as the tile's line: a station the plane does not see as Bound says what a re-check can
+   reach and that a machine and site link both down need someone on site or an out-of-band path. */
+.stations-page .station-detail-recovery {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--orange) 7%, var(--panel));
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .stations-page .station-detail-conflict {
   display: flex;
   align-items: flex-start;
@@ -675,8 +691,6 @@
 .stations-page .station-detail-robot {
   display: grid;
   gap: 10px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
 }
 
 .stations-page .station-detail-robot-head {
@@ -842,6 +856,7 @@
 
 .stations-page .stations-frame {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   max-width: none;
   margin-inline: auto;
@@ -885,9 +900,13 @@
 
 .stations-page .station-tile {
   display: grid;
+  grid-auto-rows: min-content;
   gap: 10px;
   min-width: 0;
   align-self: stretch;
+  /* Rows keep their own height: a shorter tile leaves the extra room at its end instead of a dock stretched
+     around empty space, so every card's controls stay as compact as its own content. */
+  align-content: start;
   overflow-wrap: anywhere;
 }
 
@@ -927,7 +946,8 @@
 .stations-page .station-camera.is-big.is-empty { cursor: default; }
 .stations-page .station-camera.is-big.is-empty .station-camera-frame { color: rgb(255 255 255 / .4); }
 
-/* Overlays: identity and state on a top gradient, power facts and controls on a bottom one. */
+/* One overlay only: identity and state on a top gradient. Nothing sits on the picture's lower edge any more —
+   the state and the hardware controls live in the dock under the picture. */
 .stations-page .station-tile-overlay { position: absolute; left: 0; right: 0; z-index: 2; }
 
 .stations-page .station-tile-overlay.is-top {
@@ -939,21 +959,16 @@
   background: linear-gradient(rgb(9 13 18 / .9) 0%, rgb(9 13 18 / .84) 52%, rgb(9 13 18 / .5) 80%, rgb(9 13 18 / 0) 100%);
 }
 
-.stations-page .station-tile-overlay.is-bottom {
-  bottom: 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 34px 12px 10px;
-  background: linear-gradient(rgb(9 13 18 / 0), rgb(9 13 18 / .58) 26%, rgb(9 13 18 / .92) 100%);
-}
 
-.stations-page .station-tile-top { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+/* The top line wraps instead of squeezing the state label: identity keeps a usable width, and the camera line
+   drops below the robot's name on a narrow card. */
+.stations-page .station-tile-top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px 8px; min-width: 0; }
 
 .stations-page .station-tile .station-card-check { margin-top: 4px; }
 
-.stations-page .station-tile-name { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.stations-page .station-tile-name { display: grid; flex: 1 1 170px; gap: 2px; min-width: 0; }
+
+.stations-page .station-tile-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; }
 
 .stations-page .station-tile-name h3,
 .stations-page .station-tile-name h3 .node-name {
@@ -968,6 +983,16 @@
 }
 
 .stations-page .station-tile-name small { display: flex; flex-wrap: wrap; gap: 2px 6px; color: rgb(255 255 255 / .72); font-size: 11px; }
+.stations-page .station-tile-name .station-tile-camera-metrics {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: rgb(255 255 255 / .9);
+  font-variant-numeric: tabular-nums;
+}
+
+/* An empty metrics line (no stream yet, or a camera the body lacks) takes no room in the top line. */
+.stations-page .station-tile-name .station-tile-camera-metrics:empty { display: none; }
 .stations-page .station-tile-name small .inline-code {
   padding: 0;
   border: 0;
@@ -976,6 +1001,39 @@
   font-size: 11px;
 }
 
+/* The card's preview rate, to the left of the online label: a compact dark select plus the rate the browser
+   actually received. They sit together as one unit so a wrapping top line never splits them. */
+.stations-page .station-tile-fps { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+
+/* The measured rate: one short mono value that stays on the select's line on a narrow tile. */
+.stations-page .station-tile-fps .station-tile-measured-fps {
+  min-width: 2.6em;
+  color: rgb(255 255 255 / .82);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-shadow: 0 1px 6px rgb(0 0 0 / .6);
+}
+
+.stations-page .station-tile-fps select {
+  min-height: 28px;
+  padding: 0 6px;
+  border: 1px solid rgb(255 255 255 / .32);
+  border-radius: 8px;
+  background: rgb(6 10 12 / .42);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color-scheme: dark;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+}
+
+.stations-page .station-tile-fps select:hover { background: rgb(6 10 12 / .62); }
+.stations-page .station-tile-fps select option { background: var(--panel); color: var(--ink); }
+
 .stations-page .station-tile-phase {
   flex: none;
   font-size: 12px;
@@ -983,22 +1041,30 @@
   text-shadow: 0 1px 6px rgb(0 0 0 / .6);
 }
 
+/* The tile's details entry: a short labelled capsule that stays legible on any frame behind it, and never wraps
+   into the robot's name or the rate beside it. */
 .stations-page .station-tile-expand {
-  display: grid;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   flex: none;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 1px solid rgb(255 255 255 / .34);
+  min-height: 28px;
+  padding: 0 9px 0 10px;
+  border: 1px solid rgb(255 255 255 / .36);
   border-radius: 9px;
-  background: rgb(6 10 12 / .4);
+  background: rgb(6 10 12 / .44);
   color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
   backdrop-filter: blur(2px);
+  text-shadow: 0 1px 6px rgb(0 0 0 / .5);
 }
 
-.stations-page .station-tile-expand:hover { background: rgb(6 10 12 / .62); }
+.stations-page .station-tile-expand-label { line-height: 1.2; }
+.stations-page .station-tile-expand:hover { background: rgb(6 10 12 / .66); border-color: rgb(255 255 255 / .52); }
+.stations-page .station-tile-expand:focus-visible { outline: 2px solid rgb(255 255 255 / .72); outline-offset: 2px; }
 .stations-page .station-tile-expand svg { transition: transform 150ms ease; }
 .stations-page .station-tile-expand svg.is-open { transform: rotate(180deg); }
 
@@ -1020,69 +1086,243 @@
 .stations-page .station-tile-tag.is-status-offline::before,
 .stations-page .station-tile-tag.is-status-retired::before { background: rgb(255 255 255 / .45); }
 
-.stations-page .station-tile-power { display: flex; gap: 14px; min-width: 0; }
-.stations-page .station-tile-power span { display: inline-flex; align-items: baseline; gap: 4px; min-width: 0; }
-.stations-page .station-tile-power small { color: rgb(255 255 255 / .62); font-size: 11px; }
+/* ===== The card's control dock =====
+   State and hardware controls moved out of the picture into a dock under it: a surface of the page's own palette
+   (1px line, a shade off the panel), one status line above one row of grouped controls. The picture keeps its
+   whole lower edge. */
 
-.stations-page .station-tile-power strong {
-  color: #fff;
-  font-size: 12.5px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 1px 6px rgb(0 0 0 / .6);
+.stations-page .station-tile-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 94%, var(--canvas));
 }
 
-.stations-page .station-tile-power strong.is-alert { color: #ffb3bd; }
-.stations-page .station-tile-power strong.muted { color: rgb(255 255 255 / .66); }
+/* The dock answers the tile's state too, so the ring that flags a problem ends where the operator acts. */
+.stations-page .station-tile.is-alert .station-tile-dock { border-color: color-mix(in srgb, var(--orange) 52%, var(--line)); }
+.stations-page .station-tile.is-expanded .station-tile-dock { border-color: color-mix(in srgb, var(--blue) 44%, var(--line)); }
 
-.stations-page .station-tile-actions { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.stations-page .station-tile-dock-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 7px;
+  min-width: 0;
+}
+
+/* Desired and actual are two capsules of the same height: the muted label names the question, the value answers
+   it, and only the robot's own report carries the semantic dot and tint. */
+.stations-page .station-tile-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 23px;
+  min-width: 0;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--canvas) 58%, var(--panel));
+  white-space: nowrap;
+}
+
+.stations-page .station-tile-pill small { color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .05em; }
+.stations-page .station-tile-pill strong { color: var(--ink); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stations-page .station-tile-pill strong.is-muted { color: var(--muted); font-weight: 600; }
+
+.stations-page .station-tile-pill.is-desired strong { color: color-mix(in srgb, var(--ink) 78%, var(--muted)); font-weight: 600; }
+
+.stations-page .station-tile-pill.is-actual::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.stations-page .station-tile-pill.is-actual.is-ready {
+  border-color: color-mix(in srgb, var(--green) 34%, var(--line));
+  background: color-mix(in srgb, var(--green) 9%, var(--panel));
+}
+.stations-page .station-tile-pill.is-actual.is-ready::before { background: var(--green); }
+.stations-page .station-tile-pill.is-actual.is-ready strong { color: var(--green-ink); }
+
+.stations-page .station-tile-pill.is-actual.is-powered {
+  border-color: color-mix(in srgb, var(--blue) 30%, var(--line));
+  background: color-mix(in srgb, var(--blue) 8%, var(--panel));
+}
+.stations-page .station-tile-pill.is-actual.is-powered::before { background: var(--blue); }
+.stations-page .station-tile-pill.is-actual.is-powered strong { color: color-mix(in srgb, var(--blue) 74%, var(--ink)); }
+
+.stations-page .station-tile-pill.is-actual.is-alert {
+  border-color: color-mix(in srgb, var(--red) 42%, var(--line));
+  background: color-mix(in srgb, var(--red) 10%, var(--panel));
+}
+.stations-page .station-tile-pill.is-actual.is-alert::before { background: var(--red); }
+.stations-page .station-tile-pill.is-actual.is-alert strong { color: color-mix(in srgb, var(--red) 78%, var(--ink)); }
+
+.stations-page .station-tile-pill.is-actual.is-unknown::before { background: var(--orange); }
+.stations-page .station-tile-pill.is-actual.is-unknown strong { color: color-mix(in srgb, var(--orange) 78%, var(--ink)); }
+
+/* The administrator's whole-machine restart, on the card: a chip carrying the state the Node records (submitted,
+   waiting with the tuner's reason, restarting, restarted, failed) and one control group of its own. */
+.stations-page .station-tile-restart {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stations-page .station-tile-restart.is-sending,
+.stations-page .station-tile-restart.is-submitted { color: color-mix(in srgb, var(--blue) 76%, var(--ink)); }
+.stations-page .station-tile-restart.is-waiting { color: color-mix(in srgb, var(--orange) 82%, var(--ink)); }
+.stations-page .station-tile-restart.is-acting { color: color-mix(in srgb, var(--orange) 76%, var(--ink)); }
+.stations-page .station-tile-restart.is-done { color: var(--green-ink); }
+.stations-page .station-tile-restart.is-failed,
+.stations-page .station-tile-restart.is-unconfirmed { color: color-mix(in srgb, var(--red) 78%, var(--ink)); }
+
+.stations-page .station-tile-action-group.is-restart { border-color: color-mix(in srgb, var(--orange) 46%, var(--line)); }
+.stations-page .station-tile-action-group.is-restart.is-blocked { opacity: .72; }
+.stations-page .station-tile-action.is-restart { color: color-mix(in srgb, var(--orange) 70%, var(--ink)); }
+.stations-page .station-tile-action.is-restart:hover:not(:disabled) { background: color-mix(in srgb, var(--orange) 14%, transparent); }
+
+/* The dock's control row: three functional groups — power, driver, home hold — each a segmented capsule that keeps
+   its pair together and wraps as a unit, so a narrow dock drops whole groups to the next line instead of stranding
+   half a pair. Every action is always present; one the current state cannot act on is disabled and explains itself. */
+.stations-page .station-tile-actions {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.stations-page .station-tile-action-groups { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+
+.stations-page .station-tile-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--canvas) 52%, var(--panel));
+}
+
+.stations-page .station-tile-action-group-label {
+  padding: 0 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
 
 .stations-page .station-tile-action {
-  min-height: 30px;
-  padding: 0 10px;
-  border: 1px solid rgb(255 255 255 / .32);
+  min-height: 26px;
+  padding: 0 6px;
+  border: 0;
   border-radius: 8px;
-  background: rgb(6 10 12 / .42);
-  color: #fff;
+  background: transparent;
+  color: var(--ink);
   font-size: 12px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   cursor: pointer;
-  backdrop-filter: blur(2px);
+  transition: background 120ms ease, color 120ms ease;
 }
 
-.stations-page .station-tile-action:hover:not(:disabled) { background: rgb(6 10 12 / .66); }
-.stations-page .station-tile-action:disabled { opacity: .5; cursor: default; }
+.stations-page .station-tile-action:hover:not(:disabled) { background: color-mix(in srgb, var(--blue) 12%, transparent); }
+/* The second half of each pair is the one that takes the machine down, so it answers in red on hover. */
+.stations-page .station-tile-action-group.is-power .station-tile-action + .station-tile-action:hover:not(:disabled),
+.stations-page .station-tile-action-group.is-driver .station-tile-action + .station-tile-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  color: color-mix(in srgb, var(--red) 74%, var(--ink));
+}
+.stations-page .station-tile-action:focus-visible { outline: 2px solid color-mix(in srgb, var(--blue) 62%, transparent); outline-offset: 1px; }
+.stations-page .station-tile-action:disabled { opacity: .42; cursor: default; }
 
 .stations-page .station-tile-actions .robot-pose-button {
-  min-height: 30px;
-  padding: 0 10px;
-  border: 1px solid rgb(255 255 255 / .32);
+  min-height: 26px;
+  padding: 0 9px;
+  border: 0;
   border-radius: 8px;
-  background: rgb(6 10 12 / .42);
-  color: #fff;
+  background: transparent;
+  color: var(--ink);
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
-.stations-page .station-tile-actions .robot-pose-button:disabled { opacity: .55; }
-.stations-page .station-tile-actions .robot-pose-button.is-moving { background: color-mix(in srgb, var(--blue) 45%, rgb(6 10 12 / .6)); }
+.stations-page .station-tile-actions .robot-pose-button:hover:not(:disabled) { background: color-mix(in srgb, var(--blue) 12%, transparent); }
+.stations-page .station-tile-actions .robot-pose-button:disabled { opacity: .52; }
+.stations-page .station-tile-actions .robot-pose-button.is-moving {
+  background: color-mix(in srgb, var(--blue) 24%, var(--panel));
+  color: color-mix(in srgb, var(--blue) 82%, var(--ink));
+}
+.stations-page .station-tile-actions .robot-pose-button.is-confirming {
+  background: color-mix(in srgb, var(--blue) 12%, var(--panel));
+  color: color-mix(in srgb, var(--blue) 70%, var(--ink));
+}
 
-/* The hold-to-move hints float under the overlay instead of pushing the picture around. */
+/* The request's own progress, on the card it belongs to: sending, accepted, then the robot's report or the reason
+   it has not arrived. A short chip, with the long explanation in its tooltip. */
+.stations-page .station-tile-request {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stations-page .station-tile-request.is-accepted,
+.stations-page .station-tile-request.is-sending { color: color-mix(in srgb, var(--blue) 76%, var(--ink)); }
+.stations-page .station-tile-request.is-observed { color: var(--green-ink); }
+.stations-page .station-tile-request.is-unconfirmed { color: color-mix(in srgb, var(--orange) 80%, var(--ink)); }
+.stations-page .station-tile-request.is-failed { color: color-mix(in srgb, var(--red) 78%, var(--ink)); }
+
+.stations-page .station-tile-action-note {
+  max-width: 100%;
+  color: color-mix(in srgb, var(--orange) 74%, var(--ink));
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+/* The hold-to-move hints and the control error belong to the dock, not to the picture: when one is present the
+   pose group takes the whole row and the text flows beside its button, so nothing covers the camera, the strip or
+   the facts, and the reason a disabled hold cannot move is read where the button is. */
+.stations-page .station-tile-action-group.is-pose { flex-wrap: wrap; }
+
+.stations-page .station-tile-action-group.is-pose:has(.robot-pose-hint),
+.stations-page .station-tile-action-group.is-pose:has(.robot-controls-error) {
+  flex: 1 1 100%;
+  justify-content: flex-start;
+  border-color: color-mix(in srgb, var(--orange) 42%, var(--line));
+}
+
 .stations-page .station-tile-actions .robot-pose-hint,
 .stations-page .station-tile-actions .robot-controls-error {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 8px);
-  z-index: 6;
-  max-width: 340px;
+  flex: 1 1 240px;
+  min-width: 0;
   margin: 0;
-  padding: 5px 9px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
+  padding: 0 8px 0 4px;
   color: color-mix(in srgb, var(--orange) 72%, var(--ink));
-  box-shadow: 0 8px 22px rgb(0 0 0 / .25);
   font-size: 11px;
+  line-height: 1.4;
 }
 
 .stations-page .station-tile-actions .robot-controls-error { color: color-mix(in srgb, var(--red) 72%, var(--ink)); }
@@ -1112,6 +1352,40 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* A station the plane does not see as Bound: the last report and tunnel state are above, and this line says what the
+   manual re-check does and where it stops (a machine and a site link both unreachable need someone on site). */
+.stations-page .station-tile-recovery {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--orange) 7%, var(--panel));
+}
+
+.stations-page .station-tile-recovery-note { flex: 1 1 220px; min-width: 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+
+.stations-page .station-tile-recovery-actions { display: flex; flex: none; flex-wrap: wrap; gap: 6px; }
+
+.stations-page .station-tile-recheck {
+  flex: none;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.stations-page .station-tile-recheck:hover:not(:disabled) { border-color: color-mix(in srgb, var(--blue) 48%, var(--line)); }
+.stations-page .station-tile-recheck:disabled { opacity: .6; cursor: default; }
 
 /* Inventory rows: the quiet list. */
 .stations-page .stations-inv-list { display: grid; min-width: 0; }
@@ -1247,7 +1521,10 @@
   .stations-page .stations-card-grid.is-robot-grid { grid-template-columns: minmax(0, 1fr); }
   .stations-page .stations-frame { gap: 14px; }
   .stations-page .station-tile-overlay.is-top { padding: 8px 10px 26px; }
-  .stations-page .station-tile-overlay.is-bottom { padding: 30px 10px 8px; }
+  /* One tile per row is wide enough to set the state and the controls on a single line. */
+  .stations-page .station-tile-dock { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 7px 12px; }
+  .stations-page .station-tile-dock-status { flex: 1 1 auto; }
+  .stations-page .station-tile-actions { flex: 0 1 auto; }
 }
 
 /* ===== Detail panel in the quiet language =====
@@ -1488,3 +1765,84 @@
   color: color-mix(in srgb, var(--red) 78%, var(--ink));
   font-weight: 650;
 }
+
+.stations-page .station-detail-metadata {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.stations-page .station-detail-metadata > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 13px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.stations-page .station-detail-metadata > summary::-webkit-details-marker { display: none; }
+.stations-page .station-detail-metadata > summary span { display: inline-flex; align-items: center; gap: 7px; }
+.stations-page .station-detail-metadata > summary svg { color: var(--muted); flex: none; }
+.stations-page .station-detail-metadata[open] > summary { border-bottom: 1px solid var(--line); }
+.stations-page .station-detail-metadata[open] > summary > svg { transform: rotate(180deg); }
+.stations-page .station-detail-metadata > :not(summary) { margin: 13px; }
+
+.stations-page .station-camera-pin {
+  position: absolute;
+  z-index: 2;
+  bottom: 8px;
+  right: 8px;
+  padding: 4px 8px;
+  border: 1px solid rgb(255 255 255 / .30);
+  border-radius: 999px;
+  background: rgb(12 16 22 / .82);
+  color: #fff;
+  font: inherit;
+  font-size: 11px;
+}
+.stations-page button.station-camera-pin { cursor: pointer; }
+
+.stations-wall-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.stations-wall-grid.is-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stations-wall-tile {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+}
+.stations-wall-tile[data-severity="3"] { border-color: var(--red); }
+.stations-page .stations-wall-tile .station-tile-main {
+  height: clamp(115px, calc((100dvh - 340px) / 2), 310px);
+  min-height: 0;
+  border-radius: 0;
+}
+.stations-page .stations-wall-grid.is-3 .station-tile-main {
+  height: clamp(90px, calc((100dvh - 365px) / 3), 240px);
+}
+.stations-page .stations-wall-tile .station-camera.is-big { inset: 0; height: 100%; width: 100%; }
+.stations-page .stations-wall-tile .station-camera-frame { height: 100%; border-radius: 0; }
+.stations-page .stations-wall-tile .station-camera-frame img { object-fit: contain; }
+.stations-wall-tile footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.stations-wall-tile footer strong { overflow: hidden; text-overflow: ellipsis; }
+.stations-wall-tile footer .status { margin-inline-start: auto; }
+.stations-wall-tile footer .stations-table-alert { overflow: hidden; text-overflow: ellipsis; }
+
+
+.stations-page .station-tile-overlay.is-top { pointer-events: none; }
+.stations-page .station-tile-overlay.is-top :is(button, input, select, a) { pointer-events: auto; }
+.stations-page .stations-frame { gap: 10px; }
+.stations-page .stations-frame > :is(.stations-kpis, .stations-fleet-filters, .stations-selection, .stations-table-clusters, .stations-view-options) { margin-block: 0; }

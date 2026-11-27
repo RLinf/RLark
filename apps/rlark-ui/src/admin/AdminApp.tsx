@@ -35,9 +35,16 @@ import {
   hasAuthSession,
   storeAuthSession,
   UNAUTHORIZED_EVENT,
+  type AuthRole,
 } from "../api";
 import { authApi } from "../backend";
 import { RemovalProgressProvider } from "../astribot/components/RemovalProgress";
+import {
+  addressPath,
+  iamPortalEnabled,
+  returnToPortal,
+  signOutOfConsole,
+} from "../astribot/iam/portal";
 
 export function AdminLogin({
   lang,
@@ -63,6 +70,9 @@ export function AdminLogin({
     const timer = window.setTimeout(() => setError(""), 4000);
     return () => window.clearTimeout(timer);
   }, [error]);
+
+  // The published console signs in through /login only; this form is upstream.
+  if (iamPortalEnabled()) return null;
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -206,13 +216,17 @@ export function AdminLogin({
   );
 }
 
-export function AdminApp() {
+export function AdminApp({ portalRole }: { portalRole?: AuthRole } = {}) {
   const [lang, setLang] = usePersistentState<Lang>("rlark-language", "zh");
   const [theme, setTheme] = usePersistentState<Theme>("rlark-theme", "light");
-  const [loggedIn, setLoggedIn] = useState(
-    () =>
-      import.meta.env.DEV ||
-      (typeof sessionStorage !== "undefined" && hasAuthSession("admin")),
+  // Behind the portal the server session has already decided the role, and a
+  // native admin form is never an option: no session means leave for /login.
+  const portal = iamPortalEnabled() || portalRole !== undefined;
+  const [loggedIn, setLoggedIn] = useState(() =>
+    portal
+      ? portalRole === "admin"
+      : import.meta.env.DEV ||
+        (typeof sessionStorage !== "undefined" && hasAuthSession("admin")),
   );
   const [userName, setUserName] = useState(
     () => sessionStorage.getItem("rlark-admin-user-name") || "admin",
@@ -258,7 +272,28 @@ export function AdminApp() {
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
+  useEffect(() => {
+    if (portal && !loggedIn) void returnToPortal(addressPath(window.location));
+  }, [portal, loggedIn]);
   if (!loggedIn) {
+    if (portal) {
+      return (
+        <div
+          className="portal-status"
+          role="status"
+          style={{
+            display: "grid",
+            placeItems: "center",
+            minHeight: "100vh",
+            background: "#f6f4fc",
+            color: "#403773",
+            font: "500 15px/1.5 system-ui, sans-serif",
+          }}
+        >
+          {zh ? "正在前往统一登录…" : "Redirecting to sign in…"}
+        </div>
+      );
+    }
     return (
       <AdminLogin
         copy={c}
@@ -381,6 +416,10 @@ export function AdminApp() {
           userName={userName}
           onCreate={() => navigate("create-cluster")}
           onLogout={() => {
+            if (portal) {
+              void signOutOfConsole(addressPath(window.location));
+              return;
+            }
             clearAuthSession();
             setLoggedIn(false);
           }}

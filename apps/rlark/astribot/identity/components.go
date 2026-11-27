@@ -92,6 +92,10 @@ var controllerManagerRules = []rbacv1.PolicyRule{
 	{APIGroups: []string{"rlinf.io"}, Resources: []string{"jobs", "workflows", "tasks", "nodes", "clusters", "domains", "domainpeers"}, Verbs: rw},
 	{APIGroups: []string{"rlinf.io"}, Resources: []string{"pods"}, Verbs: read},
 	{APIGroups: []string{"rlinf.io"}, Resources: []string{"jobs/status", "workflows/status", "tasks/status", "nodes/status", "clusters/status", "domains/status", "jobs/finalizers", "workflows/finalizers"}, Verbs: []string{"update", "patch"}},
+	{APIGroups: []string{"rlinf.io"}, Resources: []string{"upgradejobs"}, Verbs: []string{"get", "list", "watch", "update"}},
+	{APIGroups: []string{"rlinf.io"}, Resources: []string{"upgradejobs/status", "upgradejobs/finalizers"}, Verbs: []string{"update", "patch"}},
+	{APIGroups: []string{"rlinf.io"}, Resources: []string{"clusterupgradejobs"}, Verbs: []string{"get", "list", "watch", "create", "delete"}},
+	{APIGroups: []string{"rlinf.io"}, Resources: []string{"clusterupgradejobs/status"}, Verbs: []string{"get"}},
 	{APIGroups: []string{""}, Resources: []string{"secrets", "configmaps"}, Verbs: rw},
 	{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: read},
 	{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: rw},
@@ -120,6 +124,7 @@ var releaseRules = []rbacv1.PolicyRule{
 // The gateway's permissions: the API it serves over RLark's and Station's objects (11-16 audit).
 var gatewayRules = []rbacv1.PolicyRule{
 	{APIGroups: []string{"rlinf.io"}, Resources: []string{"jobs", "workflows", "domains", "nodes", "tasks", "pods", "clusters", "addons"}, Verbs: append(rw, "deletecollection")},
+	{APIGroups: []string{"rlinf.io"}, Resources: []string{"upgradejobs"}, Verbs: []string{"get", "list", "create", "delete"}},
 	// A new cluster is made, and a machine joined over SSH, by the Gateway, which records how it goes (ClusterProvision, NodeJoin).
 	{APIGroups: []string{"rlinf.io"}, Resources: []string{"clusterprovisions", "clusterprovisions/status", "nodejoins", "nodejoins/status"}, Verbs: rw},
 	{APIGroups: []string{""}, Resources: []string{"secrets", "configmaps"}, Verbs: append(rw, "deletecollection")},

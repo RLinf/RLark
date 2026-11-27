@@ -48,7 +48,7 @@ func siteNetworkGateway() (*Gateway, *unstructured.Unstructured) {
 	clusterA := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "rlinf.io/v1alpha1", "kind": "Cluster", "metadata": map[string]any{"name": "cluster-a"}}}
 	clusterB := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "rlinf.io/v1alpha1", "kind": "Cluster", "metadata": map[string]any{"name": "cluster-b"}}}
 	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		siteNetworkGVR: "SiteNetworkList", nodeClassGVR: "NodeClassList", stationClusterGVR: "ClusterList",
+		networkEnrollmentGVR: "NetworkEnrollmentList", siteNetworkGVR: "SiteNetworkList", nodeClassGVR: "NodeClassList", stationClusterGVR: "ClusterList",
 	}, network, class, withoutDiscovery, clusterA, clusterB)
 	return &Gateway{astribotState: astribotState{stationClient: client}}, network
 }

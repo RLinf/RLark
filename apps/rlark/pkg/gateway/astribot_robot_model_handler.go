@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -21,11 +22,12 @@ type robotModelReferenceCounts struct {
 }
 
 type robotModelView struct {
-	Name        string                    `json:"name"`
-	DisplayName string                    `json:"displayName,omitempty"`
-	Vendor      string                    `json:"vendor,omitempty"`
-	Description string                    `json:"description,omitempty"`
-	References  robotModelReferenceCounts `json:"references"`
+	Name         string                    `json:"name"`
+	DisplayName  string                    `json:"displayName,omitempty"`
+	Vendor       string                    `json:"vendor,omitempty"`
+	Description  string                    `json:"description,omitempty"`
+	References   robotModelReferenceCounts `json:"references"`
+	Capabilities json.RawMessage           `json:"capabilities,omitempty"`
 }
 
 func (g *Gateway) robotModelReferences(c *gin.Context, name string) (robotModelReferenceCounts, error) {
@@ -122,7 +124,7 @@ func (g *Gateway) handleListRobotModels(c *gin.Context) {
 		displayName, _, _ := unstructured.NestedString(object.Object, "spec", "displayName")
 		vendor, _, _ := unstructured.NestedString(object.Object, "spec", "vendor")
 		description, _, _ := unstructured.NestedString(object.Object, "spec", "description")
-		items = append(items, robotModelView{Name: object.GetName(), DisplayName: displayName, Vendor: vendor, Description: description, References: counts})
+		items = append(items, robotModelView{Name: object.GetName(), DisplayName: displayName, Vendor: vendor, Description: description, References: counts, Capabilities: stationModelCapabilities(object.GetName())})
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }

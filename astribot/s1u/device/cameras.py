@@ -72,6 +72,8 @@ from xmlrpc.client import ServerProxy
 
 import cv2
 import numpy
+
+import body_observer
 from power import in_use, vital
 
 # Each view by the vendor driver's name of its camera, in the wall's order.
@@ -111,12 +113,24 @@ def jpeg_of(raw):
     return raw[offset + 4:offset + 4 + length]
 
 
+def capture_time_ms(raw, received_ms):
+    """ROS header.stamp in Unix milliseconds, only when plausible on the robot clock."""
+    if len(raw) < 12:
+        return None
+    seconds, nanos = struct.unpack_from("<2I", raw, 4)
+    if not seconds or nanos >= 1_000_000_000:
+        return None
+    stamp = seconds * 1000 + nanos / 1_000_000
+    return stamp if -50 <= received_ms - stamp <= 5000 else None
+
+
 class Cameras:
     """The body's cameras' newest frames, and what each camera is."""
 
-    def __init__(self, views, clock=time.monotonic):
+    def __init__(self, views, clock=time.monotonic, wall=time.time):
         self.views = tuple(view for view in VIEWS if view in views)
         self.clock = clock
+        self.wall_clock = wall
         self.lock = threading.Lock()
         self.framed = threading.Condition(self.lock)
         # samples: (time, frames so far) of the last five seconds, one a second; slow_since: since when under SLOW_FPS.
@@ -127,7 +141,8 @@ class Cameras:
     def receive(self, view, raw):
         with self.lock:
             frame = self.frames[view]
-            frame.update(raw=raw, received=self.clock(), sequence=frame["sequence"] + 1)
+            frame.update(raw=raw, received=self.clock(), sequence=frame["sequence"] + 1,
+                         capture_ms=capture_time_ms(raw, self.wall_clock() * 1000))
             self.framed.notify_all()
 
     def fps(self, view):
@@ -163,12 +178,12 @@ class Cameras:
             return (None, None) if raw is None else (jpeg_of(raw), self.age(view, self.clock()))
 
     def next(self, view, sequence):
-        """(JPEG, age, sequence) of the newest frame after ``sequence``, of a camera that sent one; a camera that
+        """(JPEG, age, sequence, capture timestamp) of the newest frame after ``sequence``; a camera that
         stopped gives its last frame again each second, so a viewer sees its age grow."""
         with self.lock:
             frame = self.frames[view]
             self.framed.wait_for(lambda: frame["sequence"] != sequence, timeout=1)
-            return jpeg_of(frame["raw"]), self.age(view, self.clock()), frame["sequence"]
+            return jpeg_of(frame["raw"]), self.age(view, self.clock()), frame["sequence"], frame["capture_ms"]
 
     def wall(self):
         """The four views as one JPEG, made at most ten times a second however many ask; a view without a fresh
@@ -445,7 +460,7 @@ def publish(said, published, patch):
     return key
 
 
-def handler(cameras, recovery, wall=time.time):
+def handler(cameras, recovery, wall=time.time, body_state=None):
     open_streams = threading.Semaphore(STREAMS)
 
     class Handler(BaseHTTPRequestHandler):
@@ -471,8 +486,17 @@ def handler(cameras, recovery, wall=time.time):
 
         def do_GET(self):
             url = urlparse(self.path)
+            if url.path == "/body-state":
+                snapshot = body_state() if body_state else None
+                if snapshot is None:
+                    return self.refuse(404, "Body state is unavailable")
+                return self.answer(200, "application/json", json.dumps(snapshot, allow_nan=False).encode())
             if url.path == "/cameras":
+                received_ms = wall() * 1000
                 said = report(cameras, recovery, cameras.clock(), wall)
+                # Only the HTTP report carries clock samples. The Node annotation is
+                # still the state report, without per-request timestamps.
+                said["clock"] = dict(received_ms=received_ms, sent_ms=wall() * 1000)
                 return self.answer(200, "application/json", json.dumps(said, ensure_ascii=False).encode())
             match = re.fullmatch(r"/cameras/(%s|wall)(\.jpg|/stream)" % "|".join(VIEWS), url.path)
             if not match or match[1] not in cameras.views + ("wall",):
@@ -511,8 +535,10 @@ def handler(cameras, recovery, wall=time.time):
                 if view == "wall":
                     jpeg, aged = cameras.wall(), ""
                 else:
-                    jpeg, age, sequence = cameras.next(view, sequence)
+                    jpeg, age, sequence, captured = cameras.next(view, sequence)
                     aged = "X-Age-Seconds: %s\r\n" % age
+                    if captured is not None:
+                        aged += "X-Camera-Capture-Ms: %.3f\r\n" % captured
                 self.wfile.write(("--%s\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n%s\r\n"
                                   % (BOUNDARY, len(jpeg), aged)).encode() + jpeg + b"\r\n")
                 self.wfile.flush()
@@ -574,7 +600,8 @@ def main():
     from std_srvs.srv import SetBool
 
     node = os.environ["NODE_NAME"]
-    body = api("GET", "/api/v1/nodes/" + node)["metadata"]["labels"]["rlark.io/robot-body"]
+    metadata = api("GET", "/api/v1/nodes/" + node)["metadata"]
+    body = metadata["labels"]["rlark.io/robot-body"]
     cameras = Cameras(json.loads(Path(os.environ["S1U_BODIES"]).read_text())[body])
 
     def call(value):
@@ -608,7 +635,9 @@ def main():
 
     recovery = Recovery(cameras, restart, os.environ["S1U_CAMERA_DIRECTORY"], event)
     # The port first: with the robot's master down the cameras are absent, the service is not missing.
-    server = ThreadingHTTPServer((os.environ["S1U_NODE_ADDRESS"], PORT), handler(cameras, recovery))
+    observer = None
+    server = ThreadingHTTPServer((os.environ["S1U_NODE_ADDRESS"], PORT),
+                                 handler(cameras, recovery, body_state=lambda: observer() if observer else None))
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     vital(follow, cameras, recovery, node)
@@ -618,6 +647,11 @@ def main():
     for view in cameras.views:
         rospy.Subscriber(TOPIC % VENDOR[view], rospy.AnyMsg, lambda message, view=view: cameras.receive(view, message._buff),
                          queue_size=1, buff_size=16 * 1024 * 1024)
+    try:
+        capabilities = json.loads(Path("/s1u/device/capabilities.json").read_text())
+        observer, body_subscriptions = body_observer.subscribe(rospy, capabilities, body, metadata["uid"])
+    except (OSError, ValueError, KeyError) as error:
+        print("Read-only body state unavailable: %s" % error, flush=True)
     threading.Event().wait()
 
 

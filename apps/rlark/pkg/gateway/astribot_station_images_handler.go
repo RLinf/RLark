@@ -55,23 +55,7 @@ func (g *Gateway) handleStationRunningImages(c *gin.Context) {
 		log.FromContext(ctx).Error(err, "Cannot read station running images", "cluster", clusterID, "node", name)
 		respondError(c, http.StatusBadGateway, CodeUpstreamUnavailable, "Running container images are unavailable")
 	}
-	clusters, err := g.stationClient.Resource(stationClusterGVR).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		upstreamError(err)
-		return
-	}
-	owner, conflicted := "", false
-	for _, cluster := range clusters.Items {
-		if claims, _, _ := unstructured.NestedString(cluster.Object, "spec", "agentNamespace"); claims == namespace {
-			conflicted = owner != "" && owner != cluster.GetName()
-			owner = cluster.GetName()
-			if conflicted {
-				break
-			}
-		}
-	}
-	if conflicted || owner != clusterID {
-		respondError(c, http.StatusConflict, CodeResourceConflict, "Cluster namespace ownership could not be verified")
+	if !g.verifyStationNamespaceOwner(c, clusterID, namespace, upstreamError) {
 		return
 	}
 
@@ -161,4 +145,28 @@ func (g *Gateway) readStationImageObject(ctx context.Context, agentID, path stri
 		return response.StatusCode, fmt.Errorf("member Kubernetes API returned HTTP %d", response.StatusCode)
 	}
 	return response.StatusCode, json.NewDecoder(response.Body).Decode(object)
+}
+
+func (g *Gateway) verifyStationNamespaceOwner(c *gin.Context, clusterID, namespace string, upstreamError func(error)) bool {
+	clusters, err := g.stationClient.Resource(stationClusterGVR).List(c.Request.Context(), metav1.ListOptions{})
+	if err != nil {
+		upstreamError(err)
+		return false
+	}
+	owner, conflicted := "", false
+	for _, cluster := range clusters.Items {
+		if claims, _, _ := unstructured.NestedString(cluster.Object, "spec", "agentNamespace"); claims == namespace {
+			conflicted = owner != "" && owner != cluster.GetName()
+			owner = cluster.GetName()
+			if conflicted {
+				break
+			}
+		}
+	}
+	if conflicted || owner != clusterID {
+		respondError(c, http.StatusConflict, CodeResourceConflict, "Cluster namespace ownership could not be verified")
+		return false
+	}
+
+	return true
 }

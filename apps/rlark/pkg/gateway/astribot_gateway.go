@@ -31,6 +31,7 @@ type astribotState struct {
 	provisions    stagedRuns
 	nodeJoins     stagedRuns
 	provisionDial provisionDialFunc
+	cameraStreams cameraStreamLimiter
 }
 
 // AstribotConfig is our part of the Gateway's configuration; Config embeds it. Every field is required.
@@ -59,6 +60,7 @@ func (c *AstribotConfig) setupFlags(fs *pflag.FlagSet) {
 func (g *Gateway) setupAstribot() {
 	g.registryImages = lru.New(registryImageCacheEntries)
 	g.provisionDial = dialProvisionMachine
+	g.cameraStreams = cameraStreamLimiter{perUser: make(map[string]int)}
 }
 
 // initAstribot is init's part for our clients, right after the Kubernetes clients.
@@ -120,8 +122,10 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 		station.GET("", g.handleListStations)
 		station.GET("/:name", g.handleGetStation)
 		station.GET("/:name/running-images", g.handleStationRunningImages)
+		station.GET("/:name/body-state", g.handleStationBodyState)
 		station.DELETE("/:name", g.handleDeleteStation)
 	}
+	adminAPI.GET("/station/summary", g.handleStationSummary)
 	stationNodeOperations := adminAPI.Group("/station/node-operations")
 	{
 		stationNodeOperations.POST("", g.handleCreateNodeOperation)
@@ -130,6 +134,8 @@ func (g *Gateway) registerAstribotRoutes(api *gin.RouterGroup) {
 	}
 	adminAPI.GET("/station/site-network", g.handleGetSiteNetwork)
 	adminAPI.PUT("/station/site-network/sites/:site/discovery", g.handleUpdateSiteDiscovery)
+	adminAPI.GET("/station/site-network/sites/:site/scan", g.handleDiscoveryScan)
+	adminAPI.POST("/station/site-network/sites/:site/scan", g.handleDiscoveryScan)
 	adminAPI.GET("/station/robot-models", g.handleListRobotModels)
 	adminAPI.DELETE("/station/robot-models/:name", g.handleDeleteRobotModel)
 	nodeAdmissions := adminAPI.Group("/station/node-admissions")

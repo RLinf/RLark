@@ -61,12 +61,14 @@ const poseFailure = (robot: ControlledRobot, reason: unknown, zh: boolean) => {
 // robot is sent hold every 200 ms (the robot stops by itself half a second after the last one); letting go, leaving
 // the button or the window sends stop. A refusal or failure of any robot stops them all.
 export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh: boolean }) {
-  const [moving, setMoving] = useState(false);
-  const [releasing, setReleasing] = useState(false);
+  // Confirming is the first hold on its way; the robot has not acknowledged it yet. The phase changes only from the
+  // session that is still held, so a hold receipt that arrives after release cannot put the button back to moving.
+  const [phase, setPhase] = useState<"idle" | "confirming" | "holding" | "releasing">("idle");
   const [message, setMessage] = useState("");
   const [hint, setHint] = useState("");
-  const held = useRef<{ session: PoseSession; at: number; timer: number; busy: boolean; last: Promise<unknown> } | null>(null);
+  const held = useRef<{ session: PoseSession; at: number; timer: number; busy: boolean; confirmed: boolean; last: Promise<unknown> } | null>(null);
   const failed = useRef(false);
+  const alive = useRef(true);
   const ready = robots.length > 0 && robots.every((robot) => robotPowerState(robot.labels) === "ready");
   const blocked = robots.find((robot) => robotPowerState(robot.labels) !== "ready");
   const blockedState = blocked ? robotPowerState(blocked.labels) : "";
@@ -93,8 +95,7 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
     if (!hold || hold.session.state !== "holding") return;
     held.current = null;
     hold.session.state = "releasing";
-    setMoving(false);
-    setReleasing(true);
+    setPhase("releasing");
     window.clearInterval(hold.timer);
     const heldFor = performance.now() - hold.at;
     const session = hold.session;
@@ -118,19 +119,26 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
       })
       .finally(() => {
         sessions.delete([...session.keys].join("|"));
-        setReleasing(false);
+        if (alive.current && !held.current) setPhase("idle");
       });
   };
   const tick = () => {
-    const hold = held.current!;
-    if (hold.busy) return;
+    const hold = held.current;
+    if (!hold || hold.busy) return;
     hold.busy = true;
     hold.last = send("hold", robots).then((failures) => {
       hold.busy = false;
-      if (failures.length && held.current === hold) {
+      // A receipt that arrives after the button was let go settles nothing in the UI: the session is gone.
+      if (held.current !== hold) return;
+      if (failures.length) {
         failed.current = true;
         setMessage(failures.join("; "));
         release();
+        return;
+      }
+      if (!hold.confirmed) {
+        hold.confirmed = true;
+        setPhase("holding");
       }
     });
   };
@@ -139,11 +147,11 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
     setMessage("");
     setHint("");
     failed.current = false;
-    setMoving(true);
+    setPhase("confirming");
     const session: PoseSession = { keys: new Set(sessionKeys(robots)), state: "holding", release: () => {}, done: Promise.resolve("released") };
     session.release = release;
     sessions.set([...session.keys].join("|"), session);
-    held.current = { session, at: performance.now(), timer: 0, busy: false, last: Promise.resolve() };
+    held.current = { session, at: performance.now(), timer: 0, busy: false, confirmed: false, last: Promise.resolve() };
     tick();
     held.current.timer = window.setInterval(tick, HOLD_PERIOD_MS);
   };
@@ -152,10 +160,12 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
   const releaseRef = useRef(release);
   releaseRef.current = release;
   useEffect(() => {
+    alive.current = true;
     const end = () => releaseRef.current();
     window.addEventListener("pointerup", end);
     window.addEventListener("blur", end);
     return () => {
+      alive.current = false;
       window.removeEventListener("pointerup", end);
       window.removeEventListener("blur", end);
       end();
@@ -166,13 +176,18 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
   }, [ready]);
 
   const label = zh ? "按住回位" : "Hold home";
+  const moving = phase === "holding";
+  const confirming = phase === "confirming";
+  const releasing = phase === "releasing";
   return <>
     <button
       type="button"
-      className={`secondary-button robot-pose-button${moving ? " is-moving" : ""}${releasing ? " is-releasing" : ""}`}
-      disabled={!moving && !ready}
+      className={`secondary-button robot-pose-button${moving ? " is-moving" : ""}${confirming ? " is-confirming" : ""}${releasing ? " is-releasing" : ""}`}
+      disabled={!ready && !confirming && !moving && !releasing}
       title={ready
-        ? (zh ? "按住移动到初始姿势，松开即停" : "Hold to move to the home pose; let go to stop")
+        ? confirming
+          ? (zh ? "已按下，等待机器人确认第一个 hold；松开即停" : "Pressed; waiting for the robot to acknowledge the first hold. Let go to stop")
+          : (zh ? "按住移动到初始姿势，松开即停" : "Hold to move to the home pose; let go to stop")
         : blockedHint}
       onPointerDown={(event) => event.button === 0 && press()}
       onPointerUp={release}
@@ -180,7 +195,7 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
       onPointerCancel={release}
       onContextMenu={(event) => event.preventDefault()}
     >
-      <House size={14} />{moving ? (zh ? "移动中…松开即停" : "Moving… let go to stop") : label}
+      <House size={14} />{confirming ? (zh ? "请求中…" : "Requesting…") : moving ? (zh ? "移动中…松开即停" : "Moving… let go to stop") : releasing ? (zh ? "停止中…" : "Stopping…") : label}
     </button>
     {!ready && <small className="robot-pose-hint">{blockedHint}</small>}
     {hint && <small className="robot-pose-hint" role="status">{hint}</small>}
@@ -190,19 +205,20 @@ export function RobotPoseButton({ robots, zh }: { robots: ControlledRobot[]; zh:
 
 // The robot buttons of a page: power on and start the driver, stop the driver and power off, and hold-to-move to
 // the home pose, for the chosen robots of those shown. single is a page of one robot: no count of chosen ones.
-export function RobotControls({ robots, chosen, power, zh, single = false, showMessage = true }: {
+export function RobotControls({ robots, chosen, power, zh, single = false, showMessage = true, showPose = true }: {
   robots: ControlledRobot[];
   chosen: ControlledRobot[];
   power: RobotPower;
   zh: boolean;
   single?: boolean;
   showMessage?: boolean;
+  showPose?: boolean;
 }) {
   const press = async (desired: RobotPowerDesired, label: string) => {
     // The machine must not be moving while the browser blocks on the confirmation: release first, bounded, then
     // let useRobotPower run its confirm and requests.
     await releasePoseSessions(chosen);
-    void power.set(chosen.map((robot) => ({ node: robot.node, namespace: robot.namespace, desired })), label);
+    void power.set(chosen.map((robot) => ({ key: robot.key, node: robot.node, namespace: robot.namespace, desired, action: desired === "off" ? "power_off" : "power_on" })), label);
   };
   return (
     <div className="robot-controls" role="group" aria-label={zh ? "机器人控制" : "Robot controls"}>
@@ -210,7 +226,7 @@ export function RobotControls({ robots, chosen, power, zh, single = false, showM
       <span>{single ? (zh ? "机器人" : "Robot") : (zh ? `机器人：已选 ${chosen.length} / ${robots.length} 台` : `Robots: ${chosen.length} of ${robots.length} chosen`)}</span>
       <button type="button" className="secondary-button" disabled={power.pending || chosen.length === 0} onClick={() => void press("ready", zh ? "上电并启动驱动" : "Power on and start driver")}>{zh ? "上电并启动驱动" : "Power on and start driver"}</button>
       <button type="button" className="secondary-button" disabled={power.pending || chosen.length === 0} onClick={() => void press("off", zh ? "关闭驱动并下电" : "Stop driver and power off")}>{zh ? "关闭驱动并下电" : "Stop driver and power off"}</button>
-      <RobotPoseButton robots={chosen} zh={zh} />
+      {showPose && <RobotPoseButton robots={chosen} zh={zh} />}
       {showMessage && power.message && <small role="status">{power.message}</small>}
     </div>
   );

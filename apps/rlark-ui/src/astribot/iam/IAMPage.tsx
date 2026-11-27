@@ -5,7 +5,7 @@ import { clearAuthSession, storeAuthSession } from "../../api";
 import { iamText, type IAMMessage } from "./i18n";
 import { initialAuditEvents, initialSessions, initialUsers, type AuditEvent, type IAMRole, type IAMSession, type IAMUser } from "./mockData";
 import { IAMApiError, iamApi, type IAMSessionView } from "./api";
-import { iamPortalEnabled, returnToPortal, signOutOfConsole } from "./portal";
+import { addressPath, iamPortalEnabled, returnToPortal, signOutOfConsole } from "./portal";
 import "./iam.css";
 import astribotDark from "./assets/astribot-logo-dark.png";
 import astribotLight from "./assets/astribot-logo-light.png";
@@ -71,6 +71,7 @@ export function IAMPage({ zh }: { zh: boolean }) {
   const [loginLoading, setLoginLoading] = useState(false);
   const [apiLoading, setApiLoading] = useState(false);
   const [sessionChecked, setSessionChecked] = useState(false);
+  const [sessionAttempt, setSessionAttempt] = useState(0);
   const [apiError, setApiError] = useState("");
   const [userQuery, setUserQuery] = useState("");
   const [userRole, setUserRole] = useState<"" | IAMRole>("");
@@ -107,7 +108,7 @@ export function IAMPage({ zh }: { zh: boolean }) {
   const handleApiError = (error: unknown) => {
     if (error instanceof IAMApiError && error.status === 401) {
       if (iamPortalEnabled()) {
-        void returnToPortal(window.location.pathname + window.location.search);
+        void returnToPortal(addressPath(window.location));
         return;
       }
       const hadSession = Boolean(sessionStorage.getItem("rlark-auth-token"));
@@ -118,6 +119,12 @@ export function IAMPage({ zh }: { zh: boolean }) {
       return;
     }
     setApiError(error instanceof Error ? error.message : text(zh, "requestFailed"));
+  };
+
+  const retrySession = () => {
+    setApiError("");
+    setSessionChecked(false);
+    setSessionAttempt((attempt) => attempt + 1);
   };
 
   useEffect(() => {
@@ -151,7 +158,7 @@ export function IAMPage({ zh }: { zh: boolean }) {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [sessionAttempt]);
 
   const currentUser = users.find((user) => user.id === currentUserId) ?? null;
   const isAdmin = currentUser?.role === "admin";
@@ -326,7 +333,7 @@ export function IAMPage({ zh }: { zh: boolean }) {
 
   const signOut = async () => {
     if (iamPortalEnabled()) {
-      await signOutOfConsole(window.location.pathname);
+      await signOutOfConsole(addressPath(window.location));
       return;
     }
     if (!isMockMode) {
@@ -628,7 +635,18 @@ export function IAMPage({ zh }: { zh: boolean }) {
     </div>)}</div>
   );
 
-  const renderLogin = () => (
+  const renderPortalSession = () => (
+    <div className="iam-state iam-portal-state" role="alert">
+      <p>{zh ? "无法确认当前登录状态，请重试或前往统一登录页。" : "Your session could not be confirmed. Retry, or open the unified sign-in page."}</p>
+      <button type="button" onClick={retrySession}>{text(zh, "retry")}</button>
+      <a href="/login">{zh ? "前往统一登录" : "Open unified sign-in"}</a>
+    </div>
+  );
+
+  const renderLogin = () => {
+    // The published console signs in at /login; this form belongs to upstream builds.
+    if (iamPortalEnabled()) return renderPortalSession();
+    return (
     <section className="iam-login-screen" aria-label={text(zh, "loginTitle")}>
       <div className="iam-login-brand-panel">
         <div className="iam-brand-top">
@@ -665,7 +683,12 @@ export function IAMPage({ zh }: { zh: boolean }) {
         </div>
       </div></div>
     </section>
-  );
+    );
+  };
+
+  // Behind the portal a failed session check is an error the page can retry,
+  // never the native credentials form.
+  const renderSessionGate = () => (iamPortalEnabled() ? renderPortalSession() : renderLogin());
 
   const renderUsers = () => {
     const scenarioBody = isScenario("loading")
@@ -896,7 +919,7 @@ export function IAMPage({ zh }: { zh: boolean }) {
     </div>;
   };
 
-  if (!currentUser) return <div className="iam-page">{!isMockMode && !sessionChecked ? <div className="iam-state" role="status">{text(zh, "checkingSession")}</div> : renderLogin()}{toast && <div className="iam-toast" role="status" aria-live="polite">{toast}</div>}</div>;
+  if (!currentUser) return <div className="iam-page">{!isMockMode && !sessionChecked ? <div className="iam-state" role="status">{text(zh, "checkingSession")}</div> : renderSessionGate()}{toast && <div className="iam-toast" role="status" aria-live="polite">{toast}</div>}</div>;
 
   const pageContent = tab === "users" ? renderUsers() : tab === "roles" ? renderRoles() : tab === "audit" ? renderAudit() : renderProfile();
   return <div className="iam-page">

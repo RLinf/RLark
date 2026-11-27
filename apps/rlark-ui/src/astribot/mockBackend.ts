@@ -1,3 +1,4 @@
+import type { SiteDiscoveryScan } from "./api";
 // The mock console's answers to the Gateway routes this fork adds or changes. mockBackend.ts asks
 // astribotMockRoute first and adds the fields of our storages to the ones it saves.
 import type { CRDNode } from "../types.js";
@@ -129,12 +130,16 @@ const mockSiteNetwork = {
     { clusterID: "rlark-ksyun-gpu", nodeName: "10-0-2-57", role: "Hub", site: "ksyun", address: "10.254.240.2" },
   ],
   nodeClasses: [{ name: "s1u", hasAccess: true, hasDiscovery: true, entryPort: 22, hostKeyFingerprints: ["SHA256:mock-factory-key"] }],
-  status: { observedGeneration: 11, members: 4, unreachable: [], conditions: [
+  status: { observedGeneration: 12, members: 4, unreachable: [], conditions: [
     { type: "Ready", status: "True", reason: "Computed", message: "" },
     { type: "FullyConnected", status: "True", reason: "AllPairsReachable", message: "" },
-    { type: "DiscoveryStale", status: "False", reason: "HubsReport", message: "" },
   ] },
 };
+
+const mockDiscoveryScans = new Map<string, SiteDiscoveryScan>();
+
+// The one restart request the demo's station Nodes remember, by node name.
+const mockRestartRequests = new Map<string, { requestID: string; startedAt: number }>();
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -155,6 +160,25 @@ export interface MockState {
 // The answer to a request on one of our routes; undefined for RLark's own.
 export async function astribotMockRoute(method: string, path: string, request: Request, state: MockState) {
   if (method === "GET" && path === "/api/v1/station/site-network") return json(mockSiteNetwork);
+  const scanRoute = path.match(/^\/api\/v1\/station\/site-network\/sites\/([^/]+)\/scan$/);
+  if (scanRoute && (method === "GET" || method === "POST")) {
+    const siteName = decodeURIComponent(scanRoute[1]);
+    const site = mockSiteNetwork.sites.find((item) => item.name === siteName);
+    if (!site) return json({ code: "RESOURCE_NOT_FOUND", message: "site not found" }, 404);
+    const current = mockDiscoveryScans.get(siteName);
+    if (current?.phase === "Running" && Date.now() - Date.parse(current.startedAt) > 2500) {
+      current.phase = "Succeeded";
+      current.completed = current.total;
+    }
+    if (method === "GET") return json(current ?? null);
+    const { id } = await request.json();
+    if (current && (current.id === id || current.phase === "Running")) return json(current, current.phase === "Running" ? 202 : 200);
+    if (!site.discovery?.enabled) return json({ code: "RESOURCE_CONFLICT", message: "Save scan settings first." }, 409);
+    const total = mockSiteNetwork.members.filter((member) => member.site === siteName && member.role === "Hub").length;
+    const scan: SiteDiscoveryScan = { id, startedAt: new Date().toISOString(), phase: "Running", total, completed: 0, failed: 0 };
+    mockDiscoveryScans.set(siteName, scan);
+    return json(scan, 202);
+  }
   const discoveryRoute = path.match(/^\/api\/v1\/station\/site-network\/sites\/([^/]+)\/discovery$/);
   if (method === "PUT" && discoveryRoute) {
     const body = await request.json();
@@ -165,10 +189,53 @@ export async function astribotMockRoute(method: string, path: string, request: R
     site.discovery = body.discovery;
     mockSiteNetwork.resourceVersion = `mock-rv-${Number(mockSiteNetwork.resourceVersion.split("-").at(-1)) + 1}`;
     mockSiteNetwork.generation += 1;
-    return json({ resourceVersion: mockSiteNetwork.resourceVersion, site });
+    mockSiteNetwork.status.observedGeneration = mockSiteNetwork.generation;
+    return json(mockSiteNetwork);
   }
   // The site-node page's fixtures: the same shapes the Gateway serves, so the real cards and detail render.
   const query = new URL(request.url).searchParams;
+  // The page also reads each station's management Node by name for its power and restart records. The demo has no
+  // such Node objects, so a station's own record answers as one: its bound UID, and one restart that moves from
+  // requested to done. A patch carries the resourceVersion of the read that passed the request check, so a 409 is
+  // reproduced for a second writer.
+  const stationNodeRoute = path.match(/^\/api\/v1\/rlinf\.io\/v1alpha1\/nodes\/([^/]+)$/);
+  const stationOfNode = stationNodeRoute ? mockStations.find((item) => item.metadata.name === decodeURIComponent(stationNodeRoute[1])) : undefined;
+  if (stationNodeRoute && stationOfNode) {
+    const name = stationOfNode.metadata.name;
+    const restart = mockRestartRequests.get(name);
+    const elapsed = restart ? Date.now() - restart.startedAt : 0;
+    const annotations: Record<string, string> = {};
+    if (restart && elapsed >= 20000) {
+      annotations["rlark.io/restart-request-state"] = JSON.stringify({ kind: "host", profile: restart.requestID, attempts: 1, was: "mock-kernel", at: restart.startedAt / 1000, done: new Date(restart.startedAt + 15000).toISOString() });
+      annotations["rlark.io/maintenance"] = JSON.stringify({ kind: "host", of: `request ${restart.requestID}`, state: "acting", why: "mock: rebooting the robot", since: restart.startedAt / 1000 });
+    } else if (restart && elapsed >= 5000) {
+      annotations["rlark.io/maintenance"] = JSON.stringify({ kind: "host", of: `request ${restart.requestID}`, state: "waiting", why: "mock: waiting for the robot to be idle", since: restart.startedAt / 1000 });
+    }
+    const node = {
+      apiVersion: "rlinf.io/v1alpha1",
+      kind: "Node",
+      metadata: {
+        name,
+        namespace: stationOfNode.metadata.namespace,
+        labels: restart ? { "rlark.io/restart-request": restart.requestID } : {},
+        annotations,
+        resourceVersion: restart ? `mock-${restart.startedAt}` : "mock-0",
+      },
+      spec: {},
+      status: { phase: "Running", kubernetesNodeUID: stationOfNode.spec.nodeUID },
+    };
+    if (method === "GET") return json(node);
+    if (method === "PATCH") {
+      const body = await request.json();
+      const resourceVersion = body?.metadata?.resourceVersion;
+      if (resourceVersion !== undefined && resourceVersion !== node.metadata.resourceVersion) {
+        return json({ code: "RESOURCE_CONFLICT", message: "The Node changed before this write." }, 409);
+      }
+      const requestID = body?.metadata?.labels?.["rlark.io/restart-request"];
+      if (requestID) mockRestartRequests.set(name, { requestID, startedAt: Date.now() });
+      return json(node);
+    }
+  }
   if (method === "GET" && path === "/api/v1/station/stations") return json({ items: mockStations });
   if (method === "GET" && path === "/api/v1/site-nodes") {
     const cluster = query.get("cluster_id");

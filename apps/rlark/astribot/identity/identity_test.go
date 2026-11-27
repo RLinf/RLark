@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -40,6 +41,47 @@ func kcpWithTokens() *fake.Clientset {
 var gateway = Component{
 	Name: "rlark-gateway", Namespace: "rlark-system", ServiceAccount: "rlark-gateway",
 	Rules: []rbacv1.PolicyRule{{APIGroups: []string{"rlinf.io"}, Resources: []string{"clusters"}, Verbs: []string{"get"}}},
+}
+
+func TestUpgradeJobPermissions(t *testing.T) {
+	for _, tc := range []struct {
+		component, resource string
+		allowed, denied     []string
+	}{
+		{"rlark-gateway", "upgradejobs", []string{"get", "list", "create", "delete"}, []string{"update", "patch"}},
+		{"rlark-gateway", "upgradejobs/status", nil, []string{"update", "patch"}},
+		{"rlark-gateway", "clusterupgradejobs", nil, []string{"create", "delete"}},
+		{"rlark-controller-manager", "upgradejobs", []string{"get", "list", "watch", "update"}, []string{"create", "delete"}},
+		{"rlark-controller-manager", "upgradejobs/status", []string{"update", "patch"}, nil},
+		{"rlark-controller-manager", "upgradejobs/finalizers", []string{"update", "patch"}, nil},
+		{"rlark-controller-manager", "clusterupgradejobs", []string{"get", "list", "watch", "create", "delete"}, nil},
+		{"rlark-controller-manager", "clusterupgradejobs/status", []string{"get"}, []string{"update", "patch"}},
+	} {
+		t.Run(tc.component+"/"+tc.resource, func(t *testing.T) {
+			components := RLark()
+			index := slices.IndexFunc(components, func(component Component) bool { return component.Name == tc.component })
+			if index < 0 {
+				t.Fatalf("missing component %s", tc.component)
+			}
+			allows := func(verb string) bool {
+				return slices.ContainsFunc(components[index].Rules, func(rule rbacv1.PolicyRule) bool {
+					return (slices.Contains(rule.APIGroups, "*") || slices.Contains(rule.APIGroups, "rlinf.io")) &&
+						(slices.Contains(rule.Resources, "*") || slices.Contains(rule.Resources, tc.resource)) &&
+						(slices.Contains(rule.Verbs, "*") || slices.Contains(rule.Verbs, verb))
+				})
+			}
+			for _, verb := range tc.allowed {
+				if !allows(verb) {
+					t.Errorf("missing permission %s", verb)
+				}
+			}
+			for _, verb := range tc.denied {
+				if allows(verb) {
+					t.Errorf("unexpected permission %s", verb)
+				}
+			}
+		})
+	}
 }
 
 // A component is given an account of its own, bound to its own role, and a kubeconfig that reads a

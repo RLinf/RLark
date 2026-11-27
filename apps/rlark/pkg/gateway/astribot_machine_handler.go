@@ -47,9 +47,10 @@ type machine struct {
 	Address                string `json:"address,omitempty"`
 	MAC                    string `json:"mac,omitempty"`
 	// LastSeen is when a hub of its site last saw the machine.
-	LastSeen  string `json:"last_seen,omitempty"`
-	ClusterID string `json:"cluster_id,omitempty"`
-	NodeName  string `json:"node_name,omitempty"`
+	LastSeen        string `json:"last_seen,omitempty"`
+	DiscoveryScanID string `json:"discovery_scan_id,omitempty"`
+	ClusterID       string `json:"cluster_id,omitempty"`
+	NodeName        string `json:"node_name,omitempty"`
 	// Admissible says whether the machine can be admitted now: one that is
 	// not a node, was read and has no problem, or one whose join stopped.
 	Admissible bool `json:"admissible"`
@@ -153,7 +154,8 @@ func machineView(object *unstructured.Unstructured, joins map[string]*machineJoi
 		Phase: text("status", "phase"), Problem: text("status", "problem"), Message: text("status", "message"), Serial: text("status", "serial"),
 		InspectedAt: text("status", "inspectedAt"), NodeHostKeyFingerprint: text("status", "nodeHostKeyFingerprint"), HostKeyFingerprint: text("status", "entry", "hostKeyFingerprint"),
 		Address: text("status", "entry", "address"), MAC: text("status", "entry", "mac"), LastSeen: text("status", "entry", "lastSeen"),
-		Port: nestedInt64(object.Object, "status", "entry", "port"), HostKeyAlgorithm: text("status", "entry", "hostKeyAlgorithm"), Banner: text("status", "entry", "banner"),
+		DiscoveryScanID: text("status", "entry", "discoveryScanID"),
+		Port:            nestedInt64(object.Object, "status", "entry", "port"), HostKeyAlgorithm: text("status", "entry", "hostKeyAlgorithm"), Banner: text("status", "entry", "banner"),
 		ClusterID: text("status", "clusterID"), NodeName: text("status", "nodeName"),
 		RequestedBy: text("spec", "admit", "requestedBy"), RequestedAt: text("spec", "admit", "requestedAt"), AdmitClusterID: text("spec", "admit", "clusterID"),
 		Join: joins[object.GetName()],

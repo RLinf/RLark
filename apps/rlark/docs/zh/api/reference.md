@@ -2,7 +2,7 @@
 
 本页仅列出 Gateway 在 [`pkg/gateway/router.go`](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/router.go) 中实际注册的 HTTP 路由。可运行请求参见 [API 调用样例](examples.md)，机器可读子集参见 [OpenAPI 规范](../../api/swagger.yaml)。
 
-除 `POST /api/v1/auth/login` 和 `/metrics` 外，Gateway 路由均要求在 `Authorization: Bearer <token>` 请求头中携带登录返回的 JWT。token 默认 8 小时过期，可通过 `--jwt-token-ttl` 配置。缺失或无效 token 返回 `401`；已认证 `user` 调用仅管理员接口返回 `403`。
+除 `POST /api/v1/auth/login` 和 `/metrics` 外，Gateway 路由均要求有效的 Bearer 凭据。除非启用 `--disable-native-login`，原生登录会签发 JWT；启用后该接口返回 HTTP `403`，错误码为 `native_login_disabled`，文案为 `Native username/password login is disabled; use IAM authentication`，且不会设置访问令牌 Cookie。JWT 默认 8 小时过期，可通过 `--jwt-token-ttl` 配置。此开关不影响服务账号令牌。
 
 仅管理员操作包括 Node 和 Domain 变更，以及全部证书、镜像仓库、Addon 接口、系统配置更新和 StorageClass provider/变更接口。系统配置读取及全部 SSH 密钥操作允许任一已认证角色访问。
 
@@ -109,3 +109,8 @@ StorageClass 接口管理控制面声明。Replication 和 Delivery 控制器会
 | `GET` | `/api/v1/installed-addons` |
 | `GET, POST` | `/api/v1/clusters/{cluster_id}/addons` |
 | `GET, PUT, DELETE` | `/api/v1/clusters/{cluster_id}/addons/{name}` |
+# 站点集群态势摘要
+
+`GET /api/v1/station/summary` 会遍历所有 `NetworkEnrollment` 分页，可选传入 `cluster_id`。Gateway 会按 namespace 和同名 RLark Node 关联入网记录。阶段统计读取 `status.node.state`，`Retired` 优先。机器人、电源、占用、自检和相机统计读取该 Node 的标签、注解及条件。Node 缺失时回退到入网记录自身的元数据和条件。
+
+`GET /api/v1/station/stations` 支持 `q`、`phase`、`model`、`zone`、`power_state`、`occupancy`、`alert_only` 和 `sort` 参数。带过滤条件的请求会聚合全部分页后再应用现有 `limit`（1–500）和数字偏移量 `continue`，响应包含 `totalMatched`。`phase` 参数不区分大小写。不带过滤条件时继续使用 Kubernetes 原生 continuation token。

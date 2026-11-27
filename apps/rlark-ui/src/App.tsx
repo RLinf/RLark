@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { Check, CircleDot, CloudCog } from "lucide-react";
 import type { Job } from "./data";
 import { copy, type Lang, type Theme } from "./i18n";
@@ -23,13 +29,24 @@ import { SSHKeysPage } from "./pages/SSHKeys";
 import { AdminApp } from "./admin/AdminApp";
 import { useBackendMode, usePersistentState } from "./hooks";
 import { clearAuthSession, hasAuthSession, UNAUTHORIZED_EVENT } from "./api";
+import {
+  addressPath,
+  portalHomeRedirect,
+  resolvePortalView,
+  retryIamSession,
+  signOutOfConsole,
+  type PortalAuthState,
+} from "./astribot/iam/portal";
 
 type NavigateOptions = {
   replace?: boolean;
   query?: Record<string, string | undefined>;
 };
 
-export default function App() {
+type AppProps = { iamState?: PortalAuthState };
+
+export default function App({ iamState }: AppProps = {}) {
+  const [portalState, setPortalState] = useState(iamState);
   const isAdmin = useIsAdminPath();
   const isTerminal = window.location.pathname === "/terminal";
   const [{ page, sub }, setRoute] = useState(parseRoute);
@@ -64,6 +81,24 @@ export default function App() {
   const { isMockMode } = useBackendMode();
   const c = copy[lang];
   const pageTitle = useMemo(() => c.nav[page], [c, page]);
+  const portalView = portalState
+    ? resolvePortalView(portalState, window.location.pathname)
+    : undefined;
+  const loggedIn = portalView
+    ? portalView.kind === "console" || portalView.kind === "admin"
+    : userLoggedIn;
+  const portalRedirected = useRef(false);
+
+  useEffect(() => {
+    if (iamState) setPortalState(iamState);
+  }, [iamState]);
+
+  useEffect(() => {
+    const target = portalView ? portalHomeRedirect(portalView) : undefined;
+    if (!target || portalRedirected.current) return;
+    portalRedirected.current = true;
+    window.location.replace(target);
+  }, [portalView]);
 
   useEffect(() => {
     document.title = isTerminal
@@ -129,9 +164,51 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [jobSubmitNotice]);
 
-  if (isAdmin) return <AdminApp />;
-  if (!userLoggedIn && !(isTerminal && terminalLoggedIn)) {
+  const retryPortal = () => {
+    setPortalState({ status: "loading" });
+    void retryIamSession().then((state) => {
+      if (state) setPortalState(state);
+    });
+  };
+
+  if (portalView) {
+    if (portalView.kind === "error")
+      return (
+        <PortalError
+          lang={lang}
+          reason={portalView.reason}
+          onRetry={retryPortal}
+        />
+      );
+    if (portalView.kind === "pending")
+      return (
+        <PortalStatus
+          message={lang === "zh" ? "正在确认登录状态…" : "Confirming your session…"}
+        />
+      );
+    if (portalView.kind === "home")
+      return (
+        <PortalStatus
+          message={
+            lang === "zh"
+              ? "当前账号没有管理后台权限，正在返回控制台…"
+              : "This account has no admin access. Returning to the console…"
+          }
+        />
+      );
+  }
+  if (isAdmin)
     return (
+      <AdminApp
+        portalRole={portalView?.kind === "admin" ? "admin" : undefined}
+      />
+    );
+  if (!loggedIn && !(isTerminal && terminalLoggedIn)) {
+    return portalView ? (
+      <PortalStatus
+        message={lang === "zh" ? "正在确认登录状态…" : "Confirming your session…"}
+      />
+    ) : (
       <UserLogin
         lang={lang}
         onLogin={(name) => {
@@ -272,6 +349,10 @@ export default function App() {
           userName={userName}
           onCreate={() => setCreateOpen(true)}
           onLogout={() => {
+            if (portalView) {
+              void signOutOfConsole(addressPath(window.location));
+              return;
+            }
             clearAuthSession();
             setUserLoggedIn(false);
           }}
@@ -415,6 +496,60 @@ export default function App() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+const portalScreenStyle: CSSProperties = {
+  display: "grid",
+  placeItems: "center",
+  alignContent: "center",
+  gap: 16,
+  minHeight: "100vh",
+  padding: 24,
+  background: "#f6f4fc",
+  color: "#403773",
+  font: "500 15px/1.5 system-ui, sans-serif",
+  textAlign: "center",
+};
+
+function PortalStatus({ message }: { message: string }) {
+  return (
+    <div className="portal-status" role="status" style={portalScreenStyle}>
+      <span>{message}</span>
+    </div>
+  );
+}
+
+function PortalError({
+  lang,
+  reason,
+  onRetry,
+}: {
+  lang: Lang;
+  reason: string;
+  onRetry: () => void;
+}) {
+  const zh = lang === "zh";
+  return (
+    <div
+      className="portal-status portal-status-error"
+      role="alert"
+      data-reason={reason}
+      style={portalScreenStyle}
+    >
+      <h2>{zh ? "无法确认登录状态" : "Unable to confirm your session"}</h2>
+      <p>
+        {zh
+          ? "统一登录服务暂时不可用，请重试或前往统一登录页。"
+          : "The unified sign-in service is unavailable. Retry, or open the sign-in page."}
+      </p>
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <button type="button" className="primary-button" onClick={onRetry}>
+          {zh ? "重试" : "Retry"}
+        </button>
+        <a href="/login">{zh ? "前往统一登录" : "Open unified sign-in"}</a>
+      </div>
     </div>
   );
 }

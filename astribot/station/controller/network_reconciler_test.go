@@ -849,7 +849,9 @@ func TestNetworkTellsTheHubsOfADiscoverySiteWhatToLookForAndSaysWhenOneGoesSilen
 		}
 		return nil
 	}
-	stale() // the hub enrolls
+	if condition := stale(); condition != nil {
+		t.Fatalf("an idle site has no scan freshness condition: %+v", condition)
+	}
 
 	hub := enrollmentStatus(t, c, "robot-01", "cp")
 	want := &network.Discovery{Ranges: []string{"192.168.31.0/24"}, IntervalSeconds: 30, Ports: []int{22}, HostKeys: []string{factory}, RelayPort: network.DiscoveryRelayPort, RelayFrom: "10.254.240.1"}
@@ -874,30 +876,6 @@ func TestNetworkTellsTheHubsOfADiscoverySiteWhatToLookForAndSaysWhenOneGoesSilen
 	stale()
 	if got := configOf(t, enrollmentStatus(t, c, "robot-01", "cp")).Discovery; got == nil || !slices.Equal(got.HostKeys, []string{factory, rotated}) {
 		t.Fatalf("what the lab's hub looks for with a joined machine: %+v", got)
-	}
-
-	// A hub that has not reported yet, one that reports, one that has stopped.
-	if condition := stale(); condition == nil || condition.Status != metav1.ConditionTrue || !strings.Contains(condition.Message, "site lab: hub robot-01/cp") || !strings.Contains(condition.Message, "never") {
-		t.Fatalf("a hub that never reported: %+v", condition)
-	}
-	report := func(ago time.Duration) {
-		t.Helper()
-		var enrollment stationv1alpha1.NetworkEnrollment
-		if err := c.Get(ctx, types.NamespacedName{Namespace: "ns-robot-01", Name: "cp"}, &enrollment); err != nil {
-			t.Fatal(err)
-		}
-		enrollment.Annotations = map[string]string{DiscoveryReportedAnnotation: time.Unix(1_800_000_000, 0).Add(-ago).UTC().Format(time.RFC3339)}
-		if err := c.Update(ctx, &enrollment); err != nil {
-			t.Fatal(err)
-		}
-	}
-	report(90 * time.Second)
-	if condition := stale(); condition == nil || condition.Status != metav1.ConditionFalse {
-		t.Fatalf("a hub that reported three intervals ago: %+v", condition)
-	}
-	report(91 * time.Second)
-	if condition := stale(); condition == nil || condition.Status != metav1.ConditionTrue || !strings.Contains(condition.Message, "last at 2027-01-15T07:58:29Z") {
-		t.Fatalf("a hub silent for more than three intervals: %+v", condition)
 	}
 
 	// Without a site that looks, the network says nothing of looking.

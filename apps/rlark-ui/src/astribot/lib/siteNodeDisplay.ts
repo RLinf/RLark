@@ -153,6 +153,7 @@ export interface Machine {
   // same network.
   mac?: string;
   last_seen?: string;
+  discovery_scan_id?: string;
   cluster_id?: string;
   node_name?: string;
   // It can be ticked: it was read and has no problem, or its join stopped.
@@ -230,6 +231,13 @@ export function machineStateLabel(machine: Pick<Machine, "phase" | "problem">, z
 export function unjoinedMachines(machines: Machine[], clusterID: string): Machine[] {
   return machines.filter((machine) => machine.phase !== "Joined" && !(machine.joining && machine.admit_cluster_id === clusterID)).sort((a, b) =>
     Number(b.admissible) - Number(a.admissible) || (b.last_seen ?? "").localeCompare(a.last_seen ?? ""));
+}
+
+export function scanJoinMachines(machines: Machine[], clusterID: string, now: number, scanID?: string): Machine[] {
+  return [
+    ...unjoinedMachines(machines, clusterID).filter((machine) => scanID && machine.discovery_scan_id === scanID && !machineUnseen(machine, now)),
+    ...machines.filter((machine) => machine.joining && machine.admit_cluster_id === clusterID),
+  ];
 }
 
 export type ReachState = "ok" | "fail" | "checking" | "unknown";
@@ -369,6 +377,71 @@ export function robotPowerAfter(action: RobotPowerAction, desired: RobotPowerDes
   return ({ power_on: desired === "off" ? "powered" : desired, driver_on: "ready", driver_off: desired === "off" ? "off" : "powered", power_off: "off" } as const)[action];
 }
 
+// Why a power or driver button cannot be used from the state the robot reports now: "" when it can. The robot's
+// power service still has the final say; this only keeps a control that cannot act on the current state from
+// looking available, and says what is in the way.
+export function robotPowerActionBlocked(action: RobotPowerAction, state: RobotPowerState | "", zh: boolean): string {
+  const alert = state === "estop" ? (zh ? "急停已按下，先解除急停" : "The emergency stop is pressed; release it first")
+    : state === "fault" ? (zh ? "电源状态为硬件报错" : "The power reports a hardware error")
+      : state === "unknown" ? (zh ? "读不到电源状态，电源服务会拒绝" : "The power state is unreadable; the power service will refuse")
+        : "";
+  const unreported = !state ? (zh ? "电源状态未上报" : "The power state has not been reported") : "";
+  if (action === "power_on") {
+    if (state === "powered") return zh ? "已上电" : "Already powered";
+    if (state === "ready") return zh ? "已上电，驱动在跑" : "Powered; the driver is running";
+    return alert;
+  }
+  if (action === "power_off") {
+    if (state === "off") return zh ? "已下电" : "Already off";
+    return state === "unknown" ? alert : "";
+  }
+  if (action === "driver_on") {
+    if (state === "off") return zh ? "先上电" : "Power it on first";
+    if (state === "ready") return zh ? "驱动已在跑" : "The driver is already running";
+    if (state === "powered") return "";
+    return alert || unreported;
+  }
+  if (state === "off") return zh ? "未上电" : "Power is off";
+  if (state === "powered") return zh ? "驱动已停" : "The driver is already stopped";
+  if (state === "ready") return "";
+  return alert || unreported;
+}
+
+// Roughly how long the device takes for this action: a hint for the accepted-but-not-observed state, not a timeout.
+export function robotPowerActionTiming(action: RobotPowerAction, zh: boolean): string {
+  return zh
+    ? ({ power_on: "上电约十几秒", power_off: "下电约十几秒", driver_on: "驱动启动约几秒", driver_off: "驱动关闭约几秒" } as const)[action]
+    : ({ power_on: "power-on takes seconds to tens of seconds", power_off: "power-off takes seconds to tens of seconds", driver_on: "the driver starts in a few seconds", driver_off: "the driver stops in a few seconds" } as const)[action];
+}
+
+// The long-form caveat shown in a tooltip: powering on again waits about ten seconds after a power-off.
+export function robotPowerActionWait(action: RobotPowerAction, zh: boolean): string {
+  const timing = robotPowerActionTiming(action, zh);
+  return action === "power_on"
+    ? (zh ? `${timing}；刚下电后约 10 秒内不能再上电` : `${timing}; after a power-off, powering on waits about 10 s`)
+    : timing;
+}
+
+// The visible line under a tile's controls: what in the current state makes one of them unavailable. Empty while
+// the robot reports a state in which the relevant control can act.
+export function robotPowerStateNote(state: RobotPowerState | "", zh: boolean): string {
+  return zh
+    ? ({ off: "未上电：启动驱动与回位需先上电", estop: "急停已按下：上电与启动驱动不可用，下电仍可下发", fault: "硬件报错：上电与启动驱动不可用，下电仍可下发", unknown: "读不到电源状态：操作可能被电源服务拒绝", "": "电源状态未上报：驱动操作暂不可用" } as Record<string, string>)[state] ?? ""
+    : ({ off: "Power is off: start the driver and home need power first", estop: "Emergency stop pressed: power-on and start-driver are unavailable; power-off can still be sent", fault: "Hardware error: power-on and start-driver are unavailable; power-off can still be sent", unknown: "The power state is unreadable: the power service may refuse the command", "": "The power state has not been reported: driver controls wait for it" } as Record<string, string>)[state] ?? "";
+}
+
+// The power service's own explanation, rlark.io/power {waiting}: why the robot is not converging on the desired
+// state now (in use, the 10-second wait after a power-off, a pressed emergency stop, the vendor's service).
+export function robotPowerWaiting(annotation?: string): string {
+  if (!annotation) return "";
+  try {
+    const parsed = JSON.parse(annotation) as { waiting?: unknown };
+    return typeof parsed.waiting === "string" ? parsed.waiting.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 // Why the robot's power service refused a hold-to-move pose (409 {reason}): maintenance carries its why.
 export function robotPoseRefusalLabel(reason: string, zh: boolean): string {
   const [kind, why] = reason.split(/:\s*/, 2);
@@ -409,9 +482,10 @@ export function unseenMachineOf(machines: Machine[], clusterID: string, nodeName
   return machine && !machineUnseen(machine, now) ? undefined : machine;
 }
 
-// No hub has seen the machine's entry device for ten minutes (a hub looks at its site's network every 30 s).
-export function machineUnseen(machine: Pick<Machine, "last_seen">, now: number): boolean {
-  return !(now - Date.parse(machine.last_seen ?? "") < 10 * 60 * 1000);
+// Allow three configured scan intervals, with a minimum window of ten minutes.
+export function machineUnseen(machine: Pick<Machine, "last_seen">, now: number, intervalSeconds = 30): boolean {
+  const windowMs = Math.max(10 * 60 * 1000, 3 * intervalSeconds * 1000);
+  return !(now - Date.parse(machine.last_seen ?? "") < windowMs);
 }
 
 const two = (value: number) => String(value).padStart(2, "0");

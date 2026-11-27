@@ -22,7 +22,12 @@ export interface InterceptedEvent {
 }
 
 export interface PortalHost {
-  location: { pathname: string; search: string; replace(url: string): void };
+  location: {
+    pathname: string;
+    search: string;
+    hash?: string;
+    replace(url: string): void;
+  };
   fetch(input: string, init: RequestInit): Promise<Response>;
   intercept(type: string, listener: (event: InterceptedEvent) => void): void;
   cover(message: string): void;
@@ -32,14 +37,52 @@ export interface PortalHost {
   broadcastLogout(): void;
 }
 
+// What the console renders from. The server session alone decides: a timeout,
+// a 5xx or a truncated body is reported as an error the page can retry, never
+// as a reason to trust a token left over in sessionStorage.
+export type PortalAuthState =
+  | { status: "loading" }
+  | { status: "authenticated"; role: "admin" | "user"; userName: string }
+  | { status: "unauthenticated" }
+  | { status: "error"; reason: string };
+
+export type PortalView =
+  | { kind: "pending" }
+  | { kind: "error"; reason: string }
+  | { kind: "console" }
+  | { kind: "admin" }
+  | { kind: "home" };
+
 export type IamPortal = ReturnType<typeof createIamPortal>;
+
+export function addressPath(location: {
+  pathname: string;
+  search: string;
+  hash?: string;
+}): string {
+  return `${location.pathname}${location.search}${location.hash ?? ""}`;
+}
 
 export function portalPath(path: string): string {
   return `/login?next=${encodeURIComponent(path)}`;
 }
 
-function consolePath(host: PortalHost): string {
-  return host.location.pathname + host.location.search;
+function isAdminPathname(pathname: string): boolean {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
+}
+
+export function resolvePortalView(
+  state: PortalAuthState,
+  pathname: string,
+): PortalView {
+  if (state.status === "error") return { kind: "error", reason: state.reason };
+  if (state.status !== "authenticated") return { kind: "pending" };
+  if (!isAdminPathname(pathname)) return { kind: "console" };
+  return state.role === "admin" ? { kind: "admin" } : { kind: "home" };
+}
+
+export function portalHomeRedirect(view: PortalView): string | undefined {
+  return view.kind === "home" ? "/" : undefined;
 }
 
 function isSignOutButton(target: unknown): boolean {
@@ -76,7 +119,6 @@ function leaveMessage(destination: "portal" | "console" | "sign-out"): string {
 }
 
 export function createIamPortal(host: PortalHost) {
-  const parked = new Promise<void>(() => {});
   let leaving = false;
 
   function beginDeparture(message: string): boolean {
@@ -87,15 +129,14 @@ export function createIamPortal(host: PortalHost) {
   }
 
   function leave(path: string, broadcast = false): Promise<void> {
-    if (!beginDeparture(leaveMessage("portal"))) return parked;
+    if (!beginDeparture(leaveMessage("portal"))) return Promise.resolve();
     clearAuthSession();
     if (broadcast) host.broadcastLogout();
     host.location.replace(portalPath(path));
-    return parked;
+    return Promise.resolve();
   }
 
-  async function syncSession(): Promise<void> {
-    const existingToken = sessionStorage.getItem(tokenKey);
+  async function checkSession(): Promise<PortalAuthState> {
     const timeout = requestSignal();
     let response: Response;
     try {
@@ -106,35 +147,46 @@ export function createIamPortal(host: PortalHost) {
         signal: timeout.signal,
       });
     } catch {
-      if (leaving) return;
-      if (!existingToken) await leave(consolePath(host));
-      return;
+      return { status: "error", reason: "unreachable" };
     } finally {
       timeout.dispose();
     }
 
-    if (leaving) return;
     if (response.status === 401) {
-      await leave(consolePath(host));
-      return;
+      clearAuthSession();
+      return { status: "unauthenticated" };
     }
     if (!response.ok) {
-      if (!existingToken) await leave(consolePath(host));
-      return;
+      return { status: "error", reason: `http_${response.status}` };
     }
 
     let session: PortalSession;
     try {
       session = (await response.json()) as PortalSession;
     } catch {
-      if (!existingToken) await leave(consolePath(host));
-      return;
+      return { status: "error", reason: "incomplete" };
     }
-    if (typeof session.token === "string" && session.token && typeof session.user?.username === "string") {
+    if (
+      typeof session.token === "string" &&
+      session.token &&
+      typeof session.user?.username === "string"
+    ) {
       storeSession(session);
-      return;
+      return {
+        status: "authenticated",
+        role: session.role === "admin" ? "admin" : "user",
+        userName: session.user.username,
+      };
     }
-    if (!existingToken) await leave(consolePath(host));
+    return { status: "error", reason: "incomplete" };
+  }
+
+  async function refresh(): Promise<PortalAuthState> {
+    if (leaving) return { status: "unauthenticated" };
+    const state = await checkSession();
+    if (leaving) return state;
+    if (state.status === "unauthenticated") void leave(addressPath(host.location));
+    return state;
   }
 
   async function signOut(path: string): Promise<void> {
@@ -165,11 +217,11 @@ export function createIamPortal(host: PortalHost) {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      void signOut(consolePath(host));
+      void signOut(addressPath(host.location));
     });
     host.intercept(UNAUTHORIZED_EVENT, (event) => {
       event.stopImmediatePropagation();
-      void leave(consolePath(host));
+      void leave(addressPath(host.location));
     });
     host.onNativeSignIn(() => {
       if (sessionStorage.getItem(tokenKey)) {
@@ -177,12 +229,12 @@ export function createIamPortal(host: PortalHost) {
         host.location.replace("/");
         return;
       }
-      void leave(consolePath(host));
+      void leave(addressPath(host.location));
     });
     host.onPageShow((persisted) => {
-      if (persisted && !leaving) void syncSession();
+      if (persisted) void refresh();
     });
-    host.onLogoutBroadcast(() => void leave(consolePath(host)));
+    host.onLogoutBroadcast(() => void leave(addressPath(host.location)));
   }
 
   return {
@@ -190,9 +242,12 @@ export function createIamPortal(host: PortalHost) {
     returnToPortal(path: string): Promise<void> {
       return leave(path);
     },
-    enter(): Promise<void> {
+    enter(): Promise<PortalAuthState> {
       keepNativeSignInOut();
-      return syncSession();
+      return refresh();
+    },
+    retry(): Promise<PortalAuthState> {
+      return refresh();
     },
   };
 }
@@ -232,11 +287,14 @@ function browserHost(): PortalHost {
     onNativeSignIn: (callback) => {
       const root = document.getElementById("root");
       if (!root || typeof MutationObserver === "undefined") return;
+      // Last line of defence only: the console decides from the session state
+      // before rendering, so a native form should never be mounted here.
+      const nativeSignIn = ".admin-login-page, .iam-login-screen";
       new MutationObserver((records) => {
         for (const record of records) {
           for (const node of record.addedNodes) {
             if (!(node instanceof Element)) continue;
-            if (!node.matches(".admin-login-page") && !node.querySelector(".admin-login-page")) continue;
+            if (!node.matches(nativeSignIn) && !node.querySelector(nativeSignIn)) continue;
             callback();
             return;
           }
@@ -265,8 +323,12 @@ function iamPortal(): IamPortal {
   return portal;
 }
 
-export function enterIamPortal(): Promise<void> {
-  return iamPortalEnabled() ? iamPortal().enter() : Promise.resolve();
+export function enterIamPortal(): Promise<PortalAuthState | undefined> {
+  return iamPortalEnabled() ? iamPortal().enter() : Promise.resolve(undefined);
+}
+
+export function retryIamSession(): Promise<PortalAuthState | undefined> {
+  return iamPortalEnabled() ? iamPortal().retry() : Promise.resolve(undefined);
 }
 
 export function signOutOfConsole(path: string): Promise<void> {

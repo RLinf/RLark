@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { joinStageLabel, joinStageNeedsPassword, joinStages, nodeJoinView } from "../dist/test/astribot/lib/nodeJoin.js";
+import { joinStageLabel, joinStageNeedsPassword, joinStages, nodeJoinView, parseSSHLogin } from "../dist/test/astribot/lib/nodeJoin.js";
 
 const join = (phase, stage, stages) => ({
   apiVersion: "rlinf.io/v1alpha1",
@@ -34,6 +34,17 @@ test("a retry logs in again up to install; after it, it does not", () => {
   const ready = nodeJoinView(join("Failed", "node-ready", [{ name: "node-ready", state: "Failed" }]), "zh");
   assert.equal(ready.canRetry, true);
   assert.equal(ready.retryNeedsPassword, false);
+});
+
+test("a recorded SSH login maps back to the address, account and port the rejoin form starts with", () => {
+  assert.deepEqual(parseSSHLogin("root@180.76.174.250:8023"), { address: "180.76.174.250", user: "root", port: "8023" });
+  assert.deepEqual(parseSSHLogin("ubuntu@10.11.107.154:22"), { address: "10.11.107.154", user: "ubuntu", port: "22" });
+  // net.JoinHostPort brackets IPv6 and always carries the port.
+  assert.deepEqual(parseSSHLogin("root@[fd00::1]:2222"), { address: "fd00::1", user: "root", port: "2222" });
+  // A bare address still maps; user and port stay unknown rather than invented.
+  assert.deepEqual(parseSSHLogin("10.11.107.154"), { address: "10.11.107.154" });
+  assert.equal(parseSSHLogin(""), undefined);
+  assert.equal(parseSSHLogin(undefined), undefined);
 });
 
 test("clearing logs in to the machine only to take away a tunnel its code's line has not used", () => {

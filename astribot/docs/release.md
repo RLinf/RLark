@@ -72,6 +72,8 @@ astribot/release/build.sh base <RLark 提交>                      # 安装器�
 
 - `s1u-robot` v1.7.2（Run 里重启、时钟）：电源容器执行认领者经 Gateway `POST nodes/{name}/robot-restart` 要的重启，只在每个在用标记都写着该 Run（`... Run <id> ...`）时做，所以要和在用标记写明 Run 的 Fleet 设备层（`deviceImage`）同一次 `apply`，旧设备层的标记会让重启以“in use by others”失败（不动机器人）。`clock` 容器只读挂载 `/run/rlark/in-use`，只在驱动停、没认领、没在用时跳；`timeSource` 由 `pinned.yaml` 带来（`time.rlark.internal`，每个站点在 SiteNetwork `names` 里指到本站 Hub；`clock` 容器挂机器自己的 `/etc/hosts`，Hub 换地址只改 `names`，不用重启 Pod）。新的 Gateway 和 agent（`rlark/agent`）同一次上线：agent 把管理面的 `rlark.io/robot-restart` 和 Station 标记 `rlark.io/station-mark-set` 带到成员集群的节点上（机器人灯的停用/维修从这里读）。重启在设备层还有会话时（`s1u-device` 标记在）失败，Fleet Runner 先排空会话再请求。
 
+- `s1u-robot` v1.7.3 提供本体快照与相机采集时间戳。与包含本体接口的 Gateway 和控制台配套发布。旧 Addon 仍可提供相机画面，页面在缺少采集时间戳时将端到端延迟显示为「—」。正式发布保持现有按空闲逐台替换策略，首台验证关节、末端位姿、两路相机、FPS 和延迟后再继续观察其余节点。
+
 ## 提高文档级别的改动（分两次 apply）
 
 阶段 `controller` 的门 `gateways-understand: N` 在 `station-agents`（换网关）之前：新级别的 controller 要等所有网关先认得新文档。所以给文档加字段的提交（`documentLevel` 加一）分两次上线，两次用同一个提交（同一棵树、同一个 `rlarkctl`）：
@@ -109,7 +111,7 @@ rlarkctl release apply -e environments/live.yaml -r releases/<名字>.yaml --tre
 |---|---|---|
 | `images` | 发布里办公室仓库缺的镜像，从金山云仓库按摘要拷进来 | 逐个读回 |
 | `prewarm` | 控制面的镜像预先拉到管理机 | `nodes-unpressured` |
-| `crds-rbac` | `rlinf.io`、`station.rlark.io` 的 CRD；station-api / controller 的管理面 RBAC；各成员集群的 Station RBAC | — |
+| `crds-rbac` | `rlinf.io`、`station.rlark.io` 的 CRD；RLark 组件（含集群升级所需的 Gateway 和 Controller Manager 角色）和 Station 的管理面 RBAC；各成员集群的 Station RBAC | — |
 | `gateway` | 控制面 gateway 容器（和 compose、env 文件） | `clusters-online`、`addons-ready` |
 | `station-api` | Deployment station-api；安装器放到 Station API 的机器上 | `enrollments-enrolled`、`observations-fresh` |
 | `controller` | Deployment station-controller（先等所有网关认得新文档级别） | `documents-unchanged`、`enrollments-enrolled`、`network-connected` |

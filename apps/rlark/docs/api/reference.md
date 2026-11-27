@@ -2,7 +2,7 @@
 
 This page lists the HTTP routes registered by the Gateway in [`pkg/gateway/router.go`](https://github.com/RLinf/RLark/tree/main/apps/rlark/pkg/gateway/router.go). For runnable requests, see [API Examples](examples.md). The machine-readable subset is available as the [OpenAPI specification](swagger.yaml).
 
-Except for `POST /api/v1/auth/login` and `/metrics`, Gateway routes require the JWT returned by login in the `Authorization: Bearer <token>` header. Tokens expire after 8 hours by default; configure the lifetime with `--jwt-token-ttl`. A missing or invalid token returns `401`; an authenticated `user` calling an admin-only route returns `403`.
+Except for `POST /api/v1/auth/login` and `/metrics`, Gateway routes require a valid bearer credential. Native login issues a JWT unless `--disable-native-login` is enabled. That option returns HTTP `403` with code `native_login_disabled` and message `Native username/password login is disabled; use IAM authentication`; it does not set an access-token cookie. JWTs expire after 8 hours by default (`--jwt-token-ttl`). Service-account tokens remain valid independently of this option.
 
 Admin-only operations are Node and Domain mutations, all certificate, image registry, and Addon routes, system configuration updates, plus StorageClass provider and mutation routes. System configuration reads and all SSH key operations accept either authenticated role.
 
@@ -109,3 +109,8 @@ StorageClass routes manage control-plane declarations. Replication and Delivery 
 | `GET` | `/api/v1/installed-addons` |
 | `GET, POST` | `/api/v1/clusters/{cluster_id}/addons` |
 | `GET, PUT, DELETE` | `/api/v1/clusters/{cluster_id}/addons/{name}` |
+# Station fleet summary
+
+`GET /api/v1/station/summary` aggregates every `NetworkEnrollment` page and accepts optional `cluster_id`. The Gateway associates each enrollment with the same-name RLark Node in its namespace. Phase counts use `status.node.state` with `Retired` taking precedence. Robot, power, occupancy, self-check, and camera metrics come from that Node's labels, annotations, and conditions. Missing Nodes fall back to the enrollment's own metadata and conditions.
+
+`GET /api/v1/station/stations` accepts `q`, `phase`, `model`, `zone`, `power_state`, `occupancy`, `alert_only`, and `sort`. Filtered requests aggregate all pages before applying the existing `limit` (1–500) and a numeric offset in `continue`; responses include `totalMatched`. Phase filters are case-insensitive. Requests without filters retain Kubernetes continuation tokens.

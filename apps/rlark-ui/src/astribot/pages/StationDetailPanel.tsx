@@ -1,5 +1,5 @@
 import { type KeyboardEvent } from "react";
-import { AlertTriangle, Fingerprint, KeyRound, ListFilter, Power } from "lucide-react";
+import { AlertTriangle, ChevronDown, Fingerprint, KeyRound, ListFilter, Power } from "lucide-react";
 import type { ClusterSummary } from "../../types";
 import type { StationItem } from "../api";
 import { formatChinaDateTime } from "../../utils/time.js";
@@ -9,13 +9,14 @@ import { NodeLinks } from "../components/NodeLinks";
 import { RobotPoseButton } from "../components/RobotControls";
 import { cameraCells, publishedCameras, type CameraView } from "../lib/cameras";
 import { admissionLabels, conditionView, stationDeleteReason } from "../lib/stationDrawer";
-import { stationNetworkState, stationPhase, stationPhaseLabel, stationStatusClass, shortUID } from "../lib/stationDisplay";
+import { stationNetworkState, stationPhase, stationPhaseLabel, stationRecoveryHint, stationStatusClass, shortUID } from "../lib/stationDisplay";
 import {
   admissionStateClass, isRobotNode, robotMaintenanceLabel, robotMaintenanceState,
   robotPowerDesired, robotPowerState, robotPowerStateClass, robotPowerStateLabel, robotSelfCheckLabel,
   robotSelfCheckState, type NodeAdmission, type RobotPowerAction, type SiteNode,
 } from "../lib/siteNodeDisplay";
 import { CopyValue, DetailField, NetworkBadge } from "./StationFields";
+import { StationBodyStatePanel } from "./StationBodyStatePanel";
 import { StationRunningImages } from "./StationRunningImages";
 
 export interface StationPower {
@@ -101,6 +102,7 @@ export function StationDetailPanel({
       </div>
       <div className="station-detail-actions">
         <div className="station-detail-action-row" role="group" aria-label={zh ? "记录操作" : "Record actions"}>
+          <button type="button" className="secondary-button" onClick={onRefresh}>{zh ? "重新检测" : "Re-check"}</button>
           <button type="button" className="secondary-button" disabled={reissueDisabled} aria-describedby={reissueReason ? `${detailsID}-reissue-reason` : undefined} onClick={onReissue}>{admissionPending === "reissue" ? (zh ? "重发中…" : "Reissuing…") : (zh ? "重发入网码" : "Reissue code")}</button>
           <button type="button" className="secondary-button" disabled={revokeDisabled} aria-describedby={revokeReason ? `${detailsID}-revoke-reason` : undefined} onClick={onRevoke}>{admissionPending === "revoke" ? (zh ? "作废中…" : "Revoking…") : (zh ? "作废入网码" : "Revoke code")}</button>
           <button type="button" className="secondary-button danger" disabled={deleteDisabled} aria-describedby={deleteReason ? deleteReasonID : undefined} onClick={onDelete}>{deleting ? (zh ? "删除中…" : "Deleting…") : (zh ? "删除记录" : "Delete record")}</button>
@@ -114,6 +116,8 @@ export function StationDetailPanel({
 
     {refreshError && <div className="cert-error station-detail-alert" role="alert"><span>{refreshError}</span><button type="button" className="secondary-button" onClick={onRefresh}>{zh ? "重试" : "Retry"}</button></div>}
 
+    {!retired && phase !== "Bound" && <p className="station-detail-recovery" role="note">{stationRecoveryHint(station, now, zh)}</p>}
+
     {phase === "Conflict" && <div className="station-detail-conflict" role="note">
       <AlertTriangle size={16} aria-hidden="true" />
       <div><strong>{zh ? "节点 UID 变了" : "Node UID changed"}</strong>
@@ -124,58 +128,6 @@ export function StationDetailPanel({
         </dl>
       </div>
     </div>}
-
-    <div className="station-detail-columns">
-      <section className="station-detail-column" aria-label={zh ? "身份" : "Identity"}>
-        <h4><Fingerprint size={14} aria-hidden="true" />{zh ? "身份" : "Identity"}</h4>
-        <dl className="station-detail-fields">
-          <DetailField label={zh ? "记录名" : "Record name"}><CopyValue value={station.metadata.name} zh={zh} /></DetailField>
-          <DetailField label={zh ? "集群" : "Cluster"}><strong>{cluster?.name ?? (zh ? "集群未确定" : "Cluster unresolved")}</strong></DetailField>
-          <DetailField label={zh ? "集群 ID" : "Cluster ID"}><CopyValue value={cluster?.id} zh={zh} /></DetailField>
-          <DetailField label={zh ? "声明类型 / 型号" : "Declared type / model"}><strong>{[siteNode?.declared_type, siteNode?.declared_model].filter(Boolean).join(" · ") || "—"}</strong></DetailField>
-          <DetailField label={zh ? "观测类型 / 型号" : "Observed type / model"}><strong>{[siteNode?.observed_type, siteNode?.observed_model].filter(Boolean).join(" · ") || "—"}{siteNode?.identity_verified && <small className={siteNode.identity_verified === "False" ? "is-alert" : undefined}>{siteNode.identity_verified}{siteNode.identity_reason ? ` · ${siteNode.identity_reason}` : ""}</small>}</strong></DetailField>
-          <DetailField label="Node UID"><CopyValue value={station.spec.nodeUID} zh={zh} /></DetailField>
-          <DetailField label="System UUID"><CopyValue value={station.status?.observation?.systemUUID} zh={zh} /></DetailField>
-        </dl>
-        {cameraIssues.length > 0 && <div className="station-detail-diagnostics">
-          <h5>{zh ? "相机诊断" : "Camera diagnostics"}</h5>
-          <ul>{cameraIssues.map((cell) => <li key={cell.view}><strong>{cell.name} · {cell.badge}</strong>{(cell.note || cell.advice) && <small>{[cell.note, cell.advice].filter(Boolean).join(" · ")}</small>}</li>)}</ul>
-        </div>}
-      </section>
-
-      <section className="station-detail-column" aria-label={zh ? "网络与入网" : "Network and admission"}>
-        <h4><KeyRound size={14} aria-hidden="true" />{zh ? "网络与入网" : "Network and admission"}</h4>
-        {siteDataState === "loading" && <p className="station-detail-note" role="status">{zh ? "正在读取网络与入网信息…" : "Loading network and admission details…"}</p>}
-        {siteDataState === "unavailable" && <p className="station-detail-note">{zh ? "网络与入网信息暂不可用。" : "Network and admission details are unavailable."}</p>}
-        <dl className="station-detail-fields">
-          <DetailField label={zh ? "网络已验证" : "Network verified"}><NetworkBadge state={networkState} zh={zh} /></DetailField>
-          <DetailField label={zh ? "WireGuard 公钥" : "WireGuard public key"} wide><CopyValue value={siteNode?.network?.public_key ?? admission?.public_key} zh={zh} /></DetailField>
-          <DetailField label={zh ? "隧道地址" : "Tunnel address"} wide><CopyValue value={admission?.tunnel_address} zh={zh} /></DetailField>
-          <DetailField label={zh ? "入网状态" : "Admission status"}><span className={`status ${admission ? admissionStateClass(admission.state) : "status-stopped"}`}><i />{admissionFor.state}</span></DetailField>
-          <DetailField label={zh ? "发码人" : "Issued by"}><strong>{admissionFor.issuer}</strong></DetailField>
-          <DetailField label={zh ? "过期时间" : "Expires"}><strong>{formatChinaDateTime(admission?.expires_at)}</strong></DetailField>
-          <DetailField label={zh ? "SSH 登录" : "SSH login"} wide>{admission?.ssh_login ? <code className="inline-code">{admission.ssh_login}</code> : <strong>—</strong>}</DetailField>
-          <DetailField label={zh ? "SSH 主机指纹" : "SSH host fingerprint"} wide><CopyValue value={admission?.ssh_host_key} zh={zh} /></DetailField>
-          {admission?.reason && <DetailField label={zh ? "入网说明" : "Admission detail"} wide><strong>{admission.reason}</strong></DetailField>}
-        </dl>
-        {siteDataState === "ready" && !siteNode && <p className="station-detail-note">{zh ? "该节点当前不在场站网络中。" : "This node is not currently in the site network."}</p>}
-      </section>
-
-      <section className="station-detail-column" aria-label={zh ? "条件" : "Conditions"}>
-        <h4><ListFilter size={14} aria-hidden="true" />{zh ? "条件" : "Conditions"}</h4>
-        {conditions.length > 0 ? <ul className="station-condition-list">
-          {conditions.map((condition) => <li key={condition.type}>
-            <div className="station-condition-main"><strong>{condition.label}</strong><small>{condition.type}</small></div>
-            <div className="station-condition-side"><span className={`station-condition-pill is-${condition.status.toLowerCase()}`}><i />{condition.status}</span>{condition.lastTransitionTime && <small title={formatChinaDateTime(condition.lastTransitionTime)}>{condition.relativeTime}</small>}</div>
-            {(condition.reason || condition.message) && <small className="station-condition-detail">{[condition.reason, condition.message].filter(Boolean).join(" · ")}</small>}
-          </li>)}
-        </ul> : <p className="station-detail-note">{zh ? "暂无条件上报" : "No conditions reported"}</p>}
-      </section>
-    </div>
-
-    {siteNode && <NodeLinks network={{ site: { online: siteNode.online, links: siteNode.network?.links ?? [], summary: siteNode.network?.link_summary ?? "" } }} zh={zh} collapsible />}
-
-    {!retired && <StationRunningImages name={station.metadata.name} clusterID={cluster?.id ?? ""} uid={station.spec.nodeUID} zh={zh} />}
 
     {robot && <section className="station-detail-robot" aria-label={zh ? "机器人" : "Robot"}>
       <div className="station-detail-robot-head">
@@ -195,5 +147,62 @@ export function StationDetailPanel({
       <details className="station-detail-rules"><summary>{zh ? "电源与维护规则" : "Power and maintenance rules"}</summary><p>{zh ? "期望状态保存在节点上；该上电没电或该运行的驱动停止时会自动恢复。急停或硬件故障时不会重拉。机器人正在使用时，下电会等它空闲。" : "The desired state stays on the Node and is reconciled when power or the driver is unexpectedly lost. It is not restored during an emergency stop or hardware fault. Power-off waits until the robot is idle."}</p></details>
       <NodeCameras node={station.metadata.name} namespace={station.metadata.namespace} labels={labels} published={siteNode?.cameras} zh={zh} heading={zh ? "实时相机" : "Live cameras"} onOpen={onZoom} active={cameraActive} />
     </section>}
+
+    {robot && cluster?.id && station.spec.nodeUID && <StationBodyStatePanel name={station.metadata.name} clusterID={cluster.id} uid={station.spec.nodeUID} zh={zh} />}
+    <details className="station-detail-metadata">
+      <summary><span><Fingerprint size={15} aria-hidden="true" />{zh ? "身份、网络与条件" : "Identity, network and conditions"}</span><ChevronDown size={16} aria-hidden="true" /></summary>
+      <div className="station-detail-columns">
+        <section className="station-detail-column" aria-label={zh ? "身份" : "Identity"}>
+          <h4><Fingerprint size={14} aria-hidden="true" />{zh ? "身份" : "Identity"}</h4>
+          <dl className="station-detail-fields">
+            <DetailField label={zh ? "记录名" : "Record name"}><CopyValue value={station.metadata.name} zh={zh} /></DetailField>
+            <DetailField label={zh ? "集群" : "Cluster"}><strong>{cluster?.name ?? (zh ? "集群未确定" : "Cluster unresolved")}</strong></DetailField>
+            <DetailField label={zh ? "集群 ID" : "Cluster ID"}><CopyValue value={cluster?.id} zh={zh} /></DetailField>
+            <DetailField label={zh ? "声明类型 / 型号" : "Declared type / model"}><strong>{[siteNode?.declared_type, siteNode?.declared_model].filter(Boolean).join(" · ") || "—"}</strong></DetailField>
+            <DetailField label={zh ? "观测类型 / 型号" : "Observed type / model"}><strong>{[siteNode?.observed_type, siteNode?.observed_model].filter(Boolean).join(" · ") || "—"}{siteNode?.identity_verified && <small className={siteNode.identity_verified === "False" ? "is-alert" : undefined}>{siteNode.identity_verified}{siteNode.identity_reason ? ` · ${siteNode.identity_reason}` : ""}</small>}</strong></DetailField>
+            <DetailField label="Node UID"><CopyValue value={station.spec.nodeUID} zh={zh} /></DetailField>
+            <DetailField label="System UUID"><CopyValue value={station.status?.observation?.systemUUID} zh={zh} /></DetailField>
+          </dl>
+          {cameraIssues.length > 0 && <div className="station-detail-diagnostics">
+            <h5>{zh ? "相机诊断" : "Camera diagnostics"}</h5>
+            <ul>{cameraIssues.map((cell) => <li key={cell.view}><strong>{cell.name} · {cell.badge}</strong>{(cell.note || cell.advice) && <small>{[cell.note, cell.advice].filter(Boolean).join(" · ")}</small>}</li>)}</ul>
+          </div>}
+        </section>
+
+        <section className="station-detail-column" aria-label={zh ? "网络与入网" : "Network and admission"}>
+          <h4><KeyRound size={14} aria-hidden="true" />{zh ? "网络与入网" : "Network and admission"}</h4>
+          {siteDataState === "loading" && <p className="station-detail-note" role="status">{zh ? "正在读取网络与入网信息…" : "Loading network and admission details…"}</p>}
+          {siteDataState === "unavailable" && <p className="station-detail-note">{zh ? "网络与入网信息暂不可用。" : "Network and admission details are unavailable."}</p>}
+          <dl className="station-detail-fields">
+            <DetailField label={zh ? "网络已验证" : "Network verified"}><NetworkBadge state={networkState} zh={zh} /></DetailField>
+            <DetailField label={zh ? "WireGuard 公钥" : "WireGuard public key"} wide><CopyValue value={siteNode?.network?.public_key ?? admission?.public_key} zh={zh} /></DetailField>
+            <DetailField label={zh ? "隧道地址" : "Tunnel address"} wide><CopyValue value={admission?.tunnel_address} zh={zh} /></DetailField>
+            <DetailField label={zh ? "入网状态" : "Admission status"}><span className={`status ${admission ? admissionStateClass(admission.state) : "status-stopped"}`}><i />{admissionFor.state}</span></DetailField>
+            <DetailField label={zh ? "发码人" : "Issued by"}><strong>{admissionFor.issuer}</strong></DetailField>
+            <DetailField label={zh ? "过期时间" : "Expires"}><strong>{formatChinaDateTime(admission?.expires_at)}</strong></DetailField>
+            <DetailField label={zh ? "SSH 登录" : "SSH login"} wide>{admission?.ssh_login ? <code className="inline-code">{admission.ssh_login}</code> : <strong>—</strong>}</DetailField>
+            <DetailField label={zh ? "SSH 主机指纹" : "SSH host fingerprint"} wide><CopyValue value={admission?.ssh_host_key} zh={zh} /></DetailField>
+            {admission?.reason && <DetailField label={zh ? "入网说明" : "Admission detail"} wide><strong>{admission.reason}</strong></DetailField>}
+          </dl>
+          {siteDataState === "ready" && !siteNode && <p className="station-detail-note">{zh ? "该节点当前不在场站网络中。" : "This node is not currently in the site network."}</p>}
+        </section>
+
+        <section className="station-detail-column" aria-label={zh ? "条件" : "Conditions"}>
+          <h4><ListFilter size={14} aria-hidden="true" />{zh ? "条件" : "Conditions"}</h4>
+          {conditions.length > 0 ? <ul className="station-condition-list">
+            {conditions.map((condition) => <li key={condition.type}>
+              <div className="station-condition-main"><strong>{condition.label}</strong><small>{condition.type}</small></div>
+              <div className="station-condition-side"><span className={`station-condition-pill is-${condition.status.toLowerCase()}`}><i />{condition.status}</span>{condition.lastTransitionTime && <small title={formatChinaDateTime(condition.lastTransitionTime)}>{condition.relativeTime}</small>}</div>
+              {(condition.reason || condition.message) && <small className="station-condition-detail">{[condition.reason, condition.message].filter(Boolean).join(" · ")}</small>}
+            </li>)}
+          </ul> : <p className="station-detail-note">{zh ? "暂无条件上报" : "No conditions reported"}</p>}
+        </section>
+      </div>
+
+      {siteNode && <NodeLinks network={{ site: { online: siteNode.online, links: siteNode.network?.links ?? [], summary: siteNode.network?.link_summary ?? "" } }} zh={zh} collapsible />}
+    </details>
+
+    {!retired && <StationRunningImages name={station.metadata.name} clusterID={cluster?.id ?? ""} uid={station.spec.nodeUID} zh={zh} />}
+
   </section>;
 }

@@ -7,8 +7,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"reflect"
 	"strconv"
@@ -282,5 +285,75 @@ func TestGatewayRelayRequiresTokenAndRestrictsTargets(t *testing.T) {
 			}
 		}
 		_ = conn.Close()
+	}
+}
+
+func TestReportDiscoveryScanSendsFinalBatchIncludingAnEmptyScan(t *testing.T) {
+	for _, size := range []int{0, 257} {
+		batches, total := 0, 0
+		err := reportDiscoveryScan(discoveryRequest{ID: "requested"}, make([]discoveredHost, size), func(body map[string]any) (int, error) {
+			batches++
+			total += len(body["hosts"].([]discoveredHost))
+			if body["scan_id"] != "requested" || body["final"] != (total == size) {
+				t.Fatalf("unexpected batch: %d of %d, final %v", total, size, body["final"])
+			}
+			return http.StatusOK, nil
+		})
+		if err != nil || total != size || batches != max(1, (size+255)/256) {
+			t.Fatalf("sent %d hosts in %d batches: %v", total, batches, err)
+		}
+	}
+}
+
+func TestRequestedDiscoveryScanHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	declared := discovery{Ranges: []string{"192.168.1.0/24"}, Ports: []int{22}}
+	if _, err := declared.scan(ctx, nil, func(string) string { return "" }); err != context.Canceled {
+		t.Fatalf("canceled scan returned %v", err)
+	}
+}
+
+func TestDiscoveryAttemptWaitsForARequestAndRetriesTheReportWithoutProbingAgain(t *testing.T) {
+	var attempt discoveryAttempt
+	probes, reports := 0, 0
+	pending := false
+	probe := func(context.Context) ([]discoveredHost, error) {
+		probes++
+		return []discoveredHost{}, nil
+	}
+	unavailable := errors.New("Station API unavailable")
+	request := func(path string, _ map[string]any) (int, []byte, error) {
+		switch path {
+		case "/v1/network/discovery-scan":
+			if !pending {
+				return http.StatusNoContent, nil, nil
+			}
+			body, err := json.Marshal(discoveryRequest{ID: "one-shot", Deadline: time.Now().Add(time.Minute)})
+			return http.StatusOK, body, err
+		case "/v1/network/discovered":
+			reports++
+			if reports == 1 {
+				return 0, nil, unavailable
+			}
+			pending = false
+			return http.StatusOK, nil, nil
+		default:
+			t.Fatalf("unexpected request to %s", path)
+			return 0, nil, nil
+		}
+	}
+	if err := attempt.run(request, probe); err != nil || probes != 0 || reports != 0 {
+		t.Fatalf("idle polling had side effects: %d probes, %d reports, %v", probes, reports, err)
+	}
+	pending = true
+	if err := attempt.run(request, probe); !errors.Is(err, unavailable) {
+		t.Fatalf("wanted transient report failure, got %v", err)
+	}
+	if err := attempt.run(request, probe); err != nil || probes != 1 || reports != 2 {
+		t.Fatalf("retry: %d probes, %d reports, %v", probes, reports, err)
+	}
+	if err := attempt.run(request, probe); err != nil || probes != 1 || reports != 2 || attempt.id != "" {
+		t.Fatalf("idle again: %d probes, %d reports, %v", probes, reports, err)
 	}
 }

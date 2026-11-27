@@ -59,7 +59,7 @@
 
 | 程序 | 在哪 | 做什么 |
 |---|---|---|
-| station-api | `rlark-local-dev-gpu` 的 `station-system`；入网的机器经 `https://10.11.14.128:18443`，Gateway 经 `https://10.254.240.1:18443` | 节点上报（TokenReview 核对 Pod→Node，写进它的 NetworkEnrollment）、入网登记、发安装包和入网码兑换（`/b/<码>`、`/v1/bootstrap/*`）、节点凭隧道密钥取文档（`/v1/network/document`）、扫到的机器（`/v1/network/discovered`） |
+| station-api | `rlark-local-dev-gpu` 的 `station-system`；入网的机器经 `https://10.11.14.128:18443`，Gateway 经 `https://10.254.240.1:18443` | 节点上报（TokenReview 核对 Pod→Node，写进它的 NetworkEnrollment）、入网登记、发安装包和入网码兑换（`/b/<码>`、`/v1/bootstrap/*`）、节点凭隧道密钥取文档（`/v1/network/document`）、扫描请求（`/v1/network/discovery-scan`）和结果（`/v1/network/discovered`） |
 | station-controller | 同上 | 每台节点的在线状态和身份变化、每台节点的隧道文档、NodeClass、Machine、NodeOperation |
 | station-agent | 每个成员集群的 DaemonSet | 心跳、登记公钥、取回文档、探测对端 |
 | station-gateway | 每台节点 | 按文档维护 WireGuard 接口、对端、路由、`/etc/hosts` 里的站点名字、给 kubelet 的 `resolv.conf`、到场站网段的转发；每 10 s 协调一次 |
@@ -74,8 +74,8 @@
 ### 网络
 
 - 拓扑：叶子拨枢纽，枢纽之间按需互联，转发枢纽替叶子转发。没在 `spec.nodes` 里列出的节点都是叶子。
-- `sites[]`：`clusters`、`reaches`（能拨到哪些场站的 `Site` 端点）、`mesh`（本站枢纽之间建隧道）、`relay`、`leafUplink`（同型号叶子共用的上联，如机器人经 Orin）、`discovery`（枢纽在 `ranges` 和自己接着的每个私有 IPv4 网段里按 NodeClass 的出厂主机密钥找未入网的机器，比 /22 大的网段只扫自己地址所在的 /22，不含公网、`st-*` 隧道、容器和集群接口；每轮最多 128 个并发探测，三个 /22 最多约 25 s，每轮从上一轮开始算起隔 `intervalSeconds`；几台枢纽在同一网段时，机器跟着先报它的枢纽，那台三个周期没再看到它才换）、`dns`、`names`（本站的名字，如 `registry.rlark.internal`）。
-- 控制台“场站节点 → 扫描设置”可改 `sites[].discovery` 的 `enabled`/`ranges`/`intervalSeconds`；`from` 是 station-controller 的拨号源，扫描由该 site 的所有 Hub 执行。
+- `sites[]`：`clusters`、`reaches`（能拨到哪些场站的 `Site` 端点）、`mesh`（本站枢纽之间建隧道）、`relay`、`leafUplink`（同型号叶子共用的上联，如机器人经 Orin）、`discovery`（枢纽在 `ranges` 和自己接着的每个私有 IPv4 网段里按 NodeClass 的出厂主机密钥找未入网的机器，比 /22 大的网段只扫自己地址所在的 /22，不含公网、`st-*` 隧道、容器和集群接口；每轮最多 128 个并发探测，三个 /22 最多约 25 s，由管理员发起一次扫描；几台枢纽在同一网段时，本轮以先上报的枢纽为准）、`dns`、`names`（本站的名字，如 `registry.rlark.internal`）。
+- 控制台“场站节点 → 扫描设置”保存 `sites[].discovery` 的扫描范围和拨号 Hub。手动扫描请求由 Gateway 保存为各站点的最新操作，包含操作 ID、开始时间和目标 Hub 的 NetworkEnrollment UID。目标 Hub 使用自己的 WireGuard 身份向 Station API 领取请求并提交结果。Station API 在入网记录上保存每个 Hub 的最终结果，在 Machine 入口状态中记录扫描 ID；任务 5 分钟后超时。中继继续使用 `from` 指定的管理面拨号源。旧版 `intervalSeconds` 配置仍可读取。
 - `nodes[]`：`role: Hub` 加 `endpoints`（`Public` 谁都能拨，`Site` 本站和 `reaches` 它的场站能拨）、`relay`、`nodeAddress`（别人找它用的地址不是隧道地址时，如云上 VPC 地址）、`advertise`（经它可达的网段：`cidr`、`sites`、`forward`，见下面“转发到场站的网段”）、`uplink`、`publicKey`（还连不上 Station API 的节点先声明公钥）。
 - 有上联（`uplink` 或本站的 `leafUplink`）的节点，文档里的 `uplinkRoutes` 是它拨的每个端点和本站 `dns` 的每台域名服务器各一条经上联网关的 /32 路由；站点不写 `dns` 时网关把机器自己的 resolv.conf 交给 kubelet，机器人上那份没有域名服务器，所以机器人所在的站点要写 `dns`。
 - `names`：全站同一地址的名字，如各集群的 `cp.<集群>.rlark.internal`、`rlark-server`、`gateway.rlark.internal`。网关写进每台节点的 `/etc/hosts`（行尾 `# rlark names`）。
@@ -182,9 +182,10 @@ Addon 的包：装或更新时，Gateway（或发布命令）把“名字@版本
 
 | 路径 | 回答 |
 |---|---|
-| `GET /cameras` | `{state, cameras: {<view>: {state, fps, age_seconds, step, attempts, next_attempt_at, last_action, last_result, diagnosis, usb, usb_advice}}, updated_at}` |
+| `GET /cameras` | `{state, cameras: {<view>: {state, fps, age_seconds, step, attempts, next_attempt_at, last_action, last_result, diagnosis, usb, usb_advice}}, updated_at, clock}`。HTTP 响应中的 `clock.received_ms`、`clock.sent_ms` 为浏览器对时提供 Unix 毫秒。 |
 | `GET /cameras/<view>.jpg` | 最新一帧 JPEG（头 `X-Age-Seconds`）；机体没有这路 404，还没有帧 503 |
-| `GET /cameras/<view>/stream?fps=N` | `multipart/x-mixed-replace`，相机自己的 JPEG 原样转发，N 为 1–30（默认 10） |
+| `GET /cameras/<view>/stream?fps=N` | `multipart/x-mixed-replace`，相机自己的 JPEG 原样转发，N 为 1–30（默认 10）。时间戳有效时，分片的 `X-Camera-Capture-Ms` 携带 ROS 采集时间（Unix 毫秒）。 |
+| `GET /body-state` | S1U Addon v1.7.3 起提供。视频进程订阅实际关节和端点状态，按型号和硬件变体返回最新快照，各组独立标记等待、实时和过期。Gateway 核对场站记录、节点 UID 与 Addon Pod 归属后，向管理员返回快照。 |
 | `GET /cameras/wall.jpg`、`/cameras/wall/stream?fps=N` | 2x2 缩略图 256x144（每格 128x72），没有新鲜帧的格子是黑的，N 为 1–10（默认 5）；只有这里解码 |
 
 - 自动恢复（不管有没有 Run 在用都做；每一步在节点上记一条事件）：容器启动后 90 s 内不动手。每路相机各在阶梯的一级上，按它自己 `stale`/`absent` 连续 30 s 算（比一次驱动重启的黑屏长，谁重启的都一样，别的相机的重启让它黑屏不算）：① 重启厂商相机驱动（`/astribot_system_monitor/camera_control_command` False，2 s，True；所有相机约 25 s 没画面；每次调用 30 s 不答算失败），最多 3 次，间隔 60 s 起翻倍、最长 900 s；一次重启算给所有还没用完 3 次的没画面相机；厂商服务不在不算一次，也不翻倍，一分钟后再试。② 经 Pod 内共享目录 `/camera` 请 `orin` 容器对这几路做 USB 复位（`reset-request {id, cameras: 厂商的相机名}` → `reset-result {id, ok, detail, reset, missing, finished_at}`，`reset`、`missing` 是复位了的和 USB 上没有的相机，复位没跑成时两个都没有；`orin` 按 Orin 上 `/etc/config/camera_info.json`（相机名 → 序列号）找到序列号对应的设备，经 usbfs `USBDEVFS_RESET` 复位，同一个 id 只做一次，容器重启也不重做；`orin` 动手前画面回来了就撤回请求，`video` 容器重启时也撤回上次的请求；请求收到回答或不再等（300 s）就收回，`orin` 那边出错或超时也写回答，同一个请求只做一次），再重启一次驱动（也算给其余还有重启次数的没画面相机）；复位的时刻从这次重启结束算。复位没跑成（ssh、Orin、`orin` 300 s 不答）不重启驱动，按这路相机的间隔（之后翻倍）再请；USB 上没有这路相机的直接 `stuck`，原因写“Orin 的 USB 上没有这路相机…USB 复位没做”。③ `stuck`：相机需要断电或 USB 复位。USB 复位后 5 分钟内又停的相机直接 `stuck`，原因写“疑似硬件：USB 复位后 N 秒又停，需要断电或现场检查接线”（s1u-03 11-21：头部彩色流每次复位后只撑 25 秒到 3 分钟）。`stuck` 的相机退出阶梯，直到它又连续 5 分钟有画面（只回来一下又停的仍是 `stuck`），或改接到别的 USB 口（`/camera/usb` 里的路径变了；复位只改设备号），从阶梯开头重来；其余相机照常走各自的阶梯。`stuck` 后只在机器人没人用（`/run/rlark/in-use` 下没有标记）时每小时重启一次驱动：以前不分在不在用每小时整套重来，s1u-03 11-21 的 26 小时里所有相机断帧 89 次，头部每次回来几十秒到半小时。整机重启（控制台的“重启”、断电再开）后 ROS master 重启，相机容器从头开始；控制台的启动/关闭驱动不重启 ROS master，不解除 `stuck`。进入 `stuck` 时经 `/camera` 请 `orin` 诊断（`diagnose-request {id, cameras}` → `diagnose-result {id, cameras: {厂商名: 一行诊断}, finished_at}`）：在不在 USB 上、在哪（路径、速率、经几级 hub）、厂商相机进程 `astribot_camera_main` 在不在、Orbbec SDK 打开的相机（接口驱动 `usbfs`）在 `~/Log/OrbbecSDK.log.txt` 尾部彩色和深度流还在不在；诊断写进这路相机的 `diagnosis` 和事件 `CameraStuck`（`orin` 300 s 不答也发，写明没答；Orin 上没有 SDK 日志时写“没有日志”）；回到阶梯时记事件 `CameraBack`。`orin` 每分钟把各路相机在 USB 上的位置写到 `/camera/usb`（`{厂商名: {path, device, speed, hubs}}`），报告里每路的 `usb`；一路相机所在的 hub 上的相机比同一根口下另一个 hub 上的少（一样多时两边都给）时给 `usb_advice`（与谁共用根口、经几级 hub、建议改接独立根口），只是建议，不改状态：s1u-03 的头部经两级 hub 和躯干、两腕（它们在另一个 hub 上）共用根口 2-3，只提示头部；s1u-01、s1u-02 的头部独占根口，躯干和两腕在同一个 hub 下，不提示。一路相机连续 5 分钟有画面，它的阶梯才回到起点：时好时坏的相机接着往上走，不会每回来一下就从头重启驱动。只有 `slow` 的相机：只做 ①，每小时最多一次。机器人的 ROS master 重启了（进程号变了），`video` 容器自己退出由 kubelet 重启（rospy 不会在新 master 上重新订阅），`stuck` 随之清空。

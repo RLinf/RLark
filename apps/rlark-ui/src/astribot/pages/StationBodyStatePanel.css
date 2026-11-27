@@ -1,0 +1,81 @@
+.station-body { min-width: 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.station-body-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.station-body-heading h4 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; font-weight: 650; }
+.station-body-heading h4 svg { color: var(--blue); }
+.station-body-heading p { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: var(--muted); font-size: 12px; }
+.station-body-heading code { color: var(--ink); }
+.station-body-content > p { margin: 12px 0 0; }
+.station-body-content h5 { margin: 18px 0 8px; color: var(--ink); font-size: 13px; font-weight: 650; }
+.station-body-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.station-body-table-wrap:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+#root .station-body-table {
+  --body-thead: color-mix(in srgb, var(--blue) 4%, var(--panel));
+  --body-rule: color-mix(in srgb, var(--line) 70%, var(--panel));
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.station-body-poses { min-width: 700px; }
+.station-body-joints { min-width: 790px; }
+.station-body-label-col { width: 84px; }
+.station-body-position-col { width: 28%; }
+.station-body-frame-col { width: 105px; }
+.station-body-status-col { width: 80px; }
+#root .station-body-table :is(th, td) {
+  height: auto;
+  padding: 6px 10px;
+  color: var(--ink);
+  font-size: inherit;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-align: left;
+  border: 0;
+}
+#root .station-body-table thead th { background: var(--body-thead); color: var(--muted); font-weight: 550; white-space: normal; }
+#root .station-body-table thead tr:last-child > th,
+#root .station-body-table thead th[rowspan] { border-bottom: 1px solid var(--body-rule); }
+#root .station-body-table tbody th { background: var(--panel); font-weight: 600; }
+#root .station-body-table tbody tr + tr > * { border-top: 1px solid var(--body-rule); }
+#root .station-body-table tbody tr:hover { background: color-mix(in srgb, var(--blue) 3%, var(--panel)); }
+#root .station-body-poses :is(th, td) { padding-block: 9px; }
+#root .station-body-poses td.station-body-frame { color: var(--muted); overflow-wrap: anywhere; }
+
+.station-body-vector { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items: baseline; gap: 8px; max-width: 330px; }
+.station-body-axis { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.station-body-axis > small { color: var(--muted); font-size: 10px; }
+.station-body-axis > span { font-variant-numeric: tabular-nums; }
+
+#root .station-body-joints thead th[scope="colgroup"] { padding: 9px 10px 3px; }
+.station-body-joint-group { display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; row-gap: 3px; }
+.station-body-group-label { color: var(--ink); font-weight: 650; }
+.station-body-dimension, .station-body-joints thead small { color: var(--muted); font-size: 10px; font-weight: 400; }
+#root .station-body-joints td, #root .station-body-joints thead tr:last-child > th { text-align: right; }
+#root .station-body-joints :is(th[scope="colgroup"], .station-body-group-start) { border-left: 1px solid var(--body-rule); }
+#root .station-body-joints td[data-missing="true"] { background: transparent; }
+.station-body-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.station-body-state[data-state="live"] { background: color-mix(in srgb, var(--green, #2b9861) 11%, var(--panel)); }
+.station-body-state[data-state="live"]::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--green, #2b9861); }
+
+@media (max-width: 900px) {
+  #root .station-body-table :is(thead th:first-child[rowspan], .station-body-poses thead th:first-child, tbody th[scope="row"]) {
+    position: sticky;
+    z-index: 1;
+    left: 0;
+    box-shadow: 1px 0 var(--body-rule);
+  }
+}

@@ -308,6 +308,12 @@ Changes to stable contracts should include the applicable checks:
 - provider conformance;
 - REST and UI behavior alignment.
 
+### Astribot extensions
+
+Keep new Astribot-specific implementation, tests, and configuration under the nearest Astribot directory. Use `apps/rlark/astribot/` for Go extensions, `apps/rlark-ui/src/astribot/` for UI extensions, and `astribot/` for station services, robot integrations, and deployment files. Keep shared RLark changes focused on route registration, typed hooks, navigation, and common API contracts. An extension that needs to live in a shared package should use an `astribot_*` filename and explain the package dependency. Update generated code and manifests from their source when a shared contract changes.
+
+For each upstream upgrade, review the full commit range and run upstream regressions against the actual Astribot entry points. Check the API, schema and generated clients, RBAC, controllers and Agents, UI, and deployment artifacts. Record source coverage and environment validation separately. See the [upstream upgrade review](astribot-upstream-upgrade.md) for the current baseline and acceptance checks.
+
 ## Agent design checklist
 
 Before implementation, an agent should answer:

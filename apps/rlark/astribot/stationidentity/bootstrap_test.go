@@ -399,3 +399,61 @@ func TestBootstrapServesTheInstallersSHA256AndReadsTheFileAgainOnlyWhenItChanges
 		t.Fatalf("a new installer: %q", body)
 	}
 }
+
+func TestServerJoinCodeBootstrapsWithoutRobotLabels(t *testing.T) {
+	const code, nodeName, clusterID = "svr01code", "office-server-01", "rlark-local-dev-gpu"
+	key, otherKey := strings.Repeat("A", 43)+"=", strings.Repeat("B", 43)+"="
+	now := time.Unix(1_800_000_000, 0)
+	digest := sha256.Sum256([]byte(code))
+	admission := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "station.rlark.io/v1alpha1", "kind": "NodeAdmission",
+		"metadata": map[string]interface{}{"name": nodeName, "namespace": clusterID},
+		"spec": map[string]interface{}{
+			"clusterID": clusterID, "codeHash": hex.EncodeToString(digest[:]),
+			"expiresAt": now.Add(time.Hour).UTC().Format(time.RFC3339),
+			"machine":   map[string]interface{}{"category": "Server"},
+		},
+	}}
+	management := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{nodeAdmissionGVR: "NodeAdmissionList", addonGVR: "AddonList"}, admission)
+	member := joinableCluster(true)
+	b := &Bootstrap{Management: management, Now: func() time.Time { return now },
+		Member: func(context.Context, string) (kubernetes.Interface, error) { return member, nil }}
+	ctx := context.Background()
+
+	if _, status, err := b.Redeem(ctx, code, key); err != nil || status != http.StatusAccepted {
+		t.Fatalf("first server redemption: %d %v", status, err)
+	}
+	if _, status, err := b.Redeem(ctx, code, otherKey); err != nil || status != http.StatusConflict {
+		t.Fatalf("a second machine must not redeem the server code: %d %v", status, err)
+	}
+
+	resource := management.Resource(nodeAdmissionGVR).Namespace(clusterID)
+	stored, err := resource.Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.Object["status"] = map[string]interface{}{"phase": "Redeemed", "address": "10.254.240.3", "publicKey": key, "config": `{"address":"10.254.240.3/32"}`}
+	stored, err = resource.Update(ctx, stored, metav1.UpdateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, status, err := b.Redeem(ctx, code, key)
+	wantLabels := "rlark.io/cluster-id=rlark-local-dev-gpu,rlark.io/enabled=true,station.rlark.io/machine-type=server"
+	if err != nil || status != http.StatusOK || answer.Join == nil || answer.Labels != wantLabels || answer.Taints != "" {
+		t.Fatalf("server join: HTTP %d, labels %q, taints %q, error %v", status, answer.Labels, answer.Taints, err)
+	}
+
+	stored, err = resource.Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unstructured.RemoveNestedField(stored.Object, "spec", "publicKey")
+	if _, err := resource.Update(ctx, stored, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Hour)
+	if _, status, err := b.Redeem(ctx, code, key); err != nil || status != http.StatusGone {
+		t.Fatalf("expired server code: %d %v", status, err)
+	}
+}

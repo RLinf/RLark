@@ -17,6 +17,14 @@
   border-color: var(--orange);
 }
 
+/* The first hold is sent but not acknowledged yet: visibly in flight, not yet moving. */
+.robot-pose-button.is-confirming {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
+.robot-pose-button.is-releasing { opacity: .8; }
+
 .robot-controls-error {
   color: var(--red);
 }

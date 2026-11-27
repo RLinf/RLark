@@ -79,7 +79,7 @@ confirm)
 esac
 
 # Before anything is stopped: each volume takes what its path holds, with the
-# 20 % that the installer leaves the kubelet, and the machine's disk the volumes.
+# 20 % reserved for future use, and the machine's disk has to fit the volumes.
 # A node whose paths are all volumes already is not stopped.
 need=0 moving=
 for volume in $(echo "$NODE_VOLUMES" | tr , ' '); do

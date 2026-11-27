@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { createIamPortal, portalPath } from "../dist/test/astribot/iam/portal.js";
+import {
+  addressPath,
+  createIamPortal,
+  portalHomeRedirect,
+  portalPath,
+  resolvePortalView,
+} from "../dist/test/astribot/iam/portal.js";
 
 function storage(values = {}) {
   const map = new Map(Object.entries(values));
@@ -21,7 +27,7 @@ function adminSession(role = "admin", token = "opaque-session-token", username =
   return { ok: true, token, role, expiresAt: "2026-12-02T00:00:00Z", user: { username } };
 }
 
-function consoleTab({ path = "/admin/iam", stored = {}, session, sessionStatus, fetchOverride } = {}) {
+function consoleTab({ path = "/admin/iam", hash = "", stored = {}, session, sessionStatus, fetchOverride } = {}) {
   const store = storage(stored);
   Object.defineProperty(globalThis, "sessionStorage", { value: store, configurable: true, writable: true });
   const calls = [];
@@ -37,6 +43,7 @@ function consoleTab({ path = "/admin/iam", stored = {}, session, sessionStatus, 
     location: {
       pathname,
       search: query.length ? `?${query.join("?")}` : "",
+      hash,
       replace: (url) => void navigations.push(url),
     },
     fetch: async (url, init = {}) => {
@@ -134,34 +141,122 @@ test("a held token is cleared and sent to the portal when cookie sync returns 40
   assert.deepEqual(tab.navigations, ["/login?next=%2Fadmin%2Fiam"]);
 });
 
-test("an unreachable IAM keeps a held token and permits rendering", async () => {
+test("an unreachable IAM is an error state, never the stored session", async () => {
   const tab = consoleTab({
     stored: { "rlark-auth-token": "offline-token" },
     fetchOverride: async () => { throw new TypeError("offline"); },
   });
-  await tab.portal.enter();
+  const state = await tab.portal.enter();
+  assert.equal(state.status, "error");
+  assert.equal(state.reason, "unreachable");
+  // The held token is kept for a retry but never authorizes the console.
   assert.equal(tab.store.getItem("rlark-auth-token"), "offline-token");
   assert.deepEqual(tab.navigations, []);
 });
 
-test("an unreachable IAM without a token goes to the portal", async () => {
+test("an unreachable IAM without a token is an error state, not a redirect", async () => {
   const tab = consoleTab({ fetchOverride: async () => { throw new TypeError("offline"); } });
-  void tab.portal.enter();
-  await settle();
-  assert.deepEqual(tab.navigations, ["/login?next=%2Fadmin%2Fiam"]);
-  assert.equal(tab.counters.covers.length, 1);
+  const state = await tab.portal.enter();
+  assert.equal(state.status, "error");
+  assert.deepEqual(tab.navigations, []);
+  assert.equal(tab.counters.covers.length, 0);
 });
 
-test("other unsuccessful responses keep an existing token but leave without one", async () => {
+test("an unsuccessful session check is an error whatever is stored", async () => {
   const withToken = consoleTab({ stored: { "rlark-auth-token": "held" }, sessionStatus: 503 });
-  await withToken.portal.enter();
+  const held = await withToken.portal.enter();
+  assert.equal(held.status, "error");
+  assert.equal(held.reason, "http_503");
   assert.equal(withToken.store.getItem("rlark-auth-token"), "held");
   assert.deepEqual(withToken.navigations, []);
 
   const withoutToken = consoleTab({ sessionStatus: 503 });
-  void withoutToken.portal.enter();
-  await settle();
-  assert.deepEqual(withoutToken.navigations, ["/login?next=%2Fadmin%2Fiam"]);
+  const empty = await withoutToken.portal.enter();
+  assert.equal(empty.status, "error");
+  assert.equal(empty.reason, "http_503");
+  assert.deepEqual(withoutToken.navigations, []);
+});
+
+test("an incomplete session response is an error, not a signed-out console", async () => {
+  for (const body of ["{}", '{"token":"token-only"}', '{"token":"token-only","user":{}}']) {
+    const tab = consoleTab({ fetchOverride: async () => new Response(body, { status: 200 }) });
+    const state = await tab.portal.enter();
+    assert.equal(state.status, "error", body);
+    assert.equal(state.reason, "incomplete");
+    assert.equal(tab.store.getItem("rlark-auth-token"), null);
+    assert.deepEqual(tab.navigations, []);
+  }
+});
+
+test("a retry re-reads the session and replaces the error state", async () => {
+  let attempt = 0;
+  const tab = consoleTab({
+    fetchOverride: async () => {
+      attempt += 1;
+      if (attempt === 1) return new Response("upstream failure", { status: 500 });
+      return new Response(JSON.stringify(adminSession("admin", "retry-token", "admin")), { status: 200 });
+    },
+  });
+  const failed = await tab.portal.enter();
+  assert.equal(failed.status, "error");
+  assert.equal(failed.reason, "http_500");
+  const recovered = await tab.portal.retry();
+  assert.equal(recovered.status, "authenticated");
+  assert.equal(tab.store.getItem("rlark-auth-token"), "retry-token");
+  assert.equal(tab.store.getItem("rlark-auth-role"), "admin");
+  assert.deepEqual(tab.navigations, []);
+});
+
+test("the address carried to the portal keeps its query and hash", async () => {
+  const tab = consoleTab({
+    path: "/admin/iam?tab=users",
+    hash: "#audit",
+    stored: { "rlark-auth-token": "old" },
+    sessionStatus: 401,
+  });
+  await tab.portal.enter();
+  assert.deepEqual(tab.navigations, ["/login?next=%2Fadmin%2Fiam%3Ftab%3Dusers%23audit"]);
+});
+
+test("the startup state alone decides which view the console renders", () => {
+  const admin = { status: "authenticated", role: "admin", userName: "admin" };
+  const user = { status: "authenticated", role: "user", userName: "operator" };
+  assert.deepEqual(resolvePortalView({ status: "loading" }, "/admin"), { kind: "pending" });
+  assert.deepEqual(resolvePortalView({ status: "unauthenticated" }, "/admin"), { kind: "pending" });
+  assert.deepEqual(resolvePortalView({ status: "error", reason: "unreachable" }, "/admin"), {
+    kind: "error",
+    reason: "unreachable",
+  });
+  assert.deepEqual(resolvePortalView(user, "/admin"), { kind: "home" });
+  assert.deepEqual(resolvePortalView(user, "/admin/iam"), { kind: "home" });
+  assert.deepEqual(resolvePortalView(user, "/administrator"), { kind: "console" });
+  assert.deepEqual(resolvePortalView(user, "/"), { kind: "console" });
+  assert.deepEqual(resolvePortalView(admin, "/"), { kind: "console" });
+  assert.deepEqual(resolvePortalView(admin, "/admin/iam"), { kind: "admin" });
+
+  // No portal view is a form: the only screens are pending, error, console,
+  // admin and home.
+  const views = ["pending", "error", "console", "admin", "home"];
+  for (const state of [{ status: "loading" }, { status: "unauthenticated" }, { status: "error", reason: "x" }, user, admin]) {
+    for (const path of ["/", "/admin", "/admin/iam", "/terminal"]) {
+      assert.ok(views.includes(resolvePortalView(state, path).kind));
+    }
+  }
+});
+
+test("only a role without admin access at an admin address is sent home", () => {
+  const user = { status: "authenticated", role: "user", userName: "operator" };
+  const admin = { status: "authenticated", role: "admin", userName: "admin" };
+  assert.equal(portalHomeRedirect(resolvePortalView(user, "/admin/iam")), "/");
+  assert.equal(portalHomeRedirect(resolvePortalView(admin, "/admin/iam")), undefined);
+  assert.equal(portalHomeRedirect(resolvePortalView(admin, "/")), undefined);
+  assert.equal(portalHomeRedirect(resolvePortalView({ status: "unauthenticated" }, "/admin")), undefined);
+});
+
+test("the address carried to the portal is the whole location", () => {
+  assert.equal(addressPath({ pathname: "/admin/iam", search: "?tab=users", hash: "#audit" }), "/admin/iam?tab=users#audit");
+  assert.equal(addressPath({ pathname: "/jobs", search: "" }), "/jobs");
+  assert.equal(portalPath("/admin/iam?tab=users#audit"), "/login?next=%2Fadmin%2Fiam%3Ftab%3Dusers%23audit");
 });
 
 test("the way back after signing in is the whole address, as one query parameter", () => {
@@ -321,15 +416,39 @@ test("the observer cannot navigate a second time after startup already left", as
 
 test("the console renders only after the portal lets it", async () => {
   const main = await readFile(new URL("../src/main.tsx", import.meta.url), "utf8");
-  assert.match(main, /import \{ enterIamPortal \} from "\.\/astribot\/iam\/portal";/);
-  assert.match(main, /enterIamPortal\(\)\.then\(\(\) => \{\s*ReactDOM\.createRoot\([^\n]*\)\.render\(/);
+  assert.match(main, /import \{\s+enterIamPortal,\s+iamPortalEnabled,\s+type PortalAuthState,\s+\} from "\.\/astribot\/iam\/portal";/);
+  // A status placeholder is rendered first, so no native form can flash while
+  // the session check is still in flight.
+  assert.match(main, /render\(\{ status: "loading" \}\);\s+void enterIamPortal\(\)\.then\(render\);/);
+  assert.match(main, /<App iamState=\{iamState\} \/>/);
   assert.equal(main.match(/ReactDOM\.createRoot/g).length, 1);
 
   const dockerfile = await readFile(new URL("../../../astribot/release/rlark-ui.Dockerfile", import.meta.url), "utf8");
   assert.match(dockerfile, /^ENV VITE_IAM_PORTAL=1$/m);
 
   const page = await readFile(new URL("../src/astribot/iam/IAMPage.tsx", import.meta.url), "utf8");
-  assert.match(page, /if \(iamPortalEnabled\(\)\) \{\s+await signOutOfConsole\(window\.location\.pathname\);/);
-  assert.match(page, /void returnToPortal\(window\.location\.pathname \+ window\.location\.search\)/);
+  assert.match(page, /if \(iamPortalEnabled\(\)\) \{\s+await signOutOfConsole\(addressPath\(window\.location\)\);/);
+  assert.match(page, /void returnToPortal\(addressPath\(window\.location\)\)/);
   assert.match(page, /!isMockMode && !sessionChecked \? <div className="iam-state" role="status"/);
+});
+
+test("the IAM page keeps its credentials form out of the portal build", async () => {
+  const page = await readFile(new URL("../src/astribot/iam/IAMPage.tsx", import.meta.url), "utf8");
+  const portal = await readFile(new URL("../src/astribot/iam/portal.ts", import.meta.url), "utf8");
+
+  // renderLogin() refuses to build the form behind the portal, whatever
+  // /api/iam/me answered (403, 5xx or a network failure).
+  assert.match(page, /const renderLogin = \(\) => \{\s+\/\/[^\n]*\n\s+if \(iamPortalEnabled\(\)\) return renderPortalSession\(\);/);
+  // The failed-session screen offers a retry and the portal entrance.
+  assert.match(page, /const renderPortalSession = \(\) => \(\s+<div className="iam-state iam-portal-state" role="alert">/);
+  assert.match(page, /<button type="button" onClick=\{retrySession\}>\{text\(zh, "retry"\)\}<\/button>/);
+  assert.match(page, /<a href="\/login">/);
+  // A signed-out visit is rendered by the gate alone.
+  assert.match(page, /const renderSessionGate = \(\) => \(iamPortalEnabled\(\) \? renderPortalSession\(\) : renderLogin\(\)\);/);
+  assert.match(page, /: renderSessionGate\(\)\}/);
+  // Retrying re-reads the IAM identity behind the page.
+  assert.match(page, /const retrySession = \(\) => \{\s+setApiError\(""\);\s+setSessionChecked\(false\);\s+setSessionAttempt\(\(attempt\) => attempt \+ 1\);/);
+  assert.match(page, /\}, \[sessionAttempt\]\);/);
+  // The observation net watches both native forms.
+  assert.match(portal, /const nativeSignIn = "\.admin-login-page, \.iam-login-screen";/);
 });

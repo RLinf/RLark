@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -211,10 +212,15 @@ func (d *discovery) scan(ctx context.Context, attached []netip.Prefix, hardware 
 		}
 	}
 	algorithms := []string{ssh.KeyAlgoED25519, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521, ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256}
+scanAddresses:
 	for _, address := range addresses(networks) {
 		for _, port := range ports {
+			select {
+			case <-ctx.Done():
+				break scanAddresses
+			case slots <- struct{}{}:
+			}
 			group.Add(1)
-			slots <- struct{}{}
 			go func() {
 				defer func() { <-slots; group.Done() }()
 				observed := hostKey(ctx, net.JoinHostPort(address.String(), strconv.Itoa(port)), algorithms)
@@ -233,6 +239,9 @@ func (d *discovery) scan(ctx context.Context, attached []netip.Prefix, hardware 
 		}
 	}
 	group.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	slices.SortFunc(found, func(a, b discoveredHost) int {
 		if a.Unclassified != b.Unclassified {
 			if a.Unclassified {
@@ -344,26 +353,20 @@ func (d *discovery) pipeRelay(conn net.Conn, reader *bufio.Reader, target string
 	_, _ = io.Copy(conn, far)
 }
 
-// discover runs for as long as the node does: while the node's document
-// declares discovery it keeps the relay on the tunnel address, looks at the
-// ranges and the attached networks every interval and reports what it found
-// to Station API. A round starts an interval after the last one started, or
-// when it ends if it took longer, so a hub reports at least every interval
-// its scan fits in (station-controller calls it silent after three).
+// discover keeps the management relay available and checks for administrator
+// requests. Network probes run only for an outstanding operation.
 func discover(read func() *desired, directory string, key wgtypes.Key) {
 	var serving *discovery
 	var listener net.Listener
+	var attempt discoveryAttempt
 	said := ""
 	for {
-		started := time.Now()
-		wait := 30 * time.Second
 		d := read()
 		var declared *discovery
 		at := ""
 		if d != nil && d.Discovery != nil {
 			declared = d.Discovery
 			at = net.JoinHostPort(d.address.IP.String(), strconv.Itoa(declared.RelayPort))
-			wait = time.Duration(declared.IntervalSeconds) * time.Second
 		}
 		if listener != nil && (declared == nil || listener.Addr().String() != at || !reflect.DeepEqual(serving, declared)) {
 			_ = listener.Close()
@@ -388,43 +391,108 @@ func discover(read func() *desired, directory string, key wgtypes.Key) {
 					}()
 				}
 			}
-			found, err := declared.scan(context.Background(), attached(), neighbour)
-			if err == nil {
-				var status int
-				var url string
-				var ca []byte
-				// A hub whose tunnel a pod runs has no station-api.json: its pod says where Station API is.
-				if url, ca, err = stationAPIOf(directory); errors.Is(err, errNoStationAPI) && os.Getenv("STATION_API_URL") != "" {
-					url = os.Getenv("STATION_API_URL")
-					ca, err = os.ReadFile(os.Getenv("STATION_API_CA_FILE"))
+			if listener != nil {
+				if err := attempt.poll(declared, directory, key); err != nil {
+					state = err.Error()
 				}
-				if err == nil {
-					// Deliver an empty heartbeat as well as non-empty batches.
-					for start := 0; ; start += 256 {
-						end := min(start+256, len(found))
-						status, _, err = askStationAPI(url, ca, key, "/v1/network/discovered", map[string]any{"hosts": found[start:end]})
-						if err != nil || status != http.StatusOK || end == len(found) {
-							break
-						}
-					}
-				}
-				if err == nil && status != http.StatusOK {
-					err = fmt.Errorf("Station API answered %d to what was found", status)
-				}
-			}
-			if err != nil {
-				state = err.Error()
-			} else if state == "" {
-				state = fmt.Sprintf("observed %d SSH endpoints", len(found))
 			}
 		}
 		if state != said {
 			said = state
 			if state == "" {
-				state = "not declared for this node"
+				state = "waiting for a scan request"
 			}
 			log.Printf("discovery: %s", state)
 		}
-		time.Sleep(wait - time.Since(started))
+		time.Sleep(10 * time.Second)
+	}
+}
+
+type discoveryRequest struct {
+	ID       string    `json:"id"`
+	Deadline time.Time `json:"deadline"`
+}
+
+type discoveryAttempt struct {
+	id      string
+	hosts   []discoveredHost
+	scanErr error
+}
+
+type discoveryAPI func(path string, request map[string]any) (int, []byte, error)
+
+func (attempt *discoveryAttempt) poll(declared *discovery, directory string, key wgtypes.Key) error {
+	url, ca, err := stationAPIOf(directory)
+	// A Hub whose tunnel a pod runs uses the address and CA mounted in its pod.
+	if errors.Is(err, errNoStationAPI) && os.Getenv("STATION_API_URL") != "" {
+		url = os.Getenv("STATION_API_URL")
+		ca, err = os.ReadFile(os.Getenv("STATION_API_CA_FILE"))
+	}
+	if err != nil {
+		return err
+	}
+	return attempt.run(func(path string, request map[string]any) (int, []byte, error) {
+		return askStationAPI(url, ca, key, path, request)
+	}, func(ctx context.Context) ([]discoveredHost, error) {
+		return declared.scan(ctx, attached(), neighbour)
+	})
+}
+
+func (attempt *discoveryAttempt) run(request discoveryAPI, probe func(context.Context) ([]discoveredHost, error)) error {
+	status, body, err := request("/v1/network/discovery-scan", map[string]any{})
+	if err != nil {
+		return err
+	}
+	if status == http.StatusNoContent {
+		*attempt = discoveryAttempt{}
+		return nil
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("Station API answered %d to the discovery scan check", status)
+	}
+	var scan discoveryRequest
+	if err := json.Unmarshal(body, &scan); err != nil {
+		return fmt.Errorf("read discovery scan request: %w", err)
+	}
+	if scan.ID == "" || !time.Now().Before(scan.Deadline) {
+		return nil
+	}
+	if attempt.id != scan.ID {
+		ctx, cancel := context.WithDeadline(context.Background(), scan.Deadline)
+		hosts, err := probe(ctx)
+		cancel()
+		*attempt = discoveryAttempt{id: scan.ID, hosts: hosts, scanErr: err}
+	}
+	if attempt.scanErr != nil {
+		status, _, err := request("/v1/network/discovered", map[string]any{"scan_id": scan.ID, "final": true, "failed": true})
+		if err == nil && status != http.StatusOK && status != http.StatusConflict {
+			err = fmt.Errorf("Station API answered %d to the discovery scan failure", status)
+		}
+		return errors.Join(attempt.scanErr, err)
+	}
+	return reportDiscoveryScan(scan, attempt.hosts, func(body map[string]any) (int, error) {
+		status, _, err := request("/v1/network/discovered", body)
+		return status, err
+	})
+}
+
+func reportDiscoveryScan(scan discoveryRequest, found []discoveredHost, send func(map[string]any) (int, error)) error {
+	for start := 0; ; start += 256 {
+		end := min(start+256, len(found))
+		final := end == len(found)
+		status, err := send(map[string]any{"scan_id": scan.ID, "hosts": found[start:end], "final": final})
+		if err != nil || status == http.StatusConflict {
+			return err
+		}
+		if status == http.StatusTooManyRequests && !final {
+			_, err := send(map[string]any{"scan_id": scan.ID, "final": true, "failed": true})
+			return errors.Join(fmt.Errorf("Station API reached the discovery candidate limit"), err)
+		}
+		if status != http.StatusOK {
+			return fmt.Errorf("Station API answered %d to the discovery scan result", status)
+		}
+		if final {
+			return nil
+		}
 	}
 }

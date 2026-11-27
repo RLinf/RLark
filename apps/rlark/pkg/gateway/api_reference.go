@@ -59,8 +59,8 @@ func (g *Gateway) handleAPIReference(c *gin.Context) {
 						Method: "POST",
 						Path:   "/api/v1/auth/login",
 						Description: localizedText{
-							ZH: "使用用户名和密码登录",
-							EN: "Log in with a username and password",
+							ZH: "使用用户名和密码登录；在禁用原生登录的部署中返回 403 native_login_disabled",
+							EN: "Log in with a username and password. Deployments with native login disabled return 403 native_login_disabled.",
 						},
 						Example: map[string]any{"ok": true, "role": "user", "token": "<token>", "expiresAt": "2026-09-23T18:00:00Z"},
 					},

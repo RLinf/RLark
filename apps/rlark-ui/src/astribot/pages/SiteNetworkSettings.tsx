@@ -3,6 +3,7 @@ import { Activity, AlertTriangle, Boxes, ChevronLeft, ChevronDown, CircleCheck, 
 import { ApiError } from "../../api";
 import { useAutoRefresh } from "../../hooks";
 import { RefreshOverlay } from "../../components/shared";
+import { DiscoveryScanControl, useDiscoveryScan } from "../components/DiscoveryScan";
 import { useAction } from "../components/useAction";
 import { clustersApi } from "../../backend";
 import type { ClusterSummary } from "../../types";
@@ -16,10 +17,10 @@ const condition = (data: SiteNetworkView | undefined, name: string) => data?.sta
 const defaultDiscovery = (site: SiteNetworkSite): SiteNetworkDiscovery => site.discovery ? structuredClone(site.discovery) : {
   enabled: false, ranges: [""], intervalSeconds: 30, from: { clusterID: "", nodeName: "" }, includeUnclassified: false, sshPorts: [],
 };
-// A site that never had discovery and is left disabled: saving it removes the
-// field (null), which the API accepts without requiring ranges or a from node.
-const isUnconfiguredDisabled = (site: SiteNetworkSite, draft: SiteNetworkDiscovery) =>
-  !draft.enabled && !site.discovery && draft.ranges.every((range) => !range.trim()) && !draft.from.clusterID && !draft.from.nodeName;
+function SiteScan({ site, zh, disabledReason, variant = "secondary" }: { site: string; zh: boolean; disabledReason?: string; variant?: "primary" | "secondary" }) {
+  const scan = useDiscoveryScan(site, zh);
+  return <DiscoveryScanControl {...scan} zh={zh} variant={variant} disabledReason={disabledReason} />;
+}
 
 type ScanEventTone = "ok" | "warn" | "bad" | "info";
 type ScanEvent = { at: string; text: string; tone: ScanEventTone };
@@ -41,6 +42,8 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
   const [clusterDisplayNames, setClusterDisplayNames] = useState<Record<string, string>>({});
   const [insightsLoaded, setInsightsLoaded] = useState(false);
   const [savedEvents, setSavedEvents] = useState<ScanEvent[]>([]);
+  const [unclassifiedOpen, setUnclassifiedOpen] = useState<Record<string, boolean>>({});
+  const [contextOpen, setContextOpen] = useState(true);
   const { pending, error: actionError, setError, run } = useAction();
   const dirtyRef = useRef(dirty);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -103,8 +106,8 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
   const siteHubs = useMemo(() => data?.members.filter((member) => member.role === "Hub" && member.site === selectedSite) ?? [], [data, selectedSite]);
   const selectedDisplay = selectedSiteData && siteDisplay(selectedSiteData, clusterDisplayNames);
   const draft = selectedSiteData ? drafts[selectedSite] ?? defaultDiscovery(selectedSiteData) : undefined;
-  const validation = selectedSiteData && draft && dirty[selectedSite]
-    ? (isUnconfiguredDisabled(selectedSiteData, draft) ? "" : validateDiscovery(draft, zh))
+  const validation = selectedSiteData && draft && (dirty[selectedSite] || !selectedSiteData.discovery?.enabled)
+    ? validateDiscovery(draft, zh)
     : "";
   const savedFrom = selectedSiteData?.discovery?.from;
   const selectedFrom = savedFrom && hubs.find((hub) => hub.clusterID === savedFrom.clusterID && hub.nodeName === savedFrom.nodeName);
@@ -120,7 +123,6 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
     hubs: data?.members.filter((member) => member.role === "Hub" && member.site === site.name).length ?? 0,
   })), [data, machines, clusterDisplayNames]);
   const maxLoad = Math.max(1, ...siteLoad.map((item) => item.count));
-  const scanningSites = data?.sites.filter((site) => site.discovery?.enabled && data.members.some((member) => member.role === "Hub" && member.site === site.name)).length ?? 0;
   const seenValues = machines.map((machine) => machine.last_seen).filter((value): value is string => Boolean(value)).sort();
   const latestSeen = seenValues[seenValues.length - 1];
   const robots = useMemo(() => siteNodes.filter((node) => isRobotNode(node.labels)), [siteNodes]);
@@ -178,8 +180,7 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
 
   const save = (site: SiteNetworkSite) => {
     const siteDraft = drafts[site.name] ?? defaultDiscovery(site);
-    const unconfiguredDisabled = isUnconfiguredDisabled(site, siteDraft);
-    const siteValidation = unconfiguredDisabled ? "" : validateDiscovery(siteDraft, zh);
+    const siteValidation = validateDiscovery(siteDraft, zh);
     if (siteValidation) { setError(siteValidation); return; }
     if (readOnly) return;
     void run(async () => {
@@ -187,7 +188,7 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
       try {
         await siteNetworkApi.updateDiscovery(site.name, {
           resourceVersion: data!.resourceVersion,
-          discovery: unconfiguredDisabled ? null : { ...siteDraft, ranges: siteDraft.ranges.map((item) => item.trim()).filter(Boolean) },
+          discovery: { ...siteDraft, enabled: true, ranges: siteDraft.ranges.map((item) => item.trim()).filter(Boolean) },
         });
         setDirty((current) => ({ ...current, [site.name]: false }));
         setNoticeTone((current) => ({ ...current, [site.name]: "success" }));
@@ -229,10 +230,8 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
 
   const ready = conditionIsTrue("Ready");
   const connected = conditionIsTrue("FullyConnected");
-  const stale = conditionIsTrue("DiscoveryStale");
   const readyTone = ready ? "is-ok" : condition(data, "Ready")?.status === "False" ? "is-bad" : "is-idle";
   const connectedTone = connected ? "is-ok" : condition(data, "FullyConnected")?.status === "False" ? "is-warn" : "is-idle";
-  const staleTone = stale ? "is-warn" : condition(data, "DiscoveryStale")?.status === "False" ? "is-ok" : "is-idle";
   const observedGeneration = data?.status?.observedGeneration;
   const siteState = (enabled: boolean, hubs: number) => enabled ? (hubs ? "is-ok" : "is-warn") : "is-idle";
 
@@ -240,7 +239,7 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
     <header className="site-network-page-head">
       <div className="site-network-head-copy">
         <h2>{zh ? "站点扫描设置" : "Discovery Settings"}</h2>
-        <p>{zh ? "选择站点，设置扫描范围、间隔和管理面拨号 Hub。" : "Choose a site to configure its scan ranges, interval, and management dial-out Hub."}</p>
+        <p>{zh ? "选择站点，设置手动扫描的范围和管理面拨号 Hub。" : "Choose a site to configure its manual scan ranges and management dial-out Hub."}</p>
       </div>
       <div className="site-network-head-actions">
         <button type="button" className="secondary-button" onClick={() => navigate("stations", "models")}><Boxes size={14} />{zh ? "机器人型号" : "Robot models"}</button>
@@ -249,9 +248,9 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
       </div>
     </header>
 
-    {data && (stale || unreachable.length > 0 || generationPending) && <div className="site-network-inline-status" role="status">
+    {data && (unreachable.length > 0 || generationPending) && <div className="site-network-inline-status" role="status">
       <AlertTriangle size={16} aria-hidden="true" />
-      <span>{stale && (zh ? "扫描结果已过期。" : "Discovery results are stale.")}{" "}
+      <span>
         {generationPending && (zh ? `等待应用配置（${observedGeneration ?? "—"} / ${data.generation}）。` : `Waiting for configuration to apply (${observedGeneration ?? "—"} / ${data.generation}).`)}{" "}
         {unreachable.length > 0 && (zh ? `不可达路径：${unreachable.join("、")}。` : `Unreachable paths: ${unreachable.join(", ")}.`)}
       </span>
@@ -271,6 +270,7 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
               const count = data.members.filter((member) => member.role === "Hub" && member.site === site.name).length;
               const enabled = Boolean(site.discovery?.enabled);
               const active = site.name === selectedSite;
+              const isDirty = Boolean(dirty[site.name]);
               return <button
                 type="button"
                 role="tab"
@@ -300,7 +300,10 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
                     {zh ? "站点" : "Site"} {site.name} · {count} Hub
                   </small>
                 </span>
-                <span className={`site-network-site-state ${siteState(enabled, count)}`}>{enabled ? (count ? (zh ? "已开启" : "Enabled") : (zh ? "无 Hub" : "No Hub")) : (zh ? "已关闭" : "Off")}</span>
+                <span className="site-network-site-meta">
+                  <span className={`site-network-site-state ${siteState(enabled, count)}`}>{enabled ? (count ? (zh ? "已配置" : "Configured") : (zh ? "无 Hub" : "No Hub")) : (zh ? "待配置" : "Needs setup")}</span>
+                  {isDirty && <span className="site-network-site-dirty">{zh ? "未保存" : "Unsaved"}</span>}
+                </span>
               </button>;
             })}
           </div>
@@ -308,31 +311,29 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
           {selectedSiteData && selectedDisplay && draft && <section id="site-network-editor" className="site-network-workspace" role="tabpanel" aria-labelledby={`site-network-tab-${selectedSiteData.name}`}>
             <header className="site-network-editor-head">
               <div>
-                <h3>{zh ? "扫描配置" : "Scan configuration"}<span className={`status ${selectedSiteData.discovery?.enabled ? "status-running" : "status-stopped"}`}><i />{selectedSiteData.discovery?.enabled ? (siteHubs.length ? (zh ? "扫描已开启" : "Discovery enabled") : (zh ? "无 Hub" : "No Hub")) : (zh ? "扫描已关闭" : "Discovery off")}</span></h3>
+                <h3>{zh ? "扫描配置" : "Scan configuration"}</h3>
                 <p>{selectedDisplay.title} · {zh ? "站点" : "Site"} {selectedSiteData.name} · {siteHubs.length} Hub{selectedDisplay.clusterNames.length !== 1 && ` · ${selectedDisplay.clusterNames.join(" · ") || (zh ? "未关联集群" : "No linked clusters")}`}</p>
               </div>
+              <SiteScan key={selectedSite} site={selectedSite} zh={zh} variant="secondary" disabledReason={readOnly
+                ? (zh ? "需要管理员权限" : "Administrator access required")
+                : dirty[selectedSite] || !selectedSiteData.discovery?.enabled
+                  ? (zh ? "请先保存扫描设置" : "Save scan settings first")
+                  : generationPending
+                    ? (zh ? "等待配置下发" : "Waiting for settings to apply")
+                    : !siteHubs.length ? (zh ? "站点没有 Hub" : "No Hub at this site") : undefined} />
             </header>
 
             <div className="site-network-editor-fields">
               <section className="site-network-editor-col">
-                <h4 className="site-network-group-title"><Clock size={16} aria-hidden="true" />{zh ? "扫描频率" : "Scan cadence"}</h4>
-                <div className="site-network-group-fields">
-                  <label className="site-network-switch">
-                    <input type="checkbox" checked={draft.enabled} disabled={readOnly || pending} onChange={(event) => updateDraft(selectedSite, (current) => ({ ...current, enabled: event.target.checked }))} />
-                    <span className="site-network-switch-track" aria-hidden="true" />
-                    <span><strong>{zh ? "启用此站点扫描" : "Enable discovery for this site"}</strong><small>{draft.enabled ? siteHubs.length ? (zh ? "启用后按下方间隔扫描" : "Uses the interval below when enabled") : (zh ? "已开启，但无 Hub 不会扫描。" : "Enabled, but no Hub is available to scan.") : siteHubs.length ? (zh ? "已关闭" : "Disabled") : (zh ? "已关闭，且无 Hub 不会扫描" : "Disabled, and there is no Hub to scan")}</small></span>
-                  </label>
-                  <label className="site-network-field">{zh ? "扫描间隔" : "Scan interval"}
-                    <span className="site-network-interval"><input type="number" min={10} max={3600} value={draft.intervalSeconds} disabled={readOnly || pending} onChange={(event) => updateDraft(selectedSite, (current) => ({ ...current, intervalSeconds: Number(event.target.value) }))} /><span>{zh ? "秒" : "s"}</span></span>
-                    <small>{zh ? "10–3600 秒；Hub 按这个间隔上报发现的机器。" : "10–3600 seconds; hubs report discovered machines at this cadence."}</small>
-                  </label>
+                <div className="site-network-col-meta">
+                  <h4 className="site-network-group-title"><Radar size={16} aria-hidden="true" />{zh ? "扫描范围" : "Scan scope"}</h4>
+                  <p className="site-network-group-desc">{zh ? "每次扫描包含 Hub 直连的私网，可在此补充额外 IPv4 网段。" : "Each scan includes Hub-connected private networks. Add extra IPv4 ranges here."}</p>
                 </div>
-              </section>
-
-              <section className="site-network-editor-col">
-                <h4 className="site-network-group-title"><Radar size={16} aria-hidden="true" />{zh ? "扫描范围" : "Scan scope"}</h4>
                 <div className="site-network-group-fields">
-                  <div className="site-network-field-head"><strong>{zh ? "额外扫描网段" : "Additional scan ranges"}</strong><small>{zh ? "Hub 直连私网会自动扫描，这里填写额外网段。" : "Hub-connected private networks are scanned automatically. Add extra ranges here."}</small></div>
+                  <div className="site-network-field-head">
+                    <strong>{zh ? "额外扫描网段" : "Additional scan ranges"}</strong>
+                    <small>{zh ? "支持 1–8 条不重复 IPv4 网段（/22 到 /32）" : "1–8 unique IPv4 prefixes (/22 to /32)"}</small>
+                  </div>
                   <div className="site-network-ranges">
                     {draft.ranges.map((range, index) => <div className="site-network-range-row" key={index}>
                       <input aria-label={zh ? `网段 ${index + 1}` : `Range ${index + 1}`} value={range} disabled={readOnly || pending} placeholder="192.168.31.0/24" onChange={(event) => updateDraft(selectedSite, (current) => ({ ...current, ranges: current.ranges.map((item, at) => at === index ? event.target.value : item) }))} />
@@ -340,12 +341,16 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
                     </div>)}
                     <div className="site-network-range-actions">
                       <button type="button" className="secondary-button" disabled={readOnly || pending || draft.ranges.length >= 8} onClick={() => updateDraft(selectedSite, (current) => ({ ...current, ranges: [...current.ranges, ""] }))}><Plus size={14} />{zh ? "添加网段" : "Add range"}</button>
-                      <span>{zh ? "1–8 条 · /22 到 /32" : "1–8 ranges · /22 to /32"}</span>
+                      <span>{draft.ranges.length} / 8 {zh ? "条 · /22 到 /32" : "ranges · /22 to /32"}</span>
                     </div>
                     {validation && <small className="site-network-inline-error" role="alert">{validation}</small>}
                   </div>
-                  <details className="site-network-advanced">
-                    <summary>{zh ? "未分类 SSH 候选" : "Unclassified SSH candidates"}<small>{draft.includeUnclassified ? (zh ? "已开启" : "Enabled") : (zh ? "已关闭" : "Off")}</small><ChevronDown size={14} aria-hidden="true" /></summary>
+                  <details className="site-network-advanced" open={unclassifiedOpen[selectedSite] ?? Boolean(draft.includeUnclassified)} onToggle={(event) => { const isOpen = event.currentTarget.open; setUnclassifiedOpen((current) => ({ ...current, [selectedSite]: isOpen })); }}>
+                    <summary>
+                      <span>{zh ? "未分类 SSH 候选" : "Unclassified SSH candidates"}</span>
+                      <span className={`site-network-toggle-pill${draft.includeUnclassified ? " is-on" : ""}`}>{draft.includeUnclassified ? (zh ? "已开启" : "On") : (zh ? "已关闭" : "Off")}</span>
+                      <ChevronDown size={15} aria-hidden="true" />
+                    </summary>
                     <div className="site-network-advanced-fields">
                       <label className="site-network-switch">
                         <input type="checkbox" checked={Boolean(draft.includeUnclassified)} disabled={readOnly || pending} onChange={(event) => updateDraft(selectedSite, (current) => ({ ...current, includeUnclassified: event.target.checked }))} />
@@ -360,17 +365,29 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
                   </details>
                 </div>
               </section>
+
               <section className="site-network-editor-col site-network-relay">
-                <h4 className="site-network-group-title"><Layers3 size={16} aria-hidden="true" />{zh ? "管理面连接" : "Management connection"}</h4>
+                <div className="site-network-col-meta">
+                  <h4 className="site-network-group-title"><Layers3 size={16} aria-hidden="true" />{zh ? "管理面连接" : "Management connection"}</h4>
+                  <p className="site-network-group-desc">{zh ? "station-controller 从这里拨号连接 Hub 中继；它不是负责扫描的 Hub。" : "station-controller dials through this Hub. It is not the scanner."}</p>
+                </div>
                 <div className="site-network-group-fields">
                   <label className="site-network-field">{zh ? "管理面拨号 Hub" : "Management-plane dial-out Hub"}
                     <select value={draft.from.clusterID && draft.from.nodeName ? `${draft.from.clusterID}/${draft.from.nodeName}` : ""} disabled={readOnly || pending} onChange={(event) => { const hub = hubs.find((item) => `${item.clusterID}/${item.nodeName}` === event.target.value); updateDraft(selectedSite, (current) => ({ ...current, from: { clusterID: hub?.clusterID ?? "", nodeName: hub?.nodeName ?? "" } })); }}>
                       <option value="">{zh ? "选择网络中的 Hub" : "Select a network Hub"}</option>
                       {hubs.map((hub) => <option key={`${hub.clusterID}/${hub.nodeName}`} value={`${hub.clusterID}/${hub.nodeName}`}>{clusterTitle(hub.clusterID)} · {hub.nodeName} · {hub.site} · {hub.address}</option>)}
                     </select>
-                    <small>{zh ? "station-controller 从这里拨号连接 Hub 中继；它不是负责扫描的 Hub。" : "station-controller dials through this Hub. It is not the scanner."}</small>
                   </label>
-                  <div className="site-network-readonly"><small>{zh ? "已保存的拨号源" : "Saved dial-out source"}</small><span>{selectedFrom ? `${clusterTitle(selectedFrom.clusterID)} · ${selectedFrom.nodeName} · ${selectedFrom.site} · ${selectedFrom.address}` : savedFrom?.clusterID && savedFrom.nodeName ? `${clusterTitle(savedFrom.clusterID)} · ${savedFrom.nodeName}` : (zh ? "尚未选择" : "Not selected")}</span></div>
+                  <div className="site-network-readonly">
+                    <small>{zh ? "已保存的拨号源" : "Saved dial-out source"}</small>
+                    <span>{selectedFrom ? `${clusterTitle(selectedFrom.clusterID)} · ${selectedFrom.nodeName} · ${selectedFrom.site} · ${selectedFrom.address}` : savedFrom?.clusterID && savedFrom.nodeName ? `${clusterTitle(savedFrom.clusterID)} · ${savedFrom.nodeName}` : (zh ? "尚未选择" : "Not selected")}</span>
+                  </div>
+                  <div className="site-network-site-hubs">
+                    <small>{zh ? "本站点执行扫描的 Hub" : "Scanning Hubs at this site"}</small>
+                    {siteHubs.length ? <div className="site-network-hub-pills">
+                      {siteHubs.map((hub) => <span className="site-network-hub-pill" key={`${hub.clusterID}/${hub.nodeName}`}><strong>{hub.nodeName}</strong><span className="mono">{hub.address}</span></span>)}
+                    </div> : <span className="site-network-hub-empty">{zh ? "当前站点没有已入网 Hub，保存后不会执行扫描。" : "No enrolled Hub at this site; saving will not trigger scans."}</span>}
+                  </div>
                 </div>
               </section>
             </div>
@@ -380,7 +397,7 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
               <span className="site-network-editor-note">{zh ? "保存后约 30 秒生效" : "Takes effect in about 30 seconds"}</span>
               {dirty[selectedSite] && <span className="site-network-unsaved">{zh ? "有未保存的更改" : "Unsaved changes"}</span>}
               <button type="button" className="secondary-button" disabled={!dirty[selectedSite] || pending} onClick={() => { setDrafts((current) => ({ ...current, [selectedSite]: defaultDiscovery(selectedSiteData) })); setDirty((current) => ({ ...current, [selectedSite]: false })); setNotice((current) => ({ ...current, [selectedSite]: "" })); setError(""); }}>{zh ? "放弃更改" : "Discard changes"}</button>
-              <button type="button" className="primary-button" disabled={!dirty[selectedSite] || pending || !!validation || readOnly} onClick={() => save(selectedSiteData)}>{pending ? (zh ? "保存中…" : "Saving…") : (zh ? "保存设置" : "Save settings")}</button>
+              <button type="button" className="primary-button" disabled={(!dirty[selectedSite] && Boolean(selectedSiteData.discovery?.enabled)) || pending || !!validation || readOnly} onClick={() => save(selectedSiteData)}>{pending ? (zh ? "保存中…" : "Saving…") : (zh ? "保存设置" : "Save settings")}</button>
             </footer>
           </section>}
         </div>
@@ -388,24 +405,24 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
       </div>
 
       <details className="site-network-diagnostics">
-        <summary><span><Activity size={17} aria-hidden="true" />{zh ? "网络状态与诊断" : "Network status and diagnostics"}</span><ChevronDown size={16} aria-hidden="true" /></summary>
-        <div className="site-network-diagnostic-body">
+        <summary className="site-network-diagnostics-summary">
+          <span className="site-network-diagnostics-title"><Activity size={16} aria-hidden="true" />{zh ? "网络状态与诊断" : "Network status and diagnostics"}</span>
           <div className="site-network-health" aria-label={zh ? "站点网络健康" : "Site network health"}>
-            <div className={`site-network-health-item ${readyTone}`} title={rawConditionDetail("Ready")}>
+            <span className={`site-network-health-item ${readyTone}`} title={rawConditionDetail("Ready")}>
               <i /><span><small>{zh ? "网络就绪" : "Ready"}</small><strong>{ready ? (zh ? "就绪" : "Ready") : condition(data, "Ready")?.status === "False" ? (zh ? "未就绪" : "Not ready") : (zh ? "未知" : "Unknown")}</strong></span>
-            </div>
-            <div className={`site-network-health-item ${connectedTone}`} title={rawConditionDetail("FullyConnected")}>
+            </span>
+            <span className={`site-network-health-item ${connectedTone}`} title={rawConditionDetail("FullyConnected")}>
               <i /><span><small>{zh ? "全部互通" : "Connected"}</small><strong>{connected ? (zh ? "全部可达" : "All reachable") : condition(data, "FullyConnected")?.status === "False" ? (zh ? "存在不可达" : "Unreachable paths") : (zh ? "未知" : "Unknown")}</strong></span>
-            </div>
-            <div className={`site-network-health-item ${staleTone}`} title={rawConditionDetail("DiscoveryStale")}>
-              <i /><span><small>{zh ? "扫描新鲜度" : "Discovery"}</small><strong>{stale ? (zh ? "数据已过期" : "Stale") : condition(data, "DiscoveryStale")?.status === "False" ? (zh ? "正常" : "Current") : (zh ? "未知" : "Unknown")}</strong></span>
-            </div>
-            <div className={`site-network-health-item ${!data ? "is-idle" : generationPending ? "is-warn" : "is-ok"}`} title={`${zh ? "配置版本" : "Generation"} · ${observedGeneration ?? "—"} / ${data?.generation ?? "—"}`}>
+            </span>
+            <span className={`site-network-health-item ${!data ? "is-idle" : generationPending ? "is-warn" : "is-ok"}`} title={`${zh ? "配置版本" : "Generation"} · ${observedGeneration ?? "—"} / ${data?.generation ?? "—"}`}>
               <i /><span><small>{zh ? "配置版本" : "Generation"}</small><strong>{observedGeneration ?? "—"} / {data?.generation ?? "—"}</strong></span>
-            </div>
+            </span>
           </div>
-          <details className="site-network-context">
-            <summary><span>{zh ? "站点与机型详情" : "Site and model details"}</span><ChevronDown size={16} aria-hidden="true" /></summary>
+          <ChevronDown className="site-network-diagnostics-chevron" size={16} aria-hidden="true" />
+        </summary>
+        <div className="site-network-diagnostic-body">
+          <details className="site-network-context" open={contextOpen} onToggle={(event) => setContextOpen(event.currentTarget.open)}>
+            <summary><span>{zh ? "站点与机型详情" : "Site and model details"}</span><ChevronDown size={15} aria-hidden="true" /></summary>
             <aside className="site-network-details">
               <section className="site-network-detail-section">
                 <h4><Layers3 size={14} />{zh ? "站点信息" : "Site details"}</h4>
@@ -415,18 +432,22 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
               <section className="site-network-detail-section">
                 <h4><Radar size={14} />{zh ? "可发现类型" : "Discoverable types"}</h4>
                 {data.nodeClasses.length ? <div className="site-network-detail-list">{data.nodeClasses.map((item) => <div className="site-network-detail-item" key={item.name}><strong>{item.name === "s1u" ? "S1U" : item.name}</strong><small>{zh ? "入口端口" : "Entry port"} {item.entryPort ?? "—"} · {zh ? "访问" : "Access"} {item.hasAccess ? (zh ? "已开启" : "on") : (zh ? "关闭" : "off")} · {zh ? "发现" : "Discovery"} {item.hasDiscovery ? (zh ? "已开启" : "on") : (zh ? "关闭" : "off")}</small></div>)}</div> : <p className="site-network-warning">{zh ? "没有可发现的类型，开启后也不会产生 Machine。" : "No discoverable NodeClass is configured. Enabling discovery will not produce Machines."}</p>}
-                <div className="site-network-nonrobot">{zh ? "普通 x86/GPU 没有声明 discovery，不会出现在扫描列表。它们应使用 SSH 入网或入网码。" : "Ordinary x86/GPU servers have no discovery declaration, so they never appear in the scan list. Use SSH or a join code for them."}</div>
+                <div className="site-network-nonrobot">{zh ? "未匹配机型的 SSH 设备可在开启「未分类 SSH 候选」后出现，类型在入网时确认。" : "SSH devices without a matching class can appear when unclassified candidates are enabled. Confirm their type when joining."}</div>
               </section>
-              <details className="site-network-detail-section">
-                <summary><span><CircleCheck size={14} />{zh ? `工厂主机密钥（${data.nodeClasses.reduce((count, item) => count + (item.hostKeyFingerprints?.length ?? 0), 0)}）` : `Factory host keys (${data.nodeClasses.reduce((count, item) => count + (item.hostKeyFingerprints?.length ?? 0), 0)})`}</span><span aria-hidden="true">⌄</span></summary>
+              <section className="site-network-detail-section">
+                <h4><CircleCheck size={14} />{zh ? `工厂主机密钥（${data.nodeClasses.reduce((count, item) => count + (item.hostKeyFingerprints?.length ?? 0), 0)}）` : `Factory host keys (${data.nodeClasses.reduce((count, item) => count + (item.hostKeyFingerprints?.length ?? 0), 0)})`}</h4>
                 {data.nodeClasses.some((item) => item.hostKeyFingerprints?.length) ? <div className="site-network-detail-list">{data.nodeClasses.map((item) => (item.hostKeyFingerprints ?? []).length > 0 && <div className="site-network-detail-item" key={item.name}><strong>{item.name === "s1u" ? "S1U" : item.name}</strong>{(item.hostKeyFingerprints ?? []).map((fingerprint) => <code className="site-network-fingerprint" key={`${item.name}/${fingerprint}`}>{fingerprint}</code>)}</div>)}</div> : <p className="muted">{zh ? "没有配置工厂主机密钥。" : "No factory host keys are configured."}</p>}
-              </details>
+              </section>
             </aside>
           </details>
           <details className="site-network-rules-panel">
-            <summary><span>{zh ? "扫描范围与限制" : "Scanning scope and limits"}</span><span>{zh ? "5 条 · 所有站点共用" : "5 rules · shared by all sites"}</span></summary>
+            <summary>
+              <span>{zh ? "扫描范围与限制" : "Scanning scope and limits"}</span>
+              <span className="site-network-rules-meta">{zh ? "5 条 · 所有站点共用" : "5 rules · shared by all sites"}</span>
+              <ChevronDown size={15} aria-hidden="true" />
+            </summary>
             <ul className="site-network-rules">
-              <li>{zh ? "只发现 NodeClass.spec.discovery.hostKeyFingerprints 匹配的入口设备，不是所有 PC，也不是公司设备清单。" : "Only entry devices matching NodeClass.spec.discovery.hostKeyFingerprints are discovered. This is not a scan of every PC or a company device inventory."}</li>
+              <li>{zh ? "自动识别依赖 NodeClass.spec.discovery.hostKeyFingerprints。未匹配的 SSH 设备只能作为未分类候选出现。" : "Automatic classification relies on NodeClass.spec.discovery.hostKeyFingerprints. Unmatched SSH devices can appear as unclassified candidates."}</li>
               <li>{zh ? "Hub 直连的私网也会扫描；大于 /22 的网段只扫描 Hub 所在的 /22。" : "Hub-connected private networks are scanned too. For networks wider than /22, only the Hub's /22 is scanned."}</li>
               <li>{zh ? "多个站点网段重叠时可能出现重复 Machine。" : "Overlapping site ranges may produce duplicate Machine records."}</li>
               <li>{zh ? "设置约 30 秒生效；已有 Machine 不会自动删除。" : "Changes take effect in about 30 seconds. Existing Machines are not deleted automatically."}</li>
@@ -435,7 +456,7 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
           </details>
 
           <details className="site-network-activity">
-            <summary><span>{zh ? "扫描活动与设备状态" : "Scan activity and device status"}</span><ChevronDown size={16} aria-hidden="true" /></summary>
+            <summary><span>{zh ? "扫描活动与设备状态" : "Scan activity and device status"}</span><ChevronDown size={15} aria-hidden="true" /></summary>
             <section className="site-network-bottom">
               <article className="site-network-card">
                 <header className="site-network-card-head">
@@ -452,14 +473,14 @@ export function SiteNetworkSettingsPage({ zh, navigate }: { zh: boolean; navigat
               </article>
 
               <article className="site-network-card">
-                <header className="site-network-card-head"><div><h3><Radar size={15} />{zh ? "站点发现负载" : "Site discovery load"}</h3><p>{zh ? "各站点本轮发现的机器" : "Machines found by each site"}</p></div></header>
+                <header className="site-network-card-head"><div><h3><Radar size={15} />{zh ? "站点发现负载" : "Site discovery load"}</h3><p>{zh ? "各站点已有的发现记录" : "Discovery records by site"}</p></div></header>
                 <div className="site-network-load-list">
                   {siteLoad.map((site) => <button type="button" key={site.name} className={`site-network-load-row${site.name === selectedSite ? " is-current" : ""}`} onClick={() => selectSite(site.name)}>
                     <span className="site-network-load-head"><span><i className={`site-network-site-dot ${siteState(Boolean(data.sites.find((item) => item.name === site.name)?.discovery?.enabled), site.hubs)}`} />{site.title}<small>{site.name}</small></span><span>{insightsLoaded ? `${site.count} 台` : "—"} <small>· {site.hubs} Hub</small></span></span>
                     <span className="site-network-load-bar"><i style={{ width: `${insightsLoaded ? Math.round(site.count / maxLoad * 100) : 0}%` }} /></span>
                   </button>)}
                 </div>
-                <div className="site-network-load-foot">{scanningSites} {zh ? "个站点在扫描" : "sites scanning"}{latestSeen ? ` · ${zh ? "最近发现" : "last seen"} ${seenTime(latestSeen, now)}` : ""}</div>
+                {latestSeen && <div className="site-network-load-foot">{zh ? "最近发现" : "Last seen"} {seenTime(latestSeen, now)}</div>}
               </article>
 
               <article className="site-network-card">

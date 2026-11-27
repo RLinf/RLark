@@ -41,6 +41,8 @@ export interface CamerasReport {
   // The views of the robot's body only.
   cameras: Partial<Record<CameraView, CameraReport>>;
   updated_at: number;
+  // Only the live report includes the camera service's clock exchange.
+  clock?: { received_ms: number; sent_ms: number };
 }
 
 // The robot's last published report, from its Node's annotation; undefined when there is none.
@@ -118,4 +120,29 @@ export function camerasPath(node: string, namespace: string): string {
 // A view's newest JPEG (its age in the header X-Age-Seconds; 404 the body has no such view, 503 no frame yet).
 export function cameraFramePath(node: string, namespace: string, view: CameraView): string {
   return withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/cameras/${view}.jpg`, { namespace });
+}
+
+// The preview rates a camera can be streamed at, slowest first. A robot wall with several cards starts every
+// card at the lowest rate so that it does not ask the camera service for high frame rates by default.
+export const CAMERA_FPS_OPTIONS = [5, 10, 15, 30] as const;
+export type CameraFps = (typeof CAMERA_FPS_OPTIONS)[number];
+export const DEFAULT_CAMERA_FPS: CameraFps = CAMERA_FPS_OPTIONS[0];
+
+export function isCameraFps(value: number): value is CameraFps {
+  return (CAMERA_FPS_OPTIONS as readonly number[]).includes(value);
+}
+
+export function cameraStreamPath(node: string, namespace: string, view: CameraView, fps: number): string {
+  return withQuery(`/api/v1/rlinf.io/v1alpha1/nodes/${encodeURIComponent(node)}/cameras/${view}/stream`, { namespace, fps });
+}
+
+export function readCameraAge(header: string | null): number | undefined {
+  if (!header?.trim()) return undefined;
+  const seconds = Number(header);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+}
+
+export function formatCameraMilliseconds(ms: number | undefined): string {
+  if (ms === undefined) return "—";
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }

@@ -79,6 +79,7 @@ services:
       - --station-gateway-credential-file=/etc/rlark/station-service/token
       - --station-api-bootstrap-url=${STATION_API_BOOTSTRAP_URL:?the environment's station.bootstrapURL}
       - --jwt-token-ttl=${GATEWAY_TOKEN_TTL:?the environment's controlPlane.variables}
+      - --disable-native-login
       - --submission-verification-key=/etc/rlark/submission-public.pem
     ports: ["19000:8080"]
     volumes:
@@ -112,7 +113,7 @@ services:
     depends_on: [rlark-server]
 
   # 控制台：/api/ 转给网关，/api/iam/ 转给同一发布的 IAM 服务。
-  # 用户打开 http://<控制面地址>/ ；登录态是网关签的令牌（有效期 GATEWAY_TOKEN_TTL），过期后界面回到登录页。
+  # 用户打开 http://<控制面地址>/；IAM 管理会话是浏览器入口，Gateway 原生账密登录在发布版禁用。
   rlark-ui:
     image: ${RLARK_UI_IMAGE:?the release's rlark-ui}
     container_name: rlark-ui

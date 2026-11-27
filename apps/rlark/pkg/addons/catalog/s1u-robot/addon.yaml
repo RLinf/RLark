@@ -1,7 +1,7 @@
 name: s1u-robot
 displayName: S1U 机器人节点
 category: other
-version: v1.7.2
+version: v1.7.3
 description: |
   S1U 机器人 x86 的机型配置：新机器入网后套上，之后一直保持。一个 DaemonSet（s1u-robot），镜像由 RLark 构建（extensions/s1u），加上声明了 deviceImage 时的设备层：
   1. 节点调优（tuner）：让宿主机符合节点规格（内核隔离核和统一 cgroup 层级（cgroup v2）、厂商进程和 k8s 的 CPU 范围与权重、kubelet 的 CPU 管理和内存预留、调频策略、调度器参数，开机时由宿主机上的单元重新套上），结果写在节点标签 rlark.io/node-profile-state（ok / drift / kubelet-restart-required / reboot-required）；新机器要重启一次才生效，没人用时自己重启。按 S1U 节点规格核对整台：标签 rlark.io/node-conformance（ok / not-ok），三段指纹和不成立的项写在节点注解上。机器人在用指有组件在 /run/rlark/in-use 下标着（Station 在服务一个 Run、设备层有会话接着，含遥操作）；电机上电、驱动在跑不算在用。会打断使用的事（规格要的整机重启和 kubelet 重启、人要求的重启、Orin 载荷换版本）叫维护，只在没人用时由节点调优自己做完一圈：在宿主机上拿一张租约（/run/rlark/s1u/maintenance），电源容器据此拒绝新的会话接入（Run 会看到 maintenance 和原因）并把机器人临时降到这件事需要的程度（整机重启：停驱动并下电；重启 kubelet：只停驱动；换载荷：不降），做完或租约到期后按原来的期望状态恢复，期望状态本身从不改写，所以人下电的机器人做完仍是下电。急停按下或硬件报错时不开始。进行到哪一步在节点标签 rlark.io/maintenance-state（none / waiting / queued / lowering / acting / failed）和注解 rlark.io/maintenance（做什么、为什么等、从何时起）。

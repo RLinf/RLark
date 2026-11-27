@@ -25,9 +25,7 @@ var siteNetworkGVR = schema.GroupVersionResource{Group: stationGroup, Version: s
 // where a hub relays connections to the hosts it found.
 const discoveryRelayPort = 18022
 
-// discoveryReportedAnnotation is DiscoveryReportedAnnotation of
-// astribot/station/controller: on a hub's NetworkEnrollment, when the hub
-// last reported what it found.
+// discoveryReportedAnnotation records when a Hub last sent a discovery batch.
 const discoveryReportedAnnotation = "station.rlark.io/discovery-reported-at"
 
 // entryHostKeyAnnotation is EntryHostKeyAnnotation of
@@ -42,7 +40,10 @@ var (
 
 type discoveredRequest struct {
 	documentRequest
-	Hosts []discoveredHost `json:"hosts"`
+	Hosts  []discoveredHost `json:"hosts"`
+	ScanID string           `json:"scan_id,omitempty"`
+	Final  bool             `json:"final,omitempty"`
+	Failed bool             `json:"failed,omitempty"`
 }
 
 // discoveredHost is a host a hub saw show a host key it looks for: the
@@ -73,7 +74,36 @@ func (d *NetworkDocuments) ServeDiscovered(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "at most 256 hosts")
 		return
 	}
-	status, err := d.discovered(r.Context(), request.PublicKey, request.Hosts)
+	ctx := r.Context()
+	var hub *unstructured.Unstructured
+	if request.ScanID != "" {
+		scan, target, err := d.pendingDiscoveryScan(ctx, request.PublicKey)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "discovery scan storage unavailable")
+			return
+		}
+		if scan.ID != request.ScanID || target == nil {
+			writeError(w, http.StatusConflict, "the discovery scan is no longer pending for this Hub")
+			return
+		}
+		hub = target
+		remaining := scan.StartedAt.Add(DiscoveryScanLifetime).Sub(clock(d.Now))
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, remaining)
+		defer cancel()
+	}
+	if (request.Final || request.Failed) && (hub == nil || request.Failed && (!request.Final || len(request.Hosts) != 0)) {
+		writeError(w, http.StatusBadRequest, "invalid discovery scan result")
+		return
+	}
+	status := http.StatusOK
+	var err error
+	if !request.Failed {
+		status, err = d.discovered(ctx, request.PublicKey, request.Hosts, hub, request.ScanID)
+	}
+	if err == nil && request.Final && (status == http.StatusOK || status == http.StatusTooManyRequests) {
+		err = d.finishDiscoveryScan(ctx, hub, request.PublicKey, request.ScanID, request.Failed || status == http.StatusTooManyRequests)
+	}
 	if err != nil {
 		log.Printf("discovered machines: %v", err)
 		writeError(w, http.StatusServiceUnavailable, "machine storage unavailable")
@@ -90,12 +120,15 @@ func (d *NetworkDocuments) ServeDiscovered(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]int{"hosts": len(request.Hosts)})
 }
 
-func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []discoveredHost) (int, error) {
+func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []discoveredHost, scanHub *unstructured.Unstructured, scanID string) (int, error) {
 	enrolled, err := d.Enrolled.Lookup(ctx, key)
 	if err != nil {
 		return 0, err
 	}
 	hub := enrolled[key]
+	if scanHub != nil {
+		hub = scanHub
+	}
 	if hub == nil {
 		return http.StatusForbidden, nil
 	}
@@ -107,6 +140,15 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 	network, err := d.Client.Resource(siteNetworkGVR).Namespace("station-system").Get(ctx, "default", metav1.GetOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("read the SiteNetwork: %w", err)
+	}
+	if scanID == "" {
+		scan, err := DiscoveryScanFor(network, site)
+		if err != nil {
+			return 0, err
+		}
+		if scan.ID != "" {
+			return http.StatusForbidden, nil
+		}
 	}
 	declared := false
 	includeUnclassified := false
@@ -146,21 +188,27 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		}
 	}
 	now := clock(d.Now)
-	// When the hub last reported, on its enrollment: station-controller says
-	// on the SiteNetwork when a hub has gone silent (DiscoveryStale).
 	enrollments := d.Client.Resource(networkEnrollmentGVR).Namespace(hub.GetNamespace())
 	current, err := enrollments.Get(ctx, hub.GetName(), metav1.GetOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("read the hub's NetworkEnrollment: %w", err)
 	}
-	annotations := current.GetAnnotations()
-	if annotations == nil {
-		annotations = map[string]string{}
-	}
-	annotations[discoveryReportedAnnotation] = now.UTC().Format(time.RFC3339)
-	current.SetAnnotations(annotations)
-	if _, err := enrollments.Update(ctx, current, metav1.UpdateOptions{}); err != nil && !apierrors.IsConflict(err) {
-		return 0, fmt.Errorf("record the hub's report: %w", err)
+	if scanHub != nil {
+		currentKey := text(current, "status", "publicKey")
+		if current.GetUID() != scanHub.GetUID() || currentKey != key || DiscoveryScanHubSite(current) != site {
+			return http.StatusForbidden, nil
+		}
+	} else {
+		// Preserve the last periodic report for older controllers during rollout.
+		annotations := current.GetAnnotations()
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[discoveryReportedAnnotation] = now.UTC().Format(time.RFC3339)
+		current.SetAnnotations(annotations)
+		if _, err := enrollments.Update(ctx, current, metav1.UpdateOptions{}); err != nil && !apierrors.IsConflict(err) {
+			return 0, fmt.Errorf("record the hub's report: %w", err)
+		}
 	}
 	classes, err := d.Client.Resource(nodeClassGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -243,11 +291,16 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		}
 		via := net.JoinHostPort(tunnel, strconv.Itoa(discoveryRelayPort))
 		// Hubs on one network all see its machines. A machine stays with the
-		// hub that has it until that hub has not seen it for three intervals,
-		// when station-controller would call a silent hub stale; it is not
+		// Hub that reported it first in this run, or the legacy time
+		// window for interval-based reports. It is not
 		// handed between them and looked at anew on every report.
 		if err == nil && text(machine, "status", "entry", "via") != via {
-			if seen, err := time.Parse(time.RFC3339, text(machine, "status", "entry", "lastSeen")); err == nil && now.Sub(seen) <= 3*interval {
+			seen, err := time.Parse(time.RFC3339, text(machine, "status", "entry", "lastSeen"))
+			keep := now.Sub(seen) <= 3*interval
+			if scanID != "" {
+				keep = text(machine, "status", "entry", "discoveryScanID") == scanID
+			}
+			if err == nil && keep {
 				continue
 			}
 		}
@@ -288,6 +341,9 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		entry := map[string]interface{}{"address": host.Address, "mac": strings.ToLower(host.MAC), "hostKeyFingerprint": hostKey,
 			"port": int64(host.Port), "hostKeyAlgorithm": host.HostKeyAlgorithm, "banner": host.Banner,
 			"via": via, "lastSeen": now.UTC().Format(time.RFC3339)}
+		if scanID != "" {
+			entry["discoveryScanID"] = scanID
+		}
 		// A machine that shows up changed is looked at anew.
 		for _, field := range []string{"address", "port", "hostKeyFingerprint", "hostKeyAlgorithm", "via"} {
 			if previous, _, _ := unstructured.NestedFieldNoCopy(machine.Object, "status", "entry", field); !reflect.DeepEqual(previous, entry[field]) {
@@ -298,7 +354,7 @@ func (d *NetworkDocuments) discovered(ctx context.Context, key string, hosts []d
 		if created && class == "" {
 			unclassifiedCount++
 		}
-		if _, err := machines.UpdateStatus(ctx, machine, metav1.UpdateOptions{}); err != nil && !apierrors.IsConflict(err) {
+		if _, err := machines.UpdateStatus(ctx, machine, metav1.UpdateOptions{}); err != nil && (scanHub != nil || !apierrors.IsConflict(err)) {
 			return 0, fmt.Errorf("write what was seen of Machine %s: %w", name, err)
 		}
 		reported[name] = true

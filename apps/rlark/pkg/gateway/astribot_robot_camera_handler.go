@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
@@ -16,6 +17,36 @@ import (
 
 	"github.com/rlinf/rlark/apps/rlark/pkg/apis"
 )
+
+type cameraStreamLimiter struct {
+	mu      sync.Mutex
+	total   int
+	perUser map[string]int
+}
+
+func (l *cameraStreamLimiter) acquire(user string, globalLimit, userLimit int) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.perUser == nil {
+		l.perUser = make(map[string]int)
+	}
+	if globalLimit > 0 && l.total >= globalLimit || userLimit > 0 && l.perUser[user] >= userLimit {
+		return false
+	}
+	l.total++
+	l.perUser[user]++
+	return true
+}
+
+func (l *cameraStreamLimiter) release(user string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.total--
+	l.perUser[user]--
+	if l.perUser[user] == 0 {
+		delete(l.perUser, user)
+	}
+}
 
 // A robot's cameras are served by its model Addon (s1u-robot's video container, astribot/s1u/device/cameras.py) on
 // the node's address, read-only; the Gateway reaches them through the member cluster's API server, as a proxy of that
@@ -56,6 +87,19 @@ func (g *Gateway) handleRobotCameras(c *gin.Context) {
 	if !ok {
 		respondError(c, http.StatusNotFound, CodeResourceNotFound, "a robot's cameras are /cameras, /cameras/<view>.jpg, /cameras/<view>/stream, /cameras/wall.jpg and /cameras/wall/stream; the views are "+strings.Join(robotCameraViews, ", "))
 		return
+	}
+	stream := strings.HasSuffix(c.FullPath(), "/stream")
+	owner := cameraStreamOwner(c)
+	if owner == "" {
+		owner = c.ClientIP()
+	}
+	if stream {
+		if !g.cameraStreams.acquire(owner, g.config.CameraMaxLiveStreams, g.config.CameraMaxLiveStreamsPerUser) {
+			c.Header("Retry-After", "2")
+			respondError(c, http.StatusTooManyRequests, "camera_stream_limit_exceeded", "camera live stream limit exceeded")
+			return
+		}
+		defer g.cameraStreams.release(owner)
 	}
 	agent, pod, ok := g.runningRobotAddon(c)
 	if !ok {
@@ -110,6 +154,19 @@ func (g *Gateway) handleRobotCameras(c *gin.Context) {
 			return // the end, or the robot's side gone: the viewer sees the stream end
 		}
 	}
+}
+
+func cameraStreamOwner(c *gin.Context) string {
+	subject := c.GetString(authSubjectKey)
+	if strings.HasPrefix(subject, serviceAccountSubject+"astribot-iam-") {
+		if user := strings.TrimSpace(c.GetHeader("X-IAM-User")); user != "" {
+			return user
+		}
+	}
+	if subject != "" {
+		return subject
+	}
+	return c.ClientIP()
 }
 
 // runningRobotAddon looks up the authorized node and the standing robot Addon Pod on it.

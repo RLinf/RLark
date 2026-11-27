@@ -94,6 +94,15 @@
   overflow-wrap: anywhere;
 }
 
+.station-preview-fps {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.station-camera-dialog-foot :is(.station-preview-actual-fps, .station-preview-latency) { font-variant-numeric: tabular-nums; }
+
 @media (max-width: 640px) {
   .station-camera-dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
   .station-camera-dialog-head { padding: 12px 12px 10px; }

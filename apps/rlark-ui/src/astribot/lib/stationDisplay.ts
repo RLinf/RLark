@@ -65,3 +65,18 @@ export function shortUID(value: string | undefined) {
   if (!value) return "—";
   return value.length > 13 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
 }
+
+// The recovery line of a station the plane does not see as Bound: what it last reported, whether the tunnel verified,
+// and the boundary of what a browser-side re-check can do. Re-check re-reads the node and the site network through the
+// page's normal load; if both the machine and its site link are unreachable, only someone at the machine or an
+// out-of-band path can recover it.
+export function stationRecoveryHint(item: StationItem, now: number, zh: boolean): string {
+  const seen = formatRelativeTime(item.status?.node?.lastSeenTime, now, zh);
+  const network = stationNetworkState(item);
+  const link = zh
+    ? ({ verified: "已验证", failed: "未通过", unknown: "未验证" } as const)[network]
+    : ({ verified: "verified", failed: "not verified", unknown: "unverified" } as const)[network];
+  return zh
+    ? `最近上报 ${seen}；隧道${link}。重新检测会重新读取节点与场站网络；若主机和站点链路都不可达，需到现场或走带外接入。`
+    : `Last report ${seen}; tunnel ${link}. Re-check reads the node and the site network again; if both the host and its site link are unreachable, someone must go to the machine or use an out-of-band path.`;
+}

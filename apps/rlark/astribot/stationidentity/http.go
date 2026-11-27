@@ -111,6 +111,8 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.Documents.ServeHTTP(w, r)
 	case route == "POST /v1/network/propagation":
 		a.Documents.ServePropagation(w, r)
+	case route == "POST /v1/network/discovery-scan":
+		a.Documents.ServeDiscoveryScan(w, r)
 	case route == "POST /v1/network/discovered":
 		a.Documents.ServeDiscovered(w, r)
 	case r.Method != http.MethodPost:

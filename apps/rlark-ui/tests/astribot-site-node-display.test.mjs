@@ -15,7 +15,12 @@ import {
   machineStateLabel,
   parseLabelLines,
   parseTaintLines,
+  robotPowerActionBlocked,
+  robotPowerActionTiming,
+  robotPowerActionWait,
   robotPowerAfter,
+  robotPowerStateNote,
+  robotPowerWaiting,
   unseenMachineOf,
   robotPowerDesired,
   robotPowerNodes,
@@ -172,6 +177,33 @@ test("a robot's desired power, its power and its self-check read from its Node's
   assert.deepEqual(robotPowerNodes(nodes, new Set(["a", "b", "d"])).map((node) => node.key), ["a", "d"]);
   assert.equal(isRobotNode(robot), true);
   assert.equal(isRobotNode({ "rlark.io/node-category": "gpu" }), false);
+});
+
+test("a fixed tile action says why the current state blocks it and how long the device takes", () => {
+  // The action pair is always shown; only the half that cannot act on this state is disabled and explained.
+  assert.equal(robotPowerActionBlocked("power_on", "ready", true), "已上电，驱动在跑");
+  assert.equal(robotPowerActionBlocked("power_on", "off", true), "");
+  assert.equal(robotPowerActionBlocked("power_on", "estop", true), "急停已按下，先解除急停");
+  assert.equal(robotPowerActionBlocked("power_off", "off", true), "已下电");
+  assert.equal(robotPowerActionBlocked("power_off", "ready", true), "");
+  assert.equal(robotPowerActionBlocked("driver_on", "powered", true), "");
+  assert.equal(robotPowerActionBlocked("driver_on", "off", true), "先上电");
+  assert.equal(robotPowerActionBlocked("driver_on", "ready", true), "驱动已在跑");
+  assert.equal(robotPowerActionBlocked("driver_off", "ready", true), "");
+  assert.equal(robotPowerActionBlocked("driver_off", "powered", true), "驱动已停");
+  assert.equal(robotPowerActionBlocked("driver_on", "unknown", true), "读不到电源状态，电源服务会拒绝");
+  assert.equal(robotPowerActionBlocked("driver_on", "", false), "The power state has not been reported");
+  // Device actions take different times; the accepted state says which.
+  assert.equal(robotPowerActionTiming("power_off", true), "下电约十几秒");
+  assert.equal(robotPowerActionTiming("driver_on", true), "驱动启动约几秒");
+  assert.match(robotPowerActionWait("power_on", true), /10 秒内不能再上电/);
+  // A visible note explains the state-level reason; a ready robot needs none.
+  assert.match(robotPowerStateNote("estop", true), /上电与启动驱动不可用/);
+  assert.equal(robotPowerStateNote("ready", true), "");
+  // The power service's own waiting text comes from the rlark.io/power annotation.
+  assert.equal(robotPowerWaiting('{"state":"off","waiting":"10 s before power on"}'), "10 s before power on");
+  assert.equal(robotPowerWaiting('{"state":"off"}'), "");
+  assert.equal(robotPowerWaiting("not json"), "");
 });
 
 test("a robot's ID is its node's name without -x86", () => {

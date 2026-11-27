@@ -153,6 +153,11 @@ spec:
                       evidence only.
                     maxLength: 200
                     type: string
+                  discoveryScanID:
+                    description: DiscoveryScanID identifies the manual scan that last
+                      observed this entry.
+                    maxLength: 36
+                    type: string
                   hostKeyAlgorithm:
                     description: HostKeyAlgorithm is the negotiated SSH host-key algorithm.
                     maxLength: 64
