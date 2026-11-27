@@ -34,6 +34,16 @@ type TaskStatusApplyConfiguration struct {
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// ObservedNodes 是当前承载该 Task 工作负载的节点名，由数据面 Agent 排序去重后上报。
 	ObservedNodes []string `json:"observedNodes,omitempty"`
+	// Instances lists a per-node Task's instances, sorted by node, as the
+	// data-plane Agent last observed them. It is empty for other Tasks and
+	// while the Task is stopped. Only instances on Ready nodes count toward the
+	// Task's phase: it is Running when each of them runs the current version
+	// and is ready, and Pending while one is being updated, started or keeps
+	// failing. An instance on a node that is not Ready (switched off, or still
+	// joining) is listed with the message "node not ready" and does not hold
+	// the Task back. No instance ever fails the Task, so nodes joining,
+	// leaving or going down never fail the Job.
+	Instances []TaskInstanceStatusApplyConfiguration `json:"instances,omitempty"`
 	// DrainRequests is the bounded current observation written by the Task Host.
 	DrainRequests    []TaskDrainStatusApplyConfiguration `json:"drainRequests,omitempty"`
 	Conditions       []v1.ConditionApplyConfiguration    `json:"conditions,omitempty"`
@@ -80,6 +90,19 @@ func (b *TaskStatusApplyConfiguration) WithObservedGeneration(value int64) *Task
 func (b *TaskStatusApplyConfiguration) WithObservedNodes(values ...string) *TaskStatusApplyConfiguration {
 	for i := range values {
 		b.ObservedNodes = append(b.ObservedNodes, values[i])
+	}
+	return b
+}
+
+// WithInstances adds the given value to the Instances field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Instances field.
+func (b *TaskStatusApplyConfiguration) WithInstances(values ...*TaskInstanceStatusApplyConfiguration) *TaskStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithInstances")
+		}
+		b.Instances = append(b.Instances, *values[i])
 	}
 	return b
 }

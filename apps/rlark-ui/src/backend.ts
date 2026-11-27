@@ -334,8 +334,8 @@ export const imagesApi = {
 };
 
 export const imageRegistriesApi = {
-  list() {
-    return requestJson<ImageRegistryItem[]>("/api/v1/image-registries");
+  list(signal?: AbortSignal) {
+    return requestJson<ImageRegistryItem[]>("/api/v1/image-registries", { signal });
   },
   create(body: object) {
     return request("/api/v1/image-registries", { method: "POST", body });

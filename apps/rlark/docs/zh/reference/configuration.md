@@ -89,6 +89,7 @@ API 网关。处理所有 REST API 请求，包括集群管理、任务管理和
 | `--kube-qps` | float32 | `5000` | Kubernetes 客户端 QPS |
 | `--kube-burst` | int | `8000` | Kubernetes 客户端 Burst |
 | `--kube-timeout` | duration | `0` | Kubernetes 客户端请求超时 |
+| `--submission-verification-key` | string | empty | 用于验证 Astribot IAM 任务与工作流提交人声明的 Ed25519 公钥 PEM。留空时关闭验证。 |
 
 **示例：**
 

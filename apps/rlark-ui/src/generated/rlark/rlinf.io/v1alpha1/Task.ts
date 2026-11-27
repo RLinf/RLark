@@ -47,6 +47,15 @@ export interface ITask {
       "nodeSelector"?: {
         [key: string]: string;
       };
+      /**
+       * PerNode runs one instance of the Task on every node that NodeSelector
+       * matches, like a Kubernetes DaemonSet or a cloud daemon service: a node
+       * that joins the class gets an instance, a node that leaves takes its
+       * instance with it, and neither changes the Task's spec. The class of nodes
+       * must lie in one cluster. On Kubernetes the carrier is
+       * rlinf.io/kubernetes-daemonset; a per-node Task cannot be a Job's head.
+       */
+      "perNode"?: boolean;
     };
     /**
      * TaskRole 描述 Task 在业务编排中的角色，用于前端分组与展示。
@@ -7158,6 +7167,38 @@ export interface ITask {
       "reason": string;
       "source"?: string;
       "type": string;
+    }>;
+    /**
+     * Instances lists a per-node Task's instances, sorted by node, as the
+     * data-plane Agent last observed them. It is empty for other Tasks and
+     * while the Task is stopped. Only instances on Ready nodes count toward the
+     * Task's phase: it is Running when each of them runs the current version
+     * and is ready, and Pending while one is being updated, started or keeps
+     * failing. An instance on a node that is not Ready (switched off, or still
+     * joining) is listed with the message "node not ready" and does not hold
+     * the Task back. No instance ever fails the Task, so nodes joining,
+     * leaving or going down never fail the Job.
+     */
+    "instances"?: Array<{
+      /**
+       * Image is the image of the instance's main container: the version the
+       * instance runs, which differs between nodes while an update rolls out.
+       */
+      "image"?: string;
+      "message"?: string;
+      /**
+       * Name is the instance's name in its runtime (the Pod name on Kubernetes).
+       */
+      "name": string;
+      /**
+       * Node is the name of the node the instance runs on, empty until the
+       * instance is placed.
+       */
+      "node"?: string;
+      /**
+       * TaskInstancePhase is the state of one instance of a per-node Task.
+       */
+      "phase": "Pending" | "Running" | "Failed";
     }>;
     "message"?: string;
     /**

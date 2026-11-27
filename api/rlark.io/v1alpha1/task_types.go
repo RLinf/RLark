@@ -14,6 +14,13 @@ type TaskRole string
 // TaskPlacementSpec describes scheduling constraints for the workload.
 type TaskPlacementSpec struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// PerNode runs one instance of the Task on every node that NodeSelector
+	// matches, like a Kubernetes DaemonSet or a cloud daemon service: a node
+	// that joins the class gets an instance, a node that leaves takes its
+	// instance with it, and neither changes the Task's spec. The class of nodes
+	// must lie in one cluster. On Kubernetes the carrier is
+	// rlinf.io/kubernetes-daemonset; a per-node Task cannot be a Job's head.
+	PerNode bool `json:"perNode,omitempty"`
 }
 
 // RuntimeKind 表示负责执行 Task 工作负载的 Runtime 类型。
@@ -146,6 +153,16 @@ type TaskStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// ObservedNodes 是当前承载该 Task 工作负载的节点名，由数据面 Agent 排序去重后上报。
 	ObservedNodes []string `json:"observedNodes,omitempty"`
+	// Instances lists a per-node Task's instances, sorted by node, as the
+	// data-plane Agent last observed them. It is empty for other Tasks and
+	// while the Task is stopped. Only instances on Ready nodes count toward the
+	// Task's phase: it is Running when each of them runs the current version
+	// and is ready, and Pending while one is being updated, started or keeps
+	// failing. An instance on a node that is not Ready (switched off, or still
+	// joining) is listed with the message "node not ready" and does not hold
+	// the Task back. No instance ever fails the Task, so nodes joining,
+	// leaving or going down never fail the Job.
+	Instances []TaskInstanceStatus `json:"instances,omitempty"`
 	// DrainRequests is the bounded current observation written by the Task Host.
 	// +listType=map
 	// +listMapKey=operationID

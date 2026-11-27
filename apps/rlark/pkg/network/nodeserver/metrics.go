@@ -2,6 +2,7 @@ package nodeserver
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	rlarkmetrics "github.com/rlinf/rlark/apps/rlark/pkg/metrics"
 )
@@ -53,7 +54,8 @@ func newNodeServerMetrics() *nodeServerMetrics {
 		[]string{"domain"},
 	)
 
-	prometheus.MustRegister(connectionsTotal, connectionsActive, dialTotal, sshReconnectTotal)
+	// The node server runs in the agent, whose metrics are those of its controllers' registry.
+	ctrlmetrics.Registry.MustRegister(connectionsTotal, connectionsActive, dialTotal, sshReconnectTotal)
 	return &nodeServerMetrics{
 		connectionsTotal:  connectionsTotal,
 		connectionsActive: connectionsActive,

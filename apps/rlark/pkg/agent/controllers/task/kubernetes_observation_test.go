@@ -57,13 +57,13 @@ func TestKubernetesObservationsDrivePushReconcilers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.controllers) != 2 {
-		t.Fatalf("push controllers=%d, want 2", len(runner.controllers))
+	if len(runner.controllers) != 3 {
+		t.Fatalf("push controllers=%d, want 3", len(runner.controllers))
 	}
 	if len(controller.AsKubePushReconcilers()) != 0 {
 		t.Fatal("unscoped base path exposed Task push reconcilers")
 	}
-	want := map[string]bool{"Deployment": false, "StatefulSet": false}
+	want := map[string]bool{"Deployment": false, "StatefulSet": false, "DaemonSet": false}
 	for _, plan := range plans {
 		push, err := newPushRuntimeReconciler(controller, plan.root, scope, controller.LocalKubeClient)
 		if err != nil {
@@ -209,5 +209,6 @@ func observationTestRESTMapper() meta.RESTMapper {
 	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{appsv1.SchemeGroupVersion})
 	mapper.Add(appsv1.SchemeGroupVersion.WithKind("Deployment"), meta.RESTScopeNamespace)
 	mapper.Add(appsv1.SchemeGroupVersion.WithKind("StatefulSet"), meta.RESTScopeNamespace)
+	mapper.Add(appsv1.SchemeGroupVersion.WithKind("DaemonSet"), meta.RESTScopeNamespace)
 	return mapper
 }

@@ -16,6 +16,11 @@ spec:
         app: csi-driver-rclone-controller
     spec:
       serviceAccountName: csi-driver-rclone
+      {{- if .Values.controllerNodeSelector }}
+      nodeSelector:
+        {{- $parts := splitList "=" .Values.controllerNodeSelector }}
+        {{ index $parts 0 }}: "{{ index $parts 1 }}"
+      {{- end }}
       priorityClassName: system-cluster-critical
       tolerations:
         - key: node-role.kubernetes.io/master
@@ -27,6 +32,10 @@ spec:
         - key: CriticalAddonsOnly
           operator: Exists
           effect: NoSchedule
+        # A node under disk or memory pressure keeps the Pod (with its critical priority it is not evicted)
+        - {key: node.kubernetes.io/disk-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/memory-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/pid-pressure, operator: Exists, effect: NoSchedule}
       containers:
         - name: rclone
           image: {{ .Values.rcloneImage }}

@@ -473,6 +473,12 @@
   font-size: 13px;
 }
 
+.jobs-table-panel .job-table-submitter {
+  min-width: 84px;
+  max-width: 164px;
+  overflow-wrap: anywhere;
+}
+
 .jobs-table-panel th:first-child,
 .jobs-table-panel td:first-child {
   width: 240px;

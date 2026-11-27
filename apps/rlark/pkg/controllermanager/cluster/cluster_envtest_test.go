@@ -48,6 +48,11 @@ func TestReconcileObservedGenerationAgainstAPIServer(t *testing.T) {
 		t.Fatalf("create node: %v", err)
 	}
 	node.Status.Phase = rlarkv1alpha1.NodeOnline
+	node.Status.Conditions = []metav1.Condition{
+		{Type: rlarkv1alpha1.ConditionTypeAgentConnected, Status: metav1.ConditionTrue, Reason: "LeaseFresh", LastTransitionTime: metav1.Now()},
+		{Type: rlarkv1alpha1.ConditionTypeReady, Status: metav1.ConditionTrue, Reason: "NodeReady", LastTransitionTime: metav1.Now()},
+		{Type: rlarkv1alpha1.ConditionTypeSchedulable, Status: metav1.ConditionTrue, Reason: "Schedulable", LastTransitionTime: metav1.Now()},
+	}
 	if err := c.Status().Update(ctx, node); err != nil {
 		t.Fatalf("update node status: %v", err)
 	}
@@ -71,6 +76,11 @@ func TestReconcileObservedGenerationAgainstAPIServer(t *testing.T) {
 		t.Fatalf("reconcile cluster: %v", err)
 	}
 
+	// The first pass adds the finalizer. Its Update schedules a second pass
+	// in production; drive that pass explicitly without a running manager.
+	if _, err := reconciler.Reconcile(ctx, reconcileRequest(cluster.Name)); err != nil {
+		t.Fatalf("reconcile observed cluster state: %v", err)
+	}
 	observed := getCluster(ctx, t, c, cluster.Name)
 	firstGeneration := observed.Generation
 	if observed.Status.ObservedGeneration != firstGeneration {

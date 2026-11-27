@@ -1,0 +1,7 @@
+/* The detail dialog's frame styles (size, backdrop, sticky head, toast host) live in
+   StationsCards.css under "Detail dialog" together with the rest of the page's layer, so the
+   dialog shares the page's tokens and cascade order. This file anchors the import and holds
+   anything that is genuinely dialog-only if it grows apart later. */
+.station-detail-dialog[open] {
+  overscroll-behavior: contain;
+}

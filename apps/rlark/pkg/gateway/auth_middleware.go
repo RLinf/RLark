@@ -31,6 +31,15 @@ func (g *Gateway) requireJWT() gin.HandlerFunc {
 			return
 		}
 
+		if strings.HasPrefix(tokenString, serviceAccountTokenPrefix) {
+			if !g.authenticateServiceAccount(c, tokenString) {
+				respondError(c, http.StatusUnauthorized, CodeUnauthorized, "invalid or revoked service account token")
+				return
+			}
+			c.Next()
+			return
+		}
+
 		claims := &authClaims{}
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
 			return g.jwtSigningKey, nil

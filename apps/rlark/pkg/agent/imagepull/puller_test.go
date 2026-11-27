@@ -356,7 +356,14 @@ func TestRunClearsStaleProgressOnStartup(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	cancel()
-	<-done
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Fatalf("Run returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop after context cancel")
+	}
 
 	// The previous process may have left entries on the Node status; an empty
 	// report at startup removes them.

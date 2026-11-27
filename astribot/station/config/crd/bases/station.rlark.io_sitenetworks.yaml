@@ -1,0 +1,521 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: sitenetworks.station.rlark.io
+spec:
+  group: station.rlark.io
+  names:
+    kind: SiteNetwork
+    listKind: SiteNetworkList
+    plural: sitenetworks
+    shortNames:
+    - sitenet
+    singular: sitenetwork
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.mode
+      name: Mode
+      type: string
+    - jsonPath: .spec.pool
+      name: Pool
+      type: string
+    - jsonPath: .status.members
+      name: Members
+      type: integer
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          SiteNetwork declares one network of nodes across sites: the address pool,
+          the sites, and the nodes that are more than a leaf. An administrator owns
+          spec; station-controller owns status. Nodes enroll themselves with a
+          NetworkEnrollment and never appear here unless they need a role.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              interface:
+                default: st-wg0
+                maxLength: 15
+                type: string
+              keepaliveSeconds:
+                default: 25
+                format: int32
+                maximum: 3600
+                minimum: 1
+                type: integer
+              listenPort:
+                default: 51820
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
+              mode:
+                default: Tunnel
+                description: SiteNetworkMode says how the nodes of the network reach
+                  each other.
+                enum:
+                - Tunnel
+                type: string
+              mtu:
+                default: 1380
+                format: int32
+                maximum: 9000
+                minimum: 576
+                type: integer
+              names:
+                description: |-
+                  Names are what every node resolves at the same address wherever it is:
+                  what is reached through the tunnel, as a cluster's control plane and
+                  the management plane are. A site's own names come after them. Every
+                  node keeps its names in its /etc/hosts (station-gateway), so that
+                  nothing on a node holds the address of a machine that may move.
+                items:
+                  description: SiteNetworkName resolves a name to an address.
+                  properties:
+                    address:
+                      format: ipv4
+                      type: string
+                    name:
+                      maxLength: 253
+                      minLength: 1
+                      pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                      type: string
+                  required:
+                  - address
+                  - name
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              nodes:
+                description: Nodes lists only the nodes that need more than the leaf
+                  default.
+                items:
+                  properties:
+                    address:
+                      description: Address pins the tunnel address; empty lets the
+                        controller allocate one.
+                      maxLength: 15
+                      type: string
+                    advertise:
+                      items:
+                        properties:
+                          cidr:
+                            maxLength: 18
+                            minLength: 9
+                            type: string
+                          forward:
+                            description: |-
+                              Forward makes the node carry the receivers' traffic on to CIDR: a
+                              network the node is attached to that has no route back to the tunnel,
+                              as an office's LAN with its NAS. The node lets in, from its tunnel, the
+                              tunnel addresses of the receiving sites' members and no other, and
+                              sends their packets on from its own address on that network
+                              (station-gateway). Without it CIDR is what the node holds itself, as
+                              its Pod network.
+                            type: boolean
+                          sites:
+                            description: Sites limits the receivers; empty means every
+                              other site.
+                            items:
+                              type: string
+                            maxItems: 64
+                            type: array
+                            x-kubernetes-list-type: set
+                        required:
+                        - cidr
+                        type: object
+                      maxItems: 16
+                      type: array
+                    clusterID:
+                      maxLength: 128
+                      minLength: 1
+                      type: string
+                    endpoints:
+                      items:
+                        properties:
+                          address:
+                            description: |-
+                              Address is ip:port. Empty means the address the node reported at
+                              enrollment and its listen port, for a hub whose address is assigned by DHCP.
+                            maxLength: 21
+                            type: string
+                          scope:
+                            enum:
+                            - Public
+                            - Site
+                            type: string
+                        required:
+                        - scope
+                        type: object
+                      maxItems: 4
+                      type: array
+                    interface:
+                      maxLength: 15
+                      type: string
+                    listenPort:
+                      format: int32
+                      maximum: 65535
+                      minimum: 0
+                      type: integer
+                    nodeAddress:
+                      description: |-
+                        NodeAddress is the address other nodes use for this node when it is not
+                        the tunnel address, for example a cloud VPC address.
+                      maxLength: 15
+                      type: string
+                    nodeName:
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    publicKey:
+                      description: |-
+                        PublicKey admits the node before it has enrolled. It is for a node that
+                        cannot reach Station API until its tunnel is up; it needs Address too.
+                        Once the node enrolls, the key it enrolled with is used.
+                      maxLength: 44
+                      type: string
+                    relay:
+                      description: Relay makes a hub carry traffic between the leaves
+                        that dial it.
+                      type: boolean
+                    role:
+                      default: Leaf
+                      enum:
+                      - Leaf
+                      - Hub
+                      type: string
+                    site:
+                      description: |-
+                        Site is the site the node is in when it is not its cluster's: a
+                        cluster's nodes may stand in several sites, as robots of one cluster
+                        do whose control plane is somewhere else.
+                      maxLength: 63
+                      type: string
+                    uplink:
+                      description: |-
+                        SiteNetworkUplink makes the node reach the endpoints it dials through a
+                        given gateway instead of its default route. The node dials from its own
+                        address in the gateway's network, on the interface that has it: an address
+                        of another network would be one nothing has given the node, and whatever
+                        is given that address later takes the node's answers.
+                      properties:
+                        gateway:
+                          format: ipv4
+                          type: string
+                      required:
+                      - gateway
+                      type: object
+                  required:
+                  - clusterID
+                  - nodeName
+                  type: object
+                maxItems: 256
+                type: array
+              pool:
+                description: Pool is the IPv4 prefix tunnel addresses are allocated
+                  from.
+                maxLength: 18
+                minLength: 9
+                type: string
+                x-kubernetes-validations:
+                - message: pool is immutable
+                  rule: self == oldSelf
+              sites:
+                items:
+                  properties:
+                    clusters:
+                      description: |-
+                        Clusters are the registered RLark Cluster IDs whose nodes are in this
+                        site, except the nodes that name a site of their own.
+                      items:
+                        type: string
+                      maxItems: 256
+                      type: array
+                      x-kubernetes-list-type: set
+                    discovery:
+                      description: Discovery finds the machines on this site's network
+                        that are not nodes yet.
+                      properties:
+                        enabled:
+                          type: boolean
+                        from:
+                          description: |-
+                            From is the node the management plane's station-controller dials
+                            from. The hubs relay for its tunnel address and for no other peer.
+                          properties:
+                            clusterID:
+                              maxLength: 128
+                              minLength: 1
+                              type: string
+                            nodeName:
+                              maxLength: 253
+                              minLength: 1
+                              type: string
+                          required:
+                          - clusterID
+                          - nodeName
+                          type: object
+                        includeUnclassified:
+                          description: |-
+                            IncludeUnclassified opts this site into credential-free SSH candidate
+                            discovery. Release A controllers keep the field absent in Hub documents.
+                          type: boolean
+                        intervalSeconds:
+                          default: 30
+                          format: int32
+                          maximum: 3600
+                          minimum: 10
+                          type: integer
+                        ranges:
+                          description: |-
+                            Ranges are the IPv4 prefixes of the site's network to look in, each
+                            /22 or smaller, besides the private networks each hub is attached to
+                            itself (the /22 around its address on a wider one; not its tunnel,
+                            container or cluster networks).
+                          items:
+                            type: string
+                          maxItems: 8
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                        sshPorts:
+                          description: |-
+                            SSHPorts are extra ports probed for hosts without a class fingerprint.
+                            An empty value means the default port 22 when the feature is enabled.
+                          items:
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                          maxItems: 4
+                          type: array
+                          x-kubernetes-list-type: set
+                      required:
+                      - enabled
+                      - from
+                      - ranges
+                      type: object
+                    dns:
+                      description: |-
+                        DNS are the site's name servers. A node's kubelet gives them to its
+                        pods; they are kept in /etc/rlark/station/resolv.conf on every node of
+                        the site (station-gateway). Without them a node's pods use the name
+                        servers the machine itself has.
+                      items:
+                        format: ipv4
+                        type: string
+                      maxItems: 3
+                      type: array
+                    leafUplink:
+                      description: |-
+                        LeafUplink is the uplink of every leaf of this site that declares none
+                        of its own: machines of one build, each behind a device of its own
+                        that has the same address on every one of them (a robot's computer
+                        behind the robot's router), are declared once.
+                      properties:
+                        gateway:
+                          format: ipv4
+                          type: string
+                      required:
+                      - gateway
+                      type: object
+                    mesh:
+                      description: Mesh links the hubs of this site to each other
+                        over the tunnel.
+                      type: boolean
+                    name:
+                      maxLength: 63
+                      minLength: 1
+                      type: string
+                    names:
+                      description: |-
+                        Names are what the nodes of this site resolve at an address of the
+                        site's own, as its registry is.
+                      items:
+                        description: SiteNetworkName resolves a name to an address.
+                        properties:
+                          address:
+                            format: ipv4
+                            type: string
+                          name:
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - address
+                        - name
+                        type: object
+                      maxItems: 64
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
+                    reaches:
+                      description: Reaches lists the sites whose Site-scoped endpoints
+                        this site can dial.
+                      items:
+                        type: string
+                      maxItems: 64
+                      type: array
+                      x-kubernetes-list-type: set
+                    relay:
+                      description: |-
+                        Relay is the hub that relays for the leaves of this site, as
+                        "<clusterID>/<nodeName>": a hub with relay set that the site can dial.
+                        Without it a leaf takes a relay of its own site, or else the first one
+                        it can dial. Changing it moves each leaf when it next fetches its
+                        configuration; two leaves reach each other again once both have.
+                      maxLength: 382
+                      pattern: ^[^/]+/[^/]+$
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 64
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+            required:
+            - pool
+            - sites
+            type: object
+          status:
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              declared:
+                description: |-
+                  Declared holds, for every node declared with a public key that has not
+                  enrolled yet, the document its tunnel starts on: what an administrator
+                  puts on the machine (/etc/rlark/station/bootstrap.json) before it can
+                  reach Station API. Once the node has enrolled its enrollment answers it.
+                items:
+                  properties:
+                    clusterID:
+                      type: string
+                    config:
+                      description: Config is the document station-gateway reconciles,
+                        for the declared key.
+                      maxLength: 262144
+                      type: string
+                    configHash:
+                      type: string
+                    nodeName:
+                      type: string
+                  required:
+                  - clusterID
+                  - config
+                  - configHash
+                  - nodeName
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-map-keys:
+                - clusterID
+                - nodeName
+                x-kubernetes-list-type: map
+              members:
+                format: int32
+                type: integer
+              observedGeneration:
+                format: int64
+                type: integer
+              unreachable:
+                description: Unreachable lists the first ordered pairs of members
+                  with no path.
+                items:
+                  type: string
+                maxItems: 32
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

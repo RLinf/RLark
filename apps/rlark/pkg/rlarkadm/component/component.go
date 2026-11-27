@@ -995,7 +995,7 @@ func imagePullSecrets(cfg *types.DeployConfig) []corev1.LocalObjectReference {
 	for _, name := range cfg.Kubernetes.ImagePullSecrets {
 		secrets = append(secrets, corev1.LocalObjectReference{Name: name})
 	}
-	return secrets
+	return append(secrets, credentialPullSecrets(cfg)...)
 }
 
 func Deployment(cfg *types.DeployConfig, c *types.Component) *appsv1.Deployment {
@@ -1086,6 +1086,7 @@ func Deployment(cfg *types.DeployConfig, c *types.Component) *appsv1.Deployment 
 	}
 
 	dep.Spec.Template.Spec.NodeSelector = resolveComponentNodeSelector(cfg, c.Name)
+	placeClusterAgent(dep, c)
 
 	return dep
 }

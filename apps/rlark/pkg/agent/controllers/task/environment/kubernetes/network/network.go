@@ -30,7 +30,7 @@ const (
 	ProfileVersion   = "v1"
 	HandlerAlgorithm = "kubernetes-cross-domain-network/v1"
 
-	sidecarName = "rlark-network-sidecar"
+	sidecarName = kubernetesobjects.NetworkSidecarContainerName
 	volumeName  = "rlark-nodeserver-socket"
 	socketPath  = "/var/run/rlark"
 )

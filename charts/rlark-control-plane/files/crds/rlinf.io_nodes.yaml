@@ -67,6 +67,12 @@ spec:
                 - Docker
                 - Raw
                 type: string
+              displayName:
+                description: DisplayName is the operator's name; metadata.name remains
+                  the node identity.
+                maxLength: 64
+                pattern: ^[A-Za-z0-9一-龥._-]+$
+                type: string
               identity:
                 description: Identity is set by the management API or control plane
                   when the Node is registered.

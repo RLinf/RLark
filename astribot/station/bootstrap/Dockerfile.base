@@ -1,0 +1,86 @@
+# The installer's base of a Kubernetes version: what a release's installer carries that is not the release's tree
+# (Dockerfile.installer, BASE), laid down as build.sh lays it down, and nothing of the tree: Dockerfile.installer adds
+# station-bootstrap, station-gateway, the scripts and the site's registry CA over it, for the installer and the
+# upgrade bundle of a version alike. Every part is pinned: the binaries by the sha256
+# their projects publish beside them, calico.yaml by the sha256 of the file at its tag, the images by the digest of
+# their linux/amd64 image in the office registry's mirror/… (astribot/release/mirror), saved under their upstream names,
+# the names kubeadm and calico.yaml run them by. Built on the office's management machine when the Kubernetes version
+# changes (astribot/release/build.sh base), its images read from the registry's local entry (REGISTRY, HTTP, no account)
+# on the host's network (RUN --network=host: buildctl --allow network.host).
+#
+# The result is rlark/staging-artifact, install-<VERSION>.bundle.tar at its root: an environment's installer.base,
+# whose tag Dockerfile.installer takes the Kubernetes part of.
+# The parts' versions, each a release at least two weeks old when it was chosen (11-17):
+#   CONTAINERD   containerd's static release (containerd, its shim, ctr); 2.x: Kubernetes 1.36 runs on no 1.x
+#   RUNC         runc's static release
+#   CNI_PLUGINS  the CNI plugins
+#   CALICO       Calico's manifest and images; 3.32 is the release made for Kubernetes 1.34-1.36
+# Another version is another set of these arguments: the versions, their sha256 and IMAGES, which must be exactly the
+# images `kubeadm config images list` names for VERSION and the ones calico.yaml runs.
+ARG GO_IMAGE=registry.rlark.internal:5443/mirror/golang@sha256:6327cb290853a5d13091c436b88259b4f35ff70e49b1f8d9e5d1dd1757e9c6ba
+
+FROM ${GO_IMAGE} AS build
+RUN sed -i 's#http://deb.debian.org/#https://repo.huaweicloud.com/#' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends skopeo jq && rm -rf /var/lib/apt/lists/*
+ARG VERSION=v1.36.6
+ARG CONTAINERD=2.4.2
+ARG RUNC=v1.5.2
+ARG CNI_PLUGINS=v1.9.1
+ARG CALICO=v3.32.3
+ARG KUBEADM_SHA256=7f33560df02c98e6e6edba88fce2eb9a94bd7411b29bea0efc0712d68db1fc7b
+ARG KUBELET_SHA256=cf8baae869b810d84338f8c7111e2bb32733e992c0c08107cf6692120f5e229f
+ARG KUBECTL_SHA256=29818b6729dc9262b692307470d0558d027725e738be5dd47c760261868a2634
+ARG CONTAINERD_SHA256=da656542e754c699a0f438eab925e6ffdbd6346a4428e659f83dc058f04dcffe
+ARG RUNC_SHA256=599f6f94ff8c5057241eff0d54c3c74f95c34935b6457b33fe545defc61e9488
+ARG CNI_PLUGINS_SHA256=b98f74a0f8522f0a83867178729c1aa70f2158f90c45a2ca8fa791db1c76b303
+ARG CALICO_SHA256=3db4c55514b678be853be49b8cb102bed0a00bc0343eec05ac191652dc7211e0
+ADD --chmod=755 --checksum=sha256:${KUBEADM_SHA256} https://dl.k8s.io/release/${VERSION}/bin/linux/amd64/kubeadm /bundle/bin/kubeadm
+ADD --chmod=755 --checksum=sha256:${KUBELET_SHA256} https://dl.k8s.io/release/${VERSION}/bin/linux/amd64/kubelet /bundle/bin/kubelet
+ADD --chmod=755 --checksum=sha256:${KUBECTL_SHA256} https://dl.k8s.io/release/${VERSION}/bin/linux/amd64/kubectl /bundle/bin/kubectl
+ADD --checksum=sha256:${CONTAINERD_SHA256} https://github.com/containerd/containerd/releases/download/v${CONTAINERD}/containerd-static-${CONTAINERD}-linux-amd64.tar.gz /work/containerd.tar.gz
+ADD --chmod=755 --checksum=sha256:${RUNC_SHA256} https://github.com/opencontainers/runc/releases/download/${RUNC}/runc.amd64 /bundle/bin/runc
+ADD --checksum=sha256:${CNI_PLUGINS_SHA256} https://github.com/containernetworking/plugins/releases/download/${CNI_PLUGINS}/cni-plugins-linux-amd64-${CNI_PLUGINS}.tgz /work/cni.tgz
+ADD --chmod=644 --checksum=sha256:${CALICO_SHA256} https://raw.githubusercontent.com/projectcalico/calico/${CALICO}/manifests/calico.yaml /bundle/manifests/calico.yaml
+# The images, three words each: the archive under images/ (build.sh's: a node's in node.tar and calico.tar, a control
+# plane's in control-plane/control-plane.tar), the name a node runs it by, and the registry's mirror/… of it.
+ARG REGISTRY=127.0.0.1:5443
+ARG IMAGES="\
+  node registry.k8s.io/kube-proxy:v1.36.6 mirror/kube-proxy@sha256:a374c2428aefede5238862bb8d3e3a6e26ee7d9cad1d54d2d846e9f64e92624c \
+  node registry.k8s.io/pause:3.10.2 mirror/pause@sha256:412c4a7219cb8a299a37337f3d87810c5340095322e15594a1637785adad0f17 \
+  node registry.k8s.io/coredns/coredns:v1.14.2 mirror/coredns@sha256:fd5079792b93909db3adefa91e41c3995455013394f0197c7346786ae19079fc \
+  control-plane/control-plane registry.k8s.io/kube-apiserver:v1.36.6 mirror/kube-apiserver@sha256:a4380dcb4ed588759253c66e7ab6139a1283828ff87ecfb4318e5d8f098a3fa6 \
+  control-plane/control-plane registry.k8s.io/kube-controller-manager:v1.36.6 mirror/kube-controller-manager@sha256:f0a4898d39ee4ae58f3f7ce15e3d7d431d505a2af9ecbb1217be9698275bed81 \
+  control-plane/control-plane registry.k8s.io/kube-scheduler:v1.36.6 mirror/kube-scheduler@sha256:30a89560ce9fc2212fac2bcc2265781cbb3a3346c0f9278e25df6b305d03f3b3 \
+  control-plane/control-plane registry.k8s.io/etcd:3.6.8-0 mirror/etcd@sha256:aa2b41e3f99c9a337b82f687875a63c5119e6d39bc43fc76b6c40a96f55cf391 \
+  calico quay.io/calico/node:v3.32.3 mirror/calico-node@sha256:1c19a35b07b5b9bdaa8f1e86fd7eb0aae0898b4af2152a67f55f66418d7c590f \
+  calico quay.io/calico/cni:v3.32.3 mirror/calico-cni@sha256:41bdf6ecb52f4cc80a581d28b956bfc8b48d929cfb416290dcb62156d6911d08 \
+  calico quay.io/calico/kube-controllers:v3.32.3 mirror/calico-kube-controllers@sha256:dc43a461dcd159611c301cae4476881ade485df579615f2f1b3ce7eb868a32c8"
+# Each image saved alone (skopeo writes one image to a docker-archive), and the images of an archive unpacked into
+# one directory, their manifest.json entries joined: the archive docker save writes of several images.
+RUN --network=host set -e; \
+    [ "$(printf '%s\n' $IMAGES | awk 'NR % 3 == 2' | sort)" = "$({ /bundle/bin/kubeadm config images list --kubernetes-version "$VERSION"; \
+      sed -n 's/^ *image: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' /bundle/manifests/calico.yaml; } | sort -u)" ] || \
+      { echo "IMAGES are not the images of Kubernetes $VERSION and calico.yaml $CALICO" >&2; exit 1; }; \
+    set -- $IMAGES; n=0; \
+    while [ $# -gt 0 ]; do \
+      n=$((n + 1)); \
+      skopeo --insecure-policy copy -q --src-tls-verify=false \
+        "docker://$REGISTRY/$3" "docker-archive:/work/$n.tar:$2"; \
+      mkdir -p "/work/$1.d" && tar -C "/work/$1.d" -xf "/work/$n.tar" && mv "/work/$1.d/manifest.json" "/work/$1.d/manifest-$n.json"; \
+      rm "/work/$n.tar"; shift 3; \
+    done; \
+    for directory in $(find /work -name '*.d'); do \
+      jq -s add "$directory"/manifest-*.json > "$directory/manifest.json" && rm "$directory"/manifest-*.json "$directory/repositories"; \
+      archive=${directory#/work/}; mkdir -p "$(dirname "/bundle/images/$archive")"; \
+      tar -C "$directory" --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf "/bundle/images/${archive%.d}.tar" .; \
+    done; \
+    printf '%s\n' $IMAGES | grep '/pause:' > /bundle/images/pause.ref; \
+    tar -xzf /work/containerd.tar.gz -C /bundle/bin --strip-components=1 bin/containerd bin/containerd-shim-runc-v2 bin/ctr; \
+    mkdir /work/cni /bundle/cni && tar -xzf /work/cni.tgz -C /work/cni && \
+    find /work/cni -maxdepth 1 -type f -perm -u+x -exec install -m 755 {} /bundle/cni/ \; ; \
+    rm -rf /work; \
+    echo "install-$VERSION" > /bundle/tag; \
+    mkdir /artifact && tar -C /bundle --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf "/artifact/install-$VERSION.bundle.tar" .
+
+FROM scratch
+COPY --from=build /artifact/ /

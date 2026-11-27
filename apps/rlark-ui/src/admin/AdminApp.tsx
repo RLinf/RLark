@@ -11,13 +11,13 @@ import { type Copy, type Lang, type Theme, copy } from "../i18n";
 import { adminNavItems } from "../constants";
 import { ApiPage } from "../pages/Api";
 import { DomainsPage } from "../pages/Domains";
-import { ClusterManagementPage } from "../pages/ClusterManagement";
+import { ClusterManagementPage } from "../astribot/pages/ClusterManagement";
 import {
   StorageClassesPage,
   StorageClassCreatePage,
   StorageClassFilesPage,
-} from "../pages/Storage";
-import { CreateClusterPage } from "./CreateCluster";
+} from "../astribot/pages/Storage";
+import { NewClusterPage } from "../astribot/pages/NewCluster";
 import { AddonsPage } from "./Addons";
 import { UpgradeJobsPage } from "./UpgradeJobs";
 import { AdminPage } from "./AdminPage";
@@ -26,6 +26,7 @@ import { Header, Logo, PlatformFooter } from "../components/shared";
 import { useBackendMode, usePersistentState } from "../hooks";
 import { SSHKeysPage } from "../pages/SSHKeys";
 import { ImageRegistriesPage } from "../pages/ImageRegistries";
+import { AstribotAdminPages } from "../astribot/AdminPages";
 import { SystemConfigPage } from "../pages/SystemConfig";
 import { JobsPage } from "../pages/Jobs";
 import { parseAdminRoute } from "../utils/route";
@@ -34,8 +35,16 @@ import {
   hasAuthSession,
   storeAuthSession,
   UNAUTHORIZED_EVENT,
+  type AuthRole,
 } from "../api";
 import { authApi } from "../backend";
+import { RemovalProgressProvider } from "../astribot/components/RemovalProgress";
+import {
+  addressPath,
+  iamPortalEnabled,
+  returnToPortal,
+  signOutOfConsole,
+} from "../astribot/iam/portal";
 
 export function AdminLogin({
   lang,
@@ -61,6 +70,9 @@ export function AdminLogin({
     const timer = window.setTimeout(() => setError(""), 4000);
     return () => window.clearTimeout(timer);
   }, [error]);
+
+  // The published console signs in through /login only; this form is upstream.
+  if (iamPortalEnabled()) return null;
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -204,13 +216,17 @@ export function AdminLogin({
   );
 }
 
-export function AdminApp() {
+export function AdminApp({ portalRole }: { portalRole?: AuthRole } = {}) {
   const [lang, setLang] = usePersistentState<Lang>("rlark-language", "zh");
   const [theme, setTheme] = usePersistentState<Theme>("rlark-theme", "light");
-  const [loggedIn, setLoggedIn] = useState(
-    () =>
-      import.meta.env.DEV ||
-      (typeof sessionStorage !== "undefined" && hasAuthSession("admin")),
+  // Behind the portal the server session has already decided the role, and a
+  // native admin form is never an option: no session means leave for /login.
+  const portal = iamPortalEnabled() || portalRole !== undefined;
+  const [loggedIn, setLoggedIn] = useState(() =>
+    portal
+      ? portalRole === "admin"
+      : import.meta.env.DEV ||
+        (typeof sessionStorage !== "undefined" && hasAuthSession("admin")),
   );
   const [userName, setUserName] = useState(
     () => sessionStorage.getItem("rlark-admin-user-name") || "admin",
@@ -256,7 +272,28 @@ export function AdminApp() {
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
+  useEffect(() => {
+    if (portal && !loggedIn) void returnToPortal(addressPath(window.location));
+  }, [portal, loggedIn]);
   if (!loggedIn) {
+    if (portal) {
+      return (
+        <div
+          className="portal-status"
+          role="status"
+          style={{
+            display: "grid",
+            placeItems: "center",
+            minHeight: "100vh",
+            background: "#f6f4fc",
+            color: "#403773",
+            font: "500 15px/1.5 system-ui, sans-serif",
+          }}
+        >
+          {zh ? "正在前往统一登录…" : "Redirecting to sign in…"}
+        </div>
+      );
+    }
     return (
       <AdminLogin
         copy={c}
@@ -278,6 +315,7 @@ export function AdminApp() {
         "app-shell theme-" + theme + (collapsed ? " sidebar-collapsed" : "")
       }
     >
+      <RemovalProgressProvider zh={zh} compact={adminPage !== "clusters-nodes"}>
       <aside className="sidebar">
         <Logo lang={lang} />
         <nav>
@@ -290,7 +328,9 @@ export function AdminApp() {
               adminPage === item.id ||
               (item.id === "storageClass" && adminPage === "files");
             const isChildActive = isParent
-              ? item.children!.some((ch) => ch.id === adminPage)
+              ? item.id === "stations"
+                ? adminPage === "stations" && item.children!.some((ch) => ch.id === adminSub)
+                : item.children!.some((ch) => ch.id === adminPage)
               : false;
             const expanded = isParent && (isChildActive || isActive);
             return (
@@ -311,11 +351,9 @@ export function AdminApp() {
                   }
                   onClick={() =>
                     isParent
-                      ? navigate(
-                          item.id === "clusters"
-                            ? "clusters-list"
-                            : item.children![0].id,
-                        )
+                      ? item.id === "stations"
+                        ? navigate("stations")
+                        : navigate(item.id === "clusters" ? "clusters-list" : item.children![0].id)
                       : navigate(item.id)
                   }
                 >
@@ -332,8 +370,8 @@ export function AdminApp() {
                           key={ch.id}
                           aria-label={childLabel}
                           title={childLabel}
-                          className={adminPage === ch.id ? "active" : ""}
-                          onClick={() => navigate(ch.id)}
+                          className={(item.id === "stations" ? adminPage === "stations" && adminSub === ch.id : adminPage === ch.id) ? "active" : ""}
+                          onClick={() => item.id === "stations" ? navigate("stations", ch.id) : navigate(ch.id)}
                         >
                           <ChIcon size={16} />
                           <span>{childLabel}</span>
@@ -378,10 +416,14 @@ export function AdminApp() {
           userName={userName}
           onCreate={() => navigate("create-cluster")}
           onLogout={() => {
+            if (portal) {
+              void signOutOfConsole(addressPath(window.location));
+              return;
+            }
             clearAuthSession();
             setLoggedIn(false);
           }}
-          createLabel={zh ? "创建集群" : "Create Cluster"}
+          createLabel={zh ? "新建集群" : "New Cluster"}
         />
         {adminPage === "dashboard" && (
           <AdminDashboard copy={c} onNavigate={navigate} />
@@ -419,7 +461,7 @@ export function AdminApp() {
           />
         )}
         {adminPage === "api" && <ApiPage copy={c} />}
-        {adminPage === "create-cluster" && <CreateClusterPage lang={lang} />}
+        {adminPage === "create-cluster" && <NewClusterPage lang={lang} />}
         {adminPage === "addons" && <AddonsPage lang={lang} />}
         {adminPage === "upgrades" && (
           <UpgradeJobsPage
@@ -461,11 +503,13 @@ export function AdminApp() {
             onSelect={(id?: string) => navigate("image-registries", id ?? "")}
           />
         )}
+        <AstribotAdminPages page={adminPage} sub={adminSub} copy={c} zh={zh} navigate={navigate} />
         {adminPage === "ssh-keys" && (
           <SSHKeysPage copy={c} userName={userName} />
         )}
-        <PlatformFooter />
+        <PlatformFooter lang={lang} />
       </main>
+      </RemovalProgressProvider>
     </div>
   );
 }

@@ -1,0 +1,99 @@
+# The stages of a release, in the order `rlarkctl release apply` walks them.
+# The order is data kept with the code: whoever changes what a component
+# needs of another changes a line here in the same commit. A run that goes
+# back (--back) walks the stages marked back in the reverse order.
+#
+# A stage has:
+#   name           unique; the command knows what each name changes.
+#   requires       stages that are complete before this one starts.
+#   gate           what holds before the stage starts.
+#   check          what holds once the stage is done; the command reads
+#                  until it holds or the stage times out, and stops there.
+#   recreates      the owners ("<namespace>/<owner>", path patterns) whose
+#                  Pods the stage replaces; any other Pod made anew stops it.
+#   back           the stage is walked when a run goes back too.
+#   timeoutFactor  how many times the run's timeout the stage may take.
+#   note           why the stage is where it is.
+#
+# An entry of gate or check is one of:
+#   <check>           compares the management plane with a baseline taken
+#                     before the run.
+#   <check>: <level>  reads the plane as it is, for what this build needs of
+#                     it. gateways-understand: N holds when the gateway of
+#                     every member with a document states document level N or
+#                     more; one that states none does not understand.
+stages:
+  - name: images
+    note: The office's and the robots' clusters pull from the site's registry, whose store is its own disk; an image the release brings is there before anything of the release pulls it. A site without registry.site pulls from the source itself and has nothing done here.
+
+  - name: prewarm
+    requires: [images]
+    check:
+      - nodes-unpressured
+    note: An image the machine cannot pull stops the run before anything changes. A member cluster's Pod pulls what it lacks when it starts.
+
+  - name: crds-rbac
+    requires: [prewarm]
+    note: A new station-api lists objects the old RBAC forbids, so the RBAC is there before it starts. The tree is the release's own commit (git archive), so its definitions are not an older tree's. Going back leaves them. A field or value a release's definitions dropped is then no longer accepted from the older build (pruned, or refused where it is an enum value), so a run does not go back past such a release with objects of that kind in flight.
+
+  - name: gateway
+    requires: [crds-rbac]
+    back: true
+    check: [clusters-online, addons-ready]
+    note: The catalog the Gateway reads holds the versions the site runs.
+
+  - name: station-api
+    requires: [gateway]
+    back: true
+    check: [enrollments-enrolled, observations-fresh]
+    recreates: [station-system/station-api, station-system/station-controller]
+    note: The installer holds the site registry's CA, so it is the environment's, not the release's. Read back by what Station API serves (its SHA-256); the earlier installer's file stays beside it.
+
+  - name: controller
+    requires: [station-api]
+    back: true
+    gate:
+      - gateways-understand: 4
+    check: [documents-unchanged, enrollments-enrolled, network-connected]
+    recreates: [station-system/station-controller]
+    note: A gateway refuses a document with a field it does not know. The level is that of the document this build's controller writes, DocumentLevel in astribot/station/network, and the commit that raises that raises it here.
+
+  - name: cluster-agents
+    requires: [controller]
+    back: true
+    check: [clusters-online, addons-ready, nodes-ready, nodes-unpressured]
+    recreates: [rlark-system/rlark-agent-node]
+    note: The agent renders the Addons from their packages and replaces nothing of them that did not change. The agent is the Deployment of rlark-system that runs it with --mode=cluster, whatever it was named when it was installed; its own Pods are the ones this stage replaces. It renders the node agents' DaemonSet too, and a new agent may render it otherwise with the same image (ci-ce132d1 on the live office cluster, 11-17 21:33Z, the Server's address it resolves in its node's network, cee0766), which replaces the node agents' Pods in this stage.
+
+  - name: node-agents
+    requires: [cluster-agents]
+    back: true
+    timeoutFactor: 3
+    check: [clusters-online, nodes-ready, nodes-unpressured]
+    recreates: [rlark-system/rlark-agent-node]
+    note: The cluster agent rolls them; a node that is off keeps its own until it is back and holds nobody up.
+
+  - name: station-agents
+    requires: [node-agents]
+    back: true
+    timeoutFactor: 3
+    check: [observations-fresh, enrollments-enrolled, links-connected, documents-unchanged, network-connected, nodes-unpressured]
+    recreates: [station-system/station-agent*]
+    note: A Station DaemonSet a cluster has is made what the tree's station-agent.yaml states, the whole spec but its selector, with the release's images in the same write, so that a template never runs another commit's binary. A release only set the images, and a DaemonSet kept every other field as it was first made (live 11-20, a volume of a ConfigMap the tree no longer had, and a Pod made anew could not mount it; before that the placement, two agents on one node writing the node's one observation by turns). The plan names each field that differs, compared with what the cluster's API server makes of the stated one (a dry run), so what it fills in is no difference. The cluster agent replaces their Pods (OnDelete, rlark.io/rollout), a node at a time, a robot only when it is idle, so the agents that roll them come first; a gateway that is a host service is replaced by the keeper. Going back (no tree) sets the images back and leaves the rest of the template, as crds-rbac leaves the definitions, so a run does not go back past a release whose template the older binaries do not start with.
+
+  - name: server
+    requires: [station-agents]
+    back: true
+    check: [clusters-online, nodes-ready]
+    note: The server keeps the heartbeat only of an agent whose tunnel says it is ready. An agent of a build before that says nothing and would read Offline, so every cluster's agent and node agents come first, and a run that goes back takes the server back first.
+
+  - name: console
+    requires: [server]
+    back: true
+
+  - name: addons
+    requires: [console]
+    back: true
+    timeoutFactor: 6
+    check: [clusters-online, nodes-ready]
+    recreates: ["*/*"]

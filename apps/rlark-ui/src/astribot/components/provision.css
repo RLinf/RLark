@@ -1,0 +1,509 @@
+/* The new-cluster page, a cluster's provisioning stages and the retry and
+   clear forms under them. Loaded before RLark's styles: the rule that has to
+   beat .cert-form label names .cert-form too. */
+/* New cluster fields are a two-step form. RetryClear keeps its legacy cert-form layout. */
+.create-cluster-page .new-cluster-form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.provision-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.provision-stage {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--soft);
+}
+
+.provision-stage div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.provision-stage small {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.provision-stage-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.provision-stage-done,
+.provision-stage-running {
+  color: inherit;
+}
+
+.provision-stage-done .provision-stage-icon {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.provision-stage-running .provision-stage-icon {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.provision-stage-skipped .provision-stage-icon {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.provision-stage-skip {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.provision-stage-failed {
+  color: var(--red);
+}
+
+.provision-stage-failed .provision-stage-icon {
+  border-color: var(--red);
+}
+
+.provision-stage-failed .provision-stage-message {
+  color: var(--red);
+}
+
+.provision-retry {
+  margin-top: 16px;
+}
+
+/* Taking a making away: what it does on a line of its own, then the password or "machine gone" and the button. */
+.provision-clear {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.provision-clear > small {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.provision-clear .cert-form {
+  flex-wrap: wrap;
+}
+
+.cert-form label.provision-clear-gone {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+}
+
+.cert-form label.provision-clear-gone input {
+  padding: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.cert-form label.provision-clear-gone span {
+  font-weight: 400;
+}
+
+.create-cluster-page .new-cluster-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(310px, 0.72fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.create-cluster-page .new-cluster-form,
+.create-cluster-page .new-cluster-aside {
+  min-width: 0;
+}
+
+.create-cluster-page .new-cluster-aside {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 16px;
+}
+
+.create-cluster-page .new-cluster-card {
+  margin: 0 0 16px;
+}
+
+.create-cluster-page .new-cluster-card:last-child {
+  margin-bottom: 0;
+}
+
+.create-cluster-page .new-cluster-type-field {
+  min-width: 0;
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.create-cluster-page .new-cluster-type-field legend,
+.create-cluster-page .new-cluster-field > span:first-child {
+  margin-bottom: 7px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.create-cluster-page .new-cluster-type-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.create-cluster-page .new-cluster-type-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.create-cluster-page .new-cluster-type-card.is-selected {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 14%, transparent);
+}
+
+.create-cluster-page .new-cluster-type-card > input {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--blue);
+}
+
+.create-cluster-page .new-cluster-type-card > span:last-child,
+.create-cluster-page .new-cluster-type-card small {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.create-cluster-page .new-cluster-type-card small,
+.create-cluster-page .new-cluster-helper {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.create-cluster-page .new-cluster-type-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 10px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--panel));
+}
+
+.create-cluster-page .new-cluster-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.create-cluster-page .new-cluster-field {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+}
+
+.create-cluster-page .new-cluster-field input {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink);
+  background: var(--canvas);
+  font: inherit;
+}
+
+.create-cluster-page .new-cluster-field input[aria-invalid="true"] {
+  border-color: var(--red);
+}
+
+.create-cluster-page .new-cluster-field.is-full {
+  grid-column: 1 / -1;
+}
+
+.create-cluster-page .new-cluster-field .new-cluster-helper,
+.create-cluster-page .new-cluster-field .field-error {
+  margin-top: 5px;
+}
+
+.create-cluster-page .field-error {
+  color: var(--red);
+  font-size: 11px;
+}
+
+.create-cluster-page .new-cluster-password {
+  position: relative;
+  display: block;
+}
+
+.create-cluster-page .new-cluster-password input {
+  padding-right: 42px;
+}
+
+.create-cluster-page .new-cluster-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: var(--muted);
+  background: transparent;
+  transform: translateY(-50%);
+}
+
+.create-cluster-page .new-cluster-form-actions,
+.create-cluster-page .new-cluster-summary-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 18px;
+}
+
+.create-cluster-page .new-cluster-validation-summary,
+.create-cluster-page .new-cluster-summary-alert {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--red) 30%, var(--line));
+  border-radius: 10px;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, var(--panel));
+  font-size: 12px;
+}
+
+.create-cluster-page .cluster-summary {
+  padding: 18px;
+}
+
+.create-cluster-page .cluster-summary-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.create-cluster-page .cluster-summary-head > div {
+  min-width: 0;
+}
+
+.create-cluster-page .cluster-summary-head small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.create-cluster-page .cluster-summary-head h3 {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+}
+
+.create-cluster-page .cluster-summary dl {
+  display: grid;
+  gap: 0;
+  margin: 16px 0 0;
+}
+
+.create-cluster-page .cluster-summary dl > div {
+  display: grid;
+  grid-template-columns: minmax(82px, 0.7fr) minmax(0, 1.3fr);
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.create-cluster-page .cluster-summary dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.create-cluster-page .cluster-summary dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.create-cluster-page .cluster-summary dd code {
+  font-size: 11px;
+}
+
+.create-cluster-page .cluster-summary dd small {
+  color: var(--muted);
+}
+
+.create-cluster-page .new-cluster-progress {
+  padding: 18px;
+}
+
+.create-cluster-page .new-cluster-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.create-cluster-page .new-cluster-progress-meta strong {
+  color: var(--ink);
+}
+
+.create-cluster-page .new-cluster-progress-track {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin-top: 8px;
+  appearance: none;
+  border: 0;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--canvas);
+}
+
+.create-cluster-page .new-cluster-progress-track::-webkit-progress-bar {
+  border-radius: inherit;
+  background: var(--canvas);
+}
+
+.create-cluster-page .new-cluster-progress-track::-webkit-progress-value {
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.create-cluster-page .new-cluster-progress-track::-moz-progress-bar {
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.create-cluster-page .new-cluster-failure {
+  margin-top: 12px;
+  color: var(--red);
+  font-size: 12px;
+}
+
+.create-cluster-page .new-cluster-history {
+  margin-top: 18px;
+}
+
+.create-cluster-page .new-cluster-history-list {
+  display: grid;
+}
+
+.create-cluster-page .new-cluster-history-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 62px;
+  padding: 10px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.create-cluster-page .new-cluster-history-row.is-current {
+  background: color-mix(in srgb, var(--blue) 5%, transparent);
+}
+
+.create-cluster-page .new-cluster-history-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--panel));
+}
+
+.create-cluster-page .new-cluster-history-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.create-cluster-page .new-cluster-history-main strong,
+.create-cluster-page .new-cluster-history-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.create-cluster-page .new-cluster-history-main small,
+.create-cluster-page .new-cluster-history-row time {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.create-cluster-page .new-cluster-heading-count {
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+@media (max-width: 1099px) {
+  .create-cluster-page .new-cluster-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .create-cluster-page .new-cluster-aside {
+    position: static;
+  }
+}
+
+@media (max-width: 620px) {
+  .create-cluster-page .new-cluster-type-cards,
+  .create-cluster-page .new-cluster-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .create-cluster-page .new-cluster-history-row {
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+  }
+
+  .create-cluster-page .new-cluster-history-row time {
+    grid-column: 2 / -1;
+  }
+}

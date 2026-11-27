@@ -61,7 +61,7 @@ func (e *Engine) Reconcile(ctx context.Context, declaration *corev1.Secret) (Res
 		return e.fail(ctx, declaration, inventory, "ExpansionLimitExceeded", fmt.Errorf("expanded to %d resources, limit is %d", len(desiredObjects), e.MaxTargets))
 	}
 	if len(desiredObjects) == 0 && len(inventory.Items) == 0 {
-		inventory.ObservedDeclarationResourceVersion = declaration.ResourceVersion
+		inventory.ObservedDeclarationDigest = declarationDigest(declaration)
 		inventory.ObservedRevision = inventoryRevision(nil)
 		inventory.Phase = "NoTargetsMatched"
 		inventory.Message = ""
@@ -90,7 +90,7 @@ func (e *Engine) Reconcile(ctx context.Context, declaration *corev1.Secret) (Res
 	if err := e.prune(ctx, declaration, inventory.Items, desired, definition.Config.Apply.DeletionPolicy); err != nil {
 		return e.fail(ctx, declaration, inventory, "PruneFailed", err)
 	}
-	newInventory := Inventory{ObservedDeclarationResourceVersion: declaration.ResourceVersion, Phase: "Applied", Items: desired}
+	newInventory := Inventory{ObservedDeclarationDigest: declarationDigest(declaration), Phase: "Applied", Items: desired}
 	newInventory.ObservedRevision = inventoryRevision(desired)
 	if err := e.InventoryStore.Save(ctx, declaration, newInventory); err != nil {
 		return Result{}, err
@@ -239,9 +239,9 @@ func (e *Engine) apply(ctx context.Context, declaration *corev1.Secret, desired 
 		return InventoryItem{}, err
 	}
 	force := desired.config.Apply.ConflictPolicy == "Force"
-	applied, err := targetResource.Patch(ctx, object.GetName(), types.ApplyPatchType, data, metav1.PatchOptions{
-		FieldManager: e.Mode.FieldManagerPrefix + shortHash(string(declaration.UID)), Force: &force,
-	})
+	options := metav1.PatchOptions{FieldManager: e.Mode.FieldManagerPrefix + shortHash(string(declaration.UID)), Force: &force}
+	applied, err := targetResource.Patch(ctx, object.GetName(), types.ApplyPatchType, data, options)
+	applied, err = replaceStorageClass(ctx, targetResource, existing, object, data, options, applied, err)
 	if err != nil {
 		return InventoryItem{}, err
 	}
@@ -299,6 +299,9 @@ func (e *Engine) deleteOwned(ctx context.Context, declaration *corev1.Secret, it
 		return nil
 	}
 	if err != nil {
+		return err
+	}
+	if replaced, err := e.namespaceReplaced(ctx, item); err != nil || replaced {
 		return err
 	}
 	if existing.GetUID() != item.UID || existing.GetAnnotations()[e.Mode.OwnershipPrefix+"definition-uid"] != string(declaration.UID) {

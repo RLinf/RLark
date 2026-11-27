@@ -19,7 +19,6 @@ const copyEntrySources = Object.fromEntries(
       "pages/SSHKeys.tsx",
       "pages/SystemConfig.tsx",
       "pages/Workflows.tsx",
-      "admin/CreateCluster.tsx",
     ].map(async (relative) => [
       relative,
       await readFile(new URL(`../src/${relative}`, import.meta.url), "utf8"),
@@ -189,7 +188,7 @@ test("所有复制入口都改用 copyText 且不再直接调用 navigator.clipb
 });
 
 test("复制成功态只在 copyText 返回 true 时置位", () => {
-  // Api / SystemConfig / Clusters / CreateCluster / Workflows / Jobs 都必须先
+  // Api / SystemConfig / Clusters / Workflows / Jobs 都必须先
   // 判定复制结果，避免在回退也失败时仍显示"已复制"。
   assert.match(copyEntrySources["pages/Api.tsx"], /if \(!ok\) return;/);
   assert.match(
@@ -201,14 +200,6 @@ test("复制成功态只在 copyText 返回 true 时置位", () => {
       /if \(!\(await copyText\(sshCommand\)\)\) return;/g,
     )?.length,
     2,
-  );
-  assert.match(
-    copyEntrySources["admin/CreateCluster.tsx"],
-    /if \(!\(await copyText\(deployYaml\)\)\) return;/,
-  );
-  assert.match(
-    copyEntrySources["admin/CreateCluster.tsx"],
-    /if \(!\(await copyText\(yaml\)\)\) return;/,
   );
   assert.match(
     copyEntrySources["pages/Jobs.tsx"],

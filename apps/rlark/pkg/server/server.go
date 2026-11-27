@@ -43,7 +43,7 @@ type Server struct {
 	// DB Client and Stores
 	// may be nil if DBConfigPath is not provided, should be checked before use
 	dbClient     *db.DB
-	rcStore      *db.RevokedCertificateStore
+	rcStore      certificateRevocationStore
 	rcCache      *gocache.Cache
 	userKeyStore *db.SSHUserKeyStore
 

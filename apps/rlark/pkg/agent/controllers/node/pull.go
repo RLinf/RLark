@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -30,10 +31,9 @@ type pullNodeReconciler struct {
 // onto the local Kubernetes Node or local Tasks. The reconciler has one job:
 // translate Node Drain operations into Task DrainRequests.
 //
-// Label changes are no longer pulled from management CR metadata.labels — the
-// Gateway relays PATCH requests directly to the data-plane Kubernetes Node via
-// proxyKubeRequest, so the data-plane agent never needs to reconcile labels
-// from a management CR that may be stale or incomplete.
+// The Gateway relays ordinary label edits to the data-plane Node. Only the
+// scheduling marker and explicitly site-owned metadata are projected from the
+// management Node by this controller.
 func (r *pullNodeReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	logger := log.FromContext(ctx).WithValues("node", req.NamespacedName)
 
@@ -97,6 +97,36 @@ func (r *pullNodeReconciler) reconcileSchedulingLabel(
 		}
 	} else if _, exists := localNode.Labels[nodeUnschedulableLabel]; exists {
 		delete(localNode.Labels, nodeUnschedulableLabel)
+		changed = true
+	}
+
+	// Site-owned labels are declared on the management Node. Preserve the
+	// upstream direct-relay model for all other labels.
+	siteLabels := make(map[string]string)
+	for key, value := range mgmtNode.Labels {
+		if isManagementOwnedNodeLabel(key) {
+			siteLabels[key] = value
+		}
+	}
+	for key, value := range mgmtNode.Annotations {
+		category := rlarkv1alpha1.LabelNodeCategory
+		if key == category || strings.HasPrefix(key, category+"-") {
+			siteLabels[key] = value
+		}
+	}
+	for key := range localNode.Labels {
+		if _, declared := siteLabels[key]; isManagementOwnedNodeLabel(key) && !declared {
+			delete(localNode.Labels, key)
+			changed = true
+		}
+	}
+	for key, value := range siteLabels {
+		if current, found := localNode.Labels[key]; !found || current != value {
+			localNode.Labels[key] = value
+			changed = true
+		}
+	}
+	if pullManagementAnnotations(mgmtNode, localNode) {
 		changed = true
 	}
 	if !changed {

@@ -89,6 +89,7 @@ API gateway. Handles all REST API requests including cluster management, job man
 | `--kube-qps` | float32 | `5000` | Kubernetes client QPS |
 | `--kube-burst` | int | `8000` | Kubernetes client burst |
 | `--kube-timeout` | duration | `0` | Kubernetes client request timeout |
+| `--submission-verification-key` | string | empty | Ed25519 public key PEM used to verify Astribot IAM Job and Workflow submitter assertions. Empty disables verification. |
 
 **Example:**
 

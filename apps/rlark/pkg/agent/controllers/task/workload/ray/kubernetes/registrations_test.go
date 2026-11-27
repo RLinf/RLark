@@ -39,10 +39,11 @@ func TestObservedRootsAreBoundedToSupportedCarriers(t *testing.T) {
 		t.Fatalf("observations=%#v", info.Observations)
 	}
 	roots := info.Observations[0].Roots
-	if len(roots) != 2 {
-		t.Fatalf("roots=%d, want 2", len(roots))
+	if len(roots) != 3 {
+		t.Fatalf("roots=%d, want 3", len(roots))
 	}
 	want := map[string]string{
+		appsv1.SchemeGroupVersion.WithKind(raykubernetes.CarrierDaemonSet).String():   taskapi.CarrierTypeKubernetesDaemonSet,
 		appsv1.SchemeGroupVersion.WithKind(raykubernetes.CarrierDeployment).String():  taskapi.CarrierTypeKubernetesDeployment,
 		appsv1.SchemeGroupVersion.WithKind(raykubernetes.CarrierStatefulSet).String(): taskapi.CarrierTypeKubernetesStatefulSet,
 	}

@@ -1,0 +1,278 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: machines.station.rlark.io
+spec:
+  group: station.rlark.io
+  names:
+    kind: Machine
+    listKind: MachineList
+    plural: machines
+    singular: machine
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.nodeClass
+      name: Class
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.problem
+      name: Problem
+      type: string
+    - jsonPath: .status.nodeName
+      name: Node
+      type: string
+    - jsonPath: .status.entry.address
+      name: Address
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Machine is a machine RLark knows of, a node or not: the list an
+          administrator picks from to add nodes. A machine comes into it by being
+          seen on its site's network (source Discovery) or by registering itself
+          (source Registration). Its identity is its serial, which its class says
+          where to read; the address it was seen at is an observation. Its name is its site and the hardware address of the
+          device it was first seen through.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              admit:
+                description: |-
+                  Admit is the administrator's decision that the machine is to be a
+                  node. Without it the machine is not joined.
+                properties:
+                  clusterID:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  labels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Labels replace the values of labels the machine's class declares, for
+                      this machine: the body of a robot that is not the usual one.
+                    maxProperties: 8
+                    type: object
+                  model:
+                    description: Model is the selected robot model or the operator's
+                      server model hint.
+                    maxLength: 63
+                    type: string
+                  nodeClass:
+                    description: NodeClass is the class selected at admission. Empty
+                      uses spec.nodeClass.
+                    maxLength: 63
+                    type: string
+                  requestedAt:
+                    description: |-
+                      RequestedAt is when; asking again for a machine whose join stopped
+                      is a new request, and starts a new join.
+                    format: date-time
+                    type: string
+                  requestedBy:
+                    description: RequestedBy is the authenticated identity at the
+                      Gateway.
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                  type:
+                    allOf:
+                    - enum:
+                      - Robot
+                      - Server
+                    - enum:
+                      - Robot
+                      - Server
+                    description: |-
+                      Type is the operator's selected onboarding path. Empty retains the
+                      legacy interpretation: a class-backed machine is a Robot.
+                    type: string
+                required:
+                - clusterID
+                - requestedAt
+                - requestedBy
+                type: object
+              nodeClass:
+                description: |-
+                  NodeClass is the legacy class hint. Empty means Station API observed a
+                  host that no registered class fingerprint identifies.
+                maxLength: 63
+                type: string
+              site:
+                maxLength: 63
+                minLength: 1
+                type: string
+              source:
+                enum:
+                - Discovery
+                - Registration
+                type: string
+            required:
+            - site
+            - source
+            type: object
+          status:
+            properties:
+              clusterID:
+                description: ClusterID and NodeName are the node the machine is or
+                  is becoming.
+                maxLength: 128
+                type: string
+              entry:
+                description: Entry is the device the machine was last seen through.
+                properties:
+                  address:
+                    maxLength: 15
+                    type: string
+                  banner:
+                    description: Banner is the bounded SSH server identification line,
+                      evidence only.
+                    maxLength: 200
+                    type: string
+                  discoveryScanID:
+                    description: DiscoveryScanID identifies the manual scan that last
+                      observed this entry.
+                    maxLength: 36
+                    type: string
+                  hostKeyAlgorithm:
+                    description: HostKeyAlgorithm is the negotiated SSH host-key algorithm.
+                    maxLength: 64
+                    type: string
+                  hostKeyFingerprint:
+                    maxLength: 50
+                    type: string
+                  lastSeen:
+                    format: date-time
+                    type: string
+                  mac:
+                    maxLength: 17
+                    type: string
+                  port:
+                    description: Port is the SSH port where the Hub saw the host.
+                      Zero is a legacy value.
+                    format: int32
+                    maximum: 65535
+                    minimum: 0
+                    type: integer
+                  via:
+                    description: |-
+                      Via is the relay of the hub that saw the device, "tunnel-address:port":
+                      where the management plane reaches Address from.
+                    maxLength: 21
+                    type: string
+                type: object
+              identityReason:
+                description: IdentityReason explains a mismatch or the absence of
+                  an observation.
+                maxLength: 64
+                type: string
+              identityVerified:
+                description: IdentityVerified is True, False or Unknown for the current
+                  observation.
+                enum:
+                - "True"
+                - "False"
+                - Unknown
+                type: string
+              inspectedAt:
+                description: |-
+                  InspectedAt is when RLark last logged in to the machine to read what
+                  it is. Station API clears it when the machine shows up changed.
+                format: date-time
+                type: string
+              message:
+                maxLength: 512
+                type: string
+              nodeHostKeyFingerprint:
+                description: |-
+                  NodeHostKeyFingerprint is the SSH host key of the computer behind the
+                  entry device, as it was first read through the verified entry device.
+                maxLength: 50
+                type: string
+              nodeJoin:
+                description: NodeJoin is the NodeJoin progress projected by station-controller.
+                properties:
+                  phase:
+                    maxLength: 32
+                    type: string
+                  reason:
+                    maxLength: 512
+                    type: string
+                  stage:
+                    maxLength: 64
+                    type: string
+                type: object
+              nodeName:
+                maxLength: 253
+                type: string
+              observedIdentity:
+                description: |-
+                  ObservedIdentity is read from the node's authenticated observation, never
+                  copied from the desired admission.
+                properties:
+                  category:
+                    enum:
+                    - Robot
+                    - Server
+                    type: string
+                  model:
+                    maxLength: 63
+                    type: string
+                  reportedAt:
+                    format: date-time
+                    type: string
+                  source:
+                    enum:
+                    - node-labels
+                    - node-info
+                    type: string
+                type: object
+              operation:
+                description: Operation is the NodeOperation that joins the machine.
+                maxLength: 253
+                type: string
+              phase:
+                enum:
+                - Discovered
+                - Admitted
+                - Joined
+                type: string
+              problem:
+                maxLength: 64
+                type: string
+              serial:
+                description: Serial is the machine's serial, read on its entry device.
+                maxLength: 128
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

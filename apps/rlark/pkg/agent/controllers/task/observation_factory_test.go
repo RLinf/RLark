@@ -65,10 +65,11 @@ func (r *recordingAccessReviewer) Review(ctx context.Context, attrs authorizatio
 
 func observationDependencyMapper() meta.RESTMapper {
 	m := meta.NewDefaultRESTMapper([]schema.GroupVersion{appsv1.SchemeGroupVersion, corev1.SchemeGroupVersion})
-	for _, kind := range []string{"Deployment", "StatefulSet", "ReplicaSet"} {
+	for _, kind := range []string{"Deployment", "StatefulSet", "ReplicaSet", "DaemonSet"} {
 		m.Add(appsv1.SchemeGroupVersion.WithKind(kind), meta.RESTScopeNamespace)
 	}
 	m.Add(corev1.SchemeGroupVersion.WithKind("Pod"), meta.RESTScopeNamespace)
+	m.Add(corev1.SchemeGroupVersion.WithKind("Event"), meta.RESTScopeNamespace)
 	return m
 }
 
@@ -88,7 +89,7 @@ func TestObservationAccessIsExplicitScopedAndDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plans) != 2 || len(first.attrs) != 10 {
+	if len(plans) != 2 || len(first.attrs) != 12 {
 		t.Fatalf("plans=%d permissions=%v", len(plans), first.attrs)
 	}
 	for _, attr := range first.attrs {

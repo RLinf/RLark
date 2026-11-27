@@ -56,6 +56,8 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Rlinf().V1alpha1().Addons().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("clusters"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Rlinf().V1alpha1().Clusters().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("clusterprovisions"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Rlinf().V1alpha1().ClusterProvisions().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("clusterupgradejobs"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Rlinf().V1alpha1().ClusterUpgradeJobs().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("domains"):
@@ -66,6 +68,8 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Rlinf().V1alpha1().Jobs().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("nodes"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Rlinf().V1alpha1().Nodes().Informer()}, nil
+	case v1alpha1.SchemeGroupVersion.WithResource("nodejoins"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Rlinf().V1alpha1().NodeJoins().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("pods"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Rlinf().V1alpha1().Pods().Informer()}, nil
 	case v1alpha1.SchemeGroupVersion.WithResource("tasks"):

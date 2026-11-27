@@ -26,9 +26,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# kcp writes its administrator kubeconfig anew at every start: read the one of this start.
 kubectl --kubeconfig "$HOST_KUBECONFIG" -n "$KCP_NAMESPACE" \
-  get configmap rlark-kcp-kubeconfig \
-  -o go-template='{{index .data "admin.kubeconfig"}}' > "$KCP_KUBECONFIG"
+  exec "$KCP_POD" -- cat /.kcp/admin.kubeconfig > "$KCP_KUBECONFIG"
 
 KCP_PORT="$(python3 - <<'PY'
 import socket

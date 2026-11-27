@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -44,7 +43,7 @@ func (c *clusterAgent) Build(ctx context.Context) error {
 		return fmt.Errorf("cluster ID is empty")
 	}
 
-	mm, err := ctrl.NewManager(c.a.managementConfig, ctrl.Options{
+	mm, err := ctrl.NewManager(c.a.managementConfig, astribotManagementOptions(clusterID, ctrl.Options{
 		Scheme:  controllers.MgmtScheme,
 		Metrics: metricsserver.Options{BindAddress: c.a.config.MetricsBindAddress},
 		Cache: cache.Options{
@@ -52,7 +51,7 @@ func (c *clusterAgent) Build(ctx context.Context) error {
 				clusterID: {},
 			},
 		},
-	})
+	}))
 	if err != nil {
 		return fmt.Errorf("create management manager: %w", err)
 	}
@@ -124,7 +123,7 @@ func (c *clusterAgent) Build(ctx context.Context) error {
 		LocalHTTP: bc.LocalKubeHTTP, LocalAPIHost: bc.LocalKubeAPIHost, LocalConfig: bc.LocalKubeConfig,
 		Mapper: localManager.GetRESTMapper(), Execution: c.a.config.Execution,
 		PullWorkers: c.a.config.ControllerConcurrency.TaskPull, PushWorkers: c.a.config.ControllerConcurrency.TaskRuntimePush,
-		ResyncPeriod: c.a.config.TaskRuntimeResyncPeriod,
+		DaemonSetPushWorkers: c.a.config.TaskDaemonSetWorkers, ResyncPeriod: c.a.config.TaskRuntimeResyncPeriod,
 	})
 	if err != nil {
 		return fmt.Errorf("build Task execution assembly: %w", err)
@@ -191,12 +190,11 @@ func (c *clusterAgent) Build(ctx context.Context) error {
 		return fmt.Errorf("setup delivery controller: %w", err)
 	}
 
-	c.start = func(ctx context.Context) error {
-		eg, runCtx := errgroup.WithContext(ctx)
-		eg.Go(func() error { return mm.Start(runCtx) })
-		eg.Go(func() error { return lm.Start(runCtx) })
-		return eg.Wait()
+	start, err := c.prepareAstribot(ctx, mm, localManager, lm, mclient, bc.LocalKubeClient, clusterID, agentType)
+	if err != nil {
+		return err
 	}
+	c.start = start
 	return nil
 }
 

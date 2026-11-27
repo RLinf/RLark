@@ -27,6 +27,8 @@ import (
 // NodeSpec contains only management-owned durable desired state. Agents must not
 // write this section; administrative APIs own Unschedulable and Operations.
 type NodeSpecApplyConfiguration struct {
+	// DisplayName is the operator's name; metadata.name remains the node identity.
+	DisplayName *string `json:"displayName,omitempty"`
 	// AgentType is a reserved compatibility field for the Node access form.
 	//
 	// Deprecated: use Runtime.Type for new integrations. This field must remain in
@@ -47,6 +49,14 @@ type NodeSpecApplyConfiguration struct {
 // apply.
 func NodeSpec() *NodeSpecApplyConfiguration {
 	return &NodeSpecApplyConfiguration{}
+}
+
+// WithDisplayName sets the DisplayName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DisplayName field is set to the value of the last call.
+func (b *NodeSpecApplyConfiguration) WithDisplayName(value string) *NodeSpecApplyConfiguration {
+	b.DisplayName = &value
+	return b
 }
 
 // WithAgentType sets the AgentType field in the declarative configuration to the given value

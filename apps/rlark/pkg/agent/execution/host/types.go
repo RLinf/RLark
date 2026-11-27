@@ -91,6 +91,8 @@ type LifecycleDecision struct {
 type TaskObservation struct {
 	// Nodes are the Nodes the Task was observed running on.
 	Nodes []string
+	// Instances is the complete per-node workload observation. An empty snapshot clears it.
+	Instances []rlarkv1alpha1.TaskInstanceStatus
 	// DrainRequests carries the bounded drain-status observation written by
 	// the Host. Empty means no drain activity to report; a nil slice is
 	// treated the same as empty on write.

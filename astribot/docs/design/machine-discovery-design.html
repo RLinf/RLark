@@ -1,0 +1,2550 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>机器发现与入网</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     Design plan
+     Palette: cool paper + deep teal, copper for decisions,
+     violet for robots, blue for servers, amber for unknown.
+     Type: Space Grotesk / IBM Plex Sans / IBM Plex Mono.
+     Layout: sticky section rail + readable engineering memo.
+     ============================================================ */
+
+  :root {
+    color-scheme: light;
+    --bg: #edf2ef;
+    --canvas: #f5f8f6;
+    --panel: #ffffff;
+    --panel-2: #f8fbf9;
+    --ink: #101a17;
+    --ink-2: #2b3a35;
+    --muted: #5f716a;
+    --faint: #84958e;
+    --line: #d5dfda;
+    --line-strong: #b6c7bf;
+    --teal: #0e6b5c;
+    --teal-soft: #dcefe9;
+    --teal-ink: #073f36;
+    --copper: #b45f1e;
+    --copper-soft: #f7e7d8;
+    --copper-ink: #6d3610;
+    --robot: #66468f;
+    --robot-soft: #ede7f7;
+    --server: #225f8a;
+    --server-soft: #deedf6;
+    --amber: #946400;
+    --amber-soft: #f7edd2;
+    --red: #a33a32;
+    --red-soft: #f7e2df;
+    --green: #1b6b48;
+    --green-soft: #dcefe5;
+    --code-bg: #0f1a16;
+    --code-ink: #d8ece4;
+    --shadow: 0 1px 0 rgba(16, 26, 23, .04), 0 18px 44px rgba(16, 26, 23, .06);
+    --rail-width: 248px;
+    --display: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+    --body: "IBM Plex Sans", "Noto Sans SC", system-ui, -apple-system, sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0b1210;
+      --canvas: #0e1613;
+      --panel: #141f1a;
+      --panel-2: #18241f;
+      --ink: #e6efeb;
+      --ink-2: #c5d4ce;
+      --muted: #95a8a0;
+      --faint: #6e837a;
+      --line: #23332c;
+      --line-strong: #354b41;
+      --teal: #5cc7b2;
+      --teal-soft: #12352e;
+      --teal-ink: #b9f3e6;
+      --copper: #e39a5c;
+      --copper-soft: #3a2819;
+      --copper-ink: #f7dcc4;
+      --robot: #b9a5e8;
+      --robot-soft: #2a2340;
+      --server: #7cb9e0;
+      --server-soft: #162c3b;
+      --amber: #e0b45c;
+      --amber-soft: #332a14;
+      --red: #e58a80;
+      --red-soft: #381b19;
+      --green: #6fd3a1;
+      --green-soft: #123326;
+      --code-bg: #080d0b;
+      --code-ink: #d7e9e2;
+      --shadow: 0 1px 0 rgba(0, 0, 0, .3), 0 20px 50px rgba(0, 0, 0, .28);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0b1210;
+    --canvas: #0e1613;
+    --panel: #141f1a;
+    --panel-2: #18241f;
+    --ink: #e6efeb;
+    --ink-2: #c5d4ce;
+    --muted: #95a8a0;
+    --faint: #6e837a;
+    --line: #23332c;
+    --line-strong: #354b41;
+    --teal: #5cc7b2;
+    --teal-soft: #12352e;
+    --teal-ink: #b9f3e6;
+    --copper: #e39a5c;
+    --copper-soft: #3a2819;
+    --copper-ink: #f7dcc4;
+    --robot: #b9a5e8;
+    --robot-soft: #2a2340;
+    --server: #7cb9e0;
+    --server-soft: #162c3b;
+    --amber: #e0b45c;
+    --amber-soft: #332a14;
+    --red: #e58a80;
+    --red-soft: #381b19;
+    --green: #6fd3a1;
+    --green-soft: #123326;
+    --code-bg: #080d0b;
+    --code-ink: #d7e9e2;
+    --shadow: 0 1px 0 rgba(0, 0, 0, .3), 0 20px 50px rgba(0, 0, 0, .28);
+  }
+
+  * { box-sizing: border-box; }
+
+  html {
+    scroll-behavior: smooth;
+    background: var(--bg);
+  }
+
+  body {
+    margin: 0;
+    min-width: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.68;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--teal); text-underline-offset: 3px; }
+  a:hover { color: var(--teal-ink); }
+  button { font: inherit; }
+  code, pre, kbd { font-family: var(--mono); }
+  ::selection { background: var(--teal-soft); color: var(--ink); }
+
+  :focus-visible {
+    outline: 2px solid var(--teal);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  .skip-link {
+    position: fixed;
+    left: 12px;
+    top: 12px;
+    z-index: 100;
+    transform: translateY(-160%);
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--ink);
+    color: var(--bg);
+    text-decoration: none;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .skip-link:focus { transform: translateY(0); }
+
+  .topbar {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 20;
+    background: color-mix(in srgb, var(--canvas) 92%, transparent);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .topbar-inner {
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 12px max(20px, env(safe-area-inset-left, 0px)) 12px max(20px, env(safe-area-inset-right, 0px));
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    justify-content: space-between;
+  }
+
+  .crumb {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .crumb strong { color: var(--ink); font-weight: 600; }
+  .crumb .slash { color: var(--faint); }
+
+  .top-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 10px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: var(--panel);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .04em;
+    white-space: nowrap;
+  }
+  .status-pill i {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 0 3px var(--green-soft);
+  }
+
+  .theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink-2);
+    border-radius: 7px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 11px;
+    transition: border-color .18s ease, background .18s ease;
+  }
+  .theme-toggle:hover { border-color: var(--line-strong); background: var(--panel-2); }
+
+  .shell {
+    max-width: 1500px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: var(--rail-width) minmax(0, 1fr);
+    gap: 0;
+    padding: 0 max(20px, env(safe-area-inset-left, 0px)) 0 max(20px, env(safe-area-inset-right, 0px));
+  }
+
+  .rail {
+    position: sticky;
+    top: calc(env(safe-area-inset-top, 0px) + 57px);
+    align-self: start;
+    height: calc(100vh - env(safe-area-inset-top, 0px) - 57px);
+    border-right: 1px solid var(--line);
+    padding: 28px 24px 36px 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .rail-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 12px;
+  }
+
+  .rail nav { display: grid; gap: 2px; }
+  .rail nav a {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    padding: 7px 9px;
+    border-radius: 6px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 12.5px;
+    line-height: 1.4;
+    border-left: 2px solid transparent;
+    transition: color .15s ease, background .15s ease, border-color .15s ease;
+  }
+  .rail nav a span {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--faint);
+    min-width: 16px;
+  }
+  .rail nav a:hover { color: var(--ink); background: var(--panel); }
+  .rail nav a.active {
+    color: var(--ink);
+    background: var(--panel);
+    border-left-color: var(--teal);
+  }
+  .rail nav a.active span { color: var(--teal); }
+
+  .rail-note {
+    margin-top: 24px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    color: var(--muted);
+    font-size: 11.5px;
+    line-height: 1.55;
+  }
+  .rail-note b { display: block; color: var(--ink-2); font-weight: 600; margin-bottom: 3px; }
+
+  main {
+    min-width: 0;
+    padding: 0 0 80px 40px;
+  }
+
+  .hero {
+    padding: 38px 0 34px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .eyebrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 9px;
+    margin: 0 0 16px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .eyebrow .tag {
+    padding: 3px 7px;
+    border-radius: 4px;
+    background: var(--teal-soft);
+    color: var(--teal-ink);
+    letter-spacing: .06em;
+  }
+  .eyebrow .dot { color: var(--faint); }
+
+  h1 {
+    margin: 0;
+    max-width: 18ch;
+    font-family: var(--display);
+    font-size: clamp(34px, 4.2vw, 56px);
+    font-weight: 600;
+    letter-spacing: -.035em;
+    line-height: 1.04;
+    text-wrap: balance;
+  }
+
+  .hero-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr);
+    gap: 34px;
+    align-items: end;
+    margin-top: 24px;
+  }
+
+  .lede {
+    margin: 0;
+    max-width: 62ch;
+    color: var(--ink-2);
+    font-size: 17px;
+    line-height: 1.65;
+  }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  .hero-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    overflow: hidden;
+  }
+  .metric {
+    background: var(--panel);
+    padding: 12px 14px;
+    min-width: 0;
+  }
+  .metric b {
+    display: block;
+    font-family: var(--display);
+    font-size: 25px;
+    line-height: 1;
+    letter-spacing: -.03em;
+    color: var(--ink);
+  }
+  .metric span {
+    display: block;
+    margin-top: 5px;
+    color: var(--muted);
+    font-size: 10.5px;
+    font-family: var(--mono);
+    letter-spacing: .03em;
+  }
+
+  .chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 20px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel-2);
+    color: var(--muted);
+    font-size: 11px;
+    font-family: var(--mono);
+    white-space: nowrap;
+  }
+  .chip i { width: 5px; height: 5px; border-radius: 50%; background: var(--teal); }
+
+  section {
+    padding: 52px 0 0;
+    scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 78px);
+  }
+
+  .section-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 12px;
+    margin-bottom: 24px;
+  }
+  .section-kicker {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 6px;
+  }
+  h2 {
+    margin: 0;
+    font-family: var(--display);
+    font-size: clamp(24px, 2.5vw, 33px);
+    line-height: 1.12;
+    letter-spacing: -.025em;
+    font-weight: 600;
+    text-wrap: balance;
+  }
+  .section-note {
+    max-width: 48ch;
+    margin: 0;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.55;
+    text-align: right;
+  }
+
+  h3 {
+    margin: 30px 0 10px;
+    font-family: var(--display);
+    font-size: 19px;
+    line-height: 1.25;
+    letter-spacing: -.012em;
+    font-weight: 600;
+  }
+  h3:first-child { margin-top: 0; }
+
+  h4 {
+    margin: 20px 0 7px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+  }
+
+  p { margin: 0 0 13px; max-width: 76ch; }
+  p.tight { margin-bottom: 7px; }
+  ul, ol { margin: 0 0 14px; padding-left: 1.2em; max-width: 76ch; }
+  li { margin: 4px 0; }
+  li::marker { color: var(--faint); }
+  strong { color: var(--ink); font-weight: 600; }
+  small { font-size: 12px; }
+
+  .muted { color: var(--muted); }
+  .mono { font-family: var(--mono); font-size: .92em; }
+  .nowrap { white-space: nowrap; }
+
+  .callout {
+    margin: 18px 0;
+    padding: 13px 16px;
+    border-left: 3px solid var(--teal);
+    background: var(--panel);
+    border-radius: 0 7px 7px 0;
+    color: var(--ink-2);
+    font-size: 13.5px;
+    line-height: 1.6;
+    box-shadow: var(--shadow);
+  }
+  .callout b { color: var(--ink); }
+  .callout.warn { border-left-color: var(--amber); }
+  .callout.risk { border-left-color: var(--red); }
+  .callout.decision { border-left-color: var(--copper); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .label {
+    display: inline-block;
+    margin-bottom: 3px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .card {
+    padding: 16px 17px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--panel);
+    min-width: 0;
+  }
+  .card h4 { margin-top: 0; }
+  .card p:last-child { margin-bottom: 0; }
+  .card .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px; height: 22px;
+    border-radius: 5px;
+    background: var(--teal-soft);
+    color: var(--teal-ink);
+    font-family: var(--mono);
+    font-size: 10px;
+    margin-bottom: 9px;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.55;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .badge::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  .badge.robot { background: var(--robot-soft); color: var(--robot); border-color: color-mix(in srgb, var(--robot) 22%, transparent); }
+  .badge.server { background: var(--server-soft); color: var(--server); border-color: color-mix(in srgb, var(--server) 22%, transparent); }
+  .badge.unknown { background: var(--amber-soft); color: var(--amber); border-color: color-mix(in srgb, var(--amber) 22%, transparent); }
+  .badge.new { background: var(--teal-soft); color: var(--teal-ink); border-color: color-mix(in srgb, var(--teal) 20%, transparent); }
+  .badge.keep { background: var(--panel-2); color: var(--muted); border-color: var(--line); }
+  .badge.warn { background: var(--red-soft); color: var(--red); border-color: color-mix(in srgb, var(--red) 20%, transparent); }
+
+  .stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    overflow: hidden;
+    background: var(--line);
+    gap: 1px;
+    margin: 18px 0;
+  }
+  .stat-strip div { background: var(--panel); padding: 12px 14px; min-width: 0; }
+  .stat-strip b { display: block; font-family: var(--display); font-size: 24px; line-height: 1; letter-spacing: -.03em; }
+  .stat-strip span { display: block; margin-top: 5px; font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: .02em; }
+
+  .figure {
+    margin: 22px 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+    overflow: hidden;
+  }
+  .figure-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 11px 15px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel-2);
+  }
+  .figure-head strong { font-size: 12.5px; }
+  .figure-head span { font-family: var(--mono); font-size: 9.5px; color: var(--faint); letter-spacing: .06em; text-transform: uppercase; }
+  .diagram-scroll { overflow-x: auto; padding: 14px 14px 4px; }
+  .diagram-scroll svg { display: block; width: 100%; min-width: 760px; height: auto; }
+  .figure figcaption {
+    padding: 7px 15px 12px;
+    color: var(--muted);
+    font-size: 11.5px;
+    line-height: 1.55;
+    border-top: 1px dashed var(--line);
+    margin-top: 8px;
+  }
+
+  .svg-label { font-family: var(--body); fill: var(--ink); font-size: 13px; font-weight: 600; }
+  .svg-small { font-family: var(--mono); fill: var(--muted); font-size: 10px; }
+  .svg-tiny { font-family: var(--mono); fill: var(--faint); font-size: 9px; letter-spacing: .04em; }
+  .svg-box { fill: var(--panel); stroke: var(--line-strong); stroke-width: 1; }
+  .svg-box-soft { fill: var(--panel-2); stroke: var(--line); stroke-width: 1; }
+  .svg-box-teal { fill: var(--teal-soft); stroke: var(--teal); stroke-width: 1; }
+  .svg-box-robot { fill: var(--robot-soft); stroke: var(--robot); stroke-width: 1; }
+  .svg-box-server { fill: var(--server-soft); stroke: var(--server); stroke-width: 1; }
+  .svg-box-amber { fill: var(--amber-soft); stroke: var(--amber); stroke-width: 1; }
+  .svg-box-red { fill: var(--red-soft); stroke: var(--red); stroke-width: 1; }
+  .svg-box-ghost { fill: transparent; stroke: var(--line-strong); stroke-dasharray: 4 4; }
+  .svg-line { stroke: var(--line-strong); stroke-width: 1.2; fill: none; }
+  .svg-line-teal { stroke: var(--teal); stroke-width: 1.4; fill: none; }
+  .svg-line-robot { stroke: var(--robot); stroke-width: 1.4; fill: none; }
+  .svg-line-server { stroke: var(--server); stroke-width: 1.4; fill: none; }
+  .svg-line-dash { stroke: var(--faint); stroke-width: 1.1; stroke-dasharray: 4 4; fill: none; }
+  .svg-arrow { fill: var(--line-strong); }
+  .svg-arrow-teal { fill: var(--teal); }
+  .svg-arrow-robot { fill: var(--robot); }
+  .svg-arrow-server { fill: var(--server); }
+  .svg-arrow-faint { fill: var(--faint); }
+
+  .grid-2 > *, .grid-3 > *, .timeline > *, .decision-grid > *, .dialog > * { min-width: 0; }
+
+  .table-wrap {
+    margin: 16px 0;
+    min-width: 0;
+    max-width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--panel);
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+    line-height: 1.5;
+    min-width: 640px;
+  }
+  caption {
+    caption-side: top;
+    text-align: left;
+    padding: 10px 13px 8px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--faint);
+    border-bottom: 1px solid var(--line);
+  }
+  th, td {
+    text-align: left;
+    vertical-align: top;
+    padding: 9px 13px;
+    border-bottom: 1px solid var(--line);
+  }
+  th {
+    background: var(--panel-2);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: 0; }
+  td code, th code { font-size: 11px; color: var(--ink-2); }
+  p code, li code, .callout code { overflow-wrap: anywhere; }
+  td .badge { margin: 1px 0; }
+
+  .code-block {
+    margin: 14px 0;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    overflow: hidden;
+    background: var(--code-bg);
+    color: var(--code-ink);
+  }
+  .code-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    border-bottom: 1px solid color-mix(in srgb, var(--code-ink) 12%, transparent);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--code-ink) 62%, transparent);
+  }
+  .code-block pre {
+    margin: 0;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-size: 11.5px;
+    line-height: 1.6;
+  }
+  .code-block code { color: inherit; font-family: var(--mono); }
+  .code-block .c { color: #8fb6a8; }
+  .code-block .k { color: #e6b27a; }
+  .code-block .s { color: #9fd4c4; }
+  .code-block .n { color: #d9a7d0; }
+
+  .state-flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+    margin: 18px 0;
+  }
+  .state {
+    flex: 1 1 138px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: var(--panel);
+  }
+  .state b { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: .04em; color: var(--ink); }
+  .state span { display: block; margin-top: 3px; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
+  .state.robot { border-color: color-mix(in srgb, var(--robot) 40%, var(--line)); background: var(--robot-soft); }
+  .state.robot b { color: var(--robot); }
+  .state.server { border-color: color-mix(in srgb, var(--server) 40%, var(--line)); background: var(--server-soft); }
+  .state.server b { color: var(--server); }
+  .state.done { border-color: color-mix(in srgb, var(--green) 35%, var(--line)); background: var(--green-soft); }
+  .state.done b { color: var(--green); }
+  .state.warn { border-color: color-mix(in srgb, var(--red) 35%, var(--line)); background: var(--red-soft); }
+  .state.warn b { color: var(--red); }
+  .state-arrow {
+    align-self: center;
+    flex: 0 0 auto;
+    color: var(--faint);
+    font-family: var(--mono);
+    font-size: 14px;
+  }
+
+  .wire {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+    overflow: hidden;
+    margin: 16px 0;
+    box-shadow: var(--shadow);
+  }
+  .wire-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel-2);
+  }
+  .wire-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .wire-dots { display: flex; gap: 4px; }
+  .wire-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
+  .wire-body { padding: 12px; }
+  .wire-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .wire-filter {
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--muted);
+    background: var(--panel-2);
+    white-space: nowrap;
+  }
+  .wire-filter.active { background: var(--teal-soft); color: var(--teal-ink); border-color: color-mix(in srgb, var(--teal) 30%, var(--line)); }
+  .wire-search {
+    flex: 1 1 160px;
+    min-width: 0;
+    height: 26px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--canvas);
+    color: var(--faint);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+  }
+  .wire-row {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1.25fr) minmax(0, .8fr) minmax(0, .65fr) auto;
+    gap: 8px;
+    align-items: center;
+    padding: 8px;
+    border-top: 1px solid var(--line);
+    font-size: 10.5px;
+  }
+  .wire-row.head {
+    border-top: 0;
+    padding-top: 4px;
+    color: var(--faint);
+    font-family: var(--mono);
+    font-size: 8.5px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .wire-check {
+    width: 12px; height: 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: 3px;
+    background: var(--panel);
+  }
+  .wire-check.on { background: var(--teal); border-color: var(--teal); position: relative; }
+  .wire-check.on::after { content: ""; position: absolute; left: 3px; top: 1px; width: 4px; height: 7px; border: solid var(--canvas); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+  .wire-name { min-width: 0; }
+  .wire-name b { display: block; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wire-name span { display: block; font-family: var(--mono); font-size: 8.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wire-action {
+    padding: 4px 7px;
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 8.5px;
+    color: var(--ink-2);
+    white-space: nowrap;
+    background: var(--panel);
+  }
+  .wire-action.primary { background: var(--teal); border-color: var(--teal); color: var(--canvas); }
+  .wire-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px dashed var(--line);
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+  }
+  .wire-btn {
+    padding: 5px 9px;
+    border-radius: 4px;
+    background: var(--teal);
+    color: var(--canvas);
+    font-family: var(--mono);
+    font-size: 9px;
+    white-space: nowrap;
+  }
+  .wire-btn.ghost { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
+
+  .dialog {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px;
+  }
+  .dialog-panel {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+    padding: 11px;
+    min-width: 0;
+  }
+  .dialog-panel h4 { margin: 0 0 9px; font-size: 11px; }
+  .choice {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+    margin-bottom: 7px;
+  }
+  .choice.active { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-soft); }
+  .choice .radio { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--line-strong); flex: 0 0 auto; margin-top: 2px; }
+  .choice.active .radio { border: 4px solid var(--teal); }
+  .choice b { display: block; font-size: 10.5px; }
+  .choice span { display: block; color: var(--muted); font-size: 9px; line-height: 1.45; margin-top: 2px; }
+  .field {
+    display: grid;
+    gap: 3px;
+    margin-bottom: 7px;
+  }
+  .field label { font-family: var(--mono); font-size: 8px; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+  .field .input {
+    height: 25px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--panel);
+    display: flex;
+    align-items: center;
+    padding: 0 7px;
+    color: var(--faint);
+    font-family: var(--mono);
+    font-size: 9px;
+  }
+  .field .input.filled { color: var(--ink-2); }
+  .dialog-foot {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding-top: 4px;
+    font-family: var(--mono);
+    font-size: 8.5px;
+    color: var(--faint);
+  }
+
+  .node-mock {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--panel);
+  }
+  .node-mock + .node-mock { margin-top: 9px; }
+  .node-mock .title { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+  .node-mock .title b { font-family: var(--mono); font-size: 11px; }
+  .node-mock .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px 12px;
+    margin-top: 7px;
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--muted);
+  }
+  .node-mock .facts span b { color: var(--ink-2); font-weight: 500; }
+  .node-mock .right { font-family: var(--mono); font-size: 8.5px; color: var(--faint); text-align: right; white-space: nowrap; }
+  .mismatch {
+    margin-top: 9px;
+    padding: 7px 9px;
+    border-left: 2px solid var(--amber);
+    background: var(--amber-soft);
+    border-radius: 0 4px 4px 0;
+    font-size: 9.5px;
+    color: var(--ink-2);
+  }
+
+  .timeline {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin: 18px 0;
+  }
+  .release {
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--panel);
+    padding: 14px 15px;
+    position: relative;
+    overflow: hidden;
+  }
+  .release::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--teal);
+  }
+  .release.second::before { background: var(--copper); }
+  .release .release-tag {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .release h4 { margin: 3px 0 8px; font-size: 14px; }
+  .release ul { margin-bottom: 0; font-size: 12.5px; }
+  .release li { margin: 3px 0; }
+
+  .decision-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin: 18px 0;
+  }
+  .decision {
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--panel);
+    padding: 15px 16px;
+    min-width: 0;
+  }
+  .decision .decision-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 7px;
+  }
+  .decision .decision-top span {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .decision h4 { margin: 0 0 6px; font-size: 14px; }
+  .decision p { margin: 0 0 8px; font-size: 12.5px; color: var(--ink-2); }
+  .decision .recommend {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--teal-ink);
+    background: var(--teal-soft);
+    border-radius: 4px;
+    padding: 3px 7px;
+  }
+
+  .footer {
+    margin-top: 58px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--faint);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: .03em;
+  }
+
+  .anchor {
+    color: var(--faint);
+    text-decoration: none;
+    font-family: var(--mono);
+    font-size: .62em;
+    vertical-align: .18em;
+    margin-left: .35em;
+    opacity: 0;
+    transition: opacity .15s ease;
+  }
+  h2:hover .anchor, h3:hover .anchor { opacity: 1; }
+
+  @media (max-width: 1120px) {
+    .shell { grid-template-columns: 214px minmax(0, 1fr); }
+    main { padding-left: 30px; }
+    .rail { padding-right: 18px; }
+    .hero-grid { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+    .hero-metrics { max-width: 520px; }
+  }
+
+  @media (max-width: 900px) {
+    .shell { display: block; padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px)); }
+    .rail {
+      position: static;
+      height: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+      padding: 14px 0;
+      overflow: visible;
+    }
+    .rail-label { display: none; }
+    .rail nav {
+      display: flex;
+      gap: 5px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      scrollbar-width: thin;
+    }
+    .rail nav a {
+      border-left: 0;
+      border-bottom: 2px solid transparent;
+      border-radius: 4px 4px 0 0;
+      white-space: nowrap;
+      padding: 5px 8px;
+      font-size: 11.5px;
+    }
+    .rail nav a span { display: none; }
+    .rail nav a.active { border-left: 0; border-bottom-color: var(--teal); }
+    .rail-note { display: none; }
+    main { padding: 0 0 60px; }
+    .section-note { display: none; }
+    .grid-3 { grid-template-columns: 1fr; }
+    .stat-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  @media (max-width: 680px) {
+    body { font-size: 14px; }
+    .topbar-inner { padding-left: max(14px, env(safe-area-inset-left, 0px)); padding-right: max(14px, env(safe-area-inset-right, 0px)); }
+    .status-pill { display: none; }
+    .crumb .hide-sm { display: none; }
+    .hero { padding-top: 28px; }
+    .hero-grid { margin-top: 18px; }
+    .lede { font-size: 15px; }
+    .grid-2, .decision-grid, .timeline, .dialog { grid-template-columns: 1fr; }
+    .stat-strip { grid-template-columns: 1fr 1fr; }
+    .wire-row { grid-template-columns: 16px minmax(0, 1fr) auto; }
+    .wire-row .wire-loc, .wire-row .wire-evidence { display: none; }
+    .wire-row.head { display: none; }
+    .state-arrow { display: none; }
+    .state { flex-basis: 100%; }
+    .section-head { align-items: flex-start; }
+    .figure-head { display: block; }
+    .figure-head span { display: block; margin-top: 2px; }
+    .diagram-scroll svg { min-width: 680px; }
+    .node-mock { grid-template-columns: 1fr; }
+    .node-mock .right { text-align: left; }
+    .footer { display: block; }
+    .footer span { display: block; margin-top: 4px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="crumb">
+      <span>RLark</span><span class="slash">/</span><span class="hide-sm">Station</span><span class="slash hide-sm">/</span><strong>机器发现与入网</strong>
+    </div>
+    <div class="top-actions">
+      <span class="status-pill"><i></i>设计评审 · Phase 0</span>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="切换浅色/深色主题">深色</button>
+    </div>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="rail" aria-label="章节目录">
+    <div class="rail-label">设计目录</div>
+    <nav id="toc">
+      <a href="#current"><span>01</span>现状</a>
+      <a href="#target"><span>02</span>目标形态</a>
+      <a href="#discovery"><span>03</span>发现</a>
+      <a href="#model"><span>04</span>数据模型</a>
+      <a href="#join"><span>05</span>加入流程</a>
+      <a href="#report"><span>06</span>节点自报</a>
+      <a href="#ui"><span>07</span>控制台</a>
+      <a href="#models"><span>08</span>机器人型号</a>
+      <a href="#files"><span>09</span>文件清单</a>
+      <a href="#rollout"><span>10</span>发布与安全</a>
+      <a href="#tests"><span>11</span>验证</a>
+      <a href="#decisions"><span>12</span>需要拍板</a>
+    </nav>
+    <div class="rail-note">
+      <b>Phase 0 · 只评审设计</b>
+      这份页面不改代码。确认 12 节的五个决策后，才进入 Release A。
+    </div>
+  </aside>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="title">
+      <div class="eyebrow">
+        <span class="tag">设计评审</span>
+        <span>2026-11-25</span>
+        <span class="dot">·</span>
+        <span>astribot-owned 改动</span>
+        <span class="dot">·</span>
+        <span>未改动代码</span>
+      </div>
+      <h1 id="title">机器发现与入网</h1>
+      <div class="hero-grid">
+        <div>
+          <p class="lede">现在站点扫描只认已登记的机器人出厂指纹，所以列表里只有 S1U。目标把<strong>发现</strong>和<strong>类型判断</strong>拆开：Hub 先发现候选，管理员在加入时选择机器人型号或普通 SSH，节点加入后再上报自己的类型和型号。</p>
+          <div class="chip-row">
+            <span class="chip"><i></i>混合发现</span>
+            <span class="chip"><i></i>默认关闭</span>
+            <span class="chip"><i></i>两次发布</span>
+            <span class="chip"><i></i>不改原生文件</span>
+          </div>
+        </div>
+        <div class="hero-metrics" aria-label="设计摘要">
+          <div class="metric"><b>1</b><span>可发现 NodeClass（s1u）</span></div>
+          <div class="metric"><b>3</b><span>候选类型 Robot / Unknown / Server</span></div>
+          <div class="metric"><b>2</b><span>加入路径：class admission / NodeJoin</span></div>
+          <div class="metric"><b>0</b><span>RLark 原生文件改动</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="current" aria-labelledby="current-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">01 · 现状</div>
+          <h2 id="current-title">为什么现在只扫得到 S1U<a class="anchor" href="#current" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">扫描阶段的 key 匹配把机器类型提前固定了，普通服务器在进入列表之前就被丢弃。</p>
+      </div>
+
+      <p>Hub 上的 <code>station-gateway</code> 会扫描站点私网，但只把 SSH 主机密钥命中 <code>NodeClass.spec.discovery.hostKeyFingerprints</code> 的入口设备报给 Station API。线上只有 <code>s1u</code> 同时声明 discovery 和 access，所以 <code>Machine</code> 里实际只有 S1U 的 Orin。</p>
+
+      <figure class="figure">
+        <div class="figure-head"><strong>图 1 · 今天的发现链路</strong><span>current</span></div>
+        <div class="diagram-scroll">
+          <svg viewBox="0 0 1160 430" role="img" aria-label="今天的发现链路：站点网络中的 S1U Orin 被 Hub 按已登记指纹发现，普通 GPU 因没有预登记指纹而不会进入 Machine。">
+            <defs>
+              <marker id="arr-current" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" class="svg-arrow"></path>
+              </marker>
+              <marker id="arr-current-faint" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" class="svg-arrow-faint"></path>
+              </marker>
+            </defs>
+
+            <text x="18" y="22" class="svg-tiny">SITE NETWORK</text>
+            <text x="352" y="22" class="svg-tiny">HUB</text>
+            <text x="620" y="22" class="svg-tiny">STATION API</text>
+            <text x="860" y="22" class="svg-tiny">CONTROL PLANE</text>
+
+            <rect x="16" y="36" width="300" height="360" rx="8" class="svg-box-soft"></rect>
+            <rect x="32" y="58" width="268" height="116" rx="6" class="svg-box-teal"></rect>
+            <text x="46" y="82" class="svg-label">S1U 机器人</text>
+            <text x="46" y="102" class="svg-small">Orin 入口 · 已登记工厂指纹</text>
+            <text x="46" y="122" class="svg-small">192.168.0.10 · x86 通过 Orin 跳转</text>
+            <text x="46" y="150" class="svg-small" fill="var(--teal)">扫描能看见</text>
+
+            <rect x="32" y="196" width="268" height="100" rx="6" class="svg-box-ghost"></rect>
+            <text x="46" y="220" class="svg-label" fill="var(--muted)">普通 GPU / x86</text>
+            <text x="46" y="240" class="svg-small">SSH 可达，但没有预登记指纹</text>
+            <text x="46" y="260" class="svg-small" fill="var(--amber)">扫描不到</text>
+
+            <rect x="32" y="318" width="268" height="58" rx="6" class="svg-box-ghost"></rect>
+            <text x="46" y="342" class="svg-label" fill="var(--muted)">其他 SSH 设备</text>
+            <text x="46" y="361" class="svg-small">没有类型，也没有 class</text>
+
+            <rect x="350" y="118" width="220" height="146" rx="8" class="svg-box"></rect>
+            <text x="366" y="142" class="svg-label">station-gateway</text>
+            <text x="366" y="162" class="svg-small">只匹配已登记指纹</text>
+            <text x="366" y="181" class="svg-small">ED25519 · 128 并发</text>
+            <text x="366" y="200" class="svg-small">/22 直连私网 + ranges</text>
+            <text x="366" y="228" class="svg-small" fill="var(--amber)">未命中 = 不报</text>
+
+            <line x1="300" y1="116" x2="350" y2="160" class="svg-line-teal" marker-end="url(#arr-current)"></line>
+            <line x1="300" y1="246" x2="350" y2="204" class="svg-line-dash" marker-end="url(#arr-current-faint)"></line>
+            <text x="305" y="236" class="svg-tiny">指纹不匹配，丢弃</text>
+
+            <rect x="608" y="104" width="206" height="126" rx="8" class="svg-box"></rect>
+            <text x="624" y="128" class="svg-label">Station API</text>
+            <text x="624" y="148" class="svg-small">Machine</text>
+            <text x="624" y="167" class="svg-small">spec.nodeClass = s1u</text>
+            <text x="624" y="186" class="svg-small">status.entry</text>
+            <text x="624" y="205" class="svg-small">serial / host key</text>
+
+            <line x1="570" y1="174" x2="608" y2="166" class="svg-line" marker-end="url(#arr-current)"></line>
+
+            <rect x="852" y="70" width="290" height="176" rx="8" class="svg-box"></rect>
+            <text x="868" y="94" class="svg-label">Gateway / 控制台</text>
+            <text x="868" y="114" class="svg-small">Machine admission</text>
+            <text x="868" y="133" class="svg-small">station-controller</text>
+            <text x="868" y="152" class="svg-small">entry → x86 inspection</text>
+            <text x="868" y="171" class="svg-small">NodeAdmission / NodeOperation</text>
+            <text x="868" y="199" class="svg-small" fill="var(--muted)">类型来自 class，不是节点上报</text>
+
+            <line x1="814" y1="166" x2="852" y2="150" class="svg-line" marker-end="url(#arr-current)"></line>
+
+            <rect x="852" y="286" width="290" height="76" rx="8" class="svg-box-soft"></rect>
+            <text x="868" y="310" class="svg-label">节点</text>
+            <text x="868" y="330" class="svg-small">rlark.io/robot-model = s1u</text>
+            <text x="868" y="348" class="svg-small">标签由安装声明写入</text>
+
+            <line x1="997" y1="246" x2="997" y2="286" class="svg-line" marker-end="url(#arr-current)"></line>
+          </svg>
+        </div>
+        <figcaption>今天：发现、类型和入网方式是同一条 class 链。普通服务器没有可预登记的出厂指纹，因此在扫描阶段消失。</figcaption>
+      </figure>
+
+      <div class="grid-3">
+        <div class="card">
+          <div class="num">01</div>
+          <h4>扫描被 class 绑定</h4>
+          <p>只有声明 discovery 的 NodeClass 才产生 key 和端口；普通服务器的 host key 不在任何 class 里，扫描不会报。</p>
+        </div>
+        <div class="card">
+          <div class="num">02</div>
+          <h4>类型在扫描时决定</h4>
+          <p><code>Machine.spec.nodeClass</code> 在创建时就写死；admit 请求没有选择 class 或型号的入口。</p>
+        </div>
+        <div class="card">
+          <div class="num">03</div>
+          <h4>节点没有类型自报</h4>
+          <p>类型和型号是安装时写入的声明标签；<code>NodeObservation</code> 只有 NodeInfo、压力和网关状态。</p>
+        </div>
+      </div>
+
+      <div class="callout warn">
+        <span class="label">关键区别</span>
+        <b>出厂指纹是共享的，不是机器身份。</b> 它只能说明“这台入口设备看起来像同型号的未入网设备”，不能说明它是哪一台；入网后 Orin 会换成自己的 host key。用它来预分类机器人是合理的，用它来发现普通服务器则没有可预登记的 key。
+      </div>
+    </section>
+
+    <section id="target" aria-labelledby="target-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">02 · 目标形态</div>
+          <h2 id="target-title">扫描先找候选，加入时再决定<a class="anchor" href="#target" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">发现是证据，类型是选择；节点加入后再用观测做一致性校验，而不是把选择当成事实。</p>
+      </div>
+
+      <p>保留 S1U 的工厂指纹识别，同时增加一个可选的通用 SSH 候选通道。两类结果都落在同一张 <code>Machine</code> 上：有 class 的显示为机器人，没有 class 的显示为未分类。管理员在加入时选择型号或普通 SSH。</p>
+
+      <figure class="figure">
+        <div class="figure-head"><strong>图 2 · 目标发现链路</strong><span>target</span></div>
+        <div class="diagram-scroll">
+          <svg viewBox="0 0 1200 500" role="img" aria-label="目标发现链路：Hub 同时按工厂指纹和可选 SSH 探测发现候选，Station API 创建可选 nodeClass 的 Machine，控制台显示 Robot、Unknown 或 Server。">
+            <defs>
+              <marker id="arr-target" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" class="svg-arrow"></path>
+              </marker>
+              <marker id="arr-target-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" class="svg-arrow-teal"></path>
+              </marker>
+              <marker id="arr-target-robot" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" class="svg-arrow-robot"></path>
+              </marker>
+              <marker id="arr-target-server" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" class="svg-arrow-server"></path>
+              </marker>
+            </defs>
+
+            <text x="18" y="22" class="svg-tiny">SITE NETWORK</text>
+            <text x="376" y="22" class="svg-tiny">HUB · OPT-IN</text>
+            <text x="680" y="22" class="svg-tiny">STATION API</text>
+            <text x="946" y="22" class="svg-tiny">ADMIN CHOICE</text>
+
+            <rect x="16" y="36" width="316" height="410" rx="8" class="svg-box-soft"></rect>
+            <rect x="32" y="58" width="284" height="94" rx="6" class="svg-box-robot"></rect>
+            <text x="46" y="82" class="svg-label">S1U 机器人</text>
+            <text x="46" y="102" class="svg-small">Orin 入口 · 工厂指纹</text>
+            <text x="46" y="121" class="svg-small">命中任意已登记 class key</text>
+            <text x="46" y="140" class="svg-small" fill="var(--robot)">→ Robot · s1u</text>
+
+            <rect x="32" y="166" width="284" height="94" rx="6" class="svg-box-server"></rect>
+            <text x="46" y="190" class="svg-label">普通 GPU / x86</text>
+            <text x="46" y="210" class="svg-small">OpenSSH · 无预登记 key</text>
+            <text x="46" y="229" class="svg-small">有 MAC，在站点私网内</text>
+            <text x="46" y="248" class="svg-small" fill="var(--server)">→ Unknown（可加入为 Server）</text>
+
+            <rect x="32" y="274" width="284" height="76" rx="6" class="svg-box-ghost"></rect>
+            <text x="46" y="298" class="svg-label" fill="var(--muted)">其他 SSH 设备</text>
+            <text x="46" y="318" class="svg-small">banner/端口只是证据</text>
+            <text x="46" y="337" class="svg-small">由管理员筛选或忽略</text>
+
+            <rect x="32" y="368" width="284" height="58" rx="6" class="svg-box-amber"></rect>
+            <text x="46" y="392" class="svg-small" fill="var(--amber)">v1 只发现 Hub 直连 L2 主机</text>
+            <text x="46" y="411" class="svg-small">被路由的主机继续用 SSH/入网码</text>
+
+            <rect x="370" y="94" width="270" height="196" rx="8" class="svg-box"></rect>
+            <text x="386" y="118" class="svg-label">station-gateway</text>
+            <text x="386" y="138" class="svg-small">1. 先按 class key 匹配</text>
+            <text x="386" y="157" class="svg-small">2. includeUnclassified 开启时，</text>
+            <text x="386" y="176" class="svg-small">   再探测 SSH 端口</text>
+            <text x="386" y="195" class="svg-small">ED25519 / ECDSA / RSA</text>
+            <text x="386" y="214" class="svg-small">捕获 banner + host key</text>
+            <text x="386" y="233" class="svg-small">不登录 · 不试账号</text>
+            <text x="386" y="262" class="svg-small" fill="var(--teal)">known + unclassified 一起上报</text>
+
+            <line x1="316" y1="106" x2="370" y2="142" class="svg-line-robot" marker-end="url(#arr-target-robot)"></line>
+            <line x1="316" y1="212" x2="370" y2="188" class="svg-line-server" marker-end="url(#arr-target-server)"></line>
+            <line x1="316" y1="312" x2="370" y2="232" class="svg-line-dash" marker-end="url(#arr-target)"></line>
+
+            <rect x="676" y="94" width="238" height="196" rx="8" class="svg-box"></rect>
+            <text x="692" y="118" class="svg-label">Station API</text>
+            <text x="692" y="138" class="svg-small">Machine candidate</text>
+            <text x="692" y="157" class="svg-small">spec.nodeClass 可选</text>
+            <text x="692" y="176" class="svg-small">status.entry:</text>
+            <text x="706" y="195" class="svg-small">address · mac · port</text>
+            <text x="706" y="214" class="svg-small">hostKey · algorithm</text>
+            <text x="706" y="233" class="svg-small">banner · lastSeen</text>
+            <text x="692" y="262" class="svg-small" fill="var(--amber)">无 class = Unknown</text>
+
+            <line x1="640" y1="192" x2="676" y2="192" class="svg-line-teal" marker-end="url(#arr-target-teal)"></line>
+
+            <rect x="948" y="58" width="236" height="92" rx="8" class="svg-box-robot"></rect>
+            <text x="964" y="82" class="svg-label">Robot · s1u</text>
+            <text x="964" y="102" class="svg-small">默认型号来自 class</text>
+            <text x="964" y="121" class="svg-small">加入走 Machine admission</text>
+            <text x="964" y="140" class="svg-small">Orin → x86 jump</text>
+
+            <rect x="948" y="164" width="236" height="92" rx="8" class="svg-box-amber"></rect>
+            <text x="964" y="188" class="svg-label">Unknown</text>
+            <text x="964" y="208" class="svg-small">管理员选择：</text>
+            <text x="964" y="227" class="svg-small">机器人型号 or 普通 SSH</text>
+            <text x="964" y="246" class="svg-small">先预检，再决定</text>
+
+            <rect x="948" y="270" width="236" height="92" rx="8" class="svg-box-server"></rect>
+            <text x="964" y="294" class="svg-label">Server</text>
+            <text x="964" y="314" class="svg-small">SSH 配置 + 可选 sudo</text>
+            <text x="964" y="333" class="svg-small">NodeJoin annotations</text>
+            <text x="964" y="352" class="svg-small">Gateway 直连 / 中继</text>
+
+            <line x1="914" y1="192" x2="948" y2="120" class="svg-line-dash" marker-end="url(#arr-target)"></line>
+            <line x1="914" y1="192" x2="948" y2="210" class="svg-line-dash" marker-end="url(#arr-target)"></line>
+            <line x1="914" y1="192" x2="948" y2="308" class="svg-line-dash" marker-end="url(#arr-target)"></line>
+
+            <rect x="370" y="344" width="814" height="82" rx="8" class="svg-box-soft"></rect>
+            <text x="386" y="368" class="svg-label">共同出口：NodeAdmission.spec.machine</text>
+            <text x="386" y="389" class="svg-small">{ category: Robot | Server, model: s1u | gpu-a100, body? } · labels 只是兼容投影</text>
+            <text x="386" y="408" class="svg-small">节点安装后写 station.rlark.io/machine-type / machine-model；observation 再回到 IdentityVerified</text>
+          </svg>
+        </div>
+        <figcaption>目标：发现只负责“看见”，不负责“定性”。机器人的 class 仍是默认类型，但未分类候选可以在加入时选择机器人型号或普通 SSH。</figcaption>
+      </figure>
+
+      <div class="grid-2">
+        <div class="card">
+          <span class="badge new">原则 1</span>
+          <h4>类型不写死在扫描里</h4>
+          <p>class 命中只是“默认建议”。未分类候选的 <code>Machine.spec.nodeClass</code> 保持为空；选择发生在 <code>spec.admit</code>。</p>
+        </div>
+        <div class="card">
+          <span class="badge new">原则 2</span>
+          <h4>选择与观测分开</h4>
+          <p><code>NodeAdmission.spec.machine</code> 是持久的选择；<code>NetworkEnrollment.status.observation.identity</code> 是节点上报；两者不一致只提示，不自动改期望。</p>
+        </div>
+        <div class="card">
+          <span class="badge new">原则 3</span>
+          <h4>标签是投影，不是真相</h4>
+          <p><code>rlark.io/robot-model</code>、<code>station.rlark.io/machine-type</code> 仍写给调度和 Addon 用，但 UI 的判定优先用 typed 字段。</p>
+        </div>
+        <div class="card">
+          <span class="badge keep">原则 4</span>
+          <h4>只在 astribot-owned 路径改</h4>
+          <p>Station、station-gateway、Gateway 的 <code>astribot_*.go</code>、UI 的 <code>src/astribot</code>。NodeJoin 用 annotations，避免改 <code>api/**</code>。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="discovery" aria-labelledby="discovery-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">03 · 发现</div>
+          <h2 id="discovery-title">通用 SSH 候选是可选开关<a class="anchor" href="#discovery" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">默认关闭，先单站点试点；候选只做无认证探测，不把账号发到 Hub。</p>
+      </div>
+
+      <p>在 <code>SiteNetwork.spec.sites[].discovery</code> 增加两个可选字段。现有 <code>enabled</code>、<code>from</code>、<code>ranges</code>、<code>intervalSeconds</code> 不变；关闭时行为与今天完全一致。</p>
+
+      <div class="code-block">
+        <div class="code-head"><span>SiteNetwork / discovery</span><span>YAML</span></div>
+        <pre><code><span class="k">discovery</span>:
+  <span class="k">enabled</span>: <span class="n">true</span>
+  <span class="k">intervalSeconds</span>: <span class="n">30</span>
+  <span class="k">from</span>: { <span class="k">clusterID</span>: rlark-local-dev-gpu, <span class="k">nodeName</span>: cailiang }
+  <span class="k">ranges</span>: [<span class="s">"10.11.14.0/24"</span>]
+  <span class="k">includeUnclassified</span>: <span class="n">true</span>     <span class="c"># 新增；默认 false</span>
+  <span class="k">sshPorts</span>: [<span class="n">22</span>, <span class="n">2222</span>]              <span class="c"># 新增；默认 [22]，最多 4 个</span></code></pre>
+      </div>
+
+      <h3>Hub 探测什么</h3>
+      <ol>
+        <li><b>网络</b>：站点声明的 ranges，加上 Hub 自己直连的私网；超过 /22 的网段只取 Hub 地址所在的 /22。公网、隧道、容器和集群网络不扫。</li>
+        <li><b>端口</b>：class 的 entry 端口始终探测；开启通用发现时加上 <code>sshPorts</code>。</li>
+        <li><b>握手</b>：只做 TCP + SSH key exchange，读取服务器 banner 和 host key，随后立即中止；不尝试用户名、密码或任何认证。</li>
+        <li><b>算法</b>：优先 ED25519，其次 ECDSA，再到 RSA；同时记录 host key type，后续按同一算法固定，避免同一主机因 key 类型不同被误判为 <code>HostKeyChanged</code>。</li>
+        <li><b>分类</b>：指纹命中 class 的照旧上报；未命中且开关开启的作为 unclassified 上报；没有 MAC 的主机不生成候选。</li>
+      </ol>
+
+      <div class="grid-2">
+        <div>
+          <h4>上报形状</h4>
+          <div class="code-block">
+            <div class="code-head"><span>POST /v1/network/discovered</span><span>JSON</span></div>
+            <pre><code>{
+  <span class="k">"address"</span>: <span class="s">"10.11.14.87"</span>,
+  <span class="k">"port"</span>: <span class="n">22</span>,
+  <span class="k">"mac"</span>: <span class="s">"48:b0:2d:5c:9a:11"</span>,
+  <span class="k">"host_key"</span>: <span class="s">"SHA256:..."</span>,
+  <span class="k">"host_key_algorithm"</span>: <span class="s">"ssh-ed25519"</span>,
+  <span class="k">"banner"</span>: <span class="s">"SSH-2.0-OpenSSH_9.6"</span>,
+  <span class="k">"unclassified"</span>: <span class="n">true</span>
+}</code></pre>
+          </div>
+        </div>
+        <div>
+          <h4>候选规则</h4>
+          <div class="table-wrap">
+            <table>
+              <caption>Machine candidate</caption>
+              <thead><tr><th>规则</th><th>行为</th></tr></thead>
+              <tbody>
+                <tr><td>对象名</td><td><code>&lt;site&gt;-&lt;MAC&gt;</code>，沿用今天的稳定名</td></tr>
+                <tr><td>重复上报</td><td>按同一个对象幂等更新；多 Hub 仍遵守 3 个 interval 的归属规则</td></tr>
+                <tr><td>未分类</td><td><code>spec.nodeClass</code> 为空；不写类型/型号到 status</td></tr>
+                <tr><td>自动分类</td><td>之后某轮命中 class key，可补 <code>spec.nodeClass</code>；已 admit/joined 的不改</td></tr>
+                <tr><td>回收</td><td>7 天未被发现、无 admit/NodeJoin 的才 GC；有 join 的绝不删</td></tr>
+                <tr><td>上限</td><td>每站点 512 个 unclassified 候选；每轮 256 host，超出显式标记</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <p class="muted"><small>中继 token 不在 SiteNetwork spec/UI：station-controller 从 per-site Secret 读取，写入 Hub 的 Discovery 文档；Gateway 读同一 Secret；token 不写 status、不写日志。</small></p>
+
+      <div class="callout warn">
+        <span class="label">噪声控制</span>
+        <b>这不是资产扫描。</b> 开关默认关闭；只扫私网和 Hub 直连的 L2 主机；MAC 必须是真实单播地址；已入网成员和已知基础设施由 Station API 过滤。banner 只作证据，不用来断言“这是一台服务器”。
+      </div>
+
+      <h3>候选类型怎么显示</h3>
+      <div class="stat-strip">
+        <div><span class="badge robot">Robot · s1u</span><span style="margin-top:8px">工厂指纹命中；默认型号来自 class</span></div>
+        <div><span class="badge unknown">Unknown</span><span style="margin-top:8px">有 SSH 证据，但没有 class；加入时选择类型</span></div>
+        <div><span class="badge server">Server</span><span style="margin-top:8px">已选择普通电脑/GPU 并创建 SSH join</span></div>
+        <div><span class="badge keep">无候选</span><span style="margin-top:8px">开关关闭、无 MAC、或已入网成员</span></div>
+      </div>
+    </section>
+
+    <section id="model" aria-labelledby="model-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">04 · 数据模型</div>
+          <h2 id="model-title">选择放进 NodeAdmission，观测放进 observation<a class="anchor" href="#model" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">Machine 是候选记录，NodeAdmission 是每台机器持久的入网声明；status 只由 station-controller 写。</p>
+      </div>
+
+      <h3>Machine</h3>
+      <div class="table-wrap">
+        <table>
+          <caption>station.rlark.io/v1alpha1 · Machine</caption>
+          <thead><tr><th>字段</th><th>写入方</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><code>spec.site</code></td><td>Station API</td><td>发现它的站点</td></tr>
+            <tr><td><code>spec.nodeClass</code></td><td>Station API</td><td><b>改为可选</b>；空 = 未分类候选</td></tr>
+            <tr><td><code>spec.source</code></td><td>Station API</td><td><code>Discovery</code>；<code>Registration</code> 仍保留未用</td></tr>
+            <tr><td><code>spec.admit</code></td><td>Gateway</td><td><code>{clusterID, type, nodeClass, model, labels, requestedBy, requestedAt}</code>；Robot 或 Server 的选择</td></tr>
+            <tr><td><code>status.entry</code></td><td>Station API</td><td><code>address, mac, hostKeyFingerprint, port, hostKeyAlgorithm, banner, via, lastSeen</code></td></tr>
+            <tr><td><code>status.phase / problem / serial / inspectedAt</code></td><td>station-controller</td><td>机器人 inspection、serial 去重、admission 进度</td></tr>
+            <tr><td><code>status.nodeJoin</code></td><td>station-controller</td><td>Server 的 NodeJoin 投影（Running/Failed/Succeeded）</td></tr>
+            <tr><td><code>status.observedIdentity</code></td><td>station-controller</td><td>来自 <code>NetworkEnrollment</code> 的类型/型号观测</td></tr>
+            <tr><td><code>status.identityVerified / reason</code></td><td>station-controller</td><td><code>True / False / Unknown</code>；只做一致性提示</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout decision">
+        <span class="label">所有权</span>
+        <b>不把期望类型写两遍。</b> <code>spec.nodeClass</code>/<code>spec.admit</code> 是期望，<code>status.observedIdentity</code> 是观测；Gateway view 的 <code>machine_type</code> 由 spec 推导，未分类就是 <code>Unknown</code>。Machine.status 只由 station-controller 写，Gateway 不写 status。
+      </div>
+
+      <h3>NodeClass</h3>
+      <div class="table-wrap">
+        <table>
+          <caption>station.rlark.io/v1alpha1 · NodeClass</caption>
+          <thead><tr><th>字段</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><code>spec.kind</code></td><td><code>Robot</code> / <code>Server</code>，可选；为空时从 labels 推断</td></tr>
+            <tr><td><code>spec.model</code></td><td>引用 <code>RobotModel.metadata.name</code>（例如 <code>s1u</code>）；legacy class 为空时才回退 <code>rlark.io/robot-model</code></td></tr>
+            <tr><td><code>spec.discovery</code></td><td>机器人工厂 host key；仍只有声明它的 class 参与已知指纹扫描</td></tr>
+            <tr><td><code>spec.access.entry / node</code></td><td>入口设备（Orin）和真正节点（x86）的账号；沿用现有两个 hop</td></tr>
+            <tr><td><code>spec.naming / uplink / addons</code></td><td>节点命名、机器人上联脚本、Addon 完成条件</td></tr>
+            <tr><td><code>spec.labels / taints</code></td><td>物化为节点标签/污点；新模型只需新增 class，不需要前端发版</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>线上 <code>s1u</code> 暂时没有 <code>kind</code>/<code>model</code> 也能工作：code 会从 <code>rlark.io/robot-model</code> 和 <code>rlark.io/node-category=robot</code> 推断。新机器人型号先在后台建立 <code>RobotModel</code> 目录项，再在 class 的 <code>spec.model</code> 引用；UI 的型号下拉只依赖目录，不依赖 class 名。</p>
+
+      <h3>NodeAdmission</h3>
+      <div class="code-block">
+        <div class="code-head"><span>NodeAdmission.spec</span><span>Go</span></div>
+        <pre><code><span class="k">type</span> NodeMachine <span class="k">struct</span> {
+    Category MachineCategory <span class="s">`json:"category"`</span> <span class="c">// Robot | Server</span>
+    Model    <span class="k">string</span>          <span class="s">`json:"model,omitempty"`</span> <span class="c">// s1u, gpu-a100</span>
+    Body     <span class="k">string</span>          <span class="s">`json:"body,omitempty"`</span>  <span class="c">// robot body, optional</span>
+}
+
+<span class="k">type</span> NodeAdmissionSpec <span class="k">struct</span> {
+    <span class="c">// ... existing clusterID, codeHash, labels, taints, site, serial ...</span>
+    Machine *NodeMachine <span class="s">`json:"machine,omitempty"`</span>
+}</code></pre>
+      </div>
+
+      <div class="callout risk">
+        <span class="label">必须修的旧行为</span>
+        <b><code>admitNode</code> 目前整段替换 admission。</b> SSH 入网如果不带 class/labels/serial，会把已有的 class admission 擦掉。实现时必须改成保真合并：请求未提供的字段保留；冲突的 type/model/class 明确拒绝，不再静默清空。
+      </div>
+
+      <h3>NodeJoin：用 annotations，不改 api/</h3>
+      <div class="table-wrap">
+        <table>
+          <caption>NodeJoin.metadata.annotations（都不是秘密）</caption>
+          <thead><tr><th>Key</th><th>值</th></tr></thead>
+          <tbody>
+            <tr><td><code>station.rlark.io/machine</code></td><td>Machine 候选名，只作引用；同时写 label 供 controller watch</td></tr>
+            <tr><td><code>station.rlark.io/machine-type</code></td><td><code>Server</code>；v1 的 NodeJoin 不支持 Robot</td></tr>
+            <tr><td><code>station.rlark.io/machine-model</code></td><td>普通服务器型号，可选</td></tr>
+            <tr><td><code>station.rlark.io/host-key</code></td><td>扫描到的 SHA256 指纹；首次连接必须匹配</td></tr>
+            <tr><td><code>station.rlark.io/host-key-algorithm</code></td><td><code>ssh-ed25519</code> / <code>ecdsa-sha2-nistp256</code> / <code>rsa-sha2-512</code></td></tr>
+            <tr><td><code>station.rlark.io/install-labels</code></td><td>安装标签 JSON；服务端校验，禁止 <code>rlark.io/robot-*</code></td></tr>
+            <tr><td><code>station.rlark.io/network-role</code></td><td>v1 仅 <code>Hub</code>；Leaf 后续</td></tr>
+            <tr><td><code>station.rlark.io/join-reason</code></td><td>失败原因，例如 <code>HostKeyChanged</code>、<code>LoginRejected</code>、<code>SudoRejected</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted"><small>密码和 sudo 口令永远不进 annotation/status/log；只在请求和 Gateway 内存里，重试时重新输入。</small></p>
+
+      <h3>节点观测</h3>
+      <div class="table-wrap">
+        <table>
+          <caption>NetworkEnrollment.status.observation</caption>
+          <thead><tr><th>字段</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><code>identity.category</code></td><td><code>robot</code> / <code>server</code>，来自已验证 Node 的 <code>station.rlark.io/machine-type</code>，回退 <code>rlark.io/robot-model</code></td></tr>
+            <tr><td><code>identity.model</code></td><td><code>s1u</code> / 用户填写的服务器型号</td></tr>
+            <tr><td><code>identity.source</code></td><td><code>node-labels</code>；这是观测来源，不是认证</td></tr>
+            <tr><td><code>identity.reportedAt</code></td><td>Station API 收到报告的时间</td></tr>
+            <tr><td><code>hardware</code></td><td>arch、OS image、kernel、systemVendor、productName（NodeInfo/DMI）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="join" aria-labelledby="join-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">05 · 加入流程</div>
+          <h2 id="join-title">机器人走 class，普通机器走 SSH<a class="anchor" href="#join" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">同一个候选，两条路径，最后都落到 NodeAdmission.spec.machine 和节点观测。</p>
+      </div>
+
+      <figure class="figure">
+        <div class="figure-head"><strong>图 3 · 两条加入路径</strong><span>join paths</span></div>
+        <div class="diagram-scroll">
+          <svg viewBox="0 0 1200 470" role="img" aria-label="两条加入路径：机器人候选走 Machine admission 和 NodeOperation；普通服务器走 SSH 预检、NodeJoin annotations、NodeAdmission 和安装；两者最终都产生节点观测和 IdentityVerified。">
+            <defs>
+              <marker id="arr-join" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" class="svg-arrow"></path></marker>
+              <marker id="arr-join-robot" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" class="svg-arrow-robot"></path></marker>
+              <marker id="arr-join-server" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" class="svg-arrow-server"></path></marker>
+              <marker id="arr-join-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" class="svg-arrow-teal"></path></marker>
+            </defs>
+
+            <rect x="20" y="150" width="180" height="112" rx="8" class="svg-box"></rect>
+            <text x="36" y="176" class="svg-label">Candidate</text>
+            <text x="36" y="196" class="svg-small">Machine</text>
+            <text x="36" y="215" class="svg-small">Robot · s1u</text>
+            <text x="36" y="234" class="svg-small">Unknown</text>
+            <text x="36" y="253" class="svg-small">Server（已选择）</text>
+
+            <rect x="236" y="54" width="238" height="120" rx="8" class="svg-box-robot"></rect>
+            <text x="252" y="78" class="svg-label">选择机器人型号</text>
+            <text x="252" y="98" class="svg-small">RobotModel 目录 + class profile</text>
+            <text x="252" y="117" class="svg-small">只允许指纹包含该 key 的 class</text>
+            <text x="252" y="136" class="svg-small">写 spec.admit {type, nodeClass, model}</text>
+            <text x="252" y="155" class="svg-small" fill="var(--robot)">批量仅限同型号</text>
+
+            <rect x="236" y="244" width="238" height="130" rx="8" class="svg-box-server"></rect>
+            <text x="252" y="268" class="svg-label">填写 SSH 配置</text>
+            <text x="252" y="288" class="svg-small">address / port / user / password</text>
+            <text x="252" y="307" class="svg-small">可选 sudo · 节点名</text>
+            <text x="252" y="326" class="svg-small">host key 固定为扫描值</text>
+            <text x="252" y="345" class="svg-small" fill="var(--server)">Gateway 预检：直连 / 中继</text>
+            <text x="252" y="364" class="svg-small">直连失败 → Hub 认证中继</text>
+
+            <line x1="200" y1="186" x2="236" y2="124" class="svg-line-robot" marker-end="url(#arr-join-robot)"></line>
+            <line x1="200" y1="226" x2="236" y2="298" class="svg-line-server" marker-end="url(#arr-join-server)"></line>
+
+            <rect x="512" y="54" width="230" height="120" rx="8" class="svg-box-soft"></rect>
+            <text x="528" y="78" class="svg-label">MachineReconciler</text>
+            <text x="528" y="98" class="svg-small">effective class = admit.nodeClass</text>
+            <text x="528" y="117" class="svg-small">entry → x86 inspect</text>
+            <text x="528" y="136" class="svg-small">serial 去重 / 命名</text>
+            <text x="528" y="155" class="svg-small">NodeAdmission.Machine = Robot</text>
+
+            <rect x="512" y="244" width="230" height="130" rx="8" class="svg-box-soft"></rect>
+            <text x="528" y="268" class="svg-label">NodeJoin</text>
+            <text x="528" y="288" class="svg-small">annotations: machine / type / model</text>
+            <text x="528" y="307" class="svg-small">host key / algorithm</text>
+            <text x="528" y="326" class="svg-small">install-labels</text>
+            <text x="528" y="345" class="svg-small">declare → tunnel → install</text>
+            <text x="528" y="364" class="svg-small">NodeAdmission.Machine = Server</text>
+
+            <line x1="474" y1="114" x2="512" y2="114" class="svg-line-robot" marker-end="url(#arr-join-robot)"></line>
+            <line x1="474" y1="308" x2="512" y2="308" class="svg-line-server" marker-end="url(#arr-join-server)"></line>
+
+            <rect x="780" y="54" width="190" height="120" rx="8" class="svg-box-soft"></rect>
+            <text x="796" y="78" class="svg-label">NodeOperation</text>
+            <text x="796" y="98" class="svg-small">Preflight → Uplink</text>
+            <text x="796" y="117" class="svg-small">Push → Install</text>
+            <text x="796" y="136" class="svg-small">Verify → Rotate key</text>
+            <text x="796" y="155" class="svg-small">Join 完成</text>
+
+            <rect x="780" y="244" width="190" height="130" rx="8" class="svg-box-soft"></rect>
+            <text x="796" y="268" class="svg-label">install</text>
+            <text x="796" y="288" class="svg-small">kubeadm join</text>
+            <text x="796" y="307" class="svg-small">NODE_LABELS</text>
+            <text x="796" y="326" class="svg-small">machine-type / model</text>
+            <text x="796" y="345" class="svg-small">robot-* 兼容标签</text>
+            <text x="796" y="364" class="svg-small">node Ready</text>
+
+            <line x1="742" y1="114" x2="780" y2="114" class="svg-line" marker-end="url(#arr-join)"></line>
+            <line x1="742" y1="308" x2="780" y2="308" class="svg-line" marker-end="url(#arr-join)"></line>
+
+            <rect x="1000" y="130" width="180" height="170" rx="8" class="svg-box-teal"></rect>
+            <text x="1016" y="154" class="svg-label">Node report</text>
+            <text x="1016" y="174" class="svg-small">NetworkEnrollment</text>
+            <text x="1016" y="193" class="svg-small">observation.identity</text>
+            <text x="1016" y="212" class="svg-small">machine-type / model</text>
+            <text x="1016" y="231" class="svg-small">hardware: arch/OS/DMI</text>
+            <text x="1016" y="250" class="svg-small">IdentityVerified</text>
+            <text x="1016" y="269" class="svg-small">True / False / Unknown</text>
+
+            <line x1="970" y1="114" x2="1000" y2="190" class="svg-line-teal" marker-end="url(#arr-join-teal)"></line>
+            <line x1="970" y1="308" x2="1000" y2="240" class="svg-line-teal" marker-end="url(#arr-join-teal)"></line>
+
+            <rect x="20" y="410" width="1160" height="42" rx="7" class="svg-box-amber"></rect>
+            <text x="36" y="436" class="svg-small" fill="var(--teal)">Gateway 可达性是硬要求：先直连，失败走 Hub 认证中继；Hub 只转发 TCP，不接触账号。入网码只做最后兜底。</text>
+          </svg>
+        </div>
+        <figcaption>同一个候选，两条路径。机器人保留 entry→x86 的 class 检查；普通服务器复用现有 NodeJoin，但把类型、型号、主机密钥和安装标签写进 annotations。</figcaption>
+      </figure>
+
+      <div class="state-flow" aria-label="候选状态机">
+        <div class="state"><b>Discovered</b><span>有 SSH 证据；Robot 或 Unknown</span></div>
+        <div class="state-arrow">→</div>
+        <div class="state"><b>Configuring</b><span>选择类型、型号、凭据</span></div>
+        <div class="state-arrow">→</div>
+        <div class="state"><b>Preflight / Inspect</b><span>机器人登录 entry；服务器 SSH 预检</span></div>
+        <div class="state-arrow">→</div>
+        <div class="state"><b>Joining</b><span>NodeOperation 或 NodeJoin</span></div>
+        <div class="state-arrow">→</div>
+        <div class="state done"><b>Joined</b><span>节点上报，IdentityVerified</span></div>
+        <div class="state-arrow">↘</div>
+        <div class="state warn"><b>Blocked / Failed</b><span>重试或清除；清除后回到 Discovered</span></div>
+      </div>
+
+      <h3>Gateway 可达性：直连 + Hub 认证中继</h3>
+      <p>扫描发生在站点 Hub，Gateway 在管理面。只要求“Gateway 能直连”会把云站点/私网服务器排除在外，所以已定：Gateway 先尝试直连扫描到的地址，失败时通过 <strong>Hub 的认证中继</strong>连接。Hub 只转发 TCP，不接触账号；Gateway 仍是 SSH 客户端，NodeJoin 的预检、安装、重试和清除语义不变。</p>
+
+      <figure class="figure">
+        <div class="figure-head"><strong>图 4 · Gateway 到扫描机器的可达性</strong><span>reachability</span></div>
+        <div class="diagram-scroll">
+          <svg viewBox="0 0 1200 430" role="img" aria-label="Gateway 可达性：Gateway 先直连扫描到的服务器；失败时通过 Hub 的认证中继连接，中继只转发 TCP 并限制目标在站点发现范围内，账号不离开 Gateway。">
+            <defs>
+              <marker id="arr-relay" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" class="svg-arrow"></path></marker>
+              <marker id="arr-relay-teal" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" class="svg-arrow-teal"></path></marker>
+              <marker id="arr-relay-faint" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" class="svg-arrow-faint"></path></marker>
+            </defs>
+
+            <rect x="20" y="118" width="210" height="150" rx="8" class="svg-box"></rect>
+            <text x="36" y="144" class="svg-label">RLark Gateway</text>
+            <text x="36" y="164" class="svg-small">NodeJoin / provisionDial</text>
+            <text x="36" y="183" class="svg-small">SSH 客户端</text>
+            <text x="36" y="202" class="svg-small">账号只在 Gateway 内存</text>
+            <text x="36" y="221" class="svg-small">先直连，失败走中继</text>
+            <text x="36" y="244" class="svg-small" fill="var(--teal)">host key 固定</text>
+
+            <rect x="320" y="48" width="250" height="92" rx="8" class="svg-box-server"></rect>
+            <text x="336" y="72" class="svg-label">扫描到的服务器</text>
+            <text x="336" y="92" class="svg-small">10.11.14.87:22</text>
+            <text x="336" y="111" class="svg-small">OpenSSH · 私网 / 云站点</text>
+            <text x="336" y="130" class="svg-small">可能不在 Gateway 直连路由内</text>
+
+            <rect x="320" y="248" width="250" height="110" rx="8" class="svg-box-teal"></rect>
+            <text x="336" y="272" class="svg-label">Hub 认证中继</text>
+            <text x="336" y="292" class="svg-small">station-gateway :18022</text>
+            <text x="336" y="311" class="svg-small">验证 per-site token</text>
+            <text x="336" y="330" class="svg-small">目标限制在 discovery ranges/ports</text>
+            <text x="336" y="349" class="svg-small">只转发 TCP，不接触账号</text>
+
+            <line x1="230" y1="168" x2="320" y2="108" class="svg-line-server" marker-end="url(#arr-relay)"></line>
+            <text x="244" y="126" class="svg-tiny">1. 直连（优先）</text>
+            <line x1="230" y1="218" x2="320" y2="292" class="svg-line-teal" stroke-dasharray="5 4" marker-end="url(#arr-relay-teal)"></line>
+            <text x="240" y="268" class="svg-tiny">2. Unreachable → 中继</text>
+            <line x1="570" y1="298" x2="620" y2="298" class="svg-line-teal" marker-end="url(#arr-relay-teal)"></line>
+            <line x1="620" y1="298" x2="620" y2="94" class="svg-line-teal"></line>
+            <line x1="620" y1="94" x2="570" y2="94" class="svg-line-teal" marker-end="url(#arr-relay-teal)"></line>
+            <text x="628" y="200" class="svg-tiny">Hub 连到目标</text>
+
+            <rect x="700" y="156" width="220" height="112" rx="8" class="svg-box-soft"></rect>
+            <text x="716" y="180" class="svg-label">中继 token</text>
+            <text x="716" y="200" class="svg-small">per-site Secret</text>
+            <text x="716" y="219" class="svg-small">Gateway 读取 / Hub 收到</text>
+            <text x="716" y="238" class="svg-small">不进日志、不写 CRD status</text>
+            <text x="716" y="257" class="svg-small">轮换 = 更新 Secret</text>
+
+            <line x1="620" y1="200" x2="700" y2="200" class="svg-line-dash" marker-end="url(#arr-relay-faint)"></line>
+
+            <rect x="980" y="156" width="200" height="112" rx="8" class="svg-box-amber"></rect>
+            <text x="996" y="180" class="svg-label">最后兜底</text>
+            <text x="996" y="200" class="svg-small">直连和中继都失败</text>
+            <text x="996" y="219" class="svg-small">→ 显示中继错误</text>
+            <text x="996" y="238" class="svg-small">→ 入网码（不是主路径）</text>
+            <text x="996" y="257" class="svg-small">→ 不扩大中继范围</text>
+
+            <line x1="920" y1="212" x2="980" y2="212" class="svg-line-dash" marker-end="url(#arr-relay-faint)"></line>
+
+            <rect x="20" y="386" width="1160" height="30" rx="6" class="svg-box-soft"></rect>
+            <text x="36" y="406" class="svg-small">Hub relay 握手示例：<tspan class="svg-tiny">gateway &lt;relay-token&gt; 10.11.14.87:22</tspan> → <tspan class="svg-tiny">ok</tspan> → SSH。目标不在站点 discovery 范围直接拒绝。</text>
+          </svg>
+        </div>
+        <figcaption>Gateway 先直连；不可达时用 Hub 的认证中继。中继是 TCP 转发，不是账号代理；因此 Gateway 仍负责 SSH 预检、密码和安装阶段。</figcaption>
+      </figure>
+
+      <div class="grid-2">
+        <div class="card">
+          <span class="badge new">路径</span>
+          <h4>直连优先，中继兜底</h4>
+          <p>Gateway 先尝试目标地址；只有网络不可达/超时才走中继。认证失败、host key 不匹配、sudo 拒绝都直接报错，不应重试到中继掩盖问题。</p>
+        </div>
+        <div class="card">
+          <span class="badge new">认证</span>
+          <h4>per-site token，不共享账号</h4>
+          <p>中继 token 是站点级的短期/可轮换 Secret；Gateway 读取，station-controller 把它写进 Hub 的 Discovery 文档。Hub 常量时间比较，失败即关闭；token 不进日志。</p>
+        </div>
+        <div class="card">
+          <span class="badge new">范围</span>
+          <h4>只到 discovery 的地址/端口</h4>
+          <p>Hub relay 仍只允许站点发现范围内的目标；Gateway 不能借中继访问任意内网。目标验证和 station-controller 的 relay 共用同一套网络/端口规则。</p>
+        </div>
+        <div class="card">
+          <span class="badge keep">部署</span>
+          <h4>Gateway 必须能到 Hub relay 地址</h4>
+          <p>中继地址沿用 Machine 的 <code>entry.via</code>（Hub 隧道地址:18022）；live 已验证 Gateway 容器可达 <code>10.254.240.1:18022</code>。其他站点必须保证同样可达；这是硬要求，不能用 direct-only 假设绕过。</p>
+        </div>
+      </div>
+
+      <div class="callout decision">
+        <span class="label">已定</span>
+        <b>不再把“直连不可达 → 入网码”当主路径。</b> 入网码只在直连和中继都失败时兜底。DocumentLevel 仍为 3：Discovery 文档增加中继 token；Release A 让 station-gateway 理解并支持认证中继，Release B 由 controller 写入 token。Gateway/UI 不需要用户额外填 relay 地址。
+      </div>
+
+      <h3>机器人：classified 与 unclassified</h3>
+      <div class="grid-2">
+        <div class="card">
+          <span class="badge robot">classified</span>
+          <h4>指纹已命中 class</h4>
+          <p>默认 <code>Robot · s1u</code>。管理员确认型号和 class 凭据，<code>admit</code> 写 <code>{type: Robot, nodeClass: s1u, model: s1u}</code>；station-controller inspection 通过后创建 NodeAdmission/NodeOperation。</p>
+        </div>
+        <div class="card">
+          <span class="badge unknown">unclassified</span>
+          <h4>指纹未命中，但用户选机器人</h4>
+          <p>只列出指纹包含该候选 key 的 Robot class；不匹配的型号置灰。加入后仍要登录 entry 读 serial、跳到 x86；失败就停在 <code>CredentialRejected</code>/<code>NodeUnreachable</code>，不会先创建 admission。</p>
+        </div>
+      </div>
+
+      <h3>普通电脑 / GPU</h3>
+      <ol>
+        <li>选择“普通电脑/GPU”，地址、端口、host key 从候选预填；填账号、口令、可选 sudo、节点名。</li>
+        <li>Gateway 立即预检：先直连，失败自动走 Hub 认证中继；中继只转发 TCP，不接触账号。只有直连和中继都不通时，UI 才提示入网码兜底。</li>
+        <li>预检通过后创建 NodeJoin：metadata label 指向 Machine，annotations 记录类型/型号/host key/algorithm/install labels。</li>
+        <li><code>install</code> 阶段调用 <code>admitNode</code>，写 <code>NodeAdmission.Spec.Machine = {Server, model}</code> 和安装标签；同时保留既有 class/serial，不整段覆盖。</li>
+        <li>station-controller watch NodeJoin，把 Running/Failed/Succeeded 投影到 <code>Machine.status.nodeJoin</code> 和 phase；Gateway 不写 Machine.status。</li>
+      </ol>
+
+      <h3>失败路径</h3>
+      <div class="table-wrap">
+        <table>
+          <caption>Failure matrix</caption>
+          <thead><tr><th>场景</th><th>结果</th></tr></thead>
+          <tbody>
+            <tr><td>key 不认识，开关关闭</td><td>不上报，不创建 Machine</td></tr>
+            <tr><td>key 不认识，开关开启</td><td>创建 Unknown 候选；不做任何登录</td></tr>
+            <tr><td>候选之后命中 class key</td><td>未 admit 的候选可补 <code>spec.nodeClass</code>；已 joined 的不改</td></tr>
+            <tr><td>host key 改变</td><td>未 admit：更新证据并提示确认；已 admit/joined：<code>HostKeyChanged</code>，不自动接受</td></tr>
+            <tr><td>serial 重复</td><td>沿用现有 <code>DuplicateSerial</code>；未 admitted 的失败方保留问题</td></tr>
+            <tr><td>节点上报与选择不一致</td><td><code>IdentityVerified=False</code>，显示 desired vs observed；不自动移除</td></tr>
+            <tr><td>直连失败</td><td>自动改用 Hub 认证中继；host key 仍固定；账号只留在 Gateway</td></tr>
+            <tr><td>中继也失败</td><td>显示中继错误；入网码只做最后兜底，不作为主路径</td></tr>
+            <tr><td>Gateway 重启 / join 中断</td><td>NodeJoin 标 Failed，Machine 显示 JoinBlocked；重试从 stage 继续或清除</td></tr>
+            <tr><td>Server admit 了但 NodeJoin 没创建</td><td>controller 显示 <code>JoinNotStarted</code>；重新提交或清除 admit</td></tr>
+            <tr><td>清除</td><td>删除 NodeJoin，清 Machine <code>spec.admit</code>，回到 Discovered</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid-2">
+        <div class="callout decision" style="margin-top:0">
+          <span class="label">直接限制</span>
+          <b>Gateway 可达性是硬要求。</b> 已定：Gateway 先直连，失败走 Hub 认证中继。Hub 只转发 TCP，不接触账号；Gateway 仍是 SSH 客户端，NodeJoin 流程和密码生命周期不变。中继不可用时才提示入网码兜底。
+        </div>
+        <div class="callout warn" style="margin-top:0">
+          <span class="label">批量与网络角色</span>
+          <b>机器人可批量，服务器逐台。</b> 服务器 SSH 凭据不能假设共享，v1 不做批量。NodeJoin 仍声明为 Hub；Leaf/网络角色是后续设计，文档和 UI 要写清楚。
+        </div>
+      </div>
+    </section>
+
+    <section id="report" aria-labelledby="report-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">06 · 节点自报</div>
+          <h2 id="report-title">节点说“我是什么”，但只当证据<a class="anchor" href="#report" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">不是硬件 attestation；它检测加入后的漂移，不能用来授权调度或租户。</p>
+      </div>
+
+      <p>安装器把入网选择物化成节点标签：<code>station.rlark.io/machine-type</code>、<code>station.rlark.io/machine-model</code>；机器人同时保留 <code>rlark.io/robot-model</code> 等兼容标签。station-api 在验证 projected token 后，从<strong>已验证的 Node 对象</strong>读取这些标签和 NodeInfo，写入 <code>NetworkEnrollment.status.observation</code>。</p>
+
+      <div class="code-block">
+        <div class="code-head"><span>NetworkEnrollment.status.observation</span><span>YAML</span></div>
+        <pre><code><span class="k">identity</span>:
+  <span class="k">category</span>: robot
+  <span class="k">model</span>: s1u
+  <span class="k">source</span>: node-labels
+  <span class="k">reportedAt</span>: <span class="s">"2026-11-25T10:42:00Z"</span>
+<span class="k">hardware</span>:
+  <span class="k">architecture</span>: arm64
+  <span class="k">osImage</span>: Ubuntu 22.04.4 LTS
+  <span class="k">kernelVersion</span>: 5.15.0-...
+  <span class="k">systemVendor</span>: NVIDIA
+  <span class="k">productName</span>: Jetson Orin</code></pre>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h4>期望</h4>
+          <p><code>NodeAdmission.spec.machine</code>：管理员在加入时选择的 Robot/Server 和型号；legacy admission 没有该字段时，从 <code>nodeClass</code> 和 class labels 推断。</p>
+        </div>
+        <div class="card">
+          <h4>上报</h4>
+          <p><code>observation.identity</code>：Node 标签 + NodeInfo；<code>source=node-labels</code>。节点不能直接写 <code>robot-*</code>/<code>node-category</code>，这些仍是管理侧标签。</p>
+        </div>
+      </div>
+
+      <div class="state-flow" aria-label="自报校验流程">
+        <div class="state"><b>install labels</b><span>machine-type / machine-model</span></div>
+        <div class="state-arrow">→</div>
+        <div class="state"><b>Node</b><span>kubelet 上报标签和 NodeInfo</span></div>
+        <div class="state-arrow">→</div>
+        <div class="state"><b>Station API</b><span>验证 token，读 Node，写 observation</span></div>
+        <div class="state-arrow">→</div>
+        <div class="state"><b>station-controller</b><span>desired vs observed</span></div>
+        <div class="state-arrow">→</div>
+        <div class="state done"><b>IdentityVerified</b><span>True / False / Unknown</span></div>
+      </div>
+
+      <div class="callout">
+        <span class="label">边界</span>
+        <b>它能抓漂移，不能证明硬件。</b> 安装器标签来自入网选择，所以“匹配”通常只能说明安装声明和节点标签一致；真正独立的证据是 NodeInfo/DMI/GPU，后续可以由模型 Addon 或硬件探测加强。v1 不把它当授权依据，也不因 mismatch 阻断节点 Ready。节点上报的 <code>robot-model</code> 不在 <code>RobotModel</code> 目录时，显示 <code>UnknownModel</code> / <code>IdentityVerified=False</code>，不会伪装成已知型号。
+      </div>
+    </section>
+
+    <section id="ui" aria-labelledby="ui-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">07 · 控制台</div>
+          <h2 id="ui-title">候选列表、类型选择、型号下拉<a class="anchor" href="#ui" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">线框用于评审信息层级，不是最终视觉；仍沿用现有 fork 的暗色 token 和移动端布局。</p>
+      </div>
+
+      <h3>加入节点：候选列表</h3>
+      <div class="wire" role="img" aria-label="加入节点候选列表线框：包含机器人、未分类和服务器徽标，以及类型筛选和加入按钮。">
+        <div class="wire-bar">
+          <div class="wire-title"><span class="wire-dots"><i></i><i></i><i></i></span>场站节点 / 加入节点</div>
+          <span class="badge new">线框</span>
+        </div>
+        <div class="wire-body">
+          <div class="wire-toolbar">
+            <span class="wire-filter active">全部 12</span>
+            <span class="wire-filter">机器人 4</span>
+            <span class="wire-filter">未分类 6</span>
+            <span class="wire-filter">服务器 2</span>
+            <span class="wire-search">搜索名称 / 地址 / MAC / 型号…</span>
+            <span class="wire-filter">扫描发现</span>
+            <span class="wire-filter">手动添加</span>
+          </div>
+          <div class="wire-row head"><span></span><span>机器</span><span class="wire-loc">位置 / 证据</span><span class="wire-evidence">类型</span><span>操作</span></div>
+          <div class="wire-row">
+            <span class="wire-check"></span>
+            <span class="wire-name"><b>lab-a1b2c3d4e5f6</b><span>Orin · 48:b0:2d:5c:9a:11</span></span>
+            <span class="wire-loc">10.11.14.23 · 2 分钟前</span>
+            <span class="wire-evidence"><span class="badge robot">Robot · s1u</span></span>
+            <span class="wire-action primary">加入</span>
+          </div>
+          <div class="wire-row">
+            <span class="wire-check on"></span>
+            <span class="wire-name"><b>lab-9f3c0a1b2d4e</b><span>OpenSSH 9.6 · 48:b0:2d:aa:10:22</span></span>
+            <span class="wire-loc">10.11.14.87 · 1 分钟前</span>
+            <span class="wire-evidence"><span class="badge unknown">Unknown</span></span>
+            <span class="wire-action">选择类型</span>
+          </div>
+          <div class="wire-row">
+            <span class="wire-check on"></span>
+            <span class="wire-name"><b>lab-77e0c2d4a6b8</b><span>OpenSSH 8.9 · 48:b0:2d:bb:20:33</span></span>
+            <span class="wire-loc">10.11.14.91 · 4 分钟前</span>
+            <span class="wire-evidence"><span class="badge unknown">Unknown</span></span>
+            <span class="wire-action">选择类型</span>
+          </div>
+          <div class="wire-row">
+            <span class="wire-check"></span>
+            <span class="wire-name"><b>lab-44d1e2f3a4b5</b><span>Orin · 48:b0:2d:cc:30:44</span></span>
+            <span class="wire-loc">10.11.14.102 · 5 分钟前</span>
+            <span class="wire-evidence"><span class="badge robot">Robot · s1u</span></span>
+            <span class="wire-action primary">加入</span>
+          </div>
+          <div class="wire-footer"><span>已选 2 台 · 同型号机器人可批量；普通机器逐台</span><span class="wire-btn">加入所选机器</span></div>
+        </div>
+      </div>
+
+      <h3>选择类型：机器人 or 普通电脑/GPU</h3>
+      <div class="wire" role="img" aria-label="类型选择对话框线框：左侧选择机器人或普通电脑/GPU，右侧机器人型号下拉或 SSH 表单。">
+        <div class="wire-bar">
+          <div class="wire-title"><span class="wire-dots"><i></i><i></i><i></i></span>加入 lab-9f3c0a1b2d4e</div>
+          <span class="badge unknown">Unknown</span>
+        </div>
+        <div class="wire-body">
+          <div class="dialog">
+            <div class="dialog-panel">
+              <h4>这台机器是什么？</h4>
+              <div class="choice active">
+                <span class="radio"></span>
+                <div><b>普通电脑 / GPU</b><span>填写 SSH 配置；加入后作为 Server 节点。</span></div>
+              </div>
+              <div class="choice">
+                <span class="radio"></span>
+                <div><b>机器人</b><span>选择已登记的机器人型号；走 class admission。</span></div>
+              </div>
+              <div class="callout warn" style="margin:10px 0 0;padding:8px 10px;font-size:9.5px">
+                扫描只看见 SSH，不保证类型。选择机器人前会校验指纹是否属于该型号。
+              </div>
+            </div>
+            <div class="dialog-panel">
+              <h4>SSH 配置</h4>
+              <div class="field"><label>地址</label><div class="input filled">10.11.14.87</div></div>
+              <div class="field"><label>端口</label><div class="input filled">22</div></div>
+              <div class="field"><label>账号</label><div class="input filled">ubuntu</div></div>
+              <div class="field"><label>口令 / sudo</label><div class="input">•••••••• · 可选 sudo</div></div>
+              <div class="field"><label>节点名</label><div class="input">lab-gpu-03</div></div>
+              <div class="callout" style="margin:8px 0 0;padding:8px 10px;font-size:9.5px">
+                首次预检会固定扫描到的 host key；直连失败自动走 Hub 认证中继，中继不可用才提示入网码。
+              </div>
+            </div>
+            <div class="dialog-foot"><span>第 1 步 / 共 2 步 · 预检通过后才会写 Machine.admit</span><span><span class="wire-btn ghost">取消</span> <span class="wire-btn">预检并加入</span></span></div>
+          </div>
+        </div>
+      </div>
+
+      <h3>机器人：型号 + 接入 profile</h3>
+      <div class="wire" role="img" aria-label="机器人加入线框：型号下拉来自 RobotModel 目录，下面选择接入 profile 并填写 class 凭据。">
+        <div class="wire-bar">
+          <div class="wire-title"><span class="wire-dots"><i></i><i></i><i></i></span>加入 lab-a1b2c3d4e5f6</div>
+          <span class="badge robot">Robot · s1u</span>
+        </div>
+        <div class="wire-body">
+          <div class="dialog">
+            <div class="dialog-panel">
+              <h4>机器人型号</h4>
+              <div class="field"><label>型号（来自后台目录，不可编辑）</label><div class="input filled">s1u · S1U · Astribot</div></div>
+              <div class="field"><label>接入 profile</label><div class="input filled">s1u-access · 1 个 class</div></div>
+              <div class="callout" style="margin:8px 0 0;padding:8px 10px;font-size:9.5px">
+                型号下拉只列出后台已经 apply 的 RobotModel；没有目录项时不能加入为机器人。
+              </div>
+            </div>
+            <div class="dialog-panel">
+              <h4>机型凭据</h4>
+              <div class="field"><label>Orin 入口口令</label><div class="input filled">已配置 · 只显示状态</div></div>
+              <div class="field"><label>x86 登录口令</label><div class="input">已保存；留空继续使用</div></div>
+              <div class="field"><label>sudo 口令</label><div class="input">可选</div></div>
+              <div class="callout" style="margin:8px 0 0;padding:8px 10px;font-size:9.5px">
+                先写 class 凭据，再提交 admission；口令不显示、不写日志。
+              </div>
+            </div>
+            <div class="dialog-foot"><span>型号是目录项；class 只是接入方式</span><span><span class="wire-btn ghost">取消</span> <span class="wire-btn">加入机器人</span></span></div>
+          </div>
+        </div>
+      </div>
+
+      <h3>场站节点：类型、型号与一致性</h3>
+      <div class="wire" role="img" aria-label="场站节点卡片线框：机器人显示型号和 IdentityVerified；一台服务器显示型号；一台节点显示期望和上报不一致的警告。">
+        <div class="wire-bar">
+          <div class="wire-title"><span class="wire-dots"><i></i><i></i><i></i></span>场站节点 / 机器人</div>
+          <span class="badge keep">只读线框</span>
+        </div>
+        <div class="wire-body">
+          <div class="node-mock">
+            <div>
+              <div class="title"><b>s1u-09-x86</b><span class="badge robot">机器人 · s1u</span><span class="badge new">IdentityVerified=True</span></div>
+              <div class="facts"><span>站点 <b>lab</b></span><span>状态 <b>在线</b></span><span>入口 <b>Orin 192.168.0.10</b></span><span>相机 <b>6/6</b></span></div>
+              <div class="facts"><span>期望 <b>Robot / s1u</b></span><span>上报 <b>Robot / s1u</b></span><span>加入 <b>class admission</b></span></div>
+            </div>
+            <div class="right">2 分钟前<br>SSH · 22</div>
+          </div>
+          <div class="node-mock">
+            <div>
+              <div class="title"><b>lab-gpu-03</b><span class="badge server">服务器 · gpu-a100</span><span class="badge new">IdentityVerified=True</span></div>
+              <div class="facts"><span>站点 <b>office</b></span><span>状态 <b>在线</b></span><span>GPU <b>2 × A100</b></span><span>加入 <b>NodeJoin</b></span></div>
+              <div class="facts"><span>期望 <b>Server / gpu-a100</b></span><span>上报 <b>Server / gpu-a100</b></span></div>
+            </div>
+            <div class="right">刚刚<br>SSH · 22</div>
+          </div>
+          <div class="node-mock">
+            <div>
+              <div class="title"><b>lab-gpu-07</b><span class="badge server">服务器 · gpu-a100</span><span class="badge warn">IdentityVerified=False</span></div>
+              <div class="facts"><span>站点 <b>office</b></span><span>状态 <b>在线</b></span><span>GPU <b>未上报</b></span><span>加入 <b>NodeJoin</b></span></div>
+              <div class="mismatch">期望 <b>Server / gpu-a100</b>，节点上报 <b>Unknown</b>。只提示，不自动改期望；检查安装标签或型号 Addon。</div>
+            </div>
+            <div class="right">4 分钟前<br>SSH · 22</div>
+          </div>
+        </div>
+      </div>
+
+      <h3>扫描设置：开关与端口</h3>
+      <div class="wire" role="img" aria-label="站点扫描设置线框：发现普通 SSH 主机开关、端口输入和风险提示。">
+        <div class="wire-bar">
+          <div class="wire-title"><span class="wire-dots"><i></i><i></i><i></i></span>管理后台 / 场站节点 / 扫描设置</div>
+          <span class="badge new">管理员</span>
+        </div>
+        <div class="wire-body">
+          <div class="grid-2">
+            <div class="dialog-panel">
+              <h4>发现范围</h4>
+              <div class="choice active">
+                <span class="radio"></span>
+                <div><b>发现普通 SSH 主机</b><span>开启后，Hub 会在私网内探测 SSH；默认关闭。</span></div>
+              </div>
+              <div class="field"><label>SSH 端口</label><div class="input filled">22, 2222</div></div>
+              <div class="callout warn" style="margin:8px 0 0;padding:8px 10px;font-size:9.5px">
+                这是网络资产探测，只应在站点私网开启；不是登录，不会尝试账号。
+              </div>
+            </div>
+            <div class="dialog-panel">
+              <h4>本轮限制</h4>
+              <div class="facts" style="display:grid;gap:6px;font-family:var(--mono);font-size:9px;color:var(--muted)">
+                <span>· 只扫 Hub 直连私网 + ranges（/22）</span>
+                <span>· 无 MAC 不生成候选</span>
+                <span>· 每站点最多 512 个未分类候选</span>
+                <span>· 7 天未发现且未加入的候选回收</span>
+                <span>· 已入网成员和基础设施过滤</span>
+              </div>
+            </div>
+          </div>
+          <div class="dialog-foot"><span>保存后约 30 秒生效；不改变现有管理工作台</span><span><span class="wire-btn ghost">取消</span> <span class="wire-btn">保存设置</span></span></div>
+        </div>
+      </div>
+
+      <div class="callout decision">
+        <span class="label">交互规则</span>
+        <b>批量只给同型号机器人；普通机器逐台配置。</b> 未分类候选默认走“普通电脑/GPU”，但可以切到机器人；class-matched 候选默认锁在机器人型号。主机密钥从候选预填，不能让用户随手改成 TOFU。
+      </div>
+    </section>
+
+    <section id="models" aria-labelledby="models-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">08 · 机器人型号</div>
+          <h2 id="models-title">型号是目录，接入是 profile<a class="anchor" href="#models" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">型号只增/删，不可编辑；新增只在后台 apply CRD，控制台只列表和删除。</p>
+      </div>
+
+      <p>把机器人型号从 NodeClass 里拆出来：<code>RobotModel</code> 是不可变的目录项，节点上报的 <code>rlark.io/robot-model</code> 必须能对上一个目录项；<code>NodeClass.spec.model</code> 引用它，继续负责 access、discovery、naming、uplink 和 addons。一个型号可以有多个接入 profile。</p>
+
+      <div class="grid-2">
+        <div class="card">
+          <span class="badge new">目录</span>
+          <h4>只增/删，不编辑</h4>
+          <p>新增只在后台通过 <code>kubectl apply</code> 写 <code>RobotModel</code>；控制台不提供新增和编辑，避免型号 ID 被改名后节点上报对不上。需要改名就删除后重建。</p>
+        </div>
+        <div class="card">
+          <span class="badge keep">引用</span>
+          <h4>型号 vs 接入 profile</h4>
+          <p><code>RobotModel</code> 是型号身份；<code>NodeClass</code> 是接入方式。同型号不同批次/网络可以有两个 class，但节点标签里的型号始终是同一个目录 ID。</p>
+        </div>
+      </div>
+
+      <h3>后台新增：一条不可变的目录项</h3>
+      <div class="code-block">
+        <div class="code-head"><span>RobotModel / 后台 apply</span><span>YAML + shell</span></div>
+        <pre><code><span class="k">apiVersion</span>: station.rlark.io/v1alpha1
+<span class="k">kind</span>: RobotModel
+<span class="k">metadata</span>:
+  <span class="k">name</span>: s1u                         <span class="c"># 型号 ID；节点上报用这个值</span>
+<span class="k">spec</span>:
+  <span class="k">displayName</span>: S1U
+  <span class="k">vendor</span>: Astribot
+  <span class="k">description</span>: S1U 机器人（Orin 入口 + x86）
+
+<span class="c"># 只允许后台新增；CRD 的 spec 不可变，控制台没有 POST/PUT/PATCH</span>
+kubectl --kubeconfig /home/cailiang/.local/share/rlark-runtime/kcp-admin.kubeconfig \
+  apply -f robotmodel-s1u.yaml</code></pre>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>RobotModel · 字段与引用</caption>
+          <thead><tr><th>字段 / 引用</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><code>metadata.name</code></td><td>型号 ID，DNS label；写入节点 <code>rlark.io/robot-model</code> 和 observation，不可改</td></tr>
+            <tr><td><code>spec.displayName</code></td><td>控制台显示名，例如 <code>S1U</code>；不可编辑</td></tr>
+            <tr><td><code>spec.vendor</code> / <code>description</code></td><td>可选展示信息；不可编辑</td></tr>
+            <tr><td><code>NodeClass.spec.model</code></td><td>引用一个 RobotModel；class 的 discovery/access/naming 仍归 class</td></tr>
+            <tr><td>节点 / observation</td><td><code>rlark.io/robot-model</code> 和 <code>identity.model</code> 必须是目录 ID，否则 <code>UnknownModel</code></td></tr>
+            <tr><td>历史记录</td><td>型号删除后，历史 Machine/Node 保留原字符串；UI 显示“未登记型号”，不自动猜</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>控制台：只列表和删除</h3>
+      <div class="wire" role="img" aria-label="机器人型号管理线框：型号列表、使用数量、删除按钮；没有新增和编辑按钮，提示新增只能在后台 apply。">
+        <div class="wire-bar">
+          <div class="wire-title"><span class="wire-dots"><i></i><i></i><i></i></span>场站节点 / 机器人型号</div>
+          <span class="badge keep">只读目录</span>
+        </div>
+        <div class="wire-body">
+          <div class="wire-toolbar">
+            <span class="wire-filter active">型号 3</span>
+            <span class="wire-search">新增型号只能在后台 apply RobotModel；控制台不提供新增/编辑。</span>
+          </div>
+          <div class="wire-row head"><span></span><span>型号</span><span class="wire-loc">厂商 / 接入 profile</span><span class="wire-evidence">使用</span><span>操作</span></div>
+          <div class="wire-row">
+            <span></span>
+            <span class="wire-name"><b>s1u</b><span>S1U</span></span>
+            <span class="wire-loc">Astribot · 1 个 class</span>
+            <span class="wire-evidence">4 台节点</span>
+            <span class="wire-action">删除</span>
+          </div>
+          <div class="wire-row">
+            <span></span>
+            <span class="wire-name"><b>h1</b><span>H1</span></span>
+            <span class="wire-loc">Astribot · 0 个 class</span>
+            <span class="wire-evidence">0 台节点</span>
+            <span class="wire-action">删除</span>
+          </div>
+          <div class="wire-row">
+            <span></span>
+            <span class="wire-name"><b>s1u-legacy</b><span>S1U legacy</span></span>
+            <span class="wire-loc">未登记 · 仅历史记录</span>
+            <span class="wire-evidence">0 台在线</span>
+            <span class="wire-action">删除</span>
+          </div>
+          <div class="wire-footer"><span>没有“新增”和“编辑”；行内删除被引用时返回 409</span><span class="wire-btn ghost">刷新</span></div>
+        </div>
+      </div>
+
+      <p class="muted"><small>入口：场站节点页或扫描设置页的“机器人型号”链接；不新增原生侧边栏项，守住 astribot-owned 边界。</small></p>
+
+      <h3>API：列表和删除，没有写入口</h3>
+      <div class="table-wrap">
+        <table>
+          <caption>Gateway · admin-only</caption>
+          <thead><tr><th>方法 / 路径</th><th>行为</th></tr></thead>
+          <tbody>
+            <tr><td><code>GET /api/v1/station/robot-models</code></td><td>列出目录项、displayName、vendor、引用它的 class 数、在线节点数；不含 secret</td></tr>
+            <tr><td><code>DELETE /api/v1/station/robot-models/{name}</code></td><td>删除未被引用的型号；被 NodeClass、节点记录（含离线）、Machine、NodeAdmission 或 NodeJoin 引用时返回 409，并列出引用</td></tr>
+            <tr><td><span class="badge warn">没有</span> POST / PUT / PATCH</td><td>不提供新增/编辑；新增只在后台 apply CRD，spec 不可变</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout risk">
+        <span class="label">删除规则</span>
+        <b>可以删除，但被引用时先阻止。</b> 型号被 NodeClass、节点记录（含离线）、Machine、NodeAdmission 或 NodeJoin 引用时返回 409；先移除/迁移节点和 class，再删除。没有 force；如果删除和节点上报并发，observation 会显示 <code>UnknownModel</code>，<code>IdentityVerified=False</code>，不会静默放行。
+      </div>
+
+      <h3>和入网、上报怎么对上</h3>
+      <ul>
+        <li><b>入网下拉</b>：机器人型号下拉只读 <code>RobotModel</code> 目录；选型号后再选接入 profile（NodeClass）。一个型号只有一个 profile 时自动选中。</li>
+        <li><b>扫描候选</b>：class 命中的候选显示目录里的 displayName；如果 class 的 model 不在目录里，UI 标“未登记型号”，机器人加入被阻止，直到后台补齐。</li>
+        <li><b>节点上报</b>：安装器写 <code>rlark.io/robot-model=&lt;目录 ID&gt;</code>；station-controller 对目录校验；不在目录 = <code>UnknownModel</code>，不伪装成已知型号。</li>
+        <li><b>历史兼容</b>：Release A 为现有 s1u 建目录项；legacy class 只有 <code>rlark.io/robot-model</code> 标签、没有 RobotModel 时，UI 显示“inferred”，并提示后台补目录项。</li>
+      </ul>
+
+      <div class="callout decision">
+        <span class="label">设计选择</span>
+        <b>为什么不把型号直接放在 NodeClass？</b> 型号是节点上报要对上的稳定 ID；NodeClass 是接入方式，可能因网络/批次/凭据不同而有多个。把两者分开，删除型号时才能准确判断“还有没有节点/class 在用”，也不会因为改 class 而改掉型号。
+      </div>
+    </section>
+
+    <section id="files" aria-labelledby="files-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">09 · 文件清单</div>
+          <h2 id="files-title">改动只在 astribot-owned 路径<a class="anchor" href="#files" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">不碰 <code>api/**</code>、RLark 原生文件或 UI generated；NodeJoin 新信息用 annotations。</p>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>代表文件 · 不是逐行清单</caption>
+          <thead><tr><th>区域</th><th>文件</th><th>改动</th></tr></thead>
+          <tbody>
+            <tr><td><span class="badge new">astribot</span> Station API</td><td><code>astribot/station/api/v1alpha1/{machine,class,admission,network,types}.go</code></td><td>可选 class、kind/model、NodeMachine、port/algorithm/banner、observation identity；deepcopy/CRD 重新生成</td></tr>
+            <tr><td><span class="badge new">astribot</span> 型号目录</td><td><code>astribot/station/api/v1alpha1/robotmodel_types.go</code> <code>apps/rlark/pkg/gateway/astribot_robot_model_handler.go</code></td><td>不可变 RobotModel；GET 列表 / DELETE；被引用 409；无 POST/PUT/PATCH</td></tr>
+            <tr><td><span class="badge new">astribot</span> 网络</td><td><code>astribot/station/network/compute.go</code></td><td>Discovery 增加 includeUnclassified/sshPorts；DocumentLevel 3</td></tr>
+            <tr><td><span class="badge new">astribot</span> Hub</td><td><code>astribot/station-gateway/discovery.go</code> <code>document.go</code> <code>main.go</code></td><td>通用 SSH 探测、banner/算法、level 3</td></tr>
+            <tr><td><span class="badge new">astribot</span> controller</td><td><code>astribot/station/controller/machine_reconciler.go</code> <code>machine_identity.go</code> <code>machine_nodejoin.go</code> <code>network_reconciler.go</code> <code>node_reconciler.go</code></td><td>unclassified/Server 分支、effective class、NodeJoin watch、候选 GC、IdentityVerified</td></tr>
+            <tr><td><span class="badge new">astribot</span> Station API</td><td><code>apps/rlark/astribot/stationidentity/network_discovered.go</code> <code>kubernetes.go</code> <code>kubernetes_observation.go</code></td><td>候选创建/去重/限额、Node 标签观测、identity/hardware</td></tr>
+            <tr><td><span class="badge new">astribot</span> Gateway</td><td><code>apps/rlark/pkg/gateway/astribot_machine_handler.go</code> <code>astribot_node_join_handler.go</code> <code>astribot_node_join.go</code> <code>astribot_site_node_handler.go</code></td><td>list/admit、NodeJoin annotations、host key/sudo、declared/observed</td></tr>
+            <tr><td><span class="badge new">astribot</span> Gateway 中继</td><td><code>astribot/station-gateway/discovery.go</code> <code>astribot/station/network/compute.go</code> <code>apps/rlark/astribot/nodessh</code> <code>apps/rlark/pkg/gateway/astribot_node_join.go</code></td><td>per-site token 认证、目标 allowlist、直连失败走中继、token 不进日志</td></tr>
+            <tr><td><span class="badge new">astribot</span> UI</td><td><code>apps/rlark-ui/src/astribot/pages/JoinNode.tsx</code> <code>JoinMachineDialog.tsx</code> <code>RobotModels.tsx</code> <code>SiteNetworkSettings.tsx</code> <code>lib/siteNodeDisplay.ts</code></td><td>类型徽标/筛选、类型对话框、动态型号、期望 vs 上报</td></tr>
+            <tr><td><span class="badge new">astribot</span> 发布</td><td><code>astribot/station/deploy/management-rbac.yaml</code> <code>apps/rlark/astribot/release/stages.yaml</code></td><td>NodeJoin get/list/watch；gateways-understand 3</td></tr>
+            <tr><td><span class="badge keep">docs</span> 文档</td><td><code>astribot/docs/design/machine-discovery-design.html</code> <code>astribot/docs/install-join.md</code> <code>astribot/docs/architecture.md</code> <code>astribot/docs/swagger.yaml</code></td><td>本设计、入网/发现说明、API 契约</td></tr>
+            <tr><td><span class="badge keep">docs</span> 用户/管理员</td><td><code>apps/rlark/docs/{user-guide/console,admin-guide/nodes}.md</code> + zh</td><td>EN/ZH 同步；文档不是运行时代码</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid-3">
+        <div class="card">
+          <span class="badge warn">不改</span>
+          <h4>api/**</h4>
+          <p>NodeJoin 不新增 CRD 字段；类型/型号/host key/标签走 annotations。以后允许改 fork-owned NodeJoin 类型时再迁移。</p>
+        </div>
+        <div class="card">
+          <span class="badge warn">不改</span>
+          <h4>原生 Gateway / UI</h4>
+          <p><code>clusters_handler.go</code>、<code>apps/rlark-ui/src/utils</code> 等原生文件不动；型号展示在 Astribot 页面内完成。</p>
+        </div>
+        <div class="card">
+          <span class="badge new">新增</span>
+          <h4>设计交付物</h4>
+          <p><code>astribot/docs/design/machine-discovery-design.html</code>，用静态 HTTP server 评审；Phase 0 不改代码。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="rollout" aria-labelledby="rollout-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">10 · 发布与安全</div>
+          <h2 id="rollout-title">网关先行，两次发布<a class="anchor" href="#rollout" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">DocumentLevel 2→3 不能和 controller 写新字段放在同一次发布；release stage 里 gateway 在 controller 之后。</p>
+      </div>
+
+      <div class="timeline">
+        <div class="release">
+          <div class="release-tag">Release A · 兼容</div>
+          <h4>让 gateway 先懂 level 3</h4>
+          <ul>
+            <li>CRD/RBAC、station-api 新字段、station-gateway 能解析/宣告 level 3，并支持 Gateway 认证中继（token 由 Secret 提供，controller 暂不写）。</li>
+            <li>内置 <code>RobotModel s1u</code>；legacy class 没有目录项时显示 inferred，后台补齐。</li>
+            <li>controller 仍写 level 2；<code>includeUnclassified</code> 不产生新文档字段。</li>
+            <li>等所有 member 的 <code>gateways-understand: 3</code> 成立。</li>
+            <li>UI 可以先显示新字段，但开关保持关闭。</li>
+          </ul>
+        </div>
+        <div class="release second">
+          <div class="release-tag">Release B · 启用</div>
+          <h4>controller 写 level 3</h4>
+          <ul>
+            <li>controller 写 <code>includeUnclassified</code>/<code>sshPorts</code>/per-site relay token；gate 已满足。</li>
+            <li>型号目录页可用：只列表/删除；新增型号仍只在后台 apply CRD。</li>
+            <li>UI 开关可用；默认仍关闭。</li>
+            <li>先单站点试点，观察候选量、噪声、失败和 Gateway 可达性。</li>
+            <li>再扩大到其他站点；机器人 S1U 流程保持原样。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout risk">
+        <span class="label">回滚</span>
+        <b>CRD 先于 controller；回滚时不要有进行中的 admission/NodeJoin。</b> 旧 CRD 会裁剪新字段；旧 controller 不认识 level 3 文档。两阶段发布是为了避免“旧 gateway 拒绝新文档”。
+      </div>
+
+      <h3>安全边界</h3>
+      <ul>
+        <li><b>Admin-only</b>：所有扫描/入网接口仍在 <code>requireAdmin</code> 下；候选数据不跨站点/租户暴露。</li>
+        <li><b>只扫私网</b>：Hub 直连私网 + 声明 ranges；公网/隧道/容器/集群网络不扫。</li>
+        <li><b>不向 Hub 发账号</b>：探测只做 key exchange；机器人凭据只在 station-controller，服务器口令只在 Gateway 请求/内存。</li>
+        <li><b>固定 host key</b>：首次连接必须匹配扫描到的指纹和算法；变化不自动接受。</li>
+        <li><b>中继最小授权</b>：Hub relay 增加 Gateway 认证路径，只转发站点 discovery ranges/ports 内的 TCP；账号不离开 Gateway；目标不在范围直接拒绝。中继端点只在私网/隧道（或 TLS），不暴露公网明文 token。</li>
+        <li><b>标签不可信</b>：observation 是证据，不用于授权；服务器标签禁止 <code>rlark.io/robot-*</code>；banner 只作展示。</li>
+      </ul>
+    </section>
+
+    <section id="tests" aria-labelledby="tests-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">11 · 验证</div>
+          <h2 id="tests-title">失败路径和恢复路径必须测<a class="anchor" href="#tests" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">先 focused package tests，再 Go/Web 全量；最后单站点试点。</p>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>测试矩阵</caption>
+          <thead><tr><th>层</th><th>重点</th></tr></thead>
+          <tbody>
+            <tr><td>station-gateway</td><td>class key 仍工作；未分类 ECDSA/RSA；开关关闭不报；MAC/私网/去重；banner/算法；不尝试认证</td></tr>
+            <tr><td>Station API</td><td>旧 report 仍接受；新字段 opt-in；候选去重/排除/上限；自动 class fill-in；joined member 排除；observation identity</td></tr>
+            <tr><td>station-controller</td><td>空 class 候选不 inspect；Server 跟随 NodeJoin Running/Failed/Succeeded；NodeJoin 丢失；候选 GC；IdentityVerified True/False/Unknown；admit 保真合并</td></tr>
+            <tr><td>Gateway</td><td>machine view 字段；robot admit class/model；server 不允许走 admit；NodeJoin machine 校验；host key 不匹配；sudo 只在请求；clear 清 admit；RobotModel 列表/删除/引用 409；直连失败→中继、中继失败→错误/入网码</td></tr>
+            <tr><td>中继</td><td>token 正确/错误；目标不在 discovery 范围拒绝；token 不进日志；Gateway 直连成功不触发中继；中继断开可重试</td></tr>
+            <tr><td>RobotModel</td><td>spec 不可变；无 POST/PUT/PATCH；被 class/节点记录（含离线）/Machine/Admission/NodeJoin 引用时不能删；UnknownModel 显示与 IdentityVerified</td></tr>
+            <tr><td>UI</td><td>类型筛选/徽标；类型对话框；动态型号；SSH 预填；直连失败→中继；中继失败→入网码；期望/上报不一致；暗色/移动端</td></tr>
+            <tr><td>端到端</td><td>单站点开 includeUnclassified：一台 Linux + 一台 GPU 成为候选；服务器 SSH 入网；S1U 仍走原流程；关闭开关无新候选</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>试点顺序</h3>
+      <div class="state-flow">
+        <div class="state"><b>1</b><span>选一个非生产站点，开 includeUnclassified，只观察</span></div>
+        <div class="state-arrow">→</div>
+        <div class="state"><b>2</b><span>看候选量、重复、误报、Gateway 可达性</span></div>
+        <div class="state-arrow">→</div>
+        <div class="state"><b>3</b><span>加入一台普通 GPU，验证标签/observation/IdentityVerified</span></div>
+        <div class="state-arrow">→</div>
+        <div class="state done"><b>4</b><span>再开第二个站点；S1U 回归通过</span></div>
+      </div>
+    </section>
+
+    <section id="decisions" aria-labelledby="decisions-title">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">12 · 需要拍板</div>
+          <h2 id="decisions-title">五个决策，决定后进 Release A<a class="anchor" href="#decisions" aria-label="本节链接">#</a></h2>
+        </div>
+        <p class="section-note">Phase 0 只交付这份设计；这些决策确认后再写代码。</p>
+      </div>
+
+      <div class="decision-grid">
+        <div class="decision">
+          <div class="decision-top"><span>决策 01</span><span class="badge warn">影响最大</span></div>
+          <h4>普通服务器 SSH：Gateway 必须可达</h4>
+          <p>已定：Gateway 先直连，失败走 Hub 认证中继；Hub 只转发 TCP，不接触账号。入网码只做最后兜底。</p>
+          <span class="recommend">已定：Hub 认证中继 + Gateway 客户端；不再用 direct-only</span>
+        </div>
+        <div class="decision">
+          <div class="decision-top"><span>决策 02</span><span class="badge keep">拓扑</span></div>
+          <h4>普通服务器加入后是 Hub 还是 Leaf？</h4>
+          <p>现有 NodeJoin 的 declare 阶段总是声明为 Hub；每个 GPU 都成为 Hub 可能不是想要的结构。</p>
+          <span class="recommend">推荐：v1 保持 Hub；Leaf 单独立项，不混进这次</span>
+        </div>
+        <div class="decision">
+          <div class="decision-top"><span>决策 03</span><span class="badge keep">范围</span></div>
+          <h4>候选只做 L2，还是也做被路由的主机？</h4>
+          <p>v1 用 MAC 作为 L2 证据；被路由的 GPU 不会成为候选，仍走手动 SSH/入网码。</p>
+          <span class="recommend">推荐：v1 只做 L2；路由发现和 host-key 身份单独设计</span>
+        </div>
+        <div class="decision">
+          <div class="decision-top"><span>决策 04</span><span class="badge keep">证据</span></div>
+          <h4>节点自报用标签/NodeInfo，还是硬件 attestation？</h4>
+          <p>安装标签能抓漂移，但和入网选择同源；不是独立硬件证明。</p>
+          <span class="recommend">推荐：v1 标签/NodeInfo + IdentityVerified；模型 Addon/硬件探测后续加强</span>
+        </div>
+        <div class="decision" style="grid-column: 1 / -1;">
+          <div class="decision-top"><span>决策 05</span><span class="badge keep">型号目录</span></div>
+          <h4>机器人型号：只增/删、不可编辑，新增只在后台？</h4>
+          <p><code>RobotModel</code> 作为稳定目录；控制台只列表和删除，新增只在后台 apply CRD；被 NodeClass/节点引用时禁止删除；节点上报未知型号显示 <code>UnknownModel</code>。</p>
+          <span class="recommend">推荐：按此实现；Release A 内置 s1u，legacy class 标 inferred</span>
+        </div>
+      </div>
+
+      <div class="callout decision">
+        <span class="label">Phase 0 结束条件</span>
+        <b>五个决策确认，且设计页评审通过。</b> 之后进入 Release A：CRD/RBAC、station-api、station-gateway level 3 兼容、UI 字段；controller 仍写 level 2，等所有 gateway 理解 level 3 后再进 Release B。
+      </div>
+
+      <p class="muted">本页是设计交付物，不包含代码改动。实现时由 Claude 统筹两个 Codex：Codex A 做 Station/gateway/controller，Codex B 做 Gateway/UI；每个改动由 Claude 审阅并跑测试，避免两个 agent 改同一文件。</p>
+    </section>
+
+    <footer class="footer">
+      <span>RLark / Station · 机器发现与入网 · 设计评审</span>
+      <span>2026-11-25 · Phase 0 · 未改代码</span>
+    </footer>
+  </main>
+</div>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var toggle = document.getElementById("theme-toggle");
+    var stored = null;
+    try { stored = localStorage.getItem("rlark-design-theme"); } catch (e) {}
+    if (stored === "light" || stored === "dark") {
+      root.setAttribute("data-theme", stored);
+    }
+    function prefersDark() {
+      return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    }
+    function currentIsDark() {
+      var attr = root.getAttribute("data-theme");
+      if (attr === "dark") return true;
+      if (attr === "light") return false;
+      return prefersDark();
+    }
+    function render() {
+      var dark = currentIsDark();
+      toggle.textContent = dark ? "浅色" : "深色";
+      toggle.setAttribute("aria-label", dark ? "切换到浅色主题" : "切换到深色主题");
+    }
+    toggle.addEventListener("click", function () {
+      var next = currentIsDark() ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("rlark-design-theme", next); } catch (e) {}
+      render();
+    });
+    render();
+
+    var links = Array.prototype.slice.call(document.querySelectorAll("#toc a[href^='#']"));
+    var sections = links.map(function (a) { return document.querySelector(a.getAttribute("href")); }).filter(Boolean);
+    if ("IntersectionObserver" in window && sections.length) {
+      var byId = {};
+      links.forEach(function (a) { byId[a.getAttribute("href").slice(1)] = a; });
+      var visible = new Set();
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) visible.add(entry.target.id);
+          else visible.delete(entry.target.id);
+        });
+        var active = null;
+        for (var i = 0; i < sections.length; i++) {
+          if (visible.has(sections[i].id)) { active = sections[i].id; break; }
+        }
+        links.forEach(function (a) { a.classList.toggle("active", a.getAttribute("href") === "#" + active); });
+      }, { rootMargin: "-18% 0px -66% 0px", threshold: 0 });
+      sections.forEach(function (section) { observer.observe(section); });
+    }
+  })();
+</script>
+</body>
+</html>

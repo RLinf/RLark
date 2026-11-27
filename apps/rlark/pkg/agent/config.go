@@ -102,6 +102,8 @@ type Config struct {
 	ContainerdSocket    string
 	ContainerdNamespace string
 	NodeName            string
+
+	AstribotConfig
 }
 
 // DefaultConfig returns the default config.
@@ -120,7 +122,7 @@ func DefaultConfig() Config {
 			config.Identity = common.Hostname("node")
 			return config
 		}(),
-		MetricsBindAddress:      ":8081",
+		MetricsBindAddress:      astribotMetricsBindAddress,
 		ControllerConcurrency:   defaultControllerConcurrencyConfig(),
 		PodOrphanSweepInterval:  5 * time.Minute,
 		PodOrphanSweepPageSize:  200,
@@ -134,9 +136,11 @@ func DefaultConfig() Config {
 		KubeletDir:                 "",
 
 		ImagePullEnabled:    true,
-		ContainerdSocket:    "/run/containerd/containerd.sock",
+		ContainerdSocket:    "",
 		ContainerdNamespace: "k8s.io",
 		NodeName:            os.Getenv("NODE_NAME"),
+
+		AstribotConfig: defaultAstribotConfig(),
 	}
 }
 
@@ -174,6 +178,7 @@ func (c *Config) SetupFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.ContainerdSocket, "containerd-socket", c.ContainerdSocket, "containerd socket address used by ctr for image pulling (Kubernetes agent type)")
 	fs.StringVar(&c.ContainerdNamespace, "containerd-namespace", c.ContainerdNamespace, "containerd namespace used by ctr for image pulling (Kubernetes agent type, default k8s.io)")
 	fs.StringVar(&c.NodeName, "node-name", c.NodeName, "Name of the local node, used for Kubernetes node-selector matching (defaults to $NODE_NAME)")
+	c.AstribotConfig.setupFlags(fs)
 }
 
 // RuntimeKind preserves the existing API/Provider/claimant identity independently
@@ -268,8 +273,8 @@ func (c Config) Validate() error {
 		if c.SSHMaxConnectionsPerDomain <= 0 {
 			return fmt.Errorf("SSH connections per domain must be positive")
 		}
-		if c.ImagePullEnabled && (c.ContainerdSocket == "" || c.ContainerdNamespace == "") {
-			return fmt.Errorf("image pre-pull requires containerd socket and namespace")
+		if c.ImagePullEnabled && c.ContainerdNamespace == "" {
+			return fmt.Errorf("image pre-pull requires containerd namespace")
 		}
 	}
 	addresses := []string{c.MetricsBindAddress}

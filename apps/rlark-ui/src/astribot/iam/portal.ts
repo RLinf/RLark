@@ -1,0 +1,340 @@
+import { clearAuthSession, storeAuthSession, UNAUTHORIZED_EVENT } from "../../api.js";
+
+const tokenKey = "rlark-auth-token";
+const sessionPath = "/api/iam/session";
+const logoutPath = "/api/iam/logout";
+const signOutLabel = /退出|sign\s*out|log\s*out/i;
+const requestTimeoutMs = 5000;
+const broadcastName = "astribot-iam";
+
+interface PortalSession {
+  token?: unknown;
+  role?: unknown;
+  user?: { username?: unknown };
+}
+
+export interface InterceptedEvent {
+  target: unknown;
+  persisted?: boolean;
+  preventDefault(): void;
+  stopPropagation(): void;
+  stopImmediatePropagation(): void;
+}
+
+export interface PortalHost {
+  location: {
+    pathname: string;
+    search: string;
+    hash?: string;
+    replace(url: string): void;
+  };
+  fetch(input: string, init: RequestInit): Promise<Response>;
+  intercept(type: string, listener: (event: InterceptedEvent) => void): void;
+  cover(message: string): void;
+  onNativeSignIn(callback: () => void): void;
+  onPageShow(callback: (persisted: boolean) => void): void;
+  onLogoutBroadcast(callback: () => void): void;
+  broadcastLogout(): void;
+}
+
+// What the console renders from. The server session alone decides: a timeout,
+// a 5xx or a truncated body is reported as an error the page can retry, never
+// as a reason to trust a token left over in sessionStorage.
+export type PortalAuthState =
+  | { status: "loading" }
+  | { status: "authenticated"; role: "admin" | "user"; userName: string }
+  | { status: "unauthenticated" }
+  | { status: "error"; reason: string };
+
+export type PortalView =
+  | { kind: "pending" }
+  | { kind: "error"; reason: string }
+  | { kind: "console" }
+  | { kind: "admin" }
+  | { kind: "home" };
+
+export type IamPortal = ReturnType<typeof createIamPortal>;
+
+export function addressPath(location: {
+  pathname: string;
+  search: string;
+  hash?: string;
+}): string {
+  return `${location.pathname}${location.search}${location.hash ?? ""}`;
+}
+
+export function portalPath(path: string): string {
+  return `/login?next=${encodeURIComponent(path)}`;
+}
+
+function isAdminPathname(pathname: string): boolean {
+  return pathname === "/admin" || pathname.startsWith("/admin/");
+}
+
+export function resolvePortalView(
+  state: PortalAuthState,
+  pathname: string,
+): PortalView {
+  if (state.status === "error") return { kind: "error", reason: state.reason };
+  if (state.status !== "authenticated") return { kind: "pending" };
+  if (!isAdminPathname(pathname)) return { kind: "console" };
+  return state.role === "admin" ? { kind: "admin" } : { kind: "home" };
+}
+
+export function portalHomeRedirect(view: PortalView): string | undefined {
+  return view.kind === "home" ? "/" : undefined;
+}
+
+function isSignOutButton(target: unknown): boolean {
+  const button = (
+    target as { closest?: (selector: string) => { textContent?: string } | null } | null
+  )?.closest?.(".account-popover button");
+  return Boolean(button && signOutLabel.test(button.textContent ?? ""));
+}
+
+function storeSession(session: PortalSession): void {
+  const admin = session.role === "admin";
+  const role = admin ? "admin" : "user";
+  clearAuthSession();
+  storeAuthSession(session.token as string, role);
+  sessionStorage.setItem(admin ? "rlark-admin-auth" : "rlark-user-auth", "1");
+  sessionStorage.setItem(admin ? "rlark-admin-user-name" : "rlark-user-name", session.user?.username as string);
+}
+
+function requestSignal(): { signal: AbortSignal; dispose(): void } {
+  if (typeof AbortSignal.timeout === "function") {
+    return { signal: AbortSignal.timeout(requestTimeoutMs), dispose: () => {} };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+  return { signal: controller.signal, dispose: () => clearTimeout(timer) };
+}
+
+function leaveMessage(destination: "portal" | "console" | "sign-out"): string {
+  const language = typeof navigator === "undefined" ? "en" : navigator.language;
+  const zh = language.toLowerCase().startsWith("zh");
+  if (destination === "sign-out") return zh ? "正在退出登录…" : "Signing out…";
+  if (destination === "console") return zh ? "正在前往控制台…" : "Opening the console…";
+  return zh ? "正在前往登录页…" : "Redirecting to sign in…";
+}
+
+export function createIamPortal(host: PortalHost) {
+  let leaving = false;
+
+  function beginDeparture(message: string): boolean {
+    if (leaving) return false;
+    leaving = true;
+    host.cover(message);
+    return true;
+  }
+
+  function leave(path: string, broadcast = false): Promise<void> {
+    if (!beginDeparture(leaveMessage("portal"))) return Promise.resolve();
+    clearAuthSession();
+    if (broadcast) host.broadcastLogout();
+    host.location.replace(portalPath(path));
+    return Promise.resolve();
+  }
+
+  async function checkSession(): Promise<PortalAuthState> {
+    const timeout = requestSignal();
+    let response: Response;
+    try {
+      response = await host.fetch(sessionPath, {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+        signal: timeout.signal,
+      });
+    } catch {
+      return { status: "error", reason: "unreachable" };
+    } finally {
+      timeout.dispose();
+    }
+
+    if (response.status === 401) {
+      clearAuthSession();
+      return { status: "unauthenticated" };
+    }
+    if (!response.ok) {
+      return { status: "error", reason: `http_${response.status}` };
+    }
+
+    let session: PortalSession;
+    try {
+      session = (await response.json()) as PortalSession;
+    } catch {
+      return { status: "error", reason: "incomplete" };
+    }
+    if (
+      typeof session.token === "string" &&
+      session.token &&
+      typeof session.user?.username === "string"
+    ) {
+      storeSession(session);
+      return {
+        status: "authenticated",
+        role: session.role === "admin" ? "admin" : "user",
+        userName: session.user.username,
+      };
+    }
+    return { status: "error", reason: "incomplete" };
+  }
+
+  async function refresh(): Promise<PortalAuthState> {
+    if (leaving) return { status: "unauthenticated" };
+    const state = await checkSession();
+    if (leaving) return state;
+    if (state.status === "unauthenticated") void leave(addressPath(host.location));
+    return state;
+  }
+
+  async function signOut(path: string): Promise<void> {
+    if (!beginDeparture(leaveMessage("sign-out"))) return;
+    const token = sessionStorage.getItem(tokenKey);
+    const timeout = requestSignal();
+    try {
+      await host.fetch(logoutPath, {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: timeout.signal,
+      });
+    } catch {
+      // Navigation still clears the browser session when IAM cannot confirm logout.
+    } finally {
+      timeout.dispose();
+      clearAuthSession();
+      host.broadcastLogout();
+      host.location.replace(portalPath(path));
+    }
+  }
+
+  function keepNativeSignInOut(): void {
+    host.intercept("click", (event) => {
+      if (!isSignOutButton(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      void signOut(addressPath(host.location));
+    });
+    host.intercept(UNAUTHORIZED_EVENT, (event) => {
+      event.stopImmediatePropagation();
+      void leave(addressPath(host.location));
+    });
+    host.onNativeSignIn(() => {
+      if (sessionStorage.getItem(tokenKey)) {
+        if (!beginDeparture(leaveMessage("console"))) return;
+        host.location.replace("/");
+        return;
+      }
+      void leave(addressPath(host.location));
+    });
+    host.onPageShow((persisted) => {
+      if (persisted) void refresh();
+    });
+    host.onLogoutBroadcast(() => void leave(addressPath(host.location)));
+  }
+
+  return {
+    signOut,
+    returnToPortal(path: string): Promise<void> {
+      return leave(path);
+    },
+    enter(): Promise<PortalAuthState> {
+      keepNativeSignInOut();
+      return refresh();
+    },
+    retry(): Promise<PortalAuthState> {
+      return refresh();
+    },
+  };
+}
+
+function browserHost(): PortalHost {
+  let channel: BroadcastChannel | undefined;
+  try {
+    if (typeof BroadcastChannel !== "undefined") channel = new BroadcastChannel(broadcastName);
+  } catch {
+    channel = undefined;
+  }
+  return {
+    location: window.location,
+    fetch: (input, init) => fetch(input, init),
+    intercept: (type, listener) => window.addEventListener(type, listener as EventListener, true),
+    cover: (message) => {
+      let cover = document.getElementById("iam-portal-leaving");
+      if (!cover) {
+        cover = document.createElement("div");
+        cover.id = "iam-portal-leaving";
+        cover.setAttribute("role", "status");
+        Object.assign(cover.style, {
+          position: "fixed",
+          inset: "0",
+          zIndex: "2147483647",
+          display: "grid",
+          placeItems: "center",
+          background: "#f6f4fc",
+          color: "#403773",
+          font: "500 15px/1.5 system-ui, sans-serif",
+          pointerEvents: "auto",
+        });
+        document.body.append(cover);
+      }
+      cover.textContent = message;
+    },
+    onNativeSignIn: (callback) => {
+      const root = document.getElementById("root");
+      if (!root || typeof MutationObserver === "undefined") return;
+      // Last line of defence only: the console decides from the session state
+      // before rendering, so a native form should never be mounted here.
+      const nativeSignIn = ".admin-login-page, .iam-login-screen";
+      new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (!(node instanceof Element)) continue;
+            if (!node.matches(nativeSignIn) && !node.querySelector(nativeSignIn)) continue;
+            callback();
+            return;
+          }
+        }
+      }).observe(root, { childList: true, subtree: true });
+    },
+    onPageShow: (callback) => window.addEventListener("pageshow", (event) => callback((event as PageTransitionEvent).persisted)),
+    onLogoutBroadcast: (callback) => {
+      if (channel) channel.onmessage = (event) => {
+        if (event.data === "logout") callback();
+      };
+    },
+    broadcastLogout: () => channel?.postMessage("logout"),
+  };
+}
+
+const buildEnv: Record<string, string | undefined> = import.meta.env ?? {};
+let portal: IamPortal | undefined;
+
+export function iamPortalEnabled(): boolean {
+  return buildEnv.VITE_IAM_PORTAL === "1";
+}
+
+function iamPortal(): IamPortal {
+  portal ??= createIamPortal(browserHost());
+  return portal;
+}
+
+export function enterIamPortal(): Promise<PortalAuthState | undefined> {
+  return iamPortalEnabled() ? iamPortal().enter() : Promise.resolve(undefined);
+}
+
+export function retryIamSession(): Promise<PortalAuthState | undefined> {
+  return iamPortalEnabled() ? iamPortal().retry() : Promise.resolve(undefined);
+}
+
+export function signOutOfConsole(path: string): Promise<void> {
+  return iamPortalEnabled() ? iamPortal().signOut(path) : Promise.resolve();
+}
+
+export function returnToPortal(path: string): Promise<void> {
+  return iamPortalEnabled() ? iamPortal().returnToPortal(path) : Promise.resolve();
+}

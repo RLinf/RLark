@@ -382,8 +382,17 @@ Responses:
   - `agentNamespace`: `string`, required - AgentNamespace is the management-plane namespace that contains the agent heartbeat Lease and Node CRs.
   - `cordoned`: `boolean`, optional
   - `delisted`: `boolean`, optional
+  - `displayName`: `string`, optional - DisplayName is a human-readable name; metadata.name remains the stable cluster ID.
   - `drainPreviousCordoned`: `boolean`, optional
   - `draining`: `boolean`, optional
+  - `nodeAgents`: `object`, optional - NodeAgents declares the cluster's node Agents. The cluster Agent keeps them as one DaemonSet, so a Kubernetes Node th...
+    - `enabled`: `boolean`, required - Enabled makes the cluster Agent keep the node Agent DaemonSet; false makes it remove the DaemonSet.
+    - `image`: `string`, optional - Image is the node Agents' image. It is the node Agents' own: neither the cluster Agent's image nor the image of the t...
+    - `nodeSelector`: `object`, optional - NodeSelector selects the Kubernetes Nodes that run a node Agent. It defaults to rlark.io/enabled=true, the label that...
+    - `rollout`: `object`, optional - Rollout is how the node Agents are replaced when their DaemonSet changes. Absent, the defaults of RolloutPolicy: one ...
+      - `canary`: `integer`, optional - Canary is how many nodes get the new Pod first. Until that many new Pods are available (ready for the DaemonSet's min...
+      - `maxUnavailable`: `integer|string`, optional - MaxUnavailable bounds how many ready nodes may be without an available Pod at once after the canary: a number, or a p...
+      - `whenIdle`: `boolean`, optional - WhenIdle replaces a Pod only while its Node's rlark.io/in-use annotation is reported and empty: for a workload that m...
 - `status`: `object`, optional - ClusterStatus reports the controller's current observation of a data-plane cluster.
   - `conditions`: `array`, optional - Conditions records the structured conclusions of the Cluster controller, which is their only writer. Ready and Degrad...
     - `items`: `object`, optional - Condition contains details for one aspect of the current state of this API Resource.
@@ -404,6 +413,218 @@ Responses:
   - `readyNodes`: `integer`, optional - ReadyNodes is the number of connected Nodes with Ready=True that are not cordoned by spec.unschedulable. A ready Node...
   - `totalNodes`: `integer`, optional
   - `unschedulableNodes`: `integer`, optional - UnschedulableNodes is the number of Nodes with spec.unschedulable=true.
+
+## ClusterProvision
+
+- Group: `rlinf.io`
+- Version: `v1alpha1`
+- Scope: `Cluster`
+- Resource: `clusterprovisions`
+
+### Operations
+
+#### `GET /api/v1/rlinf.io/v1alpha1/clusterprovisions`
+
+List clusterprovisions resources.
+
+Parameters:
+- `pretty` (query, optional)
+- `continue` (query, optional)
+- `limit` (query, optional)
+- `fieldSelector` (query, optional)
+- `labelSelector` (query, optional)
+
+Responses:
+- `200` OK → `ClusterProvisionList`
+- `401` Unauthorized
+
+#### `POST /api/v1/rlinf.io/v1alpha1/clusterprovisions`
+
+Create a ClusterProvision resource.
+
+Parameters:
+- `pretty` (query, optional)
+- `dryRun` (query, optional)
+- `fieldManager` (query, optional)
+- `fieldValidation` (query, optional)
+
+Request body: `ClusterProvision`
+
+Responses:
+- `201` Created → `ClusterProvision`
+- `202` Accepted → `ClusterProvision`
+- `401` Unauthorized
+
+#### `DELETE /api/v1/rlinf.io/v1alpha1/clusterprovisions`
+
+Delete a collection of clusterprovisions resources.
+
+Parameters:
+- `pretty` (query, optional)
+- `continue` (query, optional)
+- `limit` (query, optional)
+- `fieldSelector` (query, optional)
+- `labelSelector` (query, optional)
+
+Responses:
+- `200` OK → `Status`
+- `401` Unauthorized
+
+#### `GET /api/v1/rlinf.io/v1alpha1/clusterprovisions/{name}`
+
+Get a ClusterProvision resource.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+
+Responses:
+- `200` OK → `ClusterProvision`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `PUT /api/v1/rlinf.io/v1alpha1/clusterprovisions/{name}`
+
+Replace a ClusterProvision resource.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+- `fieldManager` (query, optional)
+- `fieldValidation` (query, optional)
+
+Request body: `ClusterProvision`
+
+Responses:
+- `200` OK → `ClusterProvision`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `PATCH /api/v1/rlinf.io/v1alpha1/clusterprovisions/{name}`
+
+Patch a ClusterProvision resource.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+- `fieldManager` (query, optional)
+- `fieldValidation` (query, optional)
+- `force` (query, optional)
+
+Request body: `ClusterProvision`
+
+Responses:
+- `200` OK → `ClusterProvision`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `DELETE /api/v1/rlinf.io/v1alpha1/clusterprovisions/{name}`
+
+Delete a ClusterProvision resource.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+
+Responses:
+- `200` OK → `Status`
+- `202` Accepted → `Status`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `GET /api/v1/rlinf.io/v1alpha1/clusterprovisions/{name}/status`
+
+Get the status subresource for ClusterProvision.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+
+Responses:
+- `200` OK → `ClusterProvision`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `PUT /api/v1/rlinf.io/v1alpha1/clusterprovisions/{name}/status`
+
+Replace the status subresource for ClusterProvision.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+- `fieldManager` (query, optional)
+- `fieldValidation` (query, optional)
+
+Request body: `ClusterProvision`
+
+Responses:
+- `200` OK → `ClusterProvision`
+- `202` Accepted → `ClusterProvision`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `PATCH /api/v1/rlinf.io/v1alpha1/clusterprovisions/{name}/status`
+
+Patch the status subresource for ClusterProvision.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+- `fieldManager` (query, optional)
+- `fieldValidation` (query, optional)
+- `force` (query, optional)
+
+Request body: `ClusterProvision`
+
+Responses:
+- `200` OK → `ClusterProvision`
+- `202` Accepted → `ClusterProvision`
+- `401` Unauthorized
+- `404` Not Found
+
+### Request Schema
+
+- `apiVersion`: `string`, optional - APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schema...
+- `kind`: `string`, optional - Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoin...
+- `metadata`: `object`, optional
+- `spec`: `object`, required - ClusterProvisionSpec is what the cluster is made of: a new site, and its first machine, which becomes the site's firs...
+  - `machine`: `object`, required - Machine is how the Gateway reaches the first machine over SSH.
+    - `address`: `string`, required - Address is the machine's address as the management plane reaches it.
+    - `port`: `integer`, optional
+    - `tunnelEndpoint`: `string`, required - TunnelEndpoint is the IPv4 ip:port other sites dial for the machine's tunnel, and the machine listens on its port: Ad...
+    - `user`: `string`, required
+  - `requestedBy`: `string`, optional - RequestedBy is the user who asked for the cluster.
+  - `site`: `string`, required - Site is the new site's name in the SiteNetwork.
+- `status`: `object`, optional - ClusterProvisionStatus is how the making went, stage by stage.
+  - `facts`: `object`, optional - ClusterProvisionFacts are what the stages found and chose; later stages, and a retry, go on from them.
+    - `bundleSHA256`: `string`, optional
+    - `cacheVolume`: `boolean`, optional
+    - `controlPlaneName`: `string`, optional
+    - `diskFree`: `string`, optional
+    - `gpus`: `array`, optional
+      - `items`: `object`, optional - ClusterProvisionGPU is one model of GPU on the machine.
+    - `kernel`: `string`, optional
+    - `nodeName`: `string`, optional
+    - `os`: `string`, optional
+    - `podSubnet`: `string`, optional
+    - `privateAddress`: `string`, optional
+    - `publicKey`: `string`, optional
+    - `registryCA`: `string`, optional - RegistryCA is the CA of the site registry the machine's installer trusts (PEM).
+    - `release`: `string`, optional
+    - `routes`: `array`, optional
+    - `serviceSubnet`: `string`, optional
+    - `tunnelAddress`: `string`, optional
+  - `hostKey`: `string`, optional - HostKey is the SHA256 fingerprint the machine showed the first time; every later connection must show the same.
+  - `phase`: `string`, optional, enum=Running,Succeeded,Failed - ClusterProvisionPhase is where the making of a cluster stands.
+  - `stage`: `string`, optional - Stage is the stage running, or the one the making stopped at.
+  - `stages`: `array`, optional
+    - `items`: `object`, optional - ClusterProvisionStage is one stage, as it went.
+      - `finishedAt`: `string`, optional
+      - `message`: `string`, optional - Message is why the stage stopped, or the last line of its progress.
+      - `name`: `string`, required
+      - `readback`: `string`, optional - Readback is what was read back once the stage had done its work.
+      - `startedAt`: `string`, optional
+      - `state`: `string`, required, enum=Pending,Running,Done,Skipped,Failed - ClusterProvisionStageState is where one stage stands.
 
 ## ClusterUpgradeJob
 
@@ -1394,6 +1615,7 @@ Responses:
 - `metadata`: `object`, optional
 - `spec`: `object`, optional - NodeSpec contains only management-owned durable desired state. Agents must not write this section; administrative API...
   - `agentType`: `string`, optional, enum=Kubernetes,Docker,Raw - AgentType is a reserved compatibility field for the Node access form. Deprecated: use Runtime.Type for new integratio...
+  - `displayName`: `string`, optional - DisplayName is the operator's name; metadata.name remains the node identity.
   - `identity`: `object`, optional - Identity is set by the management API or control plane when the Node is registered.
     - `domain`: `string`, optional - Domain is the owning Domain identifier.
     - `id`: `string`, optional - ID is the stable RLark business identity of the Node.
@@ -1489,6 +1711,217 @@ Responses:
     - `capacityBytes`: `integer`, optional
     - `usedBytes`: `integer`, optional
   - `used`: `object`, optional - Used is the sum of non-terminal Pod resource requests already allocated for scheduling. It is not actual runtime util...
+
+## NodeJoin
+
+- Group: `rlinf.io`
+- Version: `v1alpha1`
+- Scope: `Cluster`
+- Resource: `nodejoins`
+
+### Operations
+
+#### `GET /api/v1/rlinf.io/v1alpha1/nodejoins`
+
+List nodejoins resources.
+
+Parameters:
+- `pretty` (query, optional)
+- `continue` (query, optional)
+- `limit` (query, optional)
+- `fieldSelector` (query, optional)
+- `labelSelector` (query, optional)
+
+Responses:
+- `200` OK → `NodeJoinList`
+- `401` Unauthorized
+
+#### `POST /api/v1/rlinf.io/v1alpha1/nodejoins`
+
+Create a NodeJoin resource.
+
+Parameters:
+- `pretty` (query, optional)
+- `dryRun` (query, optional)
+- `fieldManager` (query, optional)
+- `fieldValidation` (query, optional)
+
+Request body: `NodeJoin`
+
+Responses:
+- `201` Created → `NodeJoin`
+- `202` Accepted → `NodeJoin`
+- `401` Unauthorized
+
+#### `DELETE /api/v1/rlinf.io/v1alpha1/nodejoins`
+
+Delete a collection of nodejoins resources.
+
+Parameters:
+- `pretty` (query, optional)
+- `continue` (query, optional)
+- `limit` (query, optional)
+- `fieldSelector` (query, optional)
+- `labelSelector` (query, optional)
+
+Responses:
+- `200` OK → `Status`
+- `401` Unauthorized
+
+#### `GET /api/v1/rlinf.io/v1alpha1/nodejoins/{name}`
+
+Get a NodeJoin resource.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+
+Responses:
+- `200` OK → `NodeJoin`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `PUT /api/v1/rlinf.io/v1alpha1/nodejoins/{name}`
+
+Replace a NodeJoin resource.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+- `fieldManager` (query, optional)
+- `fieldValidation` (query, optional)
+
+Request body: `NodeJoin`
+
+Responses:
+- `200` OK → `NodeJoin`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `PATCH /api/v1/rlinf.io/v1alpha1/nodejoins/{name}`
+
+Patch a NodeJoin resource.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+- `fieldManager` (query, optional)
+- `fieldValidation` (query, optional)
+- `force` (query, optional)
+
+Request body: `NodeJoin`
+
+Responses:
+- `200` OK → `NodeJoin`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `DELETE /api/v1/rlinf.io/v1alpha1/nodejoins/{name}`
+
+Delete a NodeJoin resource.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+
+Responses:
+- `200` OK → `Status`
+- `202` Accepted → `Status`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `GET /api/v1/rlinf.io/v1alpha1/nodejoins/{name}/status`
+
+Get the status subresource for NodeJoin.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+
+Responses:
+- `200` OK → `NodeJoin`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `PUT /api/v1/rlinf.io/v1alpha1/nodejoins/{name}/status`
+
+Replace the status subresource for NodeJoin.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+- `fieldManager` (query, optional)
+- `fieldValidation` (query, optional)
+
+Request body: `NodeJoin`
+
+Responses:
+- `200` OK → `NodeJoin`
+- `202` Accepted → `NodeJoin`
+- `401` Unauthorized
+- `404` Not Found
+
+#### `PATCH /api/v1/rlinf.io/v1alpha1/nodejoins/{name}/status`
+
+Patch the status subresource for NodeJoin.
+
+Parameters:
+- `name` (path)
+- `pretty` (query, optional)
+- `fieldManager` (query, optional)
+- `fieldValidation` (query, optional)
+- `force` (query, optional)
+
+Request body: `NodeJoin`
+
+Responses:
+- `200` OK → `NodeJoin`
+- `202` Accepted → `NodeJoin`
+- `401` Unauthorized
+- `404` Not Found
+
+### Request Schema
+
+- `apiVersion`: `string`, optional - APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schema...
+- `kind`: `string`, optional - Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoin...
+- `metadata`: `object`, optional
+- `spec`: `object`, required - NodeJoinSpec is the machine the Gateway joins to a cluster over SSH. The machine's password is never part of it: it i...
+  - `clusterID`: `string`, required
+  - `machine`: `object`, required - NodeJoinMachine is the SSH address and account of the machine.
+    - `address`: `string`, required
+    - `port`: `integer`, optional
+    - `tunnelEndpoint`: `string`, optional - TunnelEndpoint is the IPv4 ip:port other sites dial for the machine's tunnel, when it joins through one: empty, the a...
+    - `user`: `string`, required
+  - `nodeName`: `string`, required - NodeName is the node's name: the one asked for, or the machine's host name.
+  - `requestedBy`: `string`, optional - RequestedBy is the user who asked for the join.
+- `status`: `object`, optional - NodeJoinStatus is how the join went, stage by stage.
+  - `facts`: `object`, optional - NodeJoinFacts are what the stages found and chose; later stages, and a retry, go on from them.
+    - `admissionIssuedAt`: `string`, optional - AdmissionIssuedAt is when the join's code was given out.
+    - `bundleSHA256`: `string`, optional - BundleSHA256 is the sha256 of the installer the machine holds.
+    - `declaredGeneration`: `integer`, optional - DeclaredGeneration is the SiteNetwork's generation the declaration wrote.
+    - `declaredHub`: `boolean`, optional - DeclaredHub says this join declared the machine a hub in the SiteNetwork.
+    - `diskFree`: `string`, optional
+    - `gpus`: `array`, optional
+      - `items`: `object`, optional - ClusterProvisionGPU is one model of GPU on the machine.
+    - `kernel`: `string`, optional
+    - `os`: `string`, optional
+    - `privateAddress`: `string`, optional
+    - `publicKey`: `string`, optional - PublicKey is the machine's tunnel key, made on the machine.
+    - `route`: `string`, optional, enum=direct,tunnel,tunnel-up - NodeJoinRoute is how a machine reaches Station API for its code.
+    - `timings`: `array`, optional - Timings are the moments of the join's steps, in order.
+      - `items`: `object`, optional - NodeJoinTiming is when one step of the join was seen.
+    - `tunnelAddress`: `string`, optional
+  - `hostKey`: `string`, optional - HostKey is the SHA256 fingerprint the machine showed the first time; every later connection must show the same.
+  - `phase`: `string`, optional, enum=Running,Succeeded,Failed - ClusterProvisionPhase is where the making of a cluster stands.
+  - `stage`: `string`, optional - Stage is the stage running, or the one the join stopped at.
+  - `stages`: `array`, optional
+    - `items`: `object`, optional - ClusterProvisionStage is one stage, as it went.
+      - `finishedAt`: `string`, optional
+      - `message`: `string`, optional - Message is why the stage stopped, or the last line of its progress.
+      - `name`: `string`, required
+      - `readback`: `string`, optional - Readback is what was read back once the stage had done its work.
+      - `startedAt`: `string`, optional
+      - `state`: `string`, required, enum=Pending,Running,Done,Skipped,Failed - ClusterProvisionStageState is where one stage stands.
 
 ## Pod
 
@@ -1882,6 +2315,7 @@ Responses:
       - `version`: `string`, required
   - `placement`: `object`, required - TaskPlacementSpec describes scheduling constraints for the workload.
     - `nodeSelector`: `object`, optional
+    - `perNode`: `boolean`, optional - PerNode runs one instance of the Task on every node that NodeSelector matches, like a Kubernetes DaemonSet or a cloud...
   - `role`: `string`, required - TaskRole 描述 Task 在业务编排中的角色，用于前端分组与展示。 该字段当前不在 CRD 层做枚举校验：它可能承载上层编排框架的自定义角色名， 收窄取值会阻止合法的既有数据写入。请勿据此推断取值的封闭集合。
   - `runtime`: `object`, required - TaskRuntimeSpec selects the runtime implementation and instance that lowers the common Pod template. Name is a stable...
     - `kind`: `string`, required - RuntimeKind 表示负责执行 Task 工作负载的 Runtime 类型。 CRD 有意不限制该字符串的枚举值，使 Docker、Raw 等 Runtime 可以在不修改 Task Schema 的情况下扩展。Agent 必须...
@@ -1927,6 +2361,13 @@ Responses:
       - `reason`: `string`, required
       - `source`: `string`, optional
       - `type`: `string`, required
+  - `instances`: `array`, optional - Instances lists a per-node Task's instances, sorted by node, as the data-plane Agent last observed them. It is empty ...
+    - `items`: `object`, optional - TaskInstanceStatus is one instance of a per-node Task as the data-plane Agent observed it.
+      - `image`: `string`, optional - Image is the image of the instance's main container: the version the instance runs, which differs between nodes while...
+      - `message`: `string`, optional
+      - `name`: `string`, required - Name is the instance's name in its runtime (the Pod name on Kubernetes).
+      - `node`: `string`, optional - Node is the name of the node the instance runs on, empty until the instance is placed.
+      - `phase`: `string`, required, enum=Pending,Running,Failed - TaskInstancePhase is the state of one instance of a per-node Task.
   - `message`: `string`, optional
   - `observedGeneration`: `integer`, optional - ObservedGeneration 是数据面 Agent 最近一次完成本地工作负载调谐时所观测到的 metadata.generation。它是控制器契约而非 API Server 保证：消费者在读取 phase / message...
   - `observedNodes`: `array`, optional - ObservedNodes 是当前承载该 Task 工作负载的节点名，由数据面 Agent 排序去重后上报。

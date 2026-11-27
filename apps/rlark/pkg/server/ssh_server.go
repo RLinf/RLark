@@ -125,7 +125,11 @@ func (s *Server) sshPublicKeyAuth() ssh.PublicKeyHandler {
 			logger.V(1).Info("Checking if certificate is revoked", "serial", cert.Serial, "keyID", cert.KeyId)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			ret := s.checkCertRevoked(ctx, "ssh", fmt.Sprint(cert.Serial), cert.KeyId)
+			ret, err := s.checkCertRevoked(ctx, "ssh", fmt.Sprint(cert.Serial), cert.KeyId)
+			if err != nil {
+				logger.Error(err, "certificate revocation check unavailable")
+				return true
+			}
 			logger.V(1).Info("Certificate revocation check result", "serial", cert.Serial, "keyID", cert.KeyId, "revoked", ret)
 			return ret
 		},

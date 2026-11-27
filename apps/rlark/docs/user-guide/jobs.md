@@ -196,6 +196,8 @@ All file transfers are performed over the same WebSocket connection used by the 
 
 ## Managing Jobs
 
+The **Submitted by** column shows the username recorded when the job was created. Jobs produced by a Workflow use the Workflow submitter. Cloning records the new submitter. Editing, restarting, or restoring a job keeps its original submitter. A dash means that no individual submitter was recorded, which includes older Astribot IAM jobs created through a shared service account.
+
 ### Lifecycle Actions
 
 The detail-page action bar supports the full Job lifecycle:

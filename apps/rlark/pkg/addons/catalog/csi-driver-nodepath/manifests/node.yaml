@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: csi-driver-nodepath-node
+  namespace: rlark-system
+  labels:
+    app: csi-driver-nodepath-node
+spec:
+  selector:
+    matchLabels:
+      app: csi-driver-nodepath-node
+  template:
+    metadata:
+      labels:
+        app: csi-driver-nodepath-node
+    spec:
+      serviceAccountName: csi-driver-nodepath
+      priorityClassName: system-node-critical
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- $parts := splitList "=" .Values.nodeSelector }}
+        {{- if eq (len $parts) 2 }}
+        {{ index $parts 0 }}: "{{ index $parts 1 }}"
+        {{- end }}
+      {{- end }}
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: nodepath
+          image: {{ .Values.image }}
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
+          command: ["/usr/local/bin/csi-nodepath", "--endpoint=unix:///csi/csi.sock", "--host-root=/host", "--node"]
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          securityContext:
+            privileged: true
+          livenessProbe:
+            # The Pod is on the Pod network: kubelet probes its address, where the liveness-probe sidecar listens.
+            httpGet: {path: /healthz, port: 29663}
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            - {name: plugin-dir, mountPath: /csi}
+            # The node's file systems as the node mounts them (KPFS's kernel
+            # client mounts after the plugin starts too).
+            - {name: host-root, mountPath: /host, mountPropagation: HostToContainer}
+            - {name: pods-dir, mountPath: /var/lib/kubelet/pods, mountPropagation: Bidirectional}
+        - name: node-driver-registrar
+          image: {{ .Values.nodeDriverRegistrarImage }}
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--kubelet-registration-path=/var/lib/kubelet/plugins/nodepath.csi.rlark.io/csi.sock"
+          volumeMounts:
+            - {name: plugin-dir, mountPath: /csi}
+            - {name: registration-dir, mountPath: /registration}
+        - name: liveness-probe
+          image: {{ .Values.livenessProbeImage }}
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
+          args: ["--csi-address=/csi/csi.sock", "--probe-timeout=3s", "--http-endpoint=:29663"]
+          volumeMounts:
+            - {name: plugin-dir, mountPath: /csi}
+      volumes:
+        - name: plugin-dir
+          hostPath: {path: /var/lib/kubelet/plugins/nodepath.csi.rlark.io, type: DirectoryOrCreate}
+        - name: host-root
+          hostPath: {path: /, type: Directory}
+        - name: pods-dir
+          hostPath: {path: /var/lib/kubelet/pods, type: Directory}
+        - name: registration-dir
+          hostPath: {path: /var/lib/kubelet/plugins_registry, type: Directory}

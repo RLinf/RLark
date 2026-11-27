@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"time"
 
-	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
@@ -124,10 +122,14 @@ func (n *nodeAgent) Build(ctx context.Context) error {
 		var taskInformer cache.SharedIndexInformer
 		var imgPuller *imagepull.Puller
 		agentType := n.a.config.RuntimeKind()
-		if n.a.config.ImagePullEnabled && imagepull.RuntimeFor(agentType) != imagepull.RuntimeNone {
+		socket, pull, err := n.runtimeSocket(ctx, agentType)
+		if err != nil {
+			return err
+		}
+		if pull {
 			rt := imagepull.NewImagePuller(
 				imagepull.RuntimeFor(agentType),
-				n.a.config.ContainerdSocket,
+				socket,
 				n.a.config.ContainerdNamespace,
 				logger,
 			)
@@ -161,16 +163,12 @@ func (n *nodeAgent) Build(ctx context.Context) error {
 		}
 
 		factory.Start(ctx.Done())
-		// A denied/lost watch must not leave startup blocked forever.
-		syncCtx, stopSync := context.WithTimeout(ctx, startupPreflightTimeout)
 		informers := []cache.SharedIndexInformer{domainPeerInformer, managementPodInformer}
 		if taskInformer != nil {
 			informers = append(informers, taskInformer)
 		}
-		err := waitForCacheSync(syncCtx, informers)
-		stopSync()
-		if err != nil {
-			return fmt.Errorf("sync node startup informers: %w", err)
+		if err := n.waitForFirstSync(ctx, informers); err != nil {
+			return err
 		}
 		networkAdapter := container.NewContainerNetworkAdapter(
 			n.a.config.ClientConfig.ServerNamespace,
@@ -193,24 +191,13 @@ func (n *nodeAgent) Build(ctx context.Context) error {
 			container.UnmarshalContainerNetworkCred,
 		)
 
-		eg, nodeCtx := errgroup.WithContext(ctx)
+		eg, nodeCtx := n.startAstribot(ctx)
 		eg.Go(func() error {
 			return nodeserver.Run(nodeCtx, n.a)
 		})
-		// Health, metrics, and pprof HTTP server, using --metrics-bind-address (default :8081).
-		eg.Go(func() error {
-			address := n.a.config.MetricsBindAddress
-			if n.a.config.Mode == "cluster" {
-				address = n.a.config.NodeMetricsBindAddress
-			}
-			if address == "0" {
-				<-nodeCtx.Done()
-				return nil
-			}
-			srv := &http.Server{Addr: address, Handler: n.a.healthRouter()}
-			logger.Info("Node agent metrics/pprof listening", "address", address)
-			return serveHTTP(nodeCtx, srv, srv.ListenAndServe)
-		})
+		if n.a.config.Mode == "cluster" && n.a.config.NodeMetricsBindAddress != "0" {
+			eg.Go(func() error { return serve(nodeCtx, n.a.config.NodeMetricsBindAddress, n.a.healthRouter()) })
+		}
 		if imgPuller != nil {
 			eg.Go(func() error {
 				return imgPuller.Run(nodeCtx)

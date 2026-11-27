@@ -27,6 +27,8 @@ type Interface interface {
 	Addons() AddonInformer
 	// Clusters returns a ClusterInformer.
 	Clusters() ClusterInformer
+	// ClusterProvisions returns a ClusterProvisionInformer.
+	ClusterProvisions() ClusterProvisionInformer
 	// ClusterUpgradeJobs returns a ClusterUpgradeJobInformer.
 	ClusterUpgradeJobs() ClusterUpgradeJobInformer
 	// Domains returns a DomainInformer.
@@ -37,6 +39,8 @@ type Interface interface {
 	Jobs() JobInformer
 	// Nodes returns a NodeInformer.
 	Nodes() NodeInformer
+	// NodeJoins returns a NodeJoinInformer.
+	NodeJoins() NodeJoinInformer
 	// Pods returns a PodInformer.
 	Pods() PodInformer
 	// Tasks returns a TaskInformer.
@@ -68,6 +72,11 @@ func (v *version) Clusters() ClusterInformer {
 	return &clusterInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
+// ClusterProvisions returns a ClusterProvisionInformer.
+func (v *version) ClusterProvisions() ClusterProvisionInformer {
+	return &clusterProvisionInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+}
+
 // ClusterUpgradeJobs returns a ClusterUpgradeJobInformer.
 func (v *version) ClusterUpgradeJobs() ClusterUpgradeJobInformer {
 	return &clusterUpgradeJobInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
@@ -91,6 +100,11 @@ func (v *version) Jobs() JobInformer {
 // Nodes returns a NodeInformer.
 func (v *version) Nodes() NodeInformer {
 	return &nodeInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// NodeJoins returns a NodeJoinInformer.
+func (v *version) NodeJoins() NodeJoinInformer {
+	return &nodeJoinInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
 // Pods returns a PodInformer.

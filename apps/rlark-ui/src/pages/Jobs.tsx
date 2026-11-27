@@ -1,3 +1,7 @@
+import { storageMountLabel } from "../astribot/lib/storageVolume";
+import { RealName } from "../astribot/components/NodeName";
+import { clusterIDsLabel, clusterLabel, workerNodeLabel } from "../astribot/lib/displayName";
+import { useClusters } from "../astribot/components/useClusters";
 import type {
   CSSProperties,
   PointerEvent as ReactPointerEvent,
@@ -654,6 +658,7 @@ export function JobsPage({
               </th>
               <th>Worker</th>
               <th>{zh ? "角色数量" : "Roles"}</th>
+              <th>{zh ? "用户" : "Submitted by"}</th>
               <th>
                 <SortButton
                   label={zh ? "创建时间" : "Created"}
@@ -676,7 +681,7 @@ export function JobsPage({
           <tbody>
             {filtered.length === 0 && !loading && (
               <tr>
-                <td colSpan={9}>
+                <td colSpan={10}>
                   <div className="table-empty-state">
                     <span>
                       <Workflow size={22} />
@@ -791,6 +796,7 @@ export function JobsPage({
                     </span>
                   </td>
                   <td>{job.roleCount}</td>
+                  <td className="job-table-submitter">{job.submittedBy || "—"}</td>
                   <td>{formatTaskTime(job.submittedAt)}</td>
                   <td>{formatTaskTime(job.stoppedAt)}</td>
                   <td>
@@ -1683,6 +1689,8 @@ export function JobDetailPage({
   >({});
   // Task 列表缓存，用于获取节点 RANK
   const [tasks, setTasks] = useState<CRDTask[]>([]);
+  const [networkNodes, setNetworkNodes] = useState<CRDNode[]>([]);
+  const clusters = useClusters();
   const [detailNodeDiskWarningMap, setDetailNodeDiskWarningMap] = useState<
     Record<string, boolean>
   >({});
@@ -1845,6 +1853,7 @@ export function JobDetailPage({
           }
         }),
       );
+      setNetworkNodes(nodeResponses.filter((node): node is CRDNode => node !== null));
       const diskWarningMap: Record<string, boolean> = {};
       const nodeProgressMap: Record<string, PullProgressEntry[]> = {};
       const nodeWarningEventsMap: Record<string, NodeEventEntry[]> = {};
@@ -2343,8 +2352,8 @@ export function JobDetailPage({
   const workerClusterOptions = useMemo(() => {
     const set = new Set<string>();
     jobWorkers.forEach((w) => w.cluster && set.add(w.cluster));
-    return [...set].sort().map((v) => ({ value: v, label: v }));
-  }, [jobWorkers]);
+    return [...set].sort().map((v) => ({ value: v, label: clusterLabel(clusters, v) }));
+  }, [clusters, jobWorkers]);
   const workerKindOptions = useMemo(() => {
     const set = new Set<string>();
     jobWorkers.forEach((w) => set.add(getNodeKind(w)));
@@ -2650,7 +2659,7 @@ export function JobDetailPage({
               <span>{job.id}</span>
             </button>
             <span>
-              {c.jobType[job.type]} · {job.cluster}
+              {c.jobType[job.type]} · {clusterIDsLabel(clusters, job.cluster)}
             </span>
           </div>
         </div>
@@ -2956,6 +2965,8 @@ export function JobDetailPage({
                           )}
                           onSelectNode={onSelectNode}
                           onSelectCluster={onSelectCluster}
+                          clusterName={clusterLabel(clusters, worker.cluster ?? "")}
+                          nodeName={workerNodeLabel(networkNodes, worker)}
                           diskWarning={
                             detailNodeDiskWarningMap[worker.node] ?? false
                           }
@@ -4138,7 +4149,7 @@ function RoleRuntimeConfig({
               headers={[
                 zh ? "挂载类型" : "Mount type",
                 zh ? "来源" : "Source",
-                zh ? "大小" : "Size",
+                zh ? "挂载档位" : "Mount profile",
                 zh ? "挂载到 Worker" : "Mount in worker",
               ]}
               rows={resource.mounts.map((mount) => {
@@ -4162,7 +4173,7 @@ function RoleRuntimeConfig({
                     ? (storageClassDisplayNames[mount.objectStorage] ??
                       mount.objectStorage)
                     : mount.hostPath,
-                  mount.type === "storage" ? `${mount.pvcSizeGb} Gi` : "",
+                  mount.type === "storage" ? storageMountLabel(mount, zh) : "",
                   mount.mountPath,
                 ];
               })}
@@ -5083,6 +5094,8 @@ function WorkerTableRow({
   createdAt,
   onSelectNode,
   onSelectCluster,
+  clusterName,
+  nodeName,
   diskWarning,
   tasks,
 }: {
@@ -5095,6 +5108,9 @@ function WorkerTableRow({
   createdAt: string;
   onSelectNode?: (name: string) => void;
   onSelectCluster?: (id: string) => void;
+  // What the worker's cluster and node are shown as.
+  clusterName: string;
+  nodeName: string;
   diskWarning: boolean;
   tasks: CRDTask[];
 }) {
@@ -5232,6 +5248,7 @@ function WorkerTableRow({
         <td>
           <WorkerClusterLink
             cluster={worker.cluster}
+            label={clusterName}
             onSelectCluster={onSelectCluster}
           />
         </td>
@@ -5239,7 +5256,11 @@ function WorkerTableRow({
           <span
             className={`worker-node-with-warning${diskWarning ? " is-warning" : ""}`}
           >
-            <WorkerNodeLink node={worker.node} onSelectNode={onSelectNode} />
+            <WorkerNodeLink
+              node={worker.node}
+              label={nodeName}
+              onSelectNode={onSelectNode}
+            />
             {diskWarning && (
               <PullProgressInfo
                 progress={[]}
@@ -5353,17 +5374,21 @@ function WorkerTableRow({
   );
 }
 
+// cluster and node are the keys a link opens; label is what the chip shows,
+// the key itself as its title.
 function WorkerClusterLink({
   cluster,
+  label,
   onSelectCluster,
 }: {
   cluster?: string;
+  label: string;
   onSelectCluster?: (id: string) => void;
 }) {
   if (!onSelectCluster || !cluster || cluster === "—") {
     return (
       <span className="worker-chip" title={cluster || "—"}>
-        <span className="worker-link-label">{cluster || "—"}</span>
+        <span className="worker-link-label">{label ? <RealName label={label} name={cluster} /> : "—"}</span>
       </span>
     );
   }
@@ -5374,22 +5399,24 @@ function WorkerClusterLink({
       onClick={() => onSelectCluster(cluster)}
       title={cluster}
     >
-      <span className="worker-link-label">{cluster}</span>
+      <span className="worker-link-label"><RealName label={label} name={cluster} /></span>
     </button>
   );
 }
 
 function WorkerNodeLink({
   node,
+  label,
   onSelectNode,
 }: {
   node: string;
+  label: string;
   onSelectNode?: (name: string) => void;
 }) {
   if (!onSelectNode || !node || node === "—" || node.includes(",")) {
     return (
       <span className="worker-chip" title={node || "—"}>
-        <span className="worker-link-label">{node || "—"}</span>
+        <span className="worker-link-label">{label ? <RealName label={label} name={node} /> : "—"}</span>
       </span>
     );
   }
@@ -5400,7 +5427,7 @@ function WorkerNodeLink({
       onClick={() => onSelectNode(node)}
       title={node}
     >
-      <span className="worker-link-label">{node}</span>
+      <span className="worker-link-label"><RealName label={label} name={node} /></span>
     </button>
   );
 }

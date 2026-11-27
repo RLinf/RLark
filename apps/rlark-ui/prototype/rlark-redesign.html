@@ -1,0 +1,1522 @@
+<!doctype html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RLark Redesign Prototype</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   RLark redesign prototype — Fleet-inspired warm neutral system
+   ============================================================ */
+:root {
+  --canvas: #f7f7f5;
+  --panel: #ffffff;
+  --panel-2: #f0f0ee;
+  --sunken: #f2f2f0;
+  --line: #e4e4e0;
+  --line-strong: #dadad6;
+  --ink: #1d1d1f;
+  --ink-2: #3a3a3c;
+  --muted: #6e6e73;
+  --soft: #a1a1a6;
+  --purple: #5b4bc4;
+  --purple-bg: #f1eefb;
+  --purple-soft: #e7e2fa;
+  --green: #3e9a5c;
+  --green-bg: #e0f1e5;
+  --green-ink: #2c6b41;
+  --amber: #d59b2d;
+  --amber-bg: #fbeed2;
+  --amber-ink: #8a5a0b;
+  --red: #c8463b;
+  --red-bg: #fbe2de;
+  --red-ink: #a3332a;
+  --info: #4f82b8;
+  --info-bg: #e2ecf6;
+  --info-ink: #2f5c8a;
+  --shadow: 0 16px 40px rgba(29, 29, 31, .12), 0 2px 6px rgba(29, 29, 31, .05);
+  --shadow-soft: 0 1px 2px rgba(29, 29, 31, .05);
+  --radius: 14px;
+  --radius-sm: 10px;
+  --font: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  --canvas: #141413;
+  --panel: #1c1c1a;
+  --panel-2: #242422;
+  --sunken: #171716;
+  --line: #34342f;
+  --line-strong: #46463f;
+  --ink: #f2f2ef;
+  --ink-2: #c9c9c4;
+  --muted: #9a9a93;
+  --soft: #6e6e68;
+  --purple: #b9a6ff;
+  --purple-bg: #2b2540;
+  --purple-soft: #332b4d;
+  --green: #6fbf8b;
+  --green-bg: #1d3327;
+  --green-ink: #9bd9b1;
+  --amber: #e0b15a;
+  --amber-bg: #332a18;
+  --amber-ink: #f0cc8c;
+  --red: #e0796e;
+  --red-bg: #3a211f;
+  --red-ink: #f2a39b;
+  --info: #86addd;
+  --info-bg: #1d2a38;
+  --info-ink: #b7d0ee;
+  --shadow: 0 20px 48px rgba(0, 0, 0, .55), 0 2px 8px rgba(0, 0, 0, .35);
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, .4);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--canvas);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: var(--purple); text-decoration: none; }
+::selection { background: var(--purple-soft); }
+svg.icon { width: 17px; height: 17px; flex: 0 0 auto; }
+svg.icon.sm { width: 14px; height: 14px; }
+svg.icon.lg { width: 20px; height: 20px; }
+.hidden { display: none !important; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ---------- shell ---------- */
+.app { display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 100vh; }
+.sidebar {
+  position: sticky; top: 0; height: 100vh; overflow: auto;
+  display: flex; flex-direction: column; gap: 18px;
+  padding: 18px 12px 16px;
+  background: var(--canvas);
+  border-right: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 9px; padding: 2px 8px 14px; }
+.brand img { height: 28px; width: auto; display: block; }
+.brand img.dark { display: none; }
+[data-theme="dark"] .brand img.light { display: none; }
+[data-theme="dark"] .brand img.dark { display: block; }
+.brand .tag {
+  margin-left: auto; font-size: 9px; font-weight: 700; letter-spacing: .08em;
+  color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 6px;
+}
+.nav-label { padding: 0 10px; font-size: 10.5px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; color: var(--soft); }
+.nav { display: grid; gap: 1px; }
+.nav-item {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  height: 38px; padding: 0 10px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--ink-2); font-size: 13.5px; font-weight: 500; text-align: left;
+}
+.nav-item svg { color: var(--muted); }
+.nav-item:hover { background: var(--panel-2); }
+.nav-item.active { background: var(--panel-2); color: var(--ink); font-weight: 650; }
+.nav-item.active::before {
+  content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 2px;
+  border-radius: 2px; background: var(--purple);
+}
+.nav-item.active svg { color: var(--ink); }
+.nav-item .count { margin-left: auto; font-size: 10.5px; color: var(--muted); }
+.sidebar-bottom { margin-top: auto; display: grid; gap: 8px; }
+.env-card {
+  display: flex; align-items: center; gap: 10px; padding: 11px 12px;
+  border: 1px solid var(--line); border-radius: 11px; background: var(--panel);
+}
+.env-card .env-icon {
+  width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  background: var(--purple-bg); color: var(--purple);
+}
+.env-card small { display: block; font-size: 10.5px; color: var(--muted); }
+.env-card strong { display: block; font-size: 12px; font-weight: 650; }
+.env-card .live { margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 14%, transparent); }
+.side-link {
+  display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 10px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12px; text-align: left;
+}
+.side-link:hover { background: var(--panel-2); color: var(--ink); }
+
+.main { min-width: 0; display: flex; flex-direction: column; }
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 0 26px; background: var(--canvas); border-bottom: 1px solid var(--line);
+}
+.crumb { font-size: 10.5px; color: var(--muted); letter-spacing: .02em; }
+.topbar h1 { margin: 2px 0 0; font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.env-chip {
+  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 11px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 11.5px; color: var(--ink-2);
+}
+.env-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+.seg { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.seg button {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 11.5px; font-weight: 550;
+}
+.seg button svg { width: 14px; height: 14px; }
+.seg button.active { background: var(--panel-2); color: var(--ink); font-weight: 650; }
+.icon-btn {
+  width: 34px; height: 34px; display: grid; place-items: center;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--muted);
+}
+.icon-btn:hover { color: var(--ink); background: var(--panel-2); }
+.mobile-theme { display: none; }
+.avatar {
+  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--panel-2); border: 1px solid var(--line); font-size: 11px; font-weight: 700; color: var(--ink-2);
+}
+
+/* ---------- buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 38px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 10px;
+  background: var(--panel); color: var(--ink-2); font-size: 12.5px; font-weight: 600; white-space: nowrap;
+  transition: background .15s ease, border-color .15s ease, color .15s ease, opacity .15s ease;
+}
+.btn:hover { background: var(--panel-2); color: var(--ink); }
+.btn svg { width: 15px; height: 15px; }
+.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--panel); }
+.btn.primary:hover { opacity: .9; }
+[data-theme="dark"] .btn.primary { color: #1a1a18; }
+.btn.danger { color: var(--red-ink); border-color: color-mix(in srgb, var(--red) 40%, var(--line)); }
+.btn.danger:hover { background: var(--red-bg); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+.btn.ghost:hover { background: var(--panel-2); color: var(--ink); }
+.btn.sm { height: 30px; padding: 0 10px; font-size: 11.5px; border-radius: 8px; }
+.btn.sm svg { width: 13px; height: 13px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary:disabled { opacity: .35; }
+
+/* ---------- page ---------- */
+.page { display: none; padding: 24px 26px 44px; width: 100%; }
+.page.active { display: block; }
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
+.eyebrow { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.eyebrow svg { width: 13px; height: 13px; }
+.page-head h2 { margin: 6px 0 6px; font-size: 28px; line-height: 1.15; font-weight: 750; letter-spacing: -.025em; }
+.page-head p { margin: 0; max-width: 760px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.section-gap { height: 14px; }
+
+/* ---------- cards / stats ---------- */
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+.card.pad { padding: 18px 20px; }
+.summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.stat {
+  display: flex; gap: 12px; align-items: flex-start; padding: 15px 16px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.stat-icon { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 9px; background: var(--panel-2); color: var(--muted); }
+.stat .label { font-size: 11px; font-weight: 650; color: var(--muted); letter-spacing: .01em; }
+.stat .value { margin-top: 2px; font-size: 26px; line-height: 1.15; font-weight: 750; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.stat .note { margin-top: 2px; font-size: 10.5px; color: var(--muted); }
+.stat .note .dot { margin-right: 4px; }
+
+/* ---------- panels ---------- */
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 16px 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.panel-head h3 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.panel-head p { margin: 3px 0 0; font-size: 11.5px; color: var(--muted); }
+.panel-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.panel-body { padding: 16px 18px; }
+.panel-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
+
+/* ---------- form / search ---------- */
+.search {
+  display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 10px;
+  border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel); min-width: 210px; color: var(--muted);
+}
+.search svg { width: 14px; height: 14px; }
+.search input { width: 100%; border: 0; outline: 0; background: transparent; font-size: 12px; color: var(--ink); }
+.search input::placeholder { color: var(--soft); }
+.select {
+  height: 34px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 9px;
+  background: var(--panel); font-size: 12px; color: var(--ink-2); outline: 0;
+}
+.select:focus, .search:focus-within { border-color: var(--purple); box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 16%, transparent); }
+.field { display: grid; gap: 6px; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.field input, .field select {
+  height: 40px; min-width: 0; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 10px;
+  background: var(--sunken); color: var(--ink); font-size: 13px; font-weight: 400; outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.field input::placeholder { color: var(--soft); }
+.field input:focus, .field select:focus { border-color: var(--purple); box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 15%, transparent); }
+.field small { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.5; }
+.field.full { grid-column: 1 / -1; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+
+/* ---------- tables ---------- */
+.table-scroll { overflow-x: auto; }
+table.grid { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13px; }
+table.grid th {
+  padding: 11px 16px; text-align: left; white-space: nowrap;
+  font-size: 11px; font-weight: 650; color: var(--muted); letter-spacing: .01em;
+  background: color-mix(in srgb, var(--panel-2) 50%, var(--panel));
+  border-bottom: 1px solid var(--line);
+}
+table.grid td { padding: 13px 16px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+table.grid tbody tr:last-child td { border-bottom: 0; }
+table.grid tbody tr:hover { background: color-mix(in srgb, var(--panel-2) 45%, transparent); }
+table.grid tbody tr.clickable { cursor: pointer; }
+.cell-main { font-size: 13px; font-weight: 600; color: var(--ink); line-height: 1.35; }
+.cell-sub { margin-top: 2px; font-size: 11px; color: var(--muted); line-height: 1.4; }
+.cell-sub.mono { font-family: var(--mono); }
+.row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.check { width: 16px; height: 16px; accent-color: var(--purple); }
+
+/* ---------- status ---------- */
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--soft); flex: 0 0 auto; }
+.dot.ok { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 14%, transparent); }
+.dot.warn { background: var(--amber); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 15%, transparent); }
+.dot.bad { background: var(--red); box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 14%, transparent); }
+.dot.purple { background: var(--purple); box-shadow: 0 0 0 3px color-mix(in srgb, var(--purple) 14%, transparent); }
+.dot.info { background: var(--info); box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 14%, transparent); }
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.status .dot { margin-right: 1px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 8px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2);
+  font-size: 10.5px; font-weight: 650; color: var(--ink-2); white-space: nowrap;
+}
+.pill .dot { width: 5px; height: 5px; }
+.pill.ok { color: var(--green-ink); background: var(--green-bg); border-color: color-mix(in srgb, var(--green) 26%, var(--line)); }
+.pill.warn { color: var(--amber-ink); background: var(--amber-bg); border-color: color-mix(in srgb, var(--amber) 28%, var(--line)); }
+.pill.bad { color: var(--red-ink); background: var(--red-bg); border-color: color-mix(in srgb, var(--red) 26%, var(--line)); }
+.pill.info { color: var(--info-ink); background: var(--info-bg); border-color: color-mix(in srgb, var(--info) 26%, var(--line)); }
+.pill.purple { color: var(--purple); background: var(--purple-bg); border-color: color-mix(in srgb, var(--purple) 26%, var(--line)); }
+.tag-chip {
+  display: inline-flex; align-items: center; height: 21px; padding: 0 7px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2);
+  font-size: 10.5px; color: var(--muted); font-family: var(--mono);
+}
+
+/* ---------- notices ---------- */
+.notice { display: flex; align-items: flex-start; gap: 9px; padding: 11px 13px; border-radius: 10px; border: 1px solid; font-size: 11.5px; line-height: 1.5; }
+.notice svg { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; }
+.notice.warn { color: var(--amber-ink); background: var(--amber-bg); border-color: color-mix(in srgb, var(--amber) 26%, var(--line)); }
+.notice.bad { color: var(--red-ink); background: var(--red-bg); border-color: color-mix(in srgb, var(--red) 26%, var(--line)); }
+.notice.info { color: var(--info-ink); background: var(--info-bg); border-color: color-mix(in srgb, var(--info) 26%, var(--line)); }
+.notice.ok { color: var(--green-ink); background: var(--green-bg); border-color: color-mix(in srgb, var(--green) 26%, var(--line)); }
+.notice strong { font-weight: 650; }
+
+/* ---------- tabs ---------- */
+.site-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.site-tab {
+  display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 9px 13px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink-2); text-align: left;
+}
+.site-tab:hover { border-color: var(--line-strong); }
+.site-tab.active { border-color: color-mix(in srgb, var(--purple) 38%, var(--line)); background: color-mix(in srgb, var(--purple-bg) 55%, var(--panel)); }
+.site-tab .meta { display: grid; gap: 2px; }
+.site-tab strong { font-size: 12.5px; font-weight: 700; }
+.site-tab small { font-size: 10.5px; color: var(--muted); }
+.site-tab .count { justify-self: end; font-size: 10px; font-weight: 700; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; }
+.site-tab .dot { margin-top: 1px; }
+.seg-tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); padding: 0 2px; }
+.seg-tabs button {
+  height: 40px; border: 0; background: none; color: var(--muted); font-size: 12.5px; font-weight: 600;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 0 2px;
+}
+.seg-tabs button.active { color: var(--ink); border-color: var(--ink); }
+
+/* ---------- switch ---------- */
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch .track { position: relative; width: 38px; height: 22px; border-radius: 999px; background: var(--line-strong); transition: background .15s ease; flex: 0 0 auto; }
+.switch .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.18); transition: transform .15s ease; }
+.switch input:checked + .track { background: var(--purple); }
+.switch input:checked + .track::after { transform: translateX(16px); }
+.switch .state { font-size: 11px; color: var(--muted); font-weight: 500; }
+
+/* ---------- discovery workbench ---------- */
+.workbench { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.wb-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 17px 20px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.wb-head h3 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+.wb-head p { margin: 4px 0 0; font-size: 11px; color: var(--muted); }
+.wb-head-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+.fact { min-width: 0; padding: 11px 12px; border-radius: 10px; background: color-mix(in srgb, var(--panel-2) 62%, var(--panel)); display: grid; align-content: start; gap: 6px; }
+.fact .label { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 650; color: var(--muted); }
+.fact .label svg { width: 13px; height: 13px; }
+.fact .value { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.fact code { display: block; font-family: var(--mono); font-size: 10.5px; color: var(--info-ink); background: var(--info-bg); border-radius: 6px; padding: 5px 7px; overflow-wrap: anywhere; }
+.wb-form { padding: 16px 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.wb-form .full { grid-column: 1 / -1; }
+.range-list { display: grid; gap: 8px; }
+.range-row { display: grid; grid-template-columns: minmax(0, 1fr) 38px; gap: 8px; }
+.range-row .icon-btn { height: 40px; width: 38px; }
+.save-bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 13px 20px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 94%, var(--canvas)); position: sticky; bottom: 0; z-index: 2; }
+.save-bar .muted { margin-right: auto; }
+.rules { border: 1px solid color-mix(in srgb, var(--info) 24%, var(--line)); background: color-mix(in srgb, var(--info) 5%, var(--panel)); border-radius: 12px; padding: 13px 16px; display: grid; gap: 6px; font-size: 11px; color: var(--muted); line-height: 1.55; }
+.rules strong { color: var(--ink-2); font-size: 11.5px; }
+.rules ul { margin: 0; padding-left: 17px; display: grid; gap: 4px; }
+
+/* ---------- join ---------- */
+.setup-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; }
+.setup-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.setup-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
+.setup-head p { margin: 3px 0 0; font-size: 11.5px; color: var(--muted); }
+.methods { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.method { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); text-align: left; color: var(--ink-2); }
+.method:hover { border-color: var(--line-strong); }
+.method.active { border-color: color-mix(in srgb, var(--purple) 36%, var(--line)); background: color-mix(in srgb, var(--purple-bg) 45%, var(--panel)); }
+.method .m-icon { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 8px; background: var(--panel-2); color: var(--muted); }
+.method.active .m-icon { background: var(--purple-bg); color: var(--purple); }
+.method .m-copy { display: grid; gap: 2px; min-width: 0; }
+.method strong { font-size: 12.5px; font-weight: 650; }
+.method small { font-size: 10.5px; color: var(--muted); line-height: 1.45; }
+.join-layout { display: grid; grid-template-columns: minmax(0, 1fr) 318px; gap: 14px; align-items: start; margin-top: 14px; }
+.join-main { min-width: 0; display: grid; gap: 14px; }
+.rail { position: sticky; top: 82px; display: grid; gap: 10px; }
+.rail-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: 9px; }
+.rail-card h4 { margin: 0; font-size: 12.5px; font-weight: 700; }
+.rail-card p { margin: 0; font-size: 10.5px; color: var(--muted); line-height: 1.45; }
+.rail-item { border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; display: grid; gap: 6px; background: color-mix(in srgb, var(--panel-2) 35%, var(--panel)); }
+.rail-item .rt { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; font-weight: 650; }
+.rail-steps { display: grid; gap: 3px; font-size: 10.5px; color: var(--muted); }
+.rail-step { display: flex; align-items: center; gap: 6px; }
+.rail-step .dot { width: 5px; height: 5px; }
+.rail-step.done { color: var(--green-ink); }
+.rail-step.running { color: var(--ink); }
+.progress { height: 4px; border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.progress > i { display: block; height: 100%; border-radius: inherit; background: var(--purple); transition: width .3s ease; }
+.stack { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--panel-2); }
+.stack > i { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 7px; font-size: 10.5px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.state-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px 8px; margin-top: 8px; font-size: 10.5px; color: var(--muted); }
+.state-grid span { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.state-grid strong { color: var(--ink); font-size: 12px; font-weight: 700; }
+.insight-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1.05fr); gap: 14px; }
+@media (max-width: 1180px) { .insight-grid { grid-template-columns: 1fr; } }
+.ssh-panel { display: grid; gap: 14px; }
+.ssh-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; }
+.ssh-card h3 { margin: 0; font-size: 15px; font-weight: 700; }
+.ssh-card > p { margin: 4px 0 0; font-size: 11.5px; color: var(--muted); }
+.machine-table { min-width: 980px; }
+.machine-table td { vertical-align: top; }
+.reach { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; white-space: nowrap; }
+.reach .dot { width: 6px; height: 6px; }
+.reach.bad { color: var(--red-ink); }
+.reach.ok { color: var(--green-ink); }
+.code-panel { display: grid; gap: 14px; }
+.code-box { display: flex; align-items: center; gap: 10px; padding: 14px; border: 1px dashed var(--line-strong); border-radius: 12px; background: var(--sunken); font-family: var(--mono); font-size: 13px; letter-spacing: .06em; }
+
+/* ---------- drawer ---------- */
+.drawer-backdrop { position: fixed; inset: 0; z-index: 40; background: rgba(20, 20, 19, .38); opacity: 0; pointer-events: none; transition: opacity .18s ease; }
+.drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 41; width: min(560px, 100%);
+  background: var(--panel); border-left: 1px solid var(--line);
+  transform: translateX(102%); transition: transform .22s ease; display: flex; flex-direction: column;
+}
+.drawer.open { transform: none; }
+.drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
+.drawer-head h3 { margin: 0; font-size: 18px; font-weight: 750; letter-spacing: -.01em; }
+.drawer-head p { margin: 3px 0 0; font-size: 11px; color: var(--muted); }
+.drawer-tabs { display: flex; gap: 18px; padding: 0 20px; border-bottom: 1px solid var(--line); }
+.drawer-tabs button { height: 38px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font-size: 12px; font-weight: 600; }
+.drawer-tabs button.active { color: var(--ink); border-color: var(--ink); }
+.drawer-body { padding: 16px 20px; overflow: auto; display: grid; gap: 14px; }
+.drawer-foot { margin-top: auto; display: flex; justify-content: flex-end; gap: 8px; padding: 13px 20px; border-top: 1px solid var(--line); background: var(--panel); }
+.facts-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.fact-line { display: flex; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.fact-line:last-child { border-bottom: 0; }
+.fact-line .k { color: var(--muted); }
+.fact-line .v { color: var(--ink); text-align: right; overflow-wrap: anywhere; }
+
+/* ---------- login ---------- */
+.login-overlay { position: fixed; inset: 0; z-index: 70; display: none; place-items: center; padding: 24px; background: var(--canvas); overflow: auto; }
+.login-overlay.open { display: grid; }
+.login-card { width: min(400px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 28px; box-shadow: var(--shadow); }
+.login-brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
+.login-brand img { height: 34px; }
+.login-brand img.dark { display: none; }
+[data-theme="dark"] .login-brand img.light { display: none; }
+[data-theme="dark"] .login-brand img.dark { display: block; }
+.login-card h2 { margin: 0 0 5px; font-size: 22px; font-weight: 750; letter-spacing: -.02em; }
+.login-card > p { margin: 0 0 20px; font-size: 12px; color: var(--muted); }
+.login-card .field { margin-bottom: 12px; }
+.login-card .btn { width: 100%; height: 42px; margin-top: 6px; }
+.login-note { margin-top: 16px; font-size: 10.5px; color: var(--muted); text-align: center; }
+
+/* ---------- toast ---------- */
+.toasts { position: fixed; right: 20px; bottom: 20px; z-index: 90; display: grid; gap: 8px; max-width: min(360px, calc(100vw - 40px)); }
+.toast {
+  display: flex; align-items: flex-start; gap: 8px; padding: 10px 13px; border-radius: 10px;
+  background: var(--ink); color: var(--panel); font-size: 11.5px; line-height: 1.45; box-shadow: var(--shadow);
+  animation: toast-in .18s ease-out;
+}
+[data-theme="dark"] .toast { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); }
+.toast svg { width: 14px; height: 14px; margin-top: 1px; flex: 0 0 auto; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ---------- responsive ---------- */
+@media (max-width: 1180px) {
+  .join-layout { grid-template-columns: minmax(0, 1fr); }
+  .rail { position: static; }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 1050px) {
+  .app { grid-template-columns: 72px minmax(0, 1fr); }
+  .sidebar { padding: 16px 9px; align-items: center; }
+  .brand { padding: 0 0 12px; }
+  .brand img { height: 24px; width: 28px; object-fit: cover; object-position: left; }
+  .brand .tag, .nav-label, .nav-item span, .nav-item .count, .env-card, .side-link span { display: none; }
+  .nav-item { width: 42px; justify-content: center; padding: 0; }
+  .nav-item.active::before { left: -9px; }
+  .side-link { width: 42px; justify-content: center; padding: 0; }
+  .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .methods { grid-template-columns: 1fr; }
+}
+@media (max-width: 900px) {
+  .page { padding: 20px 20px 36px; }
+  .topbar { padding: 0 20px; height: 62px; }
+  .page-head { flex-direction: column; }
+  .head-actions { justify-content: flex-start; }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wb-form { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .page { padding: 16px 14px 32px; }
+  .topbar { padding: 0 14px; height: auto; min-height: 58px; padding-top: 8px; padding-bottom: 8px; align-items: flex-start; }
+  .topbar-actions { gap: 6px; }
+  .env-chip, .topbar .seg { display: none; }
+  .topbar .avatar, .topbar .icon-btn:not(.mobile-theme) { display: none; }
+  .mobile-theme { display: grid; }
+  .page-head h2 { font-size: 24px; }
+  .summary-grid, .facts { grid-template-columns: minmax(0, 1fr); }
+  .form-grid { grid-template-columns: 1fr; }
+  .site-tabs { display: grid; grid-template-columns: 1fr; }
+  .site-tab { width: 100%; }
+  .panel-head { flex-direction: column; }
+  .panel-tools { width: 100%; }
+  .search { width: 100%; min-width: 0; }
+  .save-bar { flex-wrap: wrap; }
+  .save-bar .btn { flex: 1; }
+  .drawer { width: 100%; }
+  .facts-2 { grid-template-columns: 1fr; }
+  .login-card { padding: 22px; }
+}
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+  <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a16 16 0 0 1 0 18M12 3a16 16 0 0 0 0 18"/></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m21 15-5-5L5 21"/></symbol>
+  <symbol id="i-fingerprint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10a2 2 0 0 0-2 2c0 2.5-.5 4.5-1.5 6"/><path d="M12 6a6 6 0 0 0-6 6c0 2.2-.5 4.2-1.4 6"/><path d="M12 2a10 10 0 0 0-8.5 15"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="M14 20c.8-1.7 1.2-3.7 1.2-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></symbol>
+  <symbol id="i-radar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19.07 4.93A10 10 0 1 0 12 22"/><path d="M15.54 8.46A5 5 0 1 0 12 17"/><path d="M12 12l7-7"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
+  <symbol id="i-braces" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4a2 2 0 0 0 2 2h1"/><path d="M16 3h1a2 2 0 0 1 2 2v4a2 2 0 0 0 2 2 2 2 0 0 0-2 2v4a2 2 0 0 1-2 2h-1"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+  <symbol id="i-network" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="6" rx="1"/><rect x="3" y="15" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M12 9v6M6 15v-3h12v3"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m7 4 13 8-13 8V4Z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></symbol>
+</svg>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none"><symbol id="i-grid-alt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol></svg>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <img class="light" src="/rlark-logo-zh-light.png" alt="RLark">
+      <img class="dark" src="/rlark-logo-zh-dark.svg" alt="RLark">
+      <span class="tag">ADMIN</span>
+    </div>
+    <div class="nav">
+      <div class="nav-label">管理后台</div>
+      <button class="nav-item active" data-page="dashboard" title="管理工作台"><svg class="icon"><use href="#i-grid"/></svg><span>管理工作台</span></button>
+      <button class="nav-item" data-static title="集群管理"><svg class="icon"><use href="#i-layers"/></svg><span>集群管理</span></button>
+      <button class="nav-item" data-page="jobs" title="任务管理"><svg class="icon"><use href="#i-list"/></svg><span>任务管理</span><span class="count">18</span></button>
+      <button class="nav-item" data-static title="网络域"><svg class="icon"><use href="#i-globe"/></svg><span>网络域</span></button>
+      <button class="nav-item" data-static title="存储管理"><svg class="icon"><use href="#i-db"/></svg><span>存储管理</span></button>
+      <button class="nav-item" data-static title="镜像管理"><svg class="icon"><use href="#i-image"/></svg><span>镜像管理</span></button>
+    </div>
+    <div class="nav">
+      <div class="nav-label">场站节点</div>
+      <button class="nav-item" data-page="nodes" title="场站节点"><svg class="icon"><use href="#i-fingerprint"/></svg><span>场站节点</span></button>
+      <button class="nav-item" data-page="join" title="加入节点"><svg class="icon"><use href="#i-plus"/></svg><span>加入节点</span></button>
+      <button class="nav-item" data-page="discovery" title="扫描设置"><svg class="icon"><use href="#i-radar"/></svg><span>扫描设置</span></button>
+    </div>
+    <div class="nav">
+      <button class="nav-item" data-static title="SSH 公钥"><svg class="icon"><use href="#i-terminal"/></svg><span>SSH 公钥</span></button>
+      <button class="nav-item" data-static title="系统配置"><svg class="icon"><use href="#i-settings"/></svg><span>系统配置</span></button>
+      <button class="nav-item" data-static title="接口参考"><svg class="icon"><use href="#i-braces"/></svg><span>接口参考</span></button>
+    </div>
+    <div class="sidebar-bottom">
+      <div class="env-card">
+        <span class="env-icon"><svg class="icon"><use href="#i-server"/></svg></span>
+        <div><small>环境</small><strong>Mock 环境</strong></div>
+        <span class="live"></span>
+      </div>
+      <button class="side-link" id="open-login"><svg class="icon sm"><use href="#i-shield"/></svg><span>登录页预览</span></button>
+      <button class="side-link" data-static><svg class="icon sm"><use href="#i-arrow"/></svg><span>收起侧栏</span></button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div>
+        <div class="crumb">当前页面 / <span id="crumb">管理工作台</span></div>
+        <h1 id="top-title">管理工作台</h1>
+      </div>
+      <div class="topbar-actions">
+        <span class="env-chip"><i class="dot"></i>Mock 环境</span>
+        <div class="seg" role="group" aria-label="语言">
+          <button class="active">中</button><button data-lang-en>EN</button>
+        </div>
+        <div class="seg" role="group" aria-label="主题">
+          <button data-theme-btn="light" class="active"><svg class="icon"><use href="#i-sun"/></svg>浅色</button>
+          <button data-theme-btn="dark"><svg class="icon"><use href="#i-moon"/></svg>深色</button>
+        </div>
+        <button class="icon-btn" title="通知"><svg class="icon"><use href="#i-bell"/></svg></button>
+        <button class="icon-btn mobile-theme" id="mobile-theme" title="切换主题"><svg class="icon"><use href="#i-moon"/></svg></button>
+        <button class="btn primary"><svg class="icon"><use href="#i-plus"/></svg>新建集群</button>
+        <div class="avatar">AD</div>
+      </div>
+    </header>
+
+    <!-- ================= DASHBOARD ================= -->
+    <section class="page active" id="page-dashboard">
+      <div class="page-head">
+        <div>
+          <span class="eyebrow"><svg class="icon"><use href="#i-grid"/></svg>管理工作台</span>
+          <h2>管理工作台</h2>
+          <p>总览跨集群的任务、场站节点、机器人与集群负载。</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn" data-page="jobs"><svg class="icon"><use href="#i-list"/></svg>查看任务</button>
+          <button class="btn" onclick="toast('已刷新', 'ok')"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button>
+        </div>
+      </div>
+      <div class="summary-grid">
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-play"/></svg></span><div><div class="label">运行中任务</div><div class="value">12</div><div class="note"><i class="dot ok"></i>5 个集群</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-fingerprint"/></svg></span><div><div class="label">场站节点</div><div class="value">6</div><div class="note">2 个站点 · 6 台机器</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-shield"/></svg></span><div><div class="label">机器人在用</div><div class="value">1</div><div class="note"><i class="dot purple"></i>s1u-07 · 1 个 Run</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-layers"/></svg></span><div><div class="label">集群在线</div><div class="value">3<span style="font-size:14px;color:var(--muted)">/3</span></div><div class="note">GPU · 机器人 · 云</div></div></div>
+      </div>
+      <div class="section-gap"></div>
+
+      <div class="insight-grid">
+        <div class="panel">
+          <div class="panel-head"><div><h3>最近事件</h3><p>任务、节点与调度的最新变化</p></div><button class="btn sm">查看全部</button></div>
+          <div class="panel-body" style="display:grid;gap:0">
+            <div class="fact-line"><span class="k">15:41:08</span><span class="v" style="text-align:left"><span class="status"><i class="dot ok"></i>hg-dagger-zipper 入库 episode 41</span></span></div>
+            <div class="fact-line"><span class="k">15:39:52</span><span class="v" style="text-align:left"><span class="status"><i class="dot warn"></i>pi05-eval-baseline 等待 GPU 配额</span></span></div>
+            <div class="fact-line"><span class="k">15:31:17</span><span class="v" style="text-align:left"><span class="status"><i class="dot ok"></i>s1u-07 恢复为运行中</span></span></div>
+            <div class="fact-line"><span class="k">15:12:40</span><span class="v" style="text-align:left"><span class="status"><i class="dot bad"></i>gap-test-0712 评测失败</span></span></div>
+            <div class="fact-line"><span class="k">14:58:12</span><span class="v" style="text-align:left"><span class="status"><i class="dot ok"></i>alexfu 加入 rlark-local-dev-gpu</span></span></div>
+            <div class="fact-line"><span class="k">14:40:03</span><span class="v" style="text-align:left"><span class="status"><i class="dot warn"></i>s1u-03 心跳丢失</span></span></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div><h3>集群负载</h3><p>GPU 与节点就绪情况</p></div></div>
+          <div class="panel-body" style="display:grid;gap:14px">
+            <div style="display:grid;gap:6px"><div style="display:flex;justify-content:space-between;font-size:11.5px"><span>rlark-ksyun-gpu</span><span class="muted num">GPU 16 / 20</span></div><div class="progress"><i style="width:80%;background:var(--info)"></i></div></div>
+            <div style="display:grid;gap:6px"><div style="display:flex;justify-content:space-between;font-size:11.5px"><span>rlark-local-dev-gpu</span><span class="muted num">GPU 2 / 8</span></div><div class="progress"><i style="width:25%;background:var(--info)"></i></div></div>
+            <div style="display:grid;gap:6px"><div style="display:flex;justify-content:space-between;font-size:11.5px"><span>rlark-robot-s1u-01</span><span class="muted num">节点 4 / 4</span></div><div class="progress"><i style="width:100%;background:var(--info)"></i></div></div>
+            <div class="fact-line" style="padding-top:2px;border-bottom:0"><span class="k">队列</span><span class="v">4 个任务等待 GPU</span></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div><h3>Astribot 机器人</h3><p>在用、电源与相机 · RLark 已知状态</p></div><span class="pill ok"><i class="dot ok"></i>实时</span></div>
+          <div class="panel-body" style="display:grid;gap:10px">
+            <div style="display:flex;align-items:baseline;gap:10px"><strong class="num" style="font-size:26px;font-weight:750;letter-spacing:-.03em">1</strong><span class="muted" style="font-size:11px">台在用</span><span class="pill purple"><i class="dot purple"></i>1 个 Run</span></div>
+            <div class="fact-line"><span class="k">当前 Run</span><span class="v mono" style="font-size:10.5px">20261123_151954_rollout_s1u_02</span></div>
+            <div class="fact-line"><span class="k">电源</span><span class="v"><span class="status"><i class="dot ok"></i>2 正常</span> · <span class="status"><i class="dot bad"></i>1 故障</span> · 1 未知</span></div>
+            <div class="fact-line"><span class="k">相机</span><span class="v">8/8 正常</span></div>
+            <div class="fact-line"><span class="k">站点在线</span><span class="v">office 2/2 · lab 1/1 · ksyun 2/2</span></div>
+            <button class="btn sm" data-page="nodes" style="justify-self:start">查看机器人状态</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= NODES ================= -->
+    <section class="page" id="page-nodes">
+      <div class="page-head">
+        <div>
+          <span class="eyebrow"><svg class="icon"><use href="#i-fingerprint"/></svg>场站节点</span>
+          <h2>场站节点</h2>
+          <p>查看场站机器的身份、连接与入网状态。点击节点行可查看完整详情。</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn" data-page="join"><svg class="icon"><use href="#i-plus"/></svg>加入节点</button>
+          <button class="btn"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button>
+        </div>
+      </div>
+
+      <div class="summary-grid">
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-server"/></svg></span><div><div class="label">全部</div><div class="value">6</div><div class="note">2 个站点 · 6 台机器</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-shield"/></svg></span><div><div class="label">在线</div><div class="value">4</div><div class="note"><i class="dot ok"></i>全部已入网</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-pause"/></svg></span><div><div class="label">离线</div><div class="value">1</div><div class="note"><i class="dot warn"></i>s1u-03 2 小时前</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-alert"/></svg></span><div><div class="label">冲突</div><div class="value">1</div><div class="note"><i class="dot bad"></i>s1u-09 身份重复</div></div></div>
+      </div>
+
+      <div class="section-gap"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div><h3>节点</h3><p>共 6 台 · 按最近上报排序</p></div>
+          <div class="panel-tools">
+            <label class="search"><svg class="icon"><use href="#i-search"/></svg><input placeholder="搜索节点名、UID"></label>
+            <select class="select"><option>全部状态</option><option>在线</option><option>离线</option><option>冲突</option></select>
+            <select class="select"><option>全部集群</option><option>rlark-robot-s1u-01</option><option>rlark-local-dev-gpu</option></select>
+            <button class="btn sm"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="grid">
+            <thead><tr><th style="width:34px"><input class="check" type="checkbox"></th><th>节点</th><th>集群</th><th>阶段</th><th>网络</th><th>入网</th><th>机型</th><th>最近上报</th><th style="text-align:right">操作</th></tr></thead>
+            <tbody>
+              <tr class="clickable" data-drawer="s1u-07"><td><input class="check" type="checkbox" onclick="event.stopPropagation()"></td><td><div class="cell-main">s1u-07</div><div class="cell-sub mono">s1u-07-x86</div></td><td>rlark-robot-s1u-01</td><td><span class="status"><i class="dot ok"></i>运行中</span></td><td><span class="pill info">已验证</span></td><td>入网码</td><td>S1U</td><td class="num" style="color:var(--muted)">3 秒前</td><td><div class="row-actions"><button class="btn sm">详情</button></div></td></tr>
+              <tr class="clickable" data-drawer="s1u-05"><td><input class="check" type="checkbox" onclick="event.stopPropagation()"></td><td><div class="cell-main">s1u-05</div><div class="cell-sub mono">s1u-05-x86</div></td><td>rlark-robot-s1u-01</td><td><span class="status"><i class="dot ok"></i>运行中</span></td><td><span class="pill info">已验证</span></td><td>入网码</td><td>S1U</td><td class="num" style="color:var(--muted)">12 秒前</td><td><div class="row-actions"><button class="btn sm">详情</button></div></td></tr>
+              <tr class="clickable" data-drawer="s1u-03"><td><input class="check" type="checkbox" onclick="event.stopPropagation()"></td><td><div class="cell-main">s1u-03</div><div class="cell-sub mono">s1u-03-x86</div></td><td>rlark-robot-s1u-01</td><td><span class="status"><i class="dot warn"></i>离线</span></td><td><span class="pill">未验证</span></td><td>入网码</td><td>S1U</td><td class="num" style="color:var(--muted)">2 小时前</td><td><div class="row-actions"><button class="btn sm">详情</button></div></td></tr>
+              <tr class="clickable" data-drawer="s1u-09"><td><input class="check" type="checkbox" onclick="event.stopPropagation()"></td><td><div class="cell-main">s1u-09</div><div class="cell-sub mono">s1u-09-x86</div></td><td>rlark-robot-s1u-01</td><td><span class="status"><i class="dot bad"></i>冲突</span></td><td><span class="pill bad">身份重复</span></td><td>入网码</td><td>S1U</td><td class="num" style="color:var(--muted)">1 天前</td><td><div class="row-actions"><button class="btn sm">详情</button></div></td></tr>
+              <tr class="clickable" data-drawer="alexfu"><td><input class="check" type="checkbox" onclick="event.stopPropagation()"></td><td><div class="cell-main">alexfu</div><div class="cell-sub mono">8f2a·c91</div></td><td>rlark-local-dev-gpu</td><td><span class="status"><i class="dot ok"></i>运行中</span></td><td><span class="pill info">已验证</span></td><td>SSH 入网</td><td>x86</td><td class="num" style="color:var(--muted)">5 秒前</td><td><div class="row-actions"><button class="btn sm">详情</button></div></td></tr>
+              <tr class="clickable" data-drawer="wendychen"><td><input class="check" type="checkbox" onclick="event.stopPropagation()"></td><td><div class="cell-main">wendychen</div><div class="cell-sub mono">41b7·2d0</div></td><td>rlark-local-dev-gpu</td><td><span class="status"><i class="dot ok"></i>运行中</span></td><td><span class="pill info">已验证</span></td><td>SSH 入网</td><td>x86</td><td class="num" style="color:var(--muted)">8 秒前</td><td><div class="row-actions"><button class="btn sm">详情</button></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-foot"><span>第 1 页 / 共 1 页 · 每页 20 条</span><div class="row-actions"><button class="btn sm" disabled>上一页</button><button class="btn sm" disabled>下一页</button></div></div>
+      </div>
+
+      <div class="section-gap"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div><h3>Astribot 机器人状态</h3><p>在用 / 占用 Run / 电源 / 维护 / 相机 · 来自 RLark 的 Node 标签与注解</p></div>
+          <div class="panel-tools">
+            <span class="pill purple"><i class="dot purple"></i>在用 1</span>
+            <span class="pill"><i class="dot"></i>空闲 1</span>
+            <span class="pill"><i class="dot"></i>维护 0</span>
+            <span class="pill bad"><i class="dot bad"></i>异常 2</span>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="grid" style="min-width:940px">
+            <thead><tr><th>机器人</th><th>在用</th><th>占用 Run</th><th>电源</th><th>维护</th><th>相机</th><th>最近上报</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><div class="cell-main">s1u-07</div><div class="cell-sub mono">1423225026100</div></td>
+                <td><span class="status"><i class="dot purple"></i>在用</span><div class="cell-sub">fleet-station 正在服务 Run</div></td>
+                <td><span class="tag-chip">20261123_151954_rollout_s1u_02</span><div class="cell-sub">至 15:58 · admin 授予</div></td>
+                <td><span class="status"><i class="dot ok"></i>就绪</span></td>
+                <td><span class="status"><i class="dot"></i>无</span></td>
+                <td><span class="status"><i class="dot ok"></i>4/4 正常</span></td>
+                <td class="num" style="color:var(--muted)">3 秒前</td>
+              </tr>
+              <tr>
+                <td><div class="cell-main">s1u-05</div><div class="cell-sub mono">1423225026101</div></td>
+                <td><span class="status"><i class="dot"></i>空闲</span><div class="cell-sub">没有组件在 /run/rlark/in-use 标记</div></td>
+                <td><span class="muted">—</span></td>
+                <td><span class="status"><i class="dot ok"></i>就绪</span></td>
+                <td><span class="status"><i class="dot"></i>无</span></td>
+                <td><span class="status"><i class="dot ok"></i>4/4 正常</span></td>
+                <td class="num" style="color:var(--muted)">12 秒前</td>
+              </tr>
+              <tr>
+                <td><div class="cell-main">s1u-03</div><div class="cell-sub mono">1423225026098</div></td>
+                <td><span class="status"><i class="dot warn"></i>未知（离线）</span></td>
+                <td><span class="muted">—</span></td>
+                <td><span class="status"><i class="dot"></i>未知</span></td>
+                <td><span class="status"><i class="dot"></i>无</span></td>
+                <td><span class="muted">—</span></td>
+                <td class="num" style="color:var(--muted)">2 小时前</td>
+              </tr>
+              <tr>
+                <td><div class="cell-main">s1u-09</div><div class="cell-sub mono">1423225026099</div></td>
+                <td><span class="status"><i class="dot bad"></i>—（冲突）</span></td>
+                <td><span class="muted">—</span></td>
+                <td><span class="status"><i class="dot bad"></i>故障</span></td>
+                <td><span class="status"><i class="dot"></i>无</span></td>
+                <td><span class="muted">—</span></td>
+                <td class="num" style="color:var(--muted)">1 天前</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-foot"><span>数据来自 power-state、robot-claim、maintenance-state、cameras；采集阶段（策略/复位/恢复/接管）来自 Fleet，不在 RLark。</span></div>
+      </div>
+
+      <div class="section-gap"></div>
+
+      <div class="panel">
+        <div class="panel-head"><div><h3>入网记录</h3><p>入网码与 SSH 入网记录 · 最近 3 条</p></div><button class="btn sm">查看全部</button></div>
+        <div class="table-scroll">
+          <table class="grid">
+            <thead><tr><th>记录</th><th>集群</th><th>方式</th><th>状态</th><th>签发人</th><th>签发时间</th><th>过期时间</th></tr></thead>
+            <tbody>
+              <tr><td><div class="cell-main mono">s1u-07</div><div class="cell-sub">admission</div></td><td>rlark-robot-s1u-01</td><td>入网码</td><td><span class="pill ok">已入网</span></td><td>admin</td><td class="num">11/24 15:51</td><td class="num">11/24 17:51</td></tr>
+              <tr><td><div class="cell-main mono">alexfu</div><div class="cell-sub">ssh join</div></td><td>rlark-local-dev-gpu</td><td>SSH 入网</td><td><span class="pill ok">已入网</span></td><td>admin</td><td class="num">11/23 10:12</td><td class="num">—</td></tr>
+              <tr><td><div class="cell-main mono">s1u-09</div><div class="cell-sub">admission</div></td><td>rlark-robot-s1u-01</td><td>入网码</td><td><span class="pill bad">已作废</span></td><td>admin</td><td class="num">11/22 18:30</td><td class="num">11/22 20:30</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= JOIN ================= -->
+    <section class="page" id="page-join">
+      <div class="page-head">
+        <div>
+          <span class="eyebrow"><svg class="icon"><use href="#i-plus"/></svg>场站节点</span>
+          <h2>加入节点</h2>
+          <p>把机器加入集群：场地扫到的机器人一键加入；新机器用 SSH 入网或入网码。入网后机器建好隧道，出现在场站节点列表里。</p>
+        </div>
+        <div class="head-actions"><button class="btn" data-page="nodes">返回节点</button></div>
+      </div>
+
+      <div class="setup-card">
+        <div class="setup-head"><div><h3>集群与方式</h3><p>选择目标集群，再决定机器怎么加入。</p></div><span class="pill">3 种方式</span></div>
+        <div class="form-grid" style="margin-top:14px; max-width:560px">
+          <label class="field">目标集群
+            <select id="join-cluster">
+              <option value="rlark-local-dev-gpu">深圳公司本地开发集群</option>
+              <option value="rlark-robot-s1u-01">深圳公司 S1U 测试集群</option>
+              <option value="rlark-ksyun-gpu">金山云西北宁夏穆金集群</option>
+            </select>
+          </label>
+        </div>
+        <div class="methods" id="join-methods">
+          <button class="method active" data-method="machines">
+            <span class="m-icon"><svg class="icon"><use href="#i-list"/></svg></span>
+            <span class="m-copy"><strong>未加入的机器</strong><small>从场地网络发现的机器中一键加入。</small></span>
+          </button>
+          <button class="method" data-method="ssh">
+            <span class="m-icon"><svg class="icon"><use href="#i-terminal"/></svg></span>
+            <span class="m-copy"><strong>SSH 入网</strong><small>提供地址和 SSH 凭据，由 RLark 远程完成。</small></span>
+          </button>
+          <button class="method" data-method="code">
+            <span class="m-icon"><svg class="icon"><use href="#i-shield"/></svg></span>
+            <span class="m-copy"><strong>入网码</strong><small>生成一次性入网码，在机器上执行一行命令。</small></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="join-layout">
+        <div class="join-main">
+          <div class="panel" id="join-machines-panel">
+            <div class="panel-head">
+              <div><h3>未加入的机器</h3><p id="machine-scope">只显示站点 office 的机器，按该站点设置的间隔扫描</p></div>
+              <div class="panel-tools">
+                <label class="search"><svg class="icon"><use href="#i-search"/></svg><input id="machine-search" placeholder="搜索序列号、MAC、地址"></label>
+                <span class="muted" style="font-size:11.5px" id="machine-count">共 2 台</span>
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted)"><input class="check" type="checkbox">全选可加入</label>
+                <button class="btn sm" data-page="discovery">扫描设置</button>
+                <button class="btn sm"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table class="grid machine-table">
+                <thead><tr><th style="width:34px">选择</th><th>机器</th><th>位置</th><th>Orin 上联</th><th>x86 计算机</th><th>发现</th><th>状态</th><th style="text-align:right">操作</th></tr></thead>
+                <tbody id="machine-rows"></tbody>
+              </table>
+            </div>
+            <div class="panel-foot"><span>机器不可选时会显示原因；也可以改用 SSH 入网或入网码。</span><div class="row-actions"><button class="btn sm" data-method-jump="ssh">改用 SSH 入网</button><button class="btn sm" data-method-jump="code">生成入网码</button></div></div>
+          </div>
+
+          <div class="ssh-panel hidden" id="join-ssh-panel">
+            <div class="ssh-card">
+              <div class="setup-head"><div><h3>SSH 入网</h3><p>提供地址和 SSH 凭据，由 RLark 远程完成入网。</p></div><span class="pill">独立方式</span></div>
+              <div class="notice info" style="margin-top:12px"><svg class="icon"><use href="#i-shield"/></svg><span><strong>直连提示：</strong>Gateway 会直接登录该地址，不经过 Orin 跳板；S1U 机器人请优先使用“加入此集群”。</span></div>
+              <div class="form-grid" style="margin-top:14px">
+                <label class="field">地址<input id="ssh-address" value="10.11.13.20" placeholder="IP 或主机名"></label>
+                <label class="field">端口<input id="ssh-port" value="22"></label>
+                <label class="field">账号<input id="ssh-user" value="astribot"></label>
+                <label class="field">密码<input id="ssh-password" type="password" placeholder="输入 SSH 密码"></label>
+                <label class="field">节点名（可选）<input id="ssh-name" placeholder="留空则读取主机名"></label>
+                <label class="field">隧道端点（可选）<input placeholder="IPv4:port"></label>
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn" data-method-jump="machines">返回机器列表</button><button class="btn primary" id="ssh-start">开始 SSH 入网</button></div>
+            </div>
+          </div>
+
+          <div class="code-panel hidden" id="join-code-panel">
+            <div class="ssh-card">
+              <div class="setup-head"><div><h3>入网码</h3><p>生成一次性入网码，在机器上执行一行命令。</p></div><span class="pill">独立方式</span></div>
+              <div class="form-grid" style="margin-top:14px">
+                <label class="field">节点名<input value="s1u-05-x86"></label>
+                <label class="field">类型<select><option>机器人</option><option>其他节点</option></select></label>
+                <label class="field">有效期<select><option>2 小时</option><option>24 小时</option><option>7 天</option></select></label>
+                <label class="field">场站<input value="office"></label>
+              </div>
+              <div class="code-box" style="margin-top:14px"><span class="mono">RLK-7Q2M-9X4B</span><button class="btn sm" onclick="toast('原型：命令已复制', 'info')"><svg class="icon"><use href="#i-copy"/></svg>复制命令</button></div>
+              <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn primary" onclick="toast('原型：入网码已生成', 'ok')">发放入网码</button></div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="rail">
+          <div class="rail-card">
+            <h4>入网操作</h4>
+            <p>操作在服务端继续，离开页面不会中断。</p>
+            <div id="rail-items">
+              <div class="rail-item">
+                <div class="rt"><span class="status"><i class="dot ok"></i>已加入 3</span><span class="pill ok">已完成</span></div>
+                <div class="rail-steps"><span>s1u-05 · rlark-robot-s1u-01 · 11/23 15:51</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="rail-card">
+            <h4>站点扫描</h4>
+            <p id="rail-site-note">office · 2 个 Hub 正在扫描</p>
+            <div class="status"><i class="dot ok"></i>30 秒前完成一轮</div>
+            <button class="btn sm" data-page="discovery">打开扫描设置</button>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ================= DISCOVERY ================= -->
+    <section class="page" id="page-discovery">
+      <div class="page-head">
+        <div>
+          <span class="eyebrow"><svg class="icon"><use href="#i-radar"/></svg>场站节点</span>
+          <h2>站点扫描设置</h2>
+          <p>查看全局网络状态，并逐个站点调整机器扫描设置。</p>
+        </div>
+        <div class="head-actions"><button class="btn" data-page="join">返回入网</button><button class="btn"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button></div>
+      </div>
+
+      <div class="summary-grid">
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-shield"/></svg></span><div><div class="label">网络就绪</div><div class="value" style="font-size:20px">就绪</div><div class="note" id="disc-ready-note">Ready · True · Computed</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-network"/></svg></span><div><div class="label">全部互通</div><div class="value" style="font-size:20px">全部可达</div><div class="note" id="disc-connected-note">FullyConnected · True · AllPairsReachable</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-radar"/></svg></span><div><div class="label">扫描状态</div><div class="value" style="font-size:20px">正常</div><div class="note" id="disc-stale-note">DiscoveryStale · False · HubsReport</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-layers"/></svg></span><div><div class="label">配置版本</div><div class="value" style="font-size:20px" id="disc-gen-value">等待收敛</div><div class="note" id="disc-gen-note">30 / 31</div></div></div>
+      </div>
+
+      <div class="notice warn" id="discovery-warning" style="margin-top:12px"><svg class="icon"><use href="#i-alert"/></svg><span><strong>网络仍在检查或配置尚未收敛。</strong>当前配置版本 30 / 31。保存设置后约 30 秒生效。</span></div>
+
+      <div class="section-gap"></div>
+
+      <div class="site-tabs" id="disc-sites">
+        <button class="site-tab active" data-disc-site="office"><i class="dot ok"></i><span class="meta"><strong>office</strong><small>rlark-local-dev-gpu</small></span><span class="count">2 Hub</span></button>
+        <button class="site-tab" data-disc-site="lab"><i class="dot ok"></i><span class="meta"><strong>lab</strong><small>rlark-robot-s1u-01</small></span><span class="count">1 Hub</span></button>
+        <button class="site-tab" data-disc-site="ksyun"><i class="dot"></i><span class="meta"><strong>ksyun</strong><small>rlark-ksyun-gpu</small></span><span class="count">2 Hub</span></button>
+      </div>
+
+      <div class="section-gap"></div>
+
+      <div class="workbench">
+        <div class="wb-head">
+          <div><h3 id="disc-site">office</h3><p id="disc-cluster">rlark-local-dev-gpu</p></div>
+          <div class="wb-head-meta"><span class="pill ok" id="disc-status"><i class="dot ok"></i>正在扫描</span><span class="pill" id="disc-hubs">2 个 Hub</span></div>
+        </div>
+        <div class="facts">
+          <div class="fact"><div class="label"><svg class="icon"><use href="#i-layers"/></svg>集群</div><div class="value" id="disc-cluster-fact">rlark-local-dev-gpu</div></div>
+          <div class="fact"><div class="label"><svg class="icon"><use href="#i-network"/></svg>扫描 Hub</div><div class="value" id="disc-hubs-fact"></div></div>
+          <div class="fact"><div class="label"><svg class="icon"><use href="#i-radar"/></svg>可发现类型</div><div class="value">S1U · 入口端口 22 · 访问/发现已开启</div></div>
+          <div class="fact"><div class="label"><svg class="icon"><use href="#i-fingerprint"/></svg>工厂密钥（1）</div><div class="value"><code>SHA256:xy6veDNQR/O7Dmft/4QouEn5/By6mE0O7tu3KN0/3To</code></div></div>
+        </div>
+        <div class="wb-form">
+          <div class="field">扫描开关
+            <label class="switch" style="height:40px"><input type="checkbox" id="disc-enabled"><span class="track"></span><span id="disc-enabled-label">启用此站点扫描</span><span class="state" id="disc-enabled-state">已开启</span></label>
+            <small id="disc-enabled-note">已开启，2 个 Hub 正在扫描</small>
+          </div>
+          <label class="field">扫描间隔（秒）<input id="disc-interval" type="number" min="10" max="3600" value="30"></label>
+          <div class="field full">
+            <span>额外扫描网段</span>
+            <small>Hub 直连私网会自动扫描，此处填写额外网段。</small>
+            <div class="range-list" id="disc-ranges"></div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><button class="btn sm" id="disc-add-range"><svg class="icon"><use href="#i-plus"/></svg>添加网段</button><small id="disc-range-error" style="color:var(--red-ink)"></small></div>
+          </div>
+          <label class="field full">管理面拨号 Hub
+            <select id="disc-from"></select>
+            <small>station-controller 从所选节点拨号连接 Hub；它不是负责扫描的 Hub。</small>
+          </label>
+          <div class="fact full"><div class="label">管理面拨号源 · 当前选中的网络 Hub</div><div class="value" id="disc-source"></div></div>
+        </div>
+        <div class="save-bar"><span class="muted" id="disc-dirty">有未保存的更改</span><button class="btn" id="disc-cancel">取消</button><button class="btn primary" id="disc-save">保存设置</button></div>
+      </div>
+
+      <div class="section-gap"></div>
+      <div class="rules">
+        <strong>扫描规则与限制</strong>
+        <ul>
+          <li>只发现 NodeClass.spec.discovery.hostKeyFingerprints 匹配的入口设备，不是所有 PC，也不是公司设备清单。</li>
+          <li>Hub 直连的私网也会扫描；大于 /22 的网段只扫描 Hub 所在的 /22。</li>
+          <li>多个站点网段重叠时可能出现重复 Machine。</li>
+          <li>设置约 30 秒生效；已有 Machine 不会自动删除。</li>
+          <li>没有已入网 Hub 的站点不会扫描。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ================= JOBS ================= -->
+    <section class="page" id="page-jobs">
+      <div class="page-head">
+        <div>
+          <span class="eyebrow"><svg class="icon"><use href="#i-list"/></svg>任务管理</span>
+          <h2>任务管理</h2>
+          <p>查看跨集群的训练、推理和评测任务；点开任务可跟踪阶段、日志和资源。</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn primary" onclick="toast('原型：新建任务未连接后端', 'info')"><svg class="icon"><use href="#i-plus"/></svg>新建任务</button>
+          <button class="btn" onclick="toast('已刷新', 'ok')"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button>
+        </div>
+      </div>
+
+      <div class="summary-grid">
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-play"/></svg></span><div><div class="label">运行中</div><div class="value">12</div><div class="note"><i class="dot ok"></i>5 个集群</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-pause"/></svg></span><div><div class="label">排队</div><div class="value">4</div><div class="note"><i class="dot warn"></i>等待 GPU 配额</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-check"/></svg></span><div><div class="label">本周成功</div><div class="value">128</div><div class="note">平均 1h 42m</div></div></div>
+        <div class="stat"><span class="stat-icon"><svg class="icon"><use href="#i-alert"/></svg></span><div><div class="label">失败</div><div class="value">2</div><div class="note"><i class="dot bad"></i>1 个待重试</div></div></div>
+      </div>
+
+      <div class="section-gap"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div><h3>任务</h3><p>共 146 个任务 · 按开始时间排序</p></div>
+          <div class="panel-tools">
+            <label class="search"><svg class="icon"><use href="#i-search"/></svg><input placeholder="搜索任务名、提交人"></label>
+            <select class="select"><option>全部集群</option><option>rlark-ksyun-gpu</option><option>rlark-local-dev-gpu</option><option>rlark-robot-s1u-01</option></select>
+            <select class="select"><option>全部状态</option><option>运行中</option><option>排队</option><option>成功</option><option>失败</option></select>
+            <button class="btn sm" onclick="toast('已刷新', 'ok')"><svg class="icon"><use href="#i-refresh"/></svg>刷新</button>
+          </div>
+        </div>
+        <div class="seg-tabs" style="padding:0 18px" role="tablist">
+          <button class="active">全部</button><button>训练</button><button>推理</button><button>评测</button>
+        </div>
+        <div class="table-scroll">
+          <table class="grid" style="min-width:900px">
+            <thead><tr><th>任务</th><th>集群</th><th>类型</th><th>状态</th><th>提交人</th><th>开始</th><th>时长</th><th style="text-align:right">操作</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><div class="cell-main">hg-dagger-zipper</div><div class="cell-sub">HG-DAgger 采集 · 14 数据集</div></td>
+                <td>rlark-ksyun-gpu</td><td><span class="tag-chip">训练</span></td>
+                <td><span class="status"><i class="dot ok"></i>运行中</span></td><td>admin</td>
+                <td class="num" style="color:var(--muted)">11/24 15:40</td><td class="num">1h 12m</td>
+                <td><div class="row-actions"><button class="btn sm">日志</button><button class="btn sm danger">停止</button></div></td>
+              </tr>
+              <tr>
+                <td><div class="cell-main">pi05-eval-baseline</div><div class="cell-sub">评测 pi05 基线 · 240 episode</div></td>
+                <td>rlark-local-dev-gpu</td><td><span class="tag-chip">评测</span></td>
+                <td><span class="status"><i class="dot warn"></i>排队中</span></td><td>cailiang</td>
+                <td class="num" style="color:var(--muted)">—</td><td class="num">—</td>
+                <td><div class="row-actions"><button class="btn sm">取消</button></div></td>
+              </tr>
+              <tr>
+                <td><div class="cell-main">s1u-rollout-1123</div><div class="cell-sub">S1U rollout · 2 副本</div></td>
+                <td>rlark-ksyun-gpu</td><td><span class="tag-chip">推理</span></td>
+                <td><span class="status"><i class="dot ok"></i>运行中</span></td><td>ops</td>
+                <td class="num" style="color:var(--muted)">11/23 22:10</td><td class="num">3h 02m</td>
+                <td><div class="row-actions"><button class="btn sm">日志</button><button class="btn sm danger">停止</button></div></td>
+              </tr>
+              <tr>
+                <td><div class="cell-main">towelfold-dagger</div><div class="cell-sub">HG-DAgger 采集 · 48 Station</div></td>
+                <td>rlark-ksyun-gpu</td><td><span class="tag-chip">训练</span></td>
+                <td><span class="status"><i class="dot"></i>成功</span></td><td>admin</td>
+                <td class="num" style="color:var(--muted)">11/23 10:05</td><td class="num">8h 20m</td>
+                <td><div class="row-actions"><button class="btn sm">日志</button></div></td>
+              </tr>
+              <tr>
+                <td><div class="cell-main">gap-test-0712</div><div class="cell-sub">抓取评测 · 12 场景</div></td>
+                <td>rlark-local-dev-gpu</td><td><span class="tag-chip">评测</span></td>
+                <td><span class="status"><i class="dot bad"></i>失败</span></td><td>wendychen</td>
+                <td class="num" style="color:var(--muted)">11/22 18:12</td><td class="num">12m</td>
+                <td><div class="row-actions"><button class="btn sm">日志</button><button class="btn sm">重试</button></div></td>
+              </tr>
+              <tr>
+                <td><div class="cell-main">cup-stack-ferit</div><div class="cell-sub">数据集整理 · 2,140 episode</div></td>
+                <td>rlark-ksyun-gpu</td><td><span class="tag-chip">数据</span></td>
+                <td><span class="status"><i class="dot"></i>成功</span></td><td>ops</td>
+                <td class="num" style="color:var(--muted)">11/21 15:51</td><td class="num">46m</td>
+                <td><div class="row-actions"><button class="btn sm">日志</button></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-foot"><span>第 1 页 / 共 8 页 · 每页 20 条</span><div class="row-actions"><button class="btn sm">上一页</button><button class="btn sm">下一页</button></div></div>
+      </div>
+
+    </section>
+  </div>
+</div>
+
+<!-- DRAWER -->
+<div class="drawer-backdrop" id="drawer-backdrop"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <div><h3 id="drawer-title">s1u-07</h3><p>rlark-robot-s1u-01 · S1U · <span id="drawer-sub">节点详情</span></p></div>
+    <button class="icon-btn" id="drawer-close"><svg class="icon"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="drawer-tabs">
+    <button class="active">概览</button><button>网络</button><button>条件</button>
+  </div>
+  <div class="drawer-body">
+    <div class="facts-2">
+      <div class="fact"><div class="label">状态</div><div class="value"><span class="status"><i class="dot ok"></i>运行中</span></div></div>
+      <div class="fact"><div class="label">阶段</div><div class="value">Ready · 已入网</div></div>
+    </div>
+    <div>
+      <div class="fact-line"><span class="k">节点 UID</span><span class="v mono">c4e5f6a7-8b90-4c1d</span></div>
+      <div class="fact-line"><span class="k">WireGuard 公钥</span><span class="v mono">2Zq7…mK4P</span></div>
+      <div class="fact-line"><span class="k">隧道地址</span><span class="v mono">10.254.240.12</span></div>
+      <div class="fact-line"><span class="k">SSH 主机指纹</span><span class="v mono">SHA256:8xQ2…L1</span></div>
+      <div class="fact-line"><span class="k">最近上报</span><span class="v">3 秒前</span></div>
+    </div>
+    <div class="notice info"><svg class="icon"><use href="#i-shield"/></svg><span>身份与连接信息可复制；入网码不会在签发后再次显示。</span></div>
+  </div>
+  <div class="drawer-foot"><button class="btn">重发入网码</button><button class="btn danger">删除记录</button><button class="btn primary" id="drawer-ok">关闭</button></div>
+</aside>
+
+<!-- LOGIN OVERLAY -->
+<div class="login-overlay" id="login-overlay">
+  <div class="login-card">
+    <div class="login-brand">
+      <img class="light" src="/rlark-logo-zh-light.png" alt="RLark">
+      <img class="dark" src="/rlark-logo-zh-dark.svg" alt="RLark">
+      <button class="icon-btn" id="close-login"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+    <h2>管理后台登录</h2>
+    <p>请输入管理员账号和密码</p>
+    <label class="field">账号<input value="admin" autocomplete="username"></label>
+    <label class="field">密码<input type="password" value="prototype" autocomplete="current-password"></label>
+    <button class="btn primary">登录</button>
+    <div class="login-note">原型预览 · 非真实登录</div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* ===== prototype interactions ===== */
+const pages = {
+  dashboard: { title: "管理工作台", crumb: "管理工作台" },
+  nodes: { title: "场站节点", crumb: "场站节点" },
+  join: { title: "加入节点", crumb: "加入节点" },
+  discovery: { title: "扫描设置", crumb: "扫描设置" },
+  jobs: { title: "任务管理", crumb: "任务管理" },
+};
+
+function showPage(name) {
+  const page = document.getElementById(`page-${name}`);
+  if (!page) return;
+  document.getElementById("toasts").innerHTML = "";
+  document.querySelectorAll(".page").forEach((el) => el.classList.toggle("active", el.id === `page-${name}`));
+  document.querySelectorAll(".nav-item[data-page]").forEach((el) => el.classList.toggle("active", el.dataset.page === name));
+  const meta = pages[name] || { title: name, crumb: name };
+  document.getElementById("top-title").textContent = meta.title;
+  document.getElementById("crumb").textContent = meta.crumb;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+document.querySelectorAll("[data-page]").forEach((el) => {
+  el.addEventListener("click", (event) => { if (el.tagName !== "SELECT") showPage(el.dataset.page); });
+});
+document.querySelectorAll("[data-static]").forEach((el) => {
+  el.addEventListener("click", () => toast("原型未包含此页面", "info"));
+});
+
+/* theme */
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.querySelectorAll("[data-theme-btn]").forEach((el) => el.classList.toggle("active", el.dataset.themeBtn === theme));
+  try { localStorage.setItem("rlark-prototype-theme", theme); } catch {}
+}
+document.querySelectorAll("[data-theme-btn]").forEach((el) => el.addEventListener("click", () => setTheme(el.dataset.themeBtn)));
+try { const saved = localStorage.getItem("rlark-prototype-theme"); if (saved) setTheme(saved); } catch {}
+
+document.querySelector("[data-lang-en]")?.addEventListener("click", () => toast("原型只提供中文界面", "info"));
+document.getElementById("mobile-theme").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  setTheme(next);
+  document.querySelector("#mobile-theme use").setAttribute("href", next === "dark" ? "#i-sun" : "#i-moon");
+});
+
+/* login overlay */
+const login = document.getElementById("login-overlay");
+document.getElementById("open-login").addEventListener("click", () => { document.getElementById("toasts").innerHTML = ""; login.classList.add("open"); });
+document.getElementById("close-login").addEventListener("click", () => login.classList.remove("open"));
+login.addEventListener("click", (event) => { if (event.target === login) login.classList.remove("open"); });
+
+/* drawer */
+const drawer = document.getElementById("drawer");
+const backdrop = document.getElementById("drawer-backdrop");
+function openDrawer(name) {
+  document.getElementById("drawer-title").textContent = name || "s1u-07";
+  drawer.classList.add("open");
+  backdrop.classList.add("open");
+  drawer.setAttribute("aria-hidden", "false");
+}
+function closeDrawer() {
+  drawer.classList.remove("open");
+  backdrop.classList.remove("open");
+  drawer.setAttribute("aria-hidden", "true");
+}
+document.querySelectorAll("[data-drawer]").forEach((row) => {
+  row.addEventListener("click", () => openDrawer(row.dataset.drawer));
+});
+backdrop.addEventListener("click", closeDrawer);
+document.getElementById("drawer-close").addEventListener("click", closeDrawer);
+document.getElementById("drawer-ok").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeDrawer(); login.classList.remove("open"); } });
+
+/* toasts */
+function toast(text, tone = "ok") {
+  const wrap = document.getElementById("toasts");
+  const el = document.createElement("div");
+  el.className = "toast";
+  const icon = tone === "bad" ? "i-alert" : tone === "info" ? "i-shield" : "i-check";
+  el.innerHTML = `<svg class="icon"><use href="#${icon}"/></svg><span>${text}</span>`;
+  wrap.appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transform = "translateY(4px)"; el.style.transition = "all .2s"; setTimeout(() => el.remove(), 220); }, 3200);
+}
+
+/* drawer copy-ish actions */
+document.querySelectorAll(".drawer-foot .btn:not(#drawer-ok)").forEach((el) => el.addEventListener("click", () => toast("原型操作：未连接真实接口", "info")));
+document.querySelector(".topbar .btn.primary")?.addEventListener("click", () => toast("原型：新建集群未连接后端", "info"));
+document.querySelector("#login-overlay .btn.primary")?.addEventListener("click", () => toast("原型：登录未连接后端", "info"));
+</script>
+<script>
+/* ================= JOIN ================= */
+const hubInfo = {
+  "rlark-local-dev-gpu": { site: "office", hubs: 2 },
+  "rlark-robot-s1u-01": { site: "lab", hubs: 1 },
+  "rlark-ksyun-gpu": { site: "ksyun", hubs: 2 },
+};
+
+const machineData = {
+  "rlark-local-dev-gpu": {
+    site: "office",
+    machines: [
+      { serial: "1423225026100", mac: "3c:6d:66:b1:0c:a4", address: "10.11.13.20", orin: "ok", x86: "bad", x86Note: "Orin 通，x86 不通", seen: "16:28:31", selectable: false, reason: "x86 不可达：先检查机器人电源与网络，或改用 SSH 入网" },
+      { serial: "1423225026101", mac: "3c:6d:66:b1:0c:a5", address: "10.11.13.21", orin: "ok", x86: "ok", x86Note: "已检查 · 可入网", seen: "16:29:02", selectable: true },
+    ],
+  },
+  "rlark-robot-s1u-01": {
+    site: "lab",
+    machines: [
+      { serial: "1423225026100", mac: "3c:6d:66:b1:0c:a4", address: "10.11.13.20", orin: "ok", x86: "bad", x86Note: "Orin 通，x86 不通", seen: "16:28:29", selectable: false, reason: "x86 不可达：先检查机器人电源与网络，或改用 SSH 入网" },
+    ],
+  },
+  "rlark-ksyun-gpu": { site: "ksyun", machines: [] },
+};
+
+function currentCluster() { return document.getElementById("join-cluster").value; }
+function currentMachines() { return machineData[currentCluster()]?.machines || []; }
+
+function machineRow(m, index) {
+  const joinAction = m.selectable
+    ? `<button class="btn sm primary" data-join-one="${index}">加入此集群</button>`
+    : `<button class="btn sm" data-blocked="${m.reason}" style="opacity:.55">加入此集群</button>`;
+  return `<tr>
+    <td><input class="check" type="checkbox" ${m.selectable ? "" : "disabled"}></td>
+    <td><div class="cell-main">${m.serial}</div><div class="cell-sub">s1u · ${m.mac}</div></td>
+    <td><div class="cell-main">${machineData[currentCluster()].site}</div><div class="cell-sub mono">${m.address}</div></td>
+    <td><span class="reach ${m.orin === "ok" ? "ok" : "bad"}"><i class="dot ${m.orin === "ok" ? "ok" : "bad"}"></i>${m.orin === "ok" ? "通" : "不通"}</span></td>
+    <td><span class="reach ${m.x86 === "ok" ? "ok" : "bad"}"><i class="dot ${m.x86 === "ok" ? "ok" : "bad"}"></i>${m.x86 === "ok" ? "通" : "不通"}</span><div class="cell-sub">${m.x86Note}</div></td>
+    <td class="num" style="color:var(--muted)">${m.seen}</td>
+    <td><span class="pill ${m.selectable ? "ok" : "bad"} state-pill"><i class="dot ${m.selectable ? "ok" : "bad"}"></i>${m.selectable ? "可选" : "不可选"}</span></td>
+    <td><div class="row-actions">${joinAction}<button class="btn sm" data-ssh-prefill="${m.address}" data-node="${m.serial}">改用 SSH 入网</button></div></td>
+  </tr>`;
+}
+
+function renderMachines() {
+  const data = machineData[currentCluster()];
+  const rows = document.getElementById("machine-rows");
+  const count = data.machines.length;
+  document.getElementById("machine-count").textContent = `共 ${count} 台`;
+  document.getElementById("machine-scope").textContent = data.machines.length
+    ? `只显示站点 ${data.site} 的机器，按该站点设置的间隔扫描`
+    : `站点 ${data.site} 没有未加入的机器`;
+  rows.innerHTML = count
+    ? data.machines.map(machineRow).join("")
+    : `<tr><td colspan="8"><div style="padding:26px;text-align:center;color:var(--muted);font-size:12px">该站点没有未加入的机器。新机器接入后会在下一次扫描时出现；场地第一台可用 SSH 入网或入网码。</div></td></tr>`;
+  const hub = hubInfo[currentCluster()] || { site: data.site, hubs: 0 };
+  document.getElementById("rail-site-note").textContent = `${hub.site} · ${hub.hubs} 个 Hub 正在扫描`;
+}
+
+function setMethod(method) {
+  document.querySelectorAll("#join-methods .method").forEach((el) => el.classList.toggle("active", el.dataset.method === method));
+  document.getElementById("join-machines-panel").classList.toggle("hidden", method !== "machines");
+  document.getElementById("join-ssh-panel").classList.toggle("hidden", method !== "ssh");
+  document.getElementById("join-code-panel").classList.toggle("hidden", method !== "code");
+}
+
+function prefillSSH(address, node) {
+  setMethod("ssh");
+  document.getElementById("ssh-address").value = address || "10.11.13.20";
+  document.getElementById("ssh-name").value = node || "";
+  document.getElementById("join-ssh-panel").scrollIntoView({ behavior: "smooth", block: "center" });
+  toast("已带入发现地址，填写 SSH 密码即可", "info");
+}
+
+function startOneClick(button, index) {
+  const machine = currentMachines()[index];
+  if (!machine) return;
+  button.disabled = true;
+  button.classList.remove("primary");
+  button.textContent = "提交中…";
+  button.style.opacity = ".55";
+  const row = button.closest("tr");
+  const state = row?.querySelector(".state-pill");
+  if (state) { state.className = "pill purple state-pill"; state.innerHTML = '<i class="dot purple"></i>正在加入'; }
+  const item = document.createElement("div");
+  item.className = "rail-item";
+  item.innerHTML = `
+    <div class="rt"><span class="status"><i class="dot purple"></i>${machine.serial}</span><span class="pill purple">进行中</span></div>
+    <div class="rail-steps">
+      <span class="rail-step running"><i class="dot purple"></i>Preflight · 通过 Orin 登录 x86</span>
+      <span class="rail-step"><i class="dot"></i>安装 · 下发安装器</span>
+      <span class="rail-step"><i class="dot"></i>验证 · 等待 Node Ready</span>
+    </div>
+    <div class="progress"><i style="width:12%"></i></div>`;
+  document.getElementById("rail-items").prepend(item);
+  const steps = [...item.querySelectorAll(".rail-step")];
+  const bar = item.querySelector(".progress > i");
+  let step = 0;
+  const advance = () => {
+    if (step > 0) {
+      steps[step - 1].classList.remove("running");
+      steps[step - 1].classList.add("done");
+      steps[step - 1].querySelector("i").className = "dot ok";
+    }
+    if (step < steps.length) {
+      steps[step].classList.add("running");
+      steps[step].querySelector("i").className = "dot purple";
+      bar.style.width = `${Math.round(((step + 1) / steps.length) * 100)}%`;
+      step += 1;
+      setTimeout(advance, 900);
+    } else {
+      bar.style.width = "100%";
+      const pill = item.querySelector(".rt .pill");
+      pill.className = "pill ok";
+      pill.innerHTML = '<i class="dot ok"></i>已完成';
+      item.querySelector(".rt .status").innerHTML = '<i class="dot ok"></i>已提交加入';
+      button.textContent = "已提交";
+      if (state) { state.className = "pill info state-pill"; state.innerHTML = '<i class="dot info"></i>已提交'; }
+      toast(`${machine.serial} 已提交加入，进度在右侧操作栏`, "ok");
+    }
+  };
+  setTimeout(advance, 350);
+}
+
+document.getElementById("join-cluster").addEventListener("change", renderMachines);
+document.querySelectorAll("#join-methods .method").forEach((el) => el.addEventListener("click", () => setMethod(el.dataset.method)));
+document.querySelectorAll("[data-method-jump]").forEach((el) => el.addEventListener("click", () => setMethod(el.dataset.methodJump)));
+
+document.getElementById("machine-rows").addEventListener("click", (event) => {
+  const join = event.target.closest("[data-join-one]");
+  if (join) { startOneClick(join, Number(join.dataset.joinOne)); return; }
+  const blocked = event.target.closest("[data-blocked]");
+  if (blocked) { toast(blocked.dataset.blocked, "bad"); return; }
+  const ssh = event.target.closest("[data-ssh-prefill]");
+  if (ssh) prefillSSH(ssh.dataset.sshPrefill, ssh.dataset.node);
+});
+
+document.getElementById("ssh-start").addEventListener("click", () => {
+  const password = document.getElementById("ssh-password");
+  if (!password.value.trim()) { toast("请填写 SSH 密码", "bad"); password.focus(); return; }
+  const address = document.getElementById("ssh-address").value || "10.11.13.20";
+  const item = document.createElement("div");
+  item.className = "rail-item";
+  item.innerHTML = `
+    <div class="rt"><span class="status"><i class="dot purple"></i>SSH 入网 · ${address}</span><span class="pill purple">进行中</span></div>
+    <div class="rail-steps"><span class="rail-step running"><i class="dot purple"></i>precheck · 登录并检查环境</span><span class="rail-step"><i class="dot"></i>install · 安装节点组件</span></div>
+    <div class="progress"><i style="width:22%"></i></div>`;
+  document.getElementById("rail-items").prepend(item);
+  password.value = "";
+  toast("SSH 入网已提交（原型模拟）", "ok");
+});
+
+renderMachines();
+
+/* ================= DISCOVERY ================= */
+const allHubs = [
+  { value: "rlark-local-dev-gpu/cailiang", label: "rlark-local-dev-gpu/cailiang · office · 10.254.240.1" },
+  { value: "rlark-local-dev-gpu/wendychen", label: "rlark-local-dev-gpu/wendychen · office · 10.254.240.6" },
+  { value: "rlark-robot-s1u-01/alexfu", label: "rlark-robot-s1u-01/alexfu · lab · 10.254.240.5" },
+  { value: "rlark-ksyun-gpu/ksyun-01", label: "rlark-ksyun-gpu/ksyun-01 · ksyun · 10.254.240.21" },
+  { value: "rlark-ksyun-gpu/ksyun-02", label: "rlark-ksyun-gpu/ksyun-02 · ksyun · 10.254.240.22" },
+];
+
+const discoverySites = {
+  office: {
+    cluster: "rlark-local-dev-gpu", hubs: [["cailiang", "rlark-local-dev-gpu · 10.254.240.1"], ["wendychen", "rlark-local-dev-gpu · 10.254.240.6"]],
+    enabled: true, interval: 30, ranges: ["10.11.14.0/24"], from: "rlark-local-dev-gpu/cailiang",
+  },
+  lab: {
+    cluster: "rlark-robot-s1u-01", hubs: [["alexfu", "rlark-robot-s1u-01 · 10.254.240.5"]],
+    enabled: true, interval: 30, ranges: ["192.168.31.0/24", "10.11.12.0/22"], from: "rlark-local-dev-gpu/cailiang",
+  },
+  ksyun: {
+    cluster: "rlark-ksyun-gpu", hubs: [["ksyun-01", "rlark-ksyun-gpu · 10.254.240.21"], ["ksyun-02", "rlark-ksyun-gpu · 10.254.240.22"]],
+    enabled: false, interval: 30, ranges: [], from: "",
+  },
+};
+
+let discSite = "office";
+
+function renderRanges() {
+  const site = discoverySites[discSite];
+  const wrap = document.getElementById("disc-ranges");
+  wrap.innerHTML = site.ranges.length
+    ? site.ranges.map((range, index) => `<div class="range-row"><input class="range-input" data-range-index="${index}" value="${range}" placeholder="192.168.31.0/24"><button class="icon-btn" data-remove-range="${index}" title="删除网段"><svg class="icon sm"><use href="#i-x"/></svg></button></div>`).join("")
+    : `<div class="muted" style="font-size:11.5px">未配置额外网段（Hub 直连私网仍会自动扫描）。</div>`;
+  document.getElementById("disc-range-error").textContent = "";
+}
+
+function renderFrom() {
+  const site = discoverySites[discSite];
+  const select = document.getElementById("disc-from");
+  select.innerHTML = `<option value="">选择网络中的 Hub</option>` + allHubs.map((hub) => `<option value="${hub.value}">${hub.label}</option>`).join("");
+  select.value = site.from;
+  const selected = allHubs.find((hub) => hub.value === site.from);
+  document.getElementById("disc-source").textContent = selected ? selected.label : "尚未选择";
+}
+
+function setDirty(dirty) {
+  document.getElementById("disc-dirty").style.visibility = dirty ? "visible" : "hidden";
+}
+
+function renderStatus() {
+  const site = discoverySites[discSite];
+  const status = document.getElementById("disc-status");
+  if (!site.enabled) {
+    status.className = "pill";
+    status.innerHTML = '<i class="dot"></i>已关闭';
+  } else if (site.hubs.length) {
+    status.className = "pill ok";
+    status.innerHTML = '<i class="dot ok"></i>正在扫描';
+  } else {
+    status.className = "pill warn";
+    status.innerHTML = '<i class="dot warn"></i>已开启，无 Hub 不会扫描';
+  }
+  document.getElementById("disc-enabled-state").textContent = site.enabled ? "已开启" : "已关闭";
+  document.getElementById("disc-enabled-note").textContent = site.enabled
+    ? site.hubs.length ? `已开启，${site.hubs.length} 个 Hub 正在扫描` : "已开启，但没有已入网 Hub，不会扫描"
+    : "已关闭，保留网段配置；已有 Machine 不会被删除";
+}
+
+function renderDiscovery(site) {
+  discSite = site;
+  const data = discoverySites[site];
+  document.querySelectorAll("#disc-sites .site-tab").forEach((el) => el.classList.toggle("active", el.dataset.discSite === site));
+  document.getElementById("disc-site").textContent = site;
+  document.getElementById("disc-cluster").textContent = data.cluster;
+  document.getElementById("disc-cluster-fact").textContent = data.cluster;
+  document.getElementById("disc-hubs").textContent = `${data.hubs.length} 个 Hub`;
+  document.getElementById("disc-hubs-fact").innerHTML = data.hubs.length
+    ? data.hubs.map(([name, meta]) => `<div style="font-weight:600">${name}</div><div class="cell-sub">${meta}</div>`).join("")
+    : `<span class="muted">无 Hub，不会扫描</span>`;
+  document.getElementById("disc-enabled").checked = data.enabled;
+  document.getElementById("disc-interval").value = data.interval;
+  renderRanges();
+  renderFrom();
+  renderStatus();
+  setDirty(false);
+}
+
+document.querySelectorAll("#disc-sites .site-tab").forEach((el) => el.addEventListener("click", () => {
+  if (el.dataset.discSite === discSite) return;
+  renderDiscovery(el.dataset.discSite);
+  toast(`已切换到站点 ${el.dataset.discSite}`, "info");
+}));
+
+document.getElementById("disc-enabled").addEventListener("change", (event) => {
+  discoverySites[discSite].enabled = event.target.checked;
+  renderStatus();
+  setDirty(true);
+});
+document.getElementById("disc-interval").addEventListener("input", (event) => {
+  discoverySites[discSite].interval = Number(event.target.value);
+  setDirty(true);
+});
+document.getElementById("disc-add-range").addEventListener("click", () => {
+  discoverySites[discSite].ranges.push("");
+  renderRanges();
+  setDirty(true);
+  const inputs = document.querySelectorAll("#disc-ranges .range-input");
+  inputs[inputs.length - 1]?.focus();
+});
+document.getElementById("disc-ranges").addEventListener("input", (event) => {
+  const input = event.target.closest(".range-input");
+  if (!input) return;
+  discoverySites[discSite].ranges[Number(input.dataset.rangeIndex)] = input.value;
+  setDirty(true);
+});
+document.getElementById("disc-ranges").addEventListener("click", (event) => {
+  const remove = event.target.closest("[data-remove-range]");
+  if (!remove) return;
+  discoverySites[discSite].ranges.splice(Number(remove.dataset.removeRange), 1);
+  renderRanges();
+  setDirty(true);
+});
+document.getElementById("disc-from").addEventListener("change", (event) => {
+  discoverySites[discSite].from = event.target.value;
+  const selected = allHubs.find((hub) => hub.value === event.target.value);
+  document.getElementById("disc-source").textContent = selected ? selected.label : "尚未选择";
+  setDirty(true);
+});
+document.getElementById("disc-cancel").addEventListener("click", () => {
+  renderDiscovery(discSite);
+  toast("已放弃未保存的修改", "info");
+});
+document.getElementById("disc-save").addEventListener("click", () => {
+  const site = discoverySites[discSite];
+  const interval = Number(document.getElementById("disc-interval").value);
+  const error = document.getElementById("disc-range-error");
+  if (!Number.isInteger(interval) || interval < 10 || interval > 3600) {
+    error.textContent = "扫描间隔必须在 10 到 3600 秒之间。";
+    return;
+  }
+  const ranges = site.ranges.map((range) => range.trim()).filter(Boolean);
+  for (const range of ranges) {
+    if (!/^(\d{1,3}\.){3}\d{1,3}\/(2[2-9]|3[0-2])$/.test(range)) {
+      error.textContent = `${range} 不是有效的 IPv4 /22 或更小网段。`;
+      return;
+    }
+  }
+  error.textContent = "";
+  setDirty(false);
+  document.getElementById("discovery-warning").classList.add("hidden");
+  document.getElementById("disc-gen-value").textContent = "已收敛";
+  document.getElementById("disc-gen-note").textContent = "31 / 31";
+  toast(`站点 ${discSite} 的扫描设置已保存。`, "ok");
+});
+
+renderDiscovery("office");
+</script>
+</body>
+</html>

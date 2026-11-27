@@ -6,6 +6,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/compatibility/kubernetes/kubernetesobjects"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/controllers/task/kubernetes/podunit"
 	"github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/fault"
 	executionplan "github.com/rlinf/rlark/apps/rlark/pkg/agent/execution/plan"
@@ -13,7 +14,7 @@ import (
 )
 
 const (
-	initContainerName = "rlark-tools-init"
+	initContainerName = kubernetesobjects.ToolsInitContainerName
 	volumeName        = "rlark-tools"
 	toolSourcePath    = "/usr/local/bin/rlark-tools"
 	toolTargetPath    = "/rlark-tools/rlark-tools"

@@ -26,6 +26,7 @@ import {
   availableResource,
   type ReclaimableResources,
 } from "../utils/resourceAvailability";
+import { NodeName } from "../astribot/components/NodeName";
 
 type Mode = "model" | "manual";
 type ResourceKind = "gpu" | "device" | "compute";
@@ -888,7 +889,7 @@ export function ResourcePlacementPicker({
                       title={reasonText ? `${name} · ${reasonText}` : name}
                     >
                       <div className="placement-node-head">
-                        <strong>{name}</strong>
+                        <strong><NodeName node={resource.node} /></strong>
                       </div>
                       <div className="placement-node-meta">
                         <span className="placement-node-location">

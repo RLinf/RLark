@@ -29,6 +29,10 @@ type AddonNamespaceListerExpansion interface{}
 // ClusterLister.
 type ClusterListerExpansion interface{}
 
+// ClusterProvisionListerExpansion allows custom methods to be added to
+// ClusterProvisionLister.
+type ClusterProvisionListerExpansion interface{}
+
 // ClusterUpgradeJobListerExpansion allows custom methods to be added to
 // ClusterUpgradeJobLister.
 type ClusterUpgradeJobListerExpansion interface{}
@@ -60,6 +64,10 @@ type NodeListerExpansion interface{}
 // NodeNamespaceListerExpansion allows custom methods to be added to
 // NodeNamespaceLister.
 type NodeNamespaceListerExpansion interface{}
+
+// NodeJoinListerExpansion allows custom methods to be added to
+// NodeJoinLister.
+type NodeJoinListerExpansion interface{}
 
 // PodListerExpansion allows custom methods to be added to
 // PodLister.

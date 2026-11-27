@@ -80,6 +80,9 @@ func (c *Controller) dispatch(ctx context.Context, key types.NamespacedName, hin
 		return c.host.Reconcile(ctx, key)
 	}
 	intent := host.IntentForTask(fast.task, rlarkv1alpha1.TaskPhase(observed.Observation.Phase), observed.Observation.Message, observedRootInstanceNodes(observed), host.StatusPriorityWorkload)
+	if fast.task.Spec.Placement.PerNode {
+		intent.Observed.Instances = perNodeInstances(observed.Instances)
+	}
 	if err := c.status.WriteStatus(ctx, fast.task, intent); err != nil {
 		return host.Result{Outcome: host.OutcomeRetrying, Retry: host.RetryDirective{Class: host.RetryConflict}}, err
 	}

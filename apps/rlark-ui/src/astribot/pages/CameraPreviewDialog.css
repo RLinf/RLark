@@ -1,0 +1,110 @@
+.station-camera-dialog {
+  width: min(860px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 24px 70px rgb(0 0 0 / .32);
+}
+
+.station-camera-dialog::backdrop {
+  background: rgb(12 16 27 / .68);
+}
+
+.station-camera-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.station-camera-dialog-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.station-camera-dialog-eyebrow {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  overflow-wrap: anywhere;
+}
+
+.station-camera-dialog-head h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.station-camera-dialog-close {
+  flex: none;
+  width: 38px;
+  min-height: 38px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.station-camera-dialog-frame {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  max-height: calc(100vh - 210px);
+  background: #000;
+}
+
+.station-camera-dialog-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.station-camera-dialog-blank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px;
+  color: #c9ced6;
+  font-size: 13px;
+  text-align: center;
+}
+
+.station-camera-dialog-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 11px 16px 13px;
+  border-top: 1px solid var(--line);
+}
+
+.station-camera-dialog-foot small {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.station-preview-fps {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.station-camera-dialog-foot :is(.station-preview-actual-fps, .station-preview-latency) { font-variant-numeric: tabular-nums; }
+
+@media (max-width: 640px) {
+  .station-camera-dialog { width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
+  .station-camera-dialog-head { padding: 12px 12px 10px; }
+  .station-camera-dialog-foot { padding: 10px 12px 12px; }
+}

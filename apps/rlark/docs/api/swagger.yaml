@@ -35,6 +35,36 @@ tags:
     description: Gateway Prometheus metrics
 
 paths:
+  /api/v1/station/summary:
+    get:
+      tags: [Cluster]
+      summary: Get Station fleet summary
+      operationId: getStationSummary
+      parameters:
+        - name: cluster_id
+          in: query
+          schema: {type: string}
+      responses:
+        '200':
+          description: Aggregate counts across all Station pages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: {type: integer}
+                  robots: {type: integer}
+                  otherNodes: {type: integer}
+                  byPhase: {type: object, additionalProperties: {type: integer}}
+                  alerts: {type: integer}
+                  driverReady: {type: integer}
+                  cameraFault: {type: integer}
+                  occupied: {type: integer}
+                  clusters: {type: array, items: {type: object}}
+                  generatedAt: {type: string, format: date-time}
+        '409':
+          description: The requested cluster has no unique agent namespace, or the fleet includes enrollments in a shared cluster namespace.
+
   /api/v1/images:
     get:
       tags: [Image]

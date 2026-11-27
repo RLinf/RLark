@@ -120,7 +120,7 @@ export interface Job {
   displayName: string;
   type: JobType;
   phase: Phase;
-  owner: string;
+  submittedBy?: string;
   cluster: string;
   target: string;
   workers: number;
@@ -167,7 +167,8 @@ export interface Job {
       objectStorage: string;
       mountPath: string;
       hostPath: string;
-      pvcSizeGb: number;
+      profile: string;
+      readOnly: boolean;
       rawVolume?: CRDVolume;
     }>;
     advanced?: {
@@ -312,6 +313,60 @@ export const clusters: Cluster[] = [
     robotUsage: 72,
     runningJobs: 2,
     description: "面向仓储巡检、导航采集和 AMR 任务的现场真机场。",
+  },
+  {
+    id: "rlark-robot-s1u-01",
+    name: "深圳公司S1U调试集群",
+    type: "Embodied",
+    region: "深圳 · S1U Lab",
+    location: "深圳",
+    phase: "Online",
+    cloudNodes: 0,
+    embodiedNodes: 4,
+    robots: 3,
+    gpuModels: [],
+    robotModels: ["S1U"],
+    cpuUsage: 42,
+    gpuUsage: 0,
+    robotUsage: 61,
+    runningJobs: 2,
+    description: "深圳办公室的 S1U 机器人调试集群，控制面与三台整机在同一网络域。",
+  },
+  {
+    id: "rlark-ksyun-gpu",
+    name: "金山云西北宁夏裸金属集群",
+    type: "Cloud",
+    region: "宁夏 · 中卫",
+    location: "宁夏",
+    phase: "Online",
+    cloudNodes: 2,
+    embodiedNodes: 0,
+    robots: 0,
+    gpuModels: ["NVIDIA H800"],
+    robotModels: [],
+    cpuUsage: 70,
+    gpuUsage: 82,
+    robotUsage: 0,
+    runningJobs: 4,
+    description: "金山云西北宁夏裸金属 GPU 集群，承载训练与仿真任务。",
+  },
+  {
+    id: "rlark-local-dev-gpu",
+    name: "深圳公司本地开发集群",
+    type: "Cloud",
+    region: "深圳 · 本地机房",
+    location: "深圳",
+    phase: "Online",
+    cloudNodes: 2,
+    embodiedNodes: 0,
+    robots: 0,
+    gpuModels: ["NVIDIA L40S"],
+    robotModels: [],
+    cpuUsage: 35,
+    gpuUsage: 41,
+    robotUsage: 0,
+    runningJobs: 1,
+    description: "深圳办公室的本地开发集群，供日常调试和小规模评测。",
   },
 ];
 

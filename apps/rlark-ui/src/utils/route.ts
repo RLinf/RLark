@@ -16,8 +16,10 @@ const adminPages = new Set([
   "storageClass",
   "files",
   "image-registries",
+  "stations",
   "ssh-keys",
   "upgrades",
+  "iam",
 ]);
 
 export function isAdminPath(pathname: string) {

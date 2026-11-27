@@ -21,12 +21,25 @@ import {
 import type { Copy, Lang, Theme } from "../i18n";
 import type { JobDisplayPhase } from "../utils/jobPhase";
 import type { ResourceRow } from "../types";
+import { iamPortalEnabled } from "../astribot/iam/portal";
+import astribotDark from "../astribot/iam/assets/astribot-logo-dark.png";
+import astribotLight from "../astribot/iam/assets/astribot-logo-light.png";
 
-export function PlatformFooter() {
+export function PlatformFooter({ lang }: { lang: Lang }) {
+  const locale = lang === "zh" ? "zh" : "en";
+  const astribot = iamPortalEnabled();
   return (
-    <footer className="platform-footer">
+    <footer className={astribot ? "platform-footer platform-footer-astribot" : "platform-footer"}>
       <div className="platform-footer-links">
-        <strong>RLark Open Source</strong>
+        <strong className={astribot ? "platform-footer-brand" : undefined}>
+          {astribot && (
+            <>
+              <img src={`/rlark-logo-${locale}-light.png`} alt="" className="platform-footer-logo brand-logo-light" />
+              <img src={`/rlark-logo-${locale}-dark.svg`} alt="" className="platform-footer-logo brand-logo-dark" />
+            </>
+          )}
+          RLark Open Source
+        </strong>
         <span aria-hidden="true">·</span>
         <a
           href="https://github.com/RLinf/RLark"
@@ -164,16 +177,18 @@ export function useColumnFilter() {
 
 export function Logo({ lang }: { lang: Lang }) {
   const locale = lang === "zh" ? "zh" : "en";
+  const astribot = iamPortalEnabled();
+  const brand = astribot ? "Astribot" : "RLark";
   return (
-    <div className="brand">
+    <div className={astribot ? "brand brand-astribot" : "brand"}>
       <img
-        src={`/rlark-logo-${locale}-light.png`}
-        alt="RLark"
+        src={astribot ? astribotLight : `/rlark-logo-${locale}-light.png`}
+        alt={brand}
         className="brand-logo brand-logo-light"
       />
       <img
-        src={`/rlark-logo-${locale}-dark.svg`}
-        alt="RLark"
+        src={astribot ? astribotDark : `/rlark-logo-${locale}-dark.svg`}
+        alt={brand}
         className="brand-logo brand-logo-dark"
       />
     </div>

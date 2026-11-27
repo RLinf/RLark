@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"reflect"
 
@@ -170,11 +171,15 @@ func (r *Reconciler) dispatchTasksWithTemplates(
 	}
 	statusMap := buildTaskStatusMap(job)
 	changed := false
+	var storage storageWait
 
 	for i, t := range job.Spec.Tasks {
 		ts := statusMap[t.Name]
 
 		task, err := r.reconcileTaskInNamespace(ctx, job, t, namespaces[i], logger)
+		if storage.waits(err, t.Name, logger) {
+			continue
+		}
 		if err != nil {
 			return false, err
 		}
@@ -183,7 +188,7 @@ func (r *Reconciler) dispatchTasksWithTemplates(
 		}
 	}
 
-	return changed, nil
+	return storage.result(job, changed)
 }
 
 func (r *Reconciler) reconcileTask(
@@ -206,9 +211,13 @@ func (r *Reconciler) reconcileTaskInNamespace(
 	taskNamespace string,
 	logger logr.Logger,
 ) (*rlarkv1alpha1.Task, error) {
+	t, err := r.resolveTemplateStorage(ctx, t, taskNamespace)
+	if err != nil {
+		return nil, err
+	}
 	taskName := utils.ChildName(job.Name, t.Name)
 	var task rlarkv1alpha1.Task
-	err := r.Get(ctx, types.NamespacedName{Name: taskName, Namespace: taskNamespace}, &task)
+	err = r.Get(ctx, types.NamespacedName{Name: taskName, Namespace: taskNamespace}, &task)
 	if err == nil {
 		if err := r.ensureTaskOwnership(ctx, job, t.Name, &task); err != nil {
 			return nil, err
@@ -501,6 +510,9 @@ func (r *Reconciler) reconcileWithStateMachine(
 		changed = true
 	}
 	dispatchChanged, err := r.dispatchTasks(ctx, job, logger)
+	if stderrors.Is(err, controller.ErrRequeueWaiting) {
+		return changed || dispatchChanged, err
+	}
 	if err != nil {
 		return false, err
 	}

@@ -74,7 +74,7 @@ func buildUninstallSummary(cfg *types.DeployConfig, purge bool) string {
 		fmt.Fprintf(&b, "\n")
 	}
 
-	fmt.Fprintf(&b, "  - ConfigMaps: rlark-db-config, rlark-postgres-init, rlark-kcp-kubeconfig\n")
+	fmt.Fprintf(&b, "  - ConfigMaps: rlark-db-config, rlark-postgres-init; Secrets rlark-<component>-kcp\n")
 	fmt.Fprintf(&b, "  - Secrets: rlark-tls, rlark-agent-cert\n")
 
 	if purge {

@@ -80,10 +80,8 @@ test("system configuration separates categories with horizontal navigation", () 
     /className="api-category-bar system-config-category-bar"/,
   );
   assert.match(systemConfigSource, /activeCategory === "ssh"/);
-  assert.match(systemConfigSource, /activeCategory === "deployment"/);
   assert.match(systemConfigSource, /activeCategory === "log"/);
   assert.match(systemConfigSource, /SSH 跳板配置/);
-  assert.match(systemConfigSource, /部署配置默认值/);
   assert.match(systemConfigSource, /日志后端配置/);
   assert.match(systemConfigSource, /system-config-overview/);
   assert.match(systemConfigSource, /system-config-panel/);

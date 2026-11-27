@@ -56,8 +56,6 @@ const (
 	SystemConfigKeySSH = "ssh"
 	// SystemConfigKeyLog stores log backend config as a JSON object.
 	SystemConfigKeyLog = "log"
-	// SystemConfigKeyDeployment stores data-plane deployment YAML defaults as a JSON object.
-	SystemConfigKeyDeployment = "deployment"
 )
 
 // Constants used by the package.

@@ -1,0 +1,76 @@
+{{- if and (eq .Values.role "cache") .Values.prewarm }}
+# Fetches the images in the parameter prewarm through this site's cache, so the cache holds every layer
+# before the site's nodes ask: the cache stores a layer only for the first of several simultaneous requests.
+# It is ready once every image came back at local speed; a new list starts it over.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .AddonName }}-prewarm
+  namespace: rlark-system
+  labels:
+    app: {{ .AddonName }}-prewarm
+  annotations:
+    rlark.io/not-ready-message: 站点缓存预热中
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .AddonName }}-prewarm
+  template:
+    metadata:
+      labels:
+        app: {{ .AddonName }}-prewarm
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      nodeSelector:
+        {{ index (splitList "=" .Values.nodeSelector) 0 }}: {{ index (splitList "=" .Values.nodeSelector) 1 | printf "%q" }}
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      initContainers:
+        - name: prewarm
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [sh, /etc/distribution/prewarm.sh]
+          env:
+            - name: URL
+              value: https://registry.rlark.internal:{{ index (splitList ":" .Values.listen) 1 }}
+            - name: PREWARM
+              value: {{ .Values.prewarm | printf "%q" }}
+            - name: STALL
+              value: "60"
+            - name: LOCAL_MBPS
+              value: "100"
+            - name: SSL_CERT_FILE
+              value: /etc/distribution/upstream-ca.crt
+          volumeMounts:
+            - name: config
+              mountPath: /etc/distribution
+            - name: credentials
+              mountPath: /run/site-registry
+              readOnly: true
+      containers:
+        - name: idle
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, "while :; do sleep 3600; done"]
+          resources:
+            requests:
+              cpu: 1m
+              memory: 4Mi
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .AddonName }}
+        - name: credentials
+          secret:
+            secretName: {{ .Values.secret }}
+            items:
+              - {key: proxy-username, path: proxy-username}
+              - {key: proxy-password, path: proxy-password}
+{{- end }}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/identity"
 	"github.com/rlinf/rlark/apps/rlark/cmd/rlarkadm/commands"
 	"github.com/rlinf/rlark/apps/rlark/pkg/version"
 )
@@ -19,6 +20,7 @@ func main() {
 
 	root.AddCommand(commands.InstallCommand())
 	root.AddCommand(commands.UninstallCommand())
+	root.AddCommand(identity.Command())
 	root.AddCommand(commands.UpgradeCommand())
 
 	if err := root.Execute(); err != nil {

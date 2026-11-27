@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	astribotctl "github.com/rlinf/rlark/apps/rlark/astribot/rlarkctl"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarkctl"
 	"github.com/rlinf/rlark/apps/rlark/pkg/version"
 )
@@ -19,6 +20,7 @@ func main() {
 	cmd.AddCommand(rlarkctl.SignCommand())
 	cmd.AddCommand(rlarkctl.RevokeCommand())
 	cmd.AddCommand(rlarkctl.ProxyCurlCommand())
+	cmd.AddCommand(astribotctl.Commands()...)
 	rlarkctl.SetupPersistentFlags(cmd.PersistentFlags())
 
 	if err := cmd.Execute(); err != nil {

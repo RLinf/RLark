@@ -29,11 +29,13 @@ type RlinfV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	AddonsGetter
 	ClustersGetter
+	ClusterProvisionsGetter
 	ClusterUpgradeJobsGetter
 	DomainsGetter
 	DomainPeersGetter
 	JobsGetter
 	NodesGetter
+	NodeJoinsGetter
 	PodsGetter
 	TasksGetter
 	UpgradeJobsGetter
@@ -51,6 +53,10 @@ func (c *RlinfV1alpha1Client) Addons(namespace string) AddonInterface {
 
 func (c *RlinfV1alpha1Client) Clusters() ClusterInterface {
 	return newClusters(c)
+}
+
+func (c *RlinfV1alpha1Client) ClusterProvisions() ClusterProvisionInterface {
+	return newClusterProvisions(c)
 }
 
 func (c *RlinfV1alpha1Client) ClusterUpgradeJobs(namespace string) ClusterUpgradeJobInterface {
@@ -71,6 +77,10 @@ func (c *RlinfV1alpha1Client) Jobs() JobInterface {
 
 func (c *RlinfV1alpha1Client) Nodes(namespace string) NodeInterface {
 	return newNodes(c, namespace)
+}
+
+func (c *RlinfV1alpha1Client) NodeJoins() NodeJoinInterface {
+	return newNodeJoins(c)
 }
 
 func (c *RlinfV1alpha1Client) Pods(namespace string) PodInterface {

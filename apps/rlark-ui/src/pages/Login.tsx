@@ -3,6 +3,7 @@ import { AlertCircle, ArrowRight, Eye, EyeOff } from "lucide-react";
 import { storeAuthSession } from "../api";
 import { authApi } from "../backend";
 import type { Lang } from "../i18n";
+import { iamPortalEnabled } from "../astribot/iam/portal";
 
 export function UserLogin({
   onLogin,
@@ -23,6 +24,9 @@ export function UserLogin({
     const timer = window.setTimeout(() => setError(""), 4000);
     return () => window.clearTimeout(timer);
   }, [error]);
+
+  // The published console signs in through /login only; this form is upstream.
+  if (iamPortalEnabled()) return null;
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();

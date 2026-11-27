@@ -85,6 +85,8 @@ Use condition type, status, and reason for automation; do not parse `message`. K
 
 The console localizes the condition type, status, reason, and the fixed explanation the controller writes for each condition type. It shows `lastTransitionTime` as a relative duration with the absolute timestamp on hover, and keeps the machine-readable condition type in the tooltip.
 
+Administrators can remove a node from the admin console. Removal is a server-owned node operation with observable stages; it continues when the confirmation drawer is closed and can be reopened from the node row or the task card. See [Removing a Node](../admin-guide/nodes.md#removing-a-node).
+
 ## Result
 
 You should now have a cluster and, when needed, a node selector that matches ready, schedulable Workers with sufficient capacity. Use them in [Submit and Manage a Job](jobs.md).

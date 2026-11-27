@@ -1,0 +1,26 @@
+# The robot's x86 reaches the site through this Orin and holds no address of the site's network: it has its address
+# on the robot's own network (192.168.0.10) and nothing else, and the Orin forwards what it sends beyond that
+# network under the Orin's own address, whichever uplink and address the Orin has at the time. (Before, each x86
+# held a hand-picked address of the site's network that the Orin answered ARP for: s1u_02's Orin was leased that
+# very address on 11-13 and the x86 was gone from the site.)
+#
+# This file is the only source, with nothing to fill in: every S1U is the same. The Addon s1u-robot keeps it on the
+# Orin (extensions/s1u/orin/orin.py); when a robot first joins, Station API hands the same file to its Orin (the
+# site's leafUplink.setup, the Addon's bootstrap/orin-uplink.sh, generated from this file). It is on the Orin from its
+# boot: an x86 without it reaches nothing and starts no Pod that could put it there.
+[Unit]
+Description=s1u-robot: the robot's x86 (192.168.0.10) reaches the site through this Orin
+After=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/sysctl -q -w net.ipv4.ip_forward=1
+# Forwarding is accepted by rule: docker sets the chain's policy to DROP when it finds forwarding off at its start.
+ExecStart=/bin/sh -c 'iptables -w -t nat -C POSTROUTING -s 192.168.0.10 ! -d 192.168.0.0/24 -j MASQUERADE 2>/dev/null || iptables -w -t nat -I POSTROUTING -s 192.168.0.10 ! -d 192.168.0.0/24 -j MASQUERADE'
+ExecStart=/bin/sh -c 'iptables -w -C FORWARD -s 192.168.0.10 ! -d 192.168.0.0/24 -j ACCEPT 2>/dev/null || iptables -w -I FORWARD -s 192.168.0.10 ! -d 192.168.0.0/24 -j ACCEPT'
+ExecStart=/bin/sh -c 'iptables -w -C FORWARD -d 192.168.0.10 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -w -I FORWARD -d 192.168.0.10 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT'
+ExecStop=-/bin/sh -c 'iptables -w -t nat -D POSTROUTING -s 192.168.0.10 ! -d 192.168.0.0/24 -j MASQUERADE; iptables -w -D FORWARD -s 192.168.0.10 ! -d 192.168.0.0/24 -j ACCEPT; iptables -w -D FORWARD -d 192.168.0.10 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT'
+
+[Install]
+WantedBy=multi-user.target

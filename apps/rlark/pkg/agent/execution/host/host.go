@@ -88,6 +88,7 @@ func (w KubernetesStatusWriter) WriteStatus(ctx context.Context, task *rlarkv1al
 	}
 	if intent.ObservedSet {
 		desired.Status.ObservedNodes = slices.Clone(intent.Observed.Nodes)
+		desired.Status.Instances = slices.Clone(intent.Observed.Instances)
 	}
 	if intent.ObservedSet && len(intent.Observed.DrainRequests) > 0 {
 		desired.Status.DrainRequests = slices.Clone(intent.Observed.DrainRequests)

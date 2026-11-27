@@ -3,6 +3,7 @@ package addon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -30,9 +31,6 @@ import (
 // Constants used by the package.
 const (
 	AddonRequeueInterval = 10 * time.Second
-
-	// AddonResourceVersionAnnotation annotates local resources linking back to the management Addon CR.
-	AddonResourceVersionAnnotation = "rlark.io/addon-resource-version"
 )
 
 // Reason values for the Addon Ready condition. They are stable, CamelCase
@@ -83,6 +81,9 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 	if mgmtAddon.DeletionTimestamp != nil {
 		logger.Info("management Addon being deleted, cleaning up local resources")
 		if err := r.cleanupAddon(ctx, &mgmtAddon); err != nil {
+			if errors.Is(err, errAddonCleanupPending) {
+				return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
+			}
 			logger.Error(err, "failed to clean up addon resources")
 			return reconcile.Result{}, err
 		}
@@ -110,13 +111,6 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 		return reconcile.Result{}, nil
 	}
 
-	// Look up addon in catalog
-	addon, ok := addons.Registry.Get(mgmtAddon.Spec.AddonName)
-	if !ok {
-		r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("addon %q not found in catalog", mgmtAddon.Spec.AddonName))
-		return reconcile.Result{}, nil
-	}
-
 	// Determine target phase
 	targetPhase := rlarkv1alpha1.AddonPhaseInstalling
 	if mgmtAddon.Status.Phase == rlarkv1alpha1.AddonPhaseReady {
@@ -124,13 +118,17 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 	}
 
 	// Render manifests
-	manifests, err := addon.Render(mgmtAddon.Spec.Values, apis.Namespace, mgmtAddon.Name, string(mgmtAddon.UID))
+	manifests, err := r.rendered(ctx, &mgmtAddon)
+	if errors.Is(err, errPackageMissing) {
+		return r.packageMissing(ctx, &mgmtAddon, err)
+	}
 	if err != nil {
 		r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("render error: %v", err))
 		return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
 	}
 
 	// Apply each manifest
+	prepare := r.preparer(ctx)
 	for i, m := range manifests {
 		objs, err := parseManifest(m.Raw)
 		if err != nil {
@@ -138,15 +136,24 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 			return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
 		}
 		for _, obj := range objs {
+			if err := prepare(obj); err != nil {
+				r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, err.Error())
+				return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
+			}
 			injectLabels(obj, mgmtAddon.Name, string(mgmtAddon.UID))
 			obj.SetAnnotations(mergeMaps(obj.GetAnnotations(), map[string]string{
-				AddonResourceVersionAnnotation: mgmtAddon.ResourceVersion,
+				AddonGenerationAnnotation: addonGeneration(&mgmtAddon),
 			}))
 			if err := r.applyObject(ctx, obj, &mgmtAddon); err != nil {
 				r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("apply %s/%s: %v", obj.GetKind(), obj.GetName(), err))
 				return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
 			}
 		}
+	}
+
+	if err := r.replacePodsOnUnselectedNodes(ctx, &mgmtAddon); err != nil {
+		r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseFailed, fmt.Sprintf("placement: %v", err))
+		return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
 	}
 
 	// Check readiness
@@ -158,7 +165,7 @@ func (r *pullReconciler) Reconcile(ctx context.Context, req reconcile.Request) (
 
 	if ready {
 		r.updateStatus(ctx, &mgmtAddon, rlarkv1alpha1.AddonPhaseReady, "")
-		return reconcile.Result{}, nil
+		return reconcile.Result{RequeueAfter: AddonRequeueInterval}, nil
 	}
 
 	// Not ready yet — check if any pods are failed
@@ -182,6 +189,10 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 		obj.SetNamespace(apis.Namespace)
 	}
 
+	if err := r.injectImagePullSecrets(ctx, obj); err != nil {
+		return err
+	}
+
 	key := types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}
 
 	existing := &unstructured.Unstructured{}
@@ -201,16 +212,15 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 		return nil
 	}
 
-	// Exists — update if resource version annotation changed
-	existingAnnotations := existing.GetAnnotations()
-	if existingAnnotations != nil && existingAnnotations[AddonResourceVersionAnnotation] == mgmtAddon.ResourceVersion {
-		return nil
+	// Exists — update unless it is this Addon's and still as rendered
+	if applied, err := alreadyApplied(obj, existing, mgmtAddon); applied || err != nil {
+		return err
 	}
 
 	logger.Info("updating resource")
 	mergedLabels := mergeMaps(existing.GetLabels(), obj.GetLabels())
 	mergedAnnotations := mergeMaps(existing.GetAnnotations(), obj.GetAnnotations())
-	mergedAnnotations[AddonResourceVersionAnnotation] = mgmtAddon.ResourceVersion
+	mergedAnnotations[AddonGenerationAnnotation] = addonGeneration(mgmtAddon)
 
 	existing.SetLabels(mergedLabels)
 	existing.SetAnnotations(mergedAnnotations)
@@ -232,12 +242,13 @@ func (r *pullReconciler) applyObject(ctx context.Context, obj *unstructured.Unst
 }
 
 func (r *pullReconciler) cleanupAddon(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon) error {
-	if r.c.LocalKubeClient == nil {
-		return nil
+	if err := r.cleanupPossible(mgmtAddon); err != nil {
+		return err
 	}
 
 	labelSelector := client.MatchingLabels{
 		addons.LabelAddonName: mgmtAddon.Name,
+		addons.LabelAddonUID:  string(mgmtAddon.UID),
 	}
 
 	// Delete all resources with the addon label
@@ -257,26 +268,23 @@ func (r *pullReconciler) cleanupAddon(ctx context.Context, mgmtAddon *rlarkv1alp
 		&storagev1.StorageClassList{},
 	}
 
+	var pending error
 	for _, list := range resources {
 		if err := r.c.LocalKubeClient.List(ctx, list, labelSelector); err != nil {
-			if client.IgnoreNotFound(err) != nil {
-				continue
-			}
+			return fmt.Errorf("list addon resources %T: %w", list, err)
 		}
 		items := extractItems(list)
 		if items == nil {
 			continue
 		}
 		for _, item := range items {
-			if err := r.c.LocalKubeClient.Delete(ctx, item); err != nil {
-				if client.IgnoreNotFound(err) != nil {
-					continue
-				}
+			if err := r.deleteOwned(ctx, item, &pending); err != nil {
+				return err
 			}
 		}
 	}
 
-	return nil
+	return pending
 }
 
 func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha1.Addon) (bool, string, error) {
@@ -295,8 +303,8 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: deployments found", "count", len(depList.Items))
 	for _, d := range depList.Items {
 		foundWorkloads = true
-		if d.Status.ReadyReplicas < *d.Spec.Replicas {
-			return false, fmt.Sprintf("Deployment %s: %d/%d ready", d.Name, d.Status.ReadyReplicas, *d.Spec.Replicas), nil
+		if msg := r.deploymentNotReady(ctx, &d); msg != "" {
+			return false, msg, nil
 		}
 	}
 
@@ -308,11 +316,8 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: daemonsets found", "count", len(dsList.Items), "labels", labels)
 	for _, ds := range dsList.Items {
 		foundWorkloads = true
-		if ds.Status.DesiredNumberScheduled == 0 {
-			return false, fmt.Sprintf("DaemonSet %s: no nodes scheduled", ds.Name), nil
-		}
-		if ds.Status.NumberReady < ds.Status.DesiredNumberScheduled {
-			return false, fmt.Sprintf("DaemonSet %s: %d/%d ready", ds.Name, ds.Status.NumberReady, ds.Status.DesiredNumberScheduled), nil
+		if msg, err := r.daemonSetNotReady(ctx, &ds); msg != "" || err != nil {
+			return false, msg, err
 		}
 	}
 
@@ -324,7 +329,7 @@ func (r *pullReconciler) checkReady(ctx context.Context, mgmtAddon *rlarkv1alpha
 	logger.Info("checkReady: statefulsets found", "count", len(ssList.Items))
 	for _, ss := range ssList.Items {
 		foundWorkloads = true
-		if ss.Status.ReadyReplicas < *ss.Spec.Replicas {
+		if ss.Status.ObservedGeneration < ss.Generation || ss.Status.UpdatedReplicas < *ss.Spec.Replicas || ss.Status.ReadyReplicas < *ss.Spec.Replicas {
 			return false, fmt.Sprintf("StatefulSet %s: %d/%d ready", ss.Name, ss.Status.ReadyReplicas, *ss.Spec.Replicas), nil
 		}
 	}

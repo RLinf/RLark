@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "model": "s1u",
+  "variants": [
+    {"id": "s1u", "cameras": ["head", "torso", "wrist_left", "wrist_right"]},
+    {"id": "s1u_observer", "cameras": ["head", "torso"]}
+  ],
+  "jointGroups": [
+    {"id": "arm_left", "dimensions": 7, "positionUnit": "rad", "velocityUnit": "rad/s"},
+    {"id": "arm_right", "dimensions": 7, "positionUnit": "rad", "velocityUnit": "rad/s"},
+    {"id": "torso", "dimensions": 4, "positionUnit": "rad", "velocityUnit": "rad/s"},
+    {"id": "gripper_left", "dimensions": 1},
+    {"id": "gripper_right", "dimensions": 1}
+  ],
+  "endpoints": ["arm_left", "arm_right", "torso"]
+}

@@ -22,18 +22,19 @@ import (
 // KubernetesTaskAssemblyInput supplies explicit, borrowed dependencies for one
 // Task execution runtime. Node services and manager lifecycle remain Agent-owned.
 type KubernetesTaskAssemblyInput struct {
-	ManagementClient    client.Client
-	ManagementNamespace string
-	LocalClient         client.Client
-	LocalCachedClient   client.Client
-	LocalHTTP           *http.Client
-	LocalAPIHost        string
-	LocalConfig         *rest.Config
-	Mapper              meta.RESTMapper
-	Execution           KubernetesExecutionConfig
-	PullWorkers         int
-	PushWorkers         int
-	ResyncPeriod        time.Duration
+	ManagementClient     client.Client
+	ManagementNamespace  string
+	LocalClient          client.Client
+	LocalCachedClient    client.Client
+	LocalHTTP            *http.Client
+	LocalAPIHost         string
+	LocalConfig          *rest.Config
+	Mapper               meta.RESTMapper
+	Execution            KubernetesExecutionConfig
+	PullWorkers          int
+	PushWorkers          int
+	DaemonSetPushWorkers int
+	ResyncPeriod         time.Duration
 }
 
 // KubernetesTaskAssembly owns complete Task wiring, but does not start managers.
@@ -64,7 +65,7 @@ func BuildKubernetesTaskAssembly(ctx context.Context, input KubernetesTaskAssemb
 	if input.LocalClient.Scheme() == nil {
 		return nil, fmt.Errorf("task assembly requires a local Kubernetes scheme")
 	}
-	if input.PullWorkers < 0 || input.PushWorkers < 0 || input.ResyncPeriod < 0 {
+	if input.PullWorkers < 0 || input.PushWorkers < 0 || input.DaemonSetPushWorkers < 0 || input.ResyncPeriod < 0 {
 		return nil, fmt.Errorf("task assembly workers and resync period must not be negative")
 	}
 	if strings.TrimSpace(input.Execution.Image) == "" {
@@ -83,6 +84,7 @@ func BuildKubernetesTaskAssembly(ctx context.Context, input KubernetesTaskAssemb
 		LocalKubeHTTP: input.LocalHTTP, LocalKubeAPIHost: input.LocalAPIHost, LocalKubeConfig: localConfig,
 		PullMaxConcurrentReconciles: input.PullWorkers, PushMaxConcurrentReconciles: input.PushWorkers,
 	})
+	c.daemonSetPushWorkers = input.DaemonSetPushWorkers
 	buildCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	execution, err := newKubernetesExecutionCoordinator(buildCtx, input.LocalClient, input.Execution)

@@ -345,13 +345,17 @@ func (p *Provider) ListInstances(ctx context.Context, query agentruntime.Instanc
 		if err != nil {
 			return agentruntime.InstanceSnapshot{}, err
 		}
+		nodes, err := p.instanceNodes(ctx, object, pods, &objectsForRevision)
+		if err != nil {
+			return agentruntime.InstanceSnapshot{}, err
+		}
 		for i := range pods {
 			pod := &pods[i]
 			objectsForRevision = append(objectsForRevision, pod)
 			for j := range events[pod.Name] {
 				objectsForRevision = append(objectsForRevision, &events[pod.Name][j])
 			}
-			instances = append(instances, podInstance(p.id, query.Task, parent, pod, events[pod.Name]))
+			instances = append(instances, podInstance(p.id, query.Task, parent, pod, events[pod.Name], nodes[pod.Spec.NodeName]))
 		}
 	}
 	// 4. Return deterministic instances and a revision derived from all observed
@@ -767,7 +771,7 @@ func applyWorkload(current, desired client.Object, task agentruntime.TaskIdentit
 	// the API server when the declarative manifest leaves them unspecified. This
 	// avoids the common permanent update loop without pretending to reproduce the
 	// complete, version-dependent Kubernetes defaulting implementation.
-	preserveObservedPodDefaults(workloadTemplatePointer(current), workloadTemplatePointer(desired))
+	keepPlatformAdditions(current, desired, canonicalGeneration)
 	annotationsBeforeMerge := maps.Clone(current.GetAnnotations())
 	specChanged := false
 	// TODO(execution): Replace the conservative common-default normalization and
@@ -786,7 +790,7 @@ func applyWorkload(current, desired client.Object, task agentruntime.TaskIdentit
 	case *appsv1.DaemonSet:
 		want := desired.(*appsv1.DaemonSet)
 		kubernetesobjects.MergeWorkloadAnnotations(existing, compatTask)
-		specChanged = !reflect.DeepEqual(existing.Spec.Template, want.Spec.Template)
+		specChanged = takeRollout(existing, want) || !reflect.DeepEqual(existing.Spec.Template, want.Spec.Template)
 		existing.Spec.Template = want.Spec.Template
 	case *appsv1.StatefulSet:
 		want := desired.(*appsv1.StatefulSet)
@@ -1391,7 +1395,7 @@ func (p *Provider) podEvents(ctx context.Context, namespace string, pods []corev
 	return result, nil
 }
 
-func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, parent agentruntime.ObjectRef, pod *corev1.Pod, events []corev1.Event) agentruntime.Instance {
+func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, parent agentruntime.ObjectRef, pod *corev1.Pod, events []corev1.Event, node instanceNode) agentruntime.Instance {
 	conditions := make([]agentruntime.InstanceCondition, 0)
 	if pod.Spec.NodeName != "" {
 		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "node", Subject: pod.Spec.NodeName})
@@ -1407,6 +1411,7 @@ func podInstance(runtimeID agentruntime.ID, task agentruntime.TaskIdentity, pare
 	for _, event := range events {
 		conditions = append(conditions, agentruntime.InstanceCondition{Source: "kubernetes", Scope: "instance", Subject: pod.Name, Reason: event.Reason, Message: event.Message})
 	}
+	conditions = append(conditions, perNodeConditions(pod, node)...)
 	sort.SliceStable(conditions, func(i, j int) bool {
 		left, right := conditions[i], conditions[j]
 		return left.Scope+"/"+left.Subject+"/"+left.Reason+"/"+left.Message < right.Scope+"/"+right.Subject+"/"+right.Reason+"/"+right.Message

@@ -153,6 +153,10 @@ func (s *Server) registerAgent(ctx context.Context, agentID string) error {
 		}
 	}
 
+	if err := s.grantOwnClusterReader(ctx, agentID, namespace, saName); err != nil {
+		return err
+	}
+
 	return nil
 }
 

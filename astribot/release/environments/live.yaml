@@ -1,0 +1,54 @@
+# The live site: its management machine (the office's, 10.11.14.128) runs the command, as root, and builds its releases
+# (astribot/release). The paths are the management machine's. The clusters are the management plane's, each reached by the release's
+# credential for it there (rlark-release-member-credentials/release-<cluster>).
+name: live
+release: ../releases/ci-49580ee-64864d2-controller.yaml
+management:
+  # The command's own identity in kcp (rlarkadm identity issue --output-dir /home/cailiang/.local/share/rlark-runtime/identity).
+  kubeconfig: /home/cailiang/.local/share/rlark-runtime/identity/rlark-release/kubeconfig
+# The Addon catalog directory the Gateway is given (its RLARK_ADDON_CATALOG_DIR, the compose file's ADDONS): the
+# command publishes an Addon's Package from it as the Gateway does.
+addonCatalog: /var/lib/rlark/addons
+controlPlane:
+  project: rlark
+  compose: /var/lib/rlark/rlark.compose.yaml
+  env: /var/lib/rlark/control-plane.env
+  # The site's values of the compose file (astribot/release/control-plane/rlark.compose.yaml) besides station.bootstrapURL and
+  # addonCatalog: where the components' identities, certificates and database configuration are, the Gateway's way to
+  # Station API, and how long a console login lasts. A release writes the file and these values.
+  variables:
+    R: /home/cailiang/.local/share/rlark-runtime
+    STATION_API_ADDRESS: https://10.254.240.1:18443
+    GATEWAY_TOKEN_TTL: 168h
+  # The control plane's machine pulls from a registry of its own: a release's image there by the same digest.
+  images:
+    registry.rlark.internal:5443/rlark/agent: localhost:5555/rlark
+    registry.rlark.internal:5443/rlark/rlark-ui: localhost:5555/rlark-ui
+station:
+  cluster: rlark-local-dev-gpu
+  # The account Station's Deployments pull with: what RLark delivers into station-system under the image registry
+  # credential's id (in all three clusters since 11-16 14:5x).
+  pullSecret: ir-8be41d25ef634987
+  # Where both Station Deployments read the installer, and Station API as a machine that joins reaches it.
+  bootstrapDir: /var/lib/rlark/station-bootstrap
+  bootstrapURL: https://10.11.14.128:18443
+# The installer Station API serves: the release's installer-live, which a release's build makes of the release's tree
+# (astribot/release/run.sh, Dockerfile.installer) over this base, with the site registry's CA, the first trust a machine it
+# installs has. The base gives Kubernetes v1.36.6, containerd, the CNI and the image archives (install-v1.36.6-ff8958a,
+# astribot/station/bootstrap/Dockerfile.base); a new version is a new base (astribot/release/build.sh base).
+installer:
+  base: registry.rlark.internal:5443/rlark/staging-artifact@sha256:98104450c21a4d0c1ea679a55d9a8081b75140cae2f1872e34ece6cb5bd377e8
+  registryCA: live.registry-ca.crt
+# The registries, as the management machine reaches them. source: the cloud's, which releases are kept in (their
+# images and installer, copied there by digest when they are built: rlarkctl release copy), through the tunnel,
+# trusted by the site's CA, with the account the management plane holds for it (ir-667c8af90d294c2b), which the
+# release's identity reads there. site: the office's own, on cailiang's disk (site-registry's local entry, HTTP, no
+# account), which releases are built into and the office's and the robots' clusters pull from: a run copies what of
+# the release it lacks into it first (stage images).
+registry:
+  name: registry.rlark.internal:5443
+  source: {address: "https://10.0.2.57:5443", ca: live.registry-ca.crt, credential: ir-667c8af90d294c2b}
+  site: {address: "http://127.0.0.1:5443"}
+# The records of runs. The release's Addons follow it in every cluster that has them installed; the robots' values
+# other than the release's (powerOff, reboot, ...) stay as the site set them.
+state: /var/lib/rlark/release/runs

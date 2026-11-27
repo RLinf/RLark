@@ -5,7 +5,6 @@ import {
   Check,
   Copy as CopyIcon,
   RefreshCw,
-  ServerCog,
   ScrollText,
   ShieldCheck,
 } from "lucide-react";
@@ -13,10 +12,8 @@ import type { Copy } from "../i18n";
 import { RefreshOverlay } from "../components/shared";
 import {
   systemConfigApi,
-  type DeploymentConfig,
   type SystemConfigResponse,
 } from "../backend";
-import { resolveDeploymentConfig } from "../utils/deployYaml";
 import { copyText } from "../utils/clipboard";
 
 interface LogBackendConfig {
@@ -37,25 +34,12 @@ interface SystemConfig {
   sshJumpPort: string;
   log: LogConfig;
   isAccessKeySecretSet: boolean; // 标记 accessKeySecret 是否已设置（用于区分掩码和用户输入）
-  deployment: {
-    controlPlaneAddress: string;
-    sshAddress: string;
-    insecureSkipTlsVerify: boolean;
-    kubernetes: {
-      kubeconfig: string;
-      agentImage: string;
-      image: string;
-      imagePullPolicy: "" | "Always" | "IfNotPresent" | "Never";
-      imagePullSecrets: string;
-      containerdSocket: string;
-    };
-  };
 }
 
 export function SystemConfigPage({ copy: c }: { copy: Copy }) {
   const zh = c.nav.overview === "总览";
   const [activeCategory, setActiveCategory] = useState<
-    "ssh" | "deployment" | "log"
+    "ssh" | "log"
   >("ssh");
   const [config, setConfig] = useState<SystemConfig>({
     sshJumpHost: "",
@@ -71,19 +55,6 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
       },
     },
     isAccessKeySecretSet: false,
-    deployment: {
-      controlPlaneAddress: "",
-      sshAddress: "",
-      insecureSkipTlsVerify: false,
-      kubernetes: {
-        kubeconfig: "",
-        agentImage: "rlark:latest",
-        image: "rlark:latest",
-        imagePullPolicy: "",
-        imagePullSecrets: "",
-        containerdSocket: "",
-      },
-    },
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -95,7 +66,6 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
 
   const applyConfig = (data: SystemConfigResponse) => {
     const secret = data.log?.config?.accessKeySecret || "";
-    const deployment = resolveDeploymentConfig(data.deployment);
     setConfig({
       sshJumpHost: data.ssh?.jumpHost || data.sshJumpHost || "",
       sshJumpPort: data.ssh?.jumpPort || data.sshJumpPort || "",
@@ -110,20 +80,6 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
         },
       },
       isAccessKeySecretSet: Boolean(secret),
-      deployment: {
-        controlPlaneAddress: deployment.controlPlaneAddress || "",
-        sshAddress: deployment.sshAddress || "",
-        insecureSkipTlsVerify: deployment.insecureSkipTlsVerify || false,
-        kubernetes: {
-          kubeconfig: deployment.kubernetes?.kubeconfig || "",
-          agentImage: deployment.kubernetes?.agentImage || "",
-          image: deployment.kubernetes?.image || "",
-          imagePullPolicy: deployment.kubernetes?.imagePullPolicy || "",
-          imagePullSecrets:
-            deployment.kubernetes?.imagePullSecrets?.join(", ") || "",
-          containerdSocket: deployment.kubernetes?.containerdSocket || "",
-        },
-      },
     });
     setIsLogConfigDirty(false);
   };
@@ -183,7 +139,6 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
       const requestBody: {
         ssh?: { jumpHost: string; jumpPort: string };
         log?: LogConfig;
-        deployment?: DeploymentConfig;
       } = {};
 
       if (activeCategory === "ssh") {
@@ -192,24 +147,6 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
           jumpPort: port,
         };
       }
-      if (activeCategory === "deployment") {
-        requestBody.deployment = {
-          apiVersion: "rlark.io/v1alpha1",
-          kind: "DeployConfig",
-          plane: "data",
-          controlPlaneAddress: config.deployment.controlPlaneAddress,
-          sshAddress: config.deployment.sshAddress,
-          insecureSkipTlsVerify: config.deployment.insecureSkipTlsVerify,
-          kubernetes: {
-            ...config.deployment.kubernetes,
-            imagePullSecrets: config.deployment.kubernetes.imagePullSecrets
-              .split(",")
-              .map((value) => value.trim())
-              .filter(Boolean),
-          },
-        };
-      }
-
       if (activeCategory === "log") {
         requestBody.log = config.log;
       }
@@ -311,16 +248,6 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
         </div>
         <div>
           <span>
-            <ServerCog size={18} />
-          </span>
-          <small>{zh ? "Agent 部署" : "Agent deployment"}</small>
-          <strong>
-            {config.deployment.kubernetes.agentImage ||
-              (zh ? "使用默认镜像" : "Default image")}
-          </strong>
-        </div>
-        <div>
-          <span>
             <ScrollText size={18} />
           </span>
           <small>{zh ? "历史日志" : "Historical logs"}</small>
@@ -352,14 +279,6 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
             aria-pressed={activeCategory === "ssh"}
           >
             {zh ? "SSH 跳板配置" : "SSH Jump Host"}
-          </button>
-          <button
-            type="button"
-            className={activeCategory === "deployment" ? "active" : ""}
-            onClick={() => setActiveCategory("deployment")}
-            aria-pressed={activeCategory === "deployment"}
-          >
-            {zh ? "部署配置" : "Deployment"}
           </button>
           <button
             type="button"
@@ -457,215 +376,6 @@ export function SystemConfigPage({ copy: c }: { copy: Copy }) {
             </section>
           )}
         </>
-      )}
-
-      {activeCategory === "deployment" && (
-        <section className="table-panel system-config-panel">
-          <div className="storage-table-heading">
-            <div>
-              <strong>{zh ? "部署配置默认值" : "Deployment Defaults"}</strong>
-              <small>
-                {zh
-                  ? "用于生成签发集群页面中的部署配置 YAML"
-                  : "Defaults used to generate deployment YAML on the cluster signing page"}
-              </small>
-            </div>
-          </div>
-          <div
-            className="storage-create-form"
-            style={{ background: "transparent", padding: "18px 20px" }}
-          >
-            <div className="form-section">
-              <div
-                className="form-grid system-config-form-grid"
-                style={{ gridTemplateColumns: "1fr 1fr" }}
-              >
-                <label>
-                  {zh ? "控制面地址" : "Control Plane Address"}
-                  <input
-                    value={config.deployment.controlPlaneAddress}
-                    onChange={(event) =>
-                      setConfig({
-                        ...config,
-                        deployment: {
-                          ...config.deployment,
-                          controlPlaneAddress: event.target.value,
-                        },
-                      })
-                    }
-                    placeholder="https://rlark.example.com:8443"
-                  />
-                </label>
-                <label>
-                  {zh
-                    ? "控制面 SSH 地址（可选）"
-                    : "Control Plane SSH Address (optional)"}
-                  <input
-                    value={config.deployment.sshAddress}
-                    onChange={(event) =>
-                      setConfig({
-                        ...config,
-                        deployment: {
-                          ...config.deployment,
-                          sshAddress: event.target.value,
-                        },
-                      })
-                    }
-                    placeholder="client@rlark.example.com:2222"
-                  />
-                </label>
-                <label>
-                  {zh ? "Kubeconfig 路径" : "Kubeconfig Path"}
-                  <input
-                    value={config.deployment.kubernetes.kubeconfig}
-                    onChange={(event) =>
-                      setConfig({
-                        ...config,
-                        deployment: {
-                          ...config.deployment,
-                          kubernetes: {
-                            ...config.deployment.kubernetes,
-                            kubeconfig: event.target.value,
-                          },
-                        },
-                      })
-                    }
-                    placeholder="~/.kube/config"
-                  />
-                </label>
-                <label>
-                  {zh ? "Agent 镜像" : "Agent Image"}
-                  <input
-                    value={config.deployment.kubernetes.agentImage}
-                    onChange={(event) =>
-                      setConfig({
-                        ...config,
-                        deployment: {
-                          ...config.deployment,
-                          kubernetes: {
-                            ...config.deployment.kubernetes,
-                            agentImage: event.target.value,
-                          },
-                        },
-                      })
-                    }
-                    placeholder="rlark:latest"
-                  />
-                </label>
-                <label>
-                  {zh
-                    ? "共享 RLark 镜像（可选）"
-                    : "Shared RLark Image (optional)"}
-                  <input
-                    value={config.deployment.kubernetes.image}
-                    onChange={(event) =>
-                      setConfig({
-                        ...config,
-                        deployment: {
-                          ...config.deployment,
-                          kubernetes: {
-                            ...config.deployment.kubernetes,
-                            image: event.target.value,
-                          },
-                        },
-                      })
-                    }
-                    placeholder="rlark:latest"
-                  />
-                </label>
-                <label>
-                  {zh ? "镜像拉取策略" : "Image Pull Policy"}
-                  <select
-                    value={config.deployment.kubernetes.imagePullPolicy}
-                    onChange={(event) =>
-                      setConfig({
-                        ...config,
-                        deployment: {
-                          ...config.deployment,
-                          kubernetes: {
-                            ...config.deployment.kubernetes,
-                            imagePullPolicy: event.target.value as
-                              "" | "Always" | "IfNotPresent" | "Never",
-                          },
-                        },
-                      })
-                    }
-                  >
-                    <option value="">
-                      {zh ? "使用默认值" : "Use default"}
-                    </option>
-                    <option value="Always">Always</option>
-                    <option value="IfNotPresent">IfNotPresent</option>
-                    <option value="Never">Never</option>
-                  </select>
-                </label>
-                <label>
-                  {zh
-                    ? "镜像拉取 Secret（逗号分隔）"
-                    : "Image Pull Secrets (comma-separated)"}
-                  <input
-                    value={config.deployment.kubernetes.imagePullSecrets}
-                    onChange={(event) =>
-                      setConfig({
-                        ...config,
-                        deployment: {
-                          ...config.deployment,
-                          kubernetes: {
-                            ...config.deployment.kubernetes,
-                            imagePullSecrets: event.target.value,
-                          },
-                        },
-                      })
-                    }
-                    placeholder="registry-secret"
-                  />
-                </label>
-                <label>
-                  {zh
-                    ? "Containerd Socket（可选）"
-                    : "Containerd Socket (optional)"}
-                  <input
-                    value={config.deployment.kubernetes.containerdSocket}
-                    onChange={(event) =>
-                      setConfig({
-                        ...config,
-                        deployment: {
-                          ...config.deployment,
-                          kubernetes: {
-                            ...config.deployment.kubernetes,
-                            containerdSocket: event.target.value,
-                          },
-                        },
-                      })
-                    }
-                    placeholder="/run/containerd/containerd.sock"
-                  />
-                </label>
-                <label>
-                  <span>{zh ? "TLS 验证" : "TLS Verification"}</span>
-                  <span className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={config.deployment.insecureSkipTlsVerify}
-                      onChange={(event) =>
-                        setConfig({
-                          ...config,
-                          deployment: {
-                            ...config.deployment,
-                            insecureSkipTlsVerify: event.target.checked,
-                          },
-                        })
-                      }
-                    />
-                    {zh
-                      ? "跳过控制面 TLS 证书验证（不推荐）"
-                      : "Skip control-plane TLS certificate verification (not recommended)"}
-                  </span>
-                </label>
-              </div>
-            </div>
-          </div>
-        </section>
       )}
 
       {activeCategory === "log" && (

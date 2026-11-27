@@ -13,7 +13,6 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth"
 	"github.com/rlinf/rlark/apps/rlark/pkg/auth/cert"
 	"github.com/rlinf/rlark/apps/rlark/pkg/db"
-	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 )
 
 // Constants used by the package.
@@ -152,18 +151,25 @@ func (s *Server) handleSignCertificate(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) checkCertRevoked(ctx context.Context, certType, serialNumber, subjectKeyID string) bool {
+func (s *Server) checkCertRevoked(ctx context.Context, certType, serialNumber, subjectKeyID string) (bool, error) {
 	cacheKey := fmt.Sprintf("%s:%s:%s", certType, serialNumber, subjectKeyID)
 	if cached, found := s.rcCache.Get(cacheKey); found {
 		ret, _ := cached.(bool)
-		return ret
+		return ret, nil
 	}
 	if s.rcStore == nil {
-		return false
+		return false, nil
 	}
-	revoked, _ := s.rcStore.IsCertificateRevoked(ctx, certType, serialNumber, subjectKeyID)
-	s.rcCache.Set(cacheKey, revoked, gocache.DefaultExpiration)
-	return revoked
+	revoked, err := s.rcStore.IsCertificateRevoked(ctx, certType, serialNumber, subjectKeyID)
+	if err != nil {
+		return false, fmt.Errorf("check certificate revocation: %w", err)
+	}
+	// Cache only revocations. Caching an allow decision delays revocation and
+	// masks an unavailable store until the cache entry expires.
+	if revoked {
+		s.rcCache.Set(cacheKey, true, gocache.DefaultExpiration)
+	}
+	return revoked, nil
 }
 
 func (s *Server) handleCertCheck(ctx *gin.Context) {
@@ -171,7 +177,13 @@ func (s *Server) handleCertCheck(ctx *gin.Context) {
 	if len(ctx.Request.TLS.PeerCertificates) > 0 {
 		clientCert := ctx.Request.TLS.PeerCertificates[0]
 		subjectKeyID := fmt.Sprintf("%x", clientCert.SubjectKeyId)
-		if s.checkCertRevoked(ctx, "x509", clientCert.SerialNumber.String(), subjectKeyID) {
+		revoked, err := s.checkCertRevoked(ctx, "x509", clientCert.SerialNumber.String(), subjectKeyID)
+		if err != nil {
+			ctx.JSON(http.StatusServiceUnavailable, gin.H{"error": "certificate revocation check unavailable"})
+			ctx.Abort()
+			return
+		}
+		if revoked {
 			ctx.JSON(http.StatusUnauthorized, gin.H{"error": "client certificate revoked"})
 			ctx.Abort()
 			return
@@ -200,6 +212,10 @@ func (s *Server) handleRevokeCertificate(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+	if invalid := invalidRevocation(req); invalid != "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": invalid})
+		return
+	}
 	if s.rcStore != nil {
 		model := &db.RevokedCertificateModel{
 			CertType:         req.CertType,
@@ -213,9 +229,10 @@ func (s *Server) handleRevokeCertificate(ctx *gin.Context) {
 			return
 		}
 	} else {
-		logger := log.GetLogger()
-		logger.Error(nil, "RevokedCertificateStore is not configured, only in-memory cache will be used for revocation check")
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{"error": "certificate revocation store unavailable"})
+		return
 	}
 	key := fmt.Sprintf("%s:%s:%s", req.CertType, req.SerialNumber, req.SubjectKeyID)
 	s.rcCache.Set(key, true, gocache.DefaultExpiration)
+	ctx.JSON(http.StatusOK, gin.H{"persisted": true})
 }

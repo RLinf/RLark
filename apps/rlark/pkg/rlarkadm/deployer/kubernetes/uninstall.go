@@ -51,10 +51,13 @@ func (d *Installer) Uninstall(cfg *types.DeployConfig, purge bool) error {
 	}
 
 	if cfg.Plane == types.PlaneControl {
-		for _, cmName := range []string{"rlark-db-config", "rlark-postgres-init", "rlark-kcp-kubeconfig"} {
+		for _, cmName := range []string{"rlark-db-config", "rlark-postgres-init"} {
 			if err := deleteConfigMap(ctx, clientset, cmName); err != nil {
 				return err
 			}
+		}
+		if err := deleteKCPIdentities(ctx, clientset); err != nil {
+			return err
 		}
 		if err := deleteSecret(ctx, clientset, "rlark-tls"); err != nil {
 			return err

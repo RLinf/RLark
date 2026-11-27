@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:,">
+<title>RLark · 身份与访问原型</title>
+<style>
+:root {
+  color-scheme: light;
+  --ink:#1d1d1f; --muted:#6e6e73; --canvas:#f7f7f5; --panel:#fff;
+  --line:#e4e4e0; --strong:#dadad6; --subtle:#f0f0ee; --blue:#5b4bc4;
+  --blue-bg:#f1eefb; --green:#3e9a5c; --green-ink:#2c6b41; --green-bg:#e0f1e5;
+  --danger:#a3332a; --danger-bg:#fbe2de; --amber:#78520a; --amber-bg:#fbeed2;
+  --shadow:0 16px 40px #1d1d1f1f,0 2px 6px #1d1d1f0d;
+  font:14px/1.55 Inter,"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+}
+:root[data-theme=dark] {
+  color-scheme:dark;
+  --ink:#f2f2ef; --muted:#9a9a93; --canvas:#141413; --panel:#1c1c1a;
+  --line:#34342f; --strong:#46463f; --subtle:#242422; --blue:#b9a6ff;
+  --blue-bg:#2b2540; --green:#6fbf8b; --green-ink:#9bd9b1; --green-bg:#1d3327;
+  --danger:#f2a39b; --danger-bg:#3a211f; --amber:#f0cc8c; --amber-bg:#332a18;
+  --shadow:0 20px 48px #0009,0 2px 8px #0005;
+}
+* { box-sizing:border-box }
+body { margin:0; color:var(--ink); background:var(--canvas) }
+h1,h2,h3,p,dl,dd { margin:0 }
+h1 { font-size:30px; line-height:1.2; letter-spacing:-.025em }
+h2 { font-size:18px; line-height:1.3 }
+h3 { font-size:14px }
+p,li,dd { overflow-wrap:anywhere }
+button,input,select { font:inherit; color:inherit }
+button,select { cursor:pointer }
+button:disabled { cursor:not-allowed; opacity:.5 }
+button,input,select { min-width:0 }
+button { background:var(--panel); border:1px solid var(--strong); border-radius:10px; min-height:40px; padding:8px 13px; font-size:13px; font-weight:600 }
+button:hover:not(:disabled) { background:var(--subtle) }
+button.primary { background:var(--ink); color:var(--panel); border-color:var(--ink); min-height:42px }
+button.primary:hover:not(:disabled) { background:var(--ink); opacity:.88 }
+button.danger { background:var(--danger-bg); color:var(--danger); border-color:transparent }
+button.quiet { background:transparent; border-color:transparent }
+button.selected { background:var(--blue-bg); color:var(--blue); border-color:transparent }
+input,select { height:42px; border:1px solid var(--strong); border-radius:10px; background:var(--panel); padding:0 12px; width:100% }
+:focus-visible { outline:2px solid var(--blue); outline-offset:3px }
+[hidden] { display:none !important }
+svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.65; stroke-linecap:round; stroke-linejoin:round; flex:none }
+small,.label,label { font-size:12px }
+label { font-weight:650 }
+.muted { color:var(--muted) }
+.mono,time { font-variant-numeric:tabular-nums }
+code { font:12px ui-monospace,monospace; overflow-wrap:anywhere }
+.stack { display:grid; gap:16px; min-width:0 }
+.row { display:flex; align-items:center; flex-wrap:wrap; gap:8px }
+.between { justify-content:space-between }
+.chip { display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:3px 9px; border-radius:999px; font-size:12px; font-weight:650; background:var(--subtle); color:var(--muted) }
+.chip.accent { background:var(--blue-bg); color:var(--blue) }
+.chip.good { background:var(--green-bg); color:var(--green-ink) }
+.chip.bad { background:var(--danger-bg); color:var(--danger) }
+.chip.warn { background:var(--amber-bg); color:var(--amber) }
+.review { padding:12px 24px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:12px 20px; align-items:center }
+.review nav { flex:1 1 420px }
+.review select { width:auto }
+.brand { display:inline-flex; align-items:center; gap:10px; font-size:22px; font-weight:750; letter-spacing:-.04em }
+.brand svg { width:30px; height:30px; color:var(--blue) }
+.shell { display:grid; grid-template-columns:214px minmax(0,1fr); min-height:calc(100vh - 68px) }
+.sidebar { border-right:1px solid var(--line); padding:24px 14px; display:grid; align-content:start; gap:24px }
+.sidebar .brand { padding:0 10px }
+.sidebar nav { display:grid; gap:4px }
+.sidebar nav small { padding:0 10px; margin-bottom:6px; color:var(--muted); font-weight:650 }
+.sidebar nav button { display:flex; align-items:center; gap:9px; text-align:start; justify-content:flex-start; min-height:46px; position:relative }
+.sidebar nav button.selected { background:var(--subtle); color:var(--ink) }
+.sidebar nav button.selected::before { content:""; position:absolute; left:-10px; width:2px; height:22px; background:var(--blue) }
+.topbar { min-height:68px; border-bottom:1px solid var(--line); padding:10px 26px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap }
+.topbar strong { font-size:16px }
+.menu-wrap { position:relative }
+.menu { position:absolute; top:calc(100% + 6px); right:0; z-index:2; padding:6px; display:grid; gap:4px; min-width:162px; background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow) }
+.menu button { text-align:start }
+.content { width:100%; max-width:1450px; margin-inline:auto; padding:28px; display:grid; gap:20px; align-content:start }
+.intro { display:grid; gap:5px }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; min-width:0 }
+.pad { padding:20px }
+.toolbar { display:grid; grid-template-columns: minmax(180px,2fr) repeat(2,minmax(120px,1fr)); gap:12px }
+.toolbar.audit { grid-template-columns:minmax(160px,1.5fr) repeat(4,minmax(104px,1fr)) }
+.field { display:grid; gap:6px; align-content:start; min-width:0 }
+.tablebox { overflow:hidden }
+table { border-collapse:collapse; width:100%; text-align:start; font-size:13px }
+th,td { padding:12px 14px; text-align:start; overflow-wrap:anywhere }
+th { font-size:12px; color:var(--muted); background:var(--subtle); height:50px }
+td { height:64px; border-top:1px solid var(--line) }
+td button { min-height:40px }
+.card-label { display:none }
+.table-foot { padding:12px 16px; border-top:1px solid var(--line); font-size:12px; color:var(--muted) }
+.empty { min-height:166px; display:grid; justify-items:center; align-content:center; text-align:center; gap:8px; padding:22px }
+.roles { display:grid; grid-template-columns:180px minmax(0,1fr); align-items:start; gap:16px }
+.roles nav { display:grid; gap:6px; padding:10px }
+.roles nav button { text-align:start }
+.matrix td { height:46px }
+.matrix td:first-child { font-weight:600 }
+.allowed { color:var(--green-ink) }
+.role-note { padding:0 16px 16px; color:var(--muted); font-size:13px }
+.banner { background:var(--amber-bg); color:var(--amber); padding:12px 15px; border-radius:10px }
+.login { min-height:calc(100vh - 90px); display:grid; place-items:center; padding:32px 16px }
+.login-card { width:min(100%,420px); border-radius:24px; padding:30px; box-shadow:var(--shadow) }
+.login-head { text-align:center; display:grid; justify-items:center; gap:8px }
+.login-head .brand { width:100%; justify-content:center; padding-bottom:15px; border-bottom:1px solid var(--line); margin-bottom:5px }
+.login-head h1 { font-size:26px }
+.login input { height:46px }
+.login button.primary { min-height:48px }
+.password { display:flex; align-items:center; position:relative }
+.password input { padding-inline-end:53px }
+.password button { position:absolute; right:3px; min-width:44px; padding:4px }
+.form-error { color:var(--danger); font-size:13px }
+.demo { border-top:1px solid var(--line); padding-top:14px; display:grid; gap:9px }
+.demo .row { justify-content:space-between }
+.profile { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.25fr); gap:16px; align-items:start; max-width:920px }
+.facts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px }
+.facts dt { color:var(--muted); font-size:12px }
+.facts dd { font-weight:600 }
+.proposal { max-width:1200px }
+.proposal-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px }
+.proposal-grid ul,.proposal-grid ol { margin:0; padding-inline-start:20px; display:grid; gap:6px }
+.wide { grid-column:1/-1 }
+.arch { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:12px; border-radius:10px; background:var(--canvas) }
+.arch b { padding:8px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel) }
+.detail td { background:var(--canvas) }
+dialog { width:min(480px,calc(100% - 24px)); max-height:calc(100dvh - 24px); overflow:auto; color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:22px; box-shadow:var(--shadow) }
+dialog::backdrop { background:#14141380 }
+#notice { position:fixed; right:16px; bottom:16px; max-width:calc(100% - 32px); z-index:5 }
+#notice:not(:empty) { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--blue); border-radius:10px; padding:12px 16px; box-shadow:var(--shadow) }
+@media(max-width:1050px) {
+  .shell { grid-template-columns:176px minmax(0,1fr) }
+  .content,.topbar { padding-inline:18px }
+  .toolbar.audit { grid-template-columns:repeat(3,minmax(0,1fr)) }
+}
+@media(max-width:900px) {
+  .records,.records tbody { display:block }
+  .records thead { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%) }
+  .records tr { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; padding:13px; border-top:1px solid var(--line) }
+  .records tbody tr:first-child { border-top:0 }
+  .records td { display:block; border:0; height:auto; padding:0 }
+  .records .detail { grid-template-columns:1fr; background:var(--canvas) }
+  .card-label { display:block; color:var(--muted); font-size:12px }
+}
+@media(max-width:650px) {
+  .review { padding:10px 12px; gap:8px }
+  .review nav { flex-basis:100% }
+  .shell { display:block }
+  .sidebar { border-right:0; border-bottom:1px solid var(--line); padding:10px 12px; gap:6px }
+  .sidebar .brand { padding:0; font-size:18px }
+  .sidebar nav { display:flex; flex-wrap:wrap }
+  .sidebar nav small { flex:1 0 100%; padding:0; margin:0 }
+  .sidebar nav button { min-height:44px; padding:7px }
+  .sidebar nav button.selected::before { display:none }
+  .topbar { padding-inline:12px }
+  .content { padding:18px 12px }
+  .toolbar,.toolbar.audit { grid-template-columns:repeat(2,minmax(0,1fr)) }
+  .toolbar .field:first-child { grid-column:1/-1 }
+  .roles,.profile,.proposal-grid { grid-template-columns:1fr }
+  .roles nav { display:flex; flex-wrap:wrap }
+  .roles nav button { flex:1 1 auto }
+  .matrix th,.matrix td { padding:8px 5px; font-size:12px }
+  .pad,.login-card { padding:16px }
+  button,input,select { min-height:44px }
+}
+@media(prefers-reduced-motion:reduce) {
+  *,*::before,*::after { animation:none!important; transition:none!important; scroll-behavior:auto!important }
+}
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="position:absolute;width:0;height:0">
+  <symbol id="mark" viewBox="0 0 24 24"><path d="M12 2.5 21 7.5v9L12 22l-9-5.5v-9L12 2.5Z"/><path d="m3 7.5 9 5 9-5M12 12.5V22M7.5 5l9 5v4"/></symbol>
+  <symbol id="users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2M16 5a3 3 0 0 1 0 6m5 9v-2a4 4 0 0 0-3-4"/></symbol>
+  <symbol id="roles" viewBox="0 0 24 24"><path d="m12 3 8 4v5c0 4-3 7-8 9-5-2-8-5-8-9V7l8-4Z"/><path d="m8 12 3 3 5-5"/></symbol>
+  <symbol id="audit" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6m-6 4h6m-6 4h4"/></symbol>
+  <symbol id="profile" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v2"/></symbol>
+  <symbol id="eye" viewBox="0 0 24 24"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="2.5"/></symbol>
+  <symbol id="eye-off" viewBox="0 0 24 24"><path d="m3 3 18 18M10 6a10 10 0 0 1 2 0c6 0 10 6 10 6a17 17 0 0 1-3 3M6 8a17 17 0 0 0-4 4s4 6 10 6c1 0 2 0 3-.4"/></symbol>
+</svg>
+<header id="review" class="review"></header>
+<main id="app"></main>
+<dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+<div id="notice" role="status" aria-live="polite" aria-atomic="true"></div>
+<script>
+'use strict';
+
+const copy = {
+  proposal:['设计说明','Design proposal'], login:['登录','Sign in'], users:['用户','Users'],
+  roles:['角色权限','Roles & permissions'], audit:['审计','Audit'], profile:['个人资料','My profile'],
+  iam:['身份与访问','Identity & access'], prototype:['原型','Prototype'], mock:['模拟数据','Mock data'],
+  normal:['正常','Normal'], empty:['空数据','Empty'], loading:['加载中','Loading'], error:['错误','Error'],
+  scenario:['场景','Scenario'], theme:['切换主题','Switch theme'], light:['浅色','Light'], dark:['深色','Dark'],
+  language:['语言','Language'], pages:['原型页面','Prototype pages'], signout:['退出登录','Sign out'],
+  menu:['账号菜单','Account menu'], admin:['管理员','Admin'], operator:['操作员','Operator'], viewer:['只读用户','Viewer'],
+  active:['已启用','Active'], disabled:['已停用','Disabled'], username:['用户名','Username'],
+  name:['显示名称','Display name'], role:['角色','Role'], status:['状态','Status'],
+  created:['创建时间','Created'], last:['最近登录','Last sign-in'], actions:['操作','Actions'], you:['本人','You'],
+  searchUsers:['搜索用户名或显示名称','Search username or display name'], allRoles:['全部角色','All roles'],
+  allStatuses:['全部状态','All statuses'], create:['新建用户','Create user'], edit:['编辑','Edit'],
+  reset:['重置密码','Reset password'], disable:['停用','Disable'], enable:['启用','Enable'], delete:['删除','Delete'],
+  save:['保存更改','Save changes'], cancel:['取消','Cancel'], close:['关闭','Close'], retry:['重试','Retry'],
+  clear:['清除筛选','Clear filters'], password:['密码','Password'], show:['显示密码','Show password'], hide:['隐藏密码','Hide password'],
+  current:['当前密码','Current password'], next:['新密码','New password'], confirm:['确认新密码','Confirm new password'],
+  change:['修改密码','Change password'], update:['更新密码','Update password'], signed:['已登录','Signed in'],
+  success:['成功','Success'], failure:['失败','Failure'], time:['时间','Time'], actor:['操作者','Actor'],
+  action:['操作','Action'], target:['对象','Target'], result:['结果','Result'], ip:['IP 地址','IP address'],
+  allActors:['全部操作者','All actors'], allActions:['全部操作','All actions'], allResults:['全部结果','All results'],
+  allTime:['全部时间','Any time'], day:['过去 24 小时','Past 24 hours'], week:['过去 7 天','Past 7 days'],
+  searchAudit:['搜索操作者、对象或 IP','Search actor, target or IP'], details:['详情','Details'],
+  collapse:['收起详情','Hide details'], allowed:['允许','Allowed'], denied:['禁止','Denied'], na:['不适用','Not applicable'],
+  read:['查看','View'], add:['创建','Create'], write:['编辑','Edit'], remove:['删除','Delete'],
+  jobs:['作业','Jobs'], workflows:['工作流','Workflows'], tasks:['任务','Tasks'], pods:['Pod','Pods'], nodes:['节点','Nodes'], clusters:['集群','Clusters'],
+  storage:['存储','Storage'], images:['镜像','Images'], robots:['机器人','Robots'], settings:['系统配置','System settings'],
+  module:['模块','Module'], defaultWarning:['默认密码容易猜测。用于实际环境前，请更换默认密码。','Default passwords are easy to guess. Change them before using a real environment.'],
+  initialPassword:['初始密码','Initial password'], cannotSelf:['当前账号不可在此修改角色、停用或删除。','You cannot change your own role, disable yourself, or delete yourself here.'],
+  badLogin:['用户名或密码错误，或账号不可用。','Incorrect username or password, or account unavailable.'],
+  loadFailed:['暂时无法加载。','Unable to load.'], noMatch:['没有匹配的结果','No matching results'],
+  noneUsers:['暂无用户','No users yet'], noneAudit:['暂无审计记录','No audit events'],
+  required:['请填写所有必填字段。','Complete all required fields.'],
+  passwordRule:['新密码至少需要 8 个字符。','Use at least 8 characters for the new password.'],
+  mismatch:['两次输入的新密码不一致。','The new passwords do not match.'],
+  samePassword:['新密码需与当前密码不同。','Choose a password different from the current password.'],
+  wrongCurrent:['当前密码不正确。','The current password is incorrect.'],
+  updatedPassword:['密码已更新。','Password updated.'], duplicate:['用户名已存在。','That username already exists.'],
+  invalidName:['用户名须为 3–32 位小写字母、数字、连字符或下划线，以字母或数字开头。','Use 3–32 lowercase letters, digits, hyphens or underscores. Start with a letter or digit.'],
+  userCreated:['用户已创建。','User created.'], userEdited:['用户信息已更新。','User updated.'],
+  userReset:['密码已重置。','Password reset.'], userDisabled:['用户已停用。','User disabled.'],
+  userEnabled:['用户已启用。','User enabled.'], userDeleted:['用户已删除。','User deleted.'],
+  cannotManage:['仅管理员可管理用户。','Only admins can manage users.'],
+  permissionDenied:['当前角色无法访问此页面。','Your role does not have access to this page.'],
+  resetPrompt:['为 {name} 设置新密码。','Set a new password for {name}.'],
+  disablePrompt:['停用 {name} 后，该账号将无法登录。','{name} will be unable to sign in after being disabled.'],
+  enablePrompt:['恢复 {name} 的登录权限。','Restore sign-in access for {name}.'],
+  deletePrompt:['永久删除 {name}。此操作无法撤销。','Permanently delete {name}. This action cannot be undone.'],
+  loginEvent:['登录','Sign in'], createEvent:['创建用户','Create user'], editEvent:['编辑用户','Edit user'],
+  resetEvent:['重置密码','Reset password'], disableEvent:['停用用户','Disable user'], enableEvent:['启用用户','Enable user'],
+  deleteEvent:['删除用户','Delete user'], passwordEvent:['修改密码','Change password'],
+  eventId:['事件 ID','Event ID'], reason:['说明','Details'], eventOK:['操作已完成。','Action completed.'],
+  eventBadLogin:['凭据无效或账号不可用。','Invalid credentials or account unavailable.'],
+  byAdmin:['由管理员执行。','Performed by an administrator.']
+};
+
+const views = ['proposal','login','users','roles','audit','profile'];
+const consoleViews = ['users','roles','audit','profile'];
+const roleKeys = ['admin','operator','viewer'];
+const operatorWrites = ['jobs','workflows','tasks','pods','storage'];
+const modules = [...operatorWrites.slice(0,4),'nodes','clusters','storage','images','robots','users','audit','settings'];
+const verbs = ['read','add','write','remove'];
+const eventTypes = ['loginEvent','createEvent','editEvent','resetEvent','disableEvent','enableEvent','deleteEvent','passwordEvent'];
+const defaults = {admin:'astribot',user:'123'};
+const now = Date.now();
+const before = (hours) => new Date(now - hours * 3600000).toISOString();
+const users = [
+  { id:1, username:'admin', name:'Admin', role:'admin', status:'active', created:before(480), last:before(2), password:defaults.admin },
+  { id:2, username:'user', name:'Operator', role:'operator', status:'active', created:before(480), last:before(3), password:defaults.user },
+  { id:3, username:'lin.ops', name:'Lin', role:'operator', status:'active', created:before(230), last:before(26), password:'mock-only-ops' },
+  { id:4, username:'mira.view', name:'Mira', role:'viewer', status:'active', created:before(130), last:null, password:'mock-only-view' },
+  { id:5, username:'old.ops', name:'Former operator', role:'operator', status:'disabled', created:before(290), last:null, password:'mock-only-old' }
+];
+const audit = [
+  [1,'user','loginEvent','user','failure','192.0.2.32','eventBadLogin'],
+  [2,'admin','loginEvent','admin','success','192.0.2.10','eventOK'],
+  [3,'user','loginEvent','user','success','192.0.2.32','eventOK'],
+  [22,'admin','disableEvent','old.ops','success','192.0.2.10','byAdmin'],
+  [26,'lin.ops','loginEvent','lin.ops','success','192.0.2.51','eventOK'],
+  [130,'admin','createEvent','mira.view','success','192.0.2.10','byAdmin'],
+  [250,'admin','editEvent','old.ops','success','192.0.2.10','byAdmin']
+].map(([hours,actor,action,target,result,ip,reason],index) => ({id:index+1,time:before(hours),actor,action,target,result,ip,reason}));
+const state = {
+  lang:'zh', theme:'light', view:'proposal', scenario:'normal',
+  sessionId:null, preview:true, role:'admin', userFilters:{q:'',role:'',status:''},
+  auditFilters:{q:'',actor:'',action:'',result:'',time:''}, expanded:new Set(),
+  userSequence:6, eventSequence:audit.length+1
+};
+const $ = (selector) => document.querySelector(selector);
+const dialog = $('#dialog');
+let dialogTrigger = null;
+let loginTimer;
+let toastTimer;
+const bi = (zh,en) => state.lang === 'zh' ? zh : en;
+const t = (key) => copy[key]?.[state.lang === 'zh' ? 0 : 1] ?? key;
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const icon = (id) => '<svg aria-hidden="true" viewBox="0 0 24 24"><use href="#' + id + '"></use></svg>';
+const brand = () => '<span class="brand">' + icon('mark') + ' RLark</span>';
+const chip = (label,tone='') => '<span class="chip ' + tone + '">' + esc(label) + '</span>';
+const account = () => users.find((u) => u.id === (state.preview ? 1 : state.sessionId));
+const canManage = () => account()?.role === 'admin';
+const date = (value) => value ? '<time datetime="' + esc(value) + '">' + new Intl.DateTimeFormat(bi('zh-CN','en-GB'),{dateStyle:'medium',timeStyle:'short'}).format(new Date(value)) + '</time>' : '—';
+const button = (label, attrs='', kind='') => '<button type="button" class="' + kind + '" ' + attrs + '>' + esc(label) + '</button>';
+const heading = (title,description='') => '<div class="intro"><h1 tabindex="-1">' + esc(title) + '</h1>' + (description ? '<p class="muted">' + esc(description) + '</p>' : '') + '</div>';
+const option = (value,label,current) => '<option value="' + esc(value) + '"' + (value === current ? ' selected' : '') + '>' + esc(label) + '</option>';
+const selectField = (id,label,options,current) => '<div class="field"><label for="' + id + '">' + esc(label) + '</label><select id="' + id + '">' + options.map(([value,text]) => option(value,text,current)).join('') + '</select></div>';
+const inputField = (id,label,value='',attrs='') => '<div class="field"><label for="' + id + '">' + esc(label) + '</label><input id="' + id + '" value="' + esc(value) + '" ' + attrs + '></div>';
+const passwordField = (id,label,autocomplete) => '<div class="field"><label for="' + id + '">' + esc(label) + '</label><div class="password"><input id="' + id + '" type="password" autocomplete="' + autocomplete + '" required aria-describedby="' + (id.startsWith('modal') ? 'modal-error' : id.startsWith('login') ? 'login-error' : 'profile-error') + '"><button type="button" class="quiet" data-eye="' + id + '" aria-label="' + t('show') + '">' + icon('eye') + '</button></div></div>';
+const formError = (id) => '<p id="' + id + '" class="form-error" role="alert" hidden></p>';
+const submit = (label,kind='primary') => '<button class="' + kind + '" type="submit">' + esc(label) + '</button>';
+const table = (headers,rows,cls='records') => '<table class="' + cls + '"><thead><tr>' + headers.map((label) => '<th scope="col">' + esc(label) + '</th>').join('') + '</tr></thead><tbody>' + rows + '</tbody></table>';
+const cell = (label,html) => '<td><span class="card-label" aria-hidden="true">' + esc(label) + '</span>' + html + '</td>';
+const action = (name,label,kind='') => button(label,'data-action="' + name + '"',kind);
+const flash = (message) => {
+  clearTimeout(toastTimer);
+  $('#notice').textContent = message;
+  toastTimer = setTimeout(() => { $('#notice').textContent = ''; },4500);
+};
+const error = (id,message) => {
+  const node = $('#' + id);
+  node.textContent = message;
+  node.hidden = !message;
+};
+function addEvent(actionName,target,result='success',reason='eventOK',actor=account()?.username ?? target) {
+  audit.unshift({id:state.eventSequence++,time:new Date().toISOString(),actor,action:actionName,target,result,reason,ip:'192.0.2.20'});
+}
+function emptyPanel(title,actions='',busy=false) {
+  return '<div class="empty"' + (busy ? ' aria-busy="true"' : '') + '><strong role="status">' + esc(title) + '</strong>' + actions + '</div>';
+}
+function scenarioPanel(emptyTitle,emptyActions='') {
+  if (state.scenario === 'loading') return emptyPanel(t('loading') + '…','',true);
+  if (state.scenario === 'error') return emptyPanel(t('loadFailed'),action('retry',t('retry')));
+  if (state.scenario === 'empty') return emptyPanel(emptyTitle,emptyActions);
+  return '';
+}
+function preferences() {
+  return button(bi('EN','中文'),'data-action="lang" aria-label="' + t('language') + ' · ' + bi('English','中文') + '"') +
+    button(t(state.theme),'data-action="theme" aria-label="' + t('theme') + ' · ' + t(state.theme) + '"');
+}
+function renderReview() {
+  $('#review').innerHTML = '<div class="row">' + chip(t('prototype'),'accent') + '<small class="muted">' + t('mock') + '</small></div>' +
+    '<nav class="row" aria-label="' + t('pages') + '">' + views.map((view) =>
+      button(t(view),'data-view="' + view + '" data-preview="true"' + (view === state.view ? ' aria-current="page"' : ''),view === state.view ? 'selected' : 'quiet')
+    ).join('') + '</nav><div class="row">' + preferences() + '<label for="scenario">' + t('scenario') +
+    '</label><select id="scenario">' + ['normal','empty','loading','error'].map((value) => option(value,t(value),state.scenario)).join('') + '</select></div>';
+}
+function shell(body) {
+  const viewer = account();
+  return '<div class="shell"><aside class="sidebar">' + brand() + '<nav aria-label="' + t('iam') + '"><small>' + t('iam') + '</small>' +
+    consoleViews.filter((view) => canManage() || view === 'profile').map((view) =>
+      '<button type="button" class="quiet ' + (view === state.view ? 'selected' : '') + '" data-view="' + view + '"' +
+      (view === state.view ? ' aria-current="page"' : '') + '>' + icon(view) + t(view) + '</button>'
+    ).join('') + '</nav></aside><div><header class="topbar"><div><small class="muted">' + t('iam') + '</small><br><strong>' +
+    t(state.view) + '</strong></div><div class="row">' + preferences() + '<div class="menu-wrap">' +
+    button(viewer?.username ?? '—','id="account-menu" data-action="menu" aria-label="' + t('menu') + ' · ' + esc(viewer?.username) + '" aria-expanded="false" aria-controls="account-options"') +
+    '<div class="menu" id="account-options" hidden>' + button(t('profile'),'data-view="profile"','quiet') +
+    action('signout',t('signout'),'quiet') + '</div></div></div></header><section class="content">' + body + '</section></div></div>';
+}
+function renderApp() {
+  document.documentElement.lang = bi('zh-CN','en');
+  document.documentElement.dataset.theme = state.theme;
+  document.title = 'RLark · ' + t('iam') + ' · ' + t('prototype');
+  renderReview();
+  const screens = {proposal,login,users:usersPage,roles:rolesPage,audit:auditPage,profile:profilePage};
+  const restricted = consoleViews.includes(state.view) && state.view !== 'profile' && !canManage();
+  const body = restricted ? heading(t(state.view)) + '<section class="panel">' + emptyPanel(t('permissionDenied')) + '</section>' : screens[state.view]();
+  $('#app').innerHTML = consoleViews.includes(state.view) ? shell(body) : body;
+}
+function navigate(view,preview=false) {
+  clearTimeout(loginTimer);
+  if (preview) state.preview = state.sessionId === null;
+  if (consoleViews.includes(view) && !account()) view = 'login';
+  state.view = view;
+  renderApp();
+  $('#app h1')?.focus();
+}
+
+function proposal() {
+  const block = (zh,en,html,wide=false) => '<section class="panel pad stack ' + (wide ? 'wide' : '') + '"><h2>' + bi(zh,en) + '</h2>' + html + '</section>';
+  const list = (items,ordered=false) => {
+    const tag = ordered ? 'ol' : 'ul';
+    return '<' + tag + '>' + items.map(([zh,en]) => '<li>' + bi(zh,en) + '</li>').join('') + '</' + tag + '>';
+  };
+  return '<article class="content proposal">' + heading(bi('Astribot IAM 设计说明','Astribot IAM design proposal'),
+    bi('RLark 本地身份、角色与审计的 Phase 0 提案。下列接口和部署路径供评审。','Phase 0 proposal for local RLark identity, roles and audit. Interface and deployment paths are proposed.')) +
+    '<div class="proposal-grid">' +
+    block('当前问题','Current problems',list([
+      ['两套共享账号难以追溯个人操作。','Two shared accounts make individual actions hard to attribute.'],
+      ['安装时生成随机密码，交接和轮换依赖安装记录。','Random installation passwords make handoff and rotation depend on installation records.'],
+      ['Kubernetes Secret 中的密码可由有权限的读取者还原。','Authorized Kubernetes Secret readers can recover stored plaintext passwords.'],
+      ['缺少用户 CRUD、密码重置和可查询的操作审计。','User CRUD, password reset and searchable audit are missing.']
+    ])) +
+    block('默认账号','Default accounts',
+      '<div class="row"><code>admin / astribot</code>' + chip(t('admin')) + '</div><div class="row"><code>user / 123</code>' +
+      chip(t('operator')) + '</div><p class="banner">' + t('defaultWarning') + '</p><p>' +
+      bi('登录后可以继续使用控制台，也可以在个人资料中修改密码。','After sign-in, users may continue to the console or change their password in My profile.') + '</p>') +
+    block('请求架构','Request architecture',
+      '<div class="arch"><b>' + bi('浏览器','Browser') + '</b><span>→</span><b>nginx</b><span>→</span><b>RLark Gateway</b></div>' +
+      '<div class="arch"><b>nginx <code>auth_request</code></b><span>→</span><b>astribot-iam</b><span>→</span><b>PostgreSQL</b></div><p>' +
+      bi('浏览器请求先到 nginx。nginx 将认证子请求交给 astribot-iam，通过后才将业务请求转发给 Gateway。IAM 接口由 nginx 路由至 astribot-iam。','Browser requests reach nginx first. Its auth subrequest goes to astribot-iam. On approval, nginx forwards the application request to Gateway. nginx routes IAM endpoints to astribot-iam.') + '</p>',true) +
+    block('登录入口','Sign-in entry',list([
+      ['<code>/login</code> 是人类用户的主要登录入口。未认证访问 <code>/</code> 或 <code>/admin</code> 时，nginx 返回 302 到 <code>/login?next=/</code> 或 <code>/login?next=/admin</code>。','<code>/login</code> is the primary human sign-in entry. Unauthenticated requests to <code>/</code> or <code>/admin</code> receive an nginx 302 to <code>/login?next=/</code> or <code>/login?next=/admin</code>.'],
+      ['登录页调用 <code>POST /api/v1/auth/login</code>，写入 <code>rlark-auth-token</code>、<code>rlark-auth-role</code> 和对应的 <code>rlark-user-auth</code> / <code>rlark-user-name</code> 或 <code>rlark-admin-auth</code> / <code>rlark-admin-user-name</code>，同时设置 <code>astribot_session</code> Cookie，然后执行 <code>location.replace(next)</code>。','The login page calls <code>POST /api/v1/auth/login</code>, writes <code>rlark-auth-token</code>, <code>rlark-auth-role</code> and the matching <code>rlark-user-auth</code> / <code>rlark-user-name</code> or <code>rlark-admin-auth</code> / <code>rlark-admin-user-name</code>, sets the <code>astribot_session</code> cookie, then runs <code>location.replace(next)</code>.'],
+      ['<code>next</code> 仅接受同源白名单路径。非管理员访问 <code>next=/admin</code> 时显示“需要管理员权限”，并可返回 <code>/</code>。原生 React 登录页保留为 fallback，不再是主要入口。','<code>next</code> accepts only same-origin allowlisted paths. A non-admin sent to <code>next=/admin</code> sees “Administrator access required” and can continue to <code>/</code>. The native React login remains a fallback, not the primary entry.']
+    ])) +
+    block('登录与请求时序','Sign-in and request sequence',list([
+      ['浏览器通过 HTTPS 提交用户名和密码，IAM 验证密码哈希和账号状态，记录结果。','Over HTTPS, the browser submits credentials. IAM checks the password hash and account status and records the result.'],
+      ['成功时签发服务端会话，浏览器收取 HttpOnly、Secure、SameSite Cookie。','On success, IAM creates a server-side session and sets an HttpOnly, Secure, SameSite cookie.'],
+      ['后续请求触发 auth_request。无有效会话返回 401，权限不足返回 403；通过后将已验证的身份传给 Gateway。','Subsequent requests trigger auth_request. An invalid session returns 401 and insufficient permissions return 403. On approval, verified identity reaches Gateway.'],
+      ['Gateway 按资源和租户执行授权。退出、停用、重置密码时撤销相关会话。','Gateway authorizes requests by resource and tenant. Sign-out, disabling and password reset revoke relevant sessions.']
+    ],true)) +
+    block('PostgreSQL 表','PostgreSQL tables',list([
+      ['<code>astribot_iam_users</code>：账号 ID、唯一用户名、显示名称、角色、停用状态、密码哈希及时间戳。','<code>astribot_iam_users</code> — account ID, unique username, display name, role, disabled status, password hash and timestamps.'],
+      ['<code>astribot_iam_sessions</code>：令牌摘要、用户 ID、创建、到期和最近活动时间、User-Agent 与来源 IP。','<code>astribot_iam_sessions</code> — token digest, user ID, creation, expiry and last-seen timestamps, user agent and source IP.'],
+      ['<code>astribot_iam_audit</code>：ID、时间、操作者、操作、对象、结果、来源 IP 与结构化详情。','<code>astribot_iam_audit</code> — ID, timestamp, actor, action, target, result, source IP and structured details.'],
+      ['内置角色与权限由服务端版本化定义。','Built-in roles and permissions are versioned server-side.']
+    ])) +
+    block('拟议 API','Proposed API',list([
+      ['<code>POST /api/v1/auth/login</code> — 登录，沿用 RLark 响应契约。','<code>POST /api/v1/auth/login</code> — sign in using the existing RLark response contract.'],
+      ['<code>POST /api/iam/logout</code>、<code>GET /api/iam/me</code> — 退出与查看当前账号。','<code>POST /api/iam/logout</code>, <code>GET /api/iam/me</code> — sign out and view the current account.'],
+      ['<code>POST /api/iam/password</code> — 修改本人密码。','<code>POST /api/iam/password</code> — change your password.'],
+      ['<code>GET/POST /api/iam/users</code> 与 <code>PUT/DELETE /api/iam/users/{id}</code> — 列表、创建、编辑、启停和删除。','<code>GET/POST /api/iam/users</code> and <code>PUT/DELETE /api/iam/users/{id}</code> — list, create, edit, enable, disable and delete.'],
+      ['<code>POST /api/iam/users/{id}/reset-password</code> — 管理员重置他人密码无需旧密码，设置新密码后更新 bcrypt 哈希、撤销该用户的全部会话并记录审计事件；本人改密需验证当前密码。','<code>POST /api/iam/users/{id}/reset-password</code> — An admin can reset another user’s password without the old password. The new password updates the bcrypt hash, revokes that user’s sessions and records an audit event. Self-service password changes require the current password.'],
+      ['<code>GET /api/iam/audit</code> — 查看审计；<code>GET /internal/authorize</code> — nginx 内部鉴权。','<code>GET /api/iam/audit</code> — view audit events. <code>GET /internal/authorize</code> — internal nginx authorization.']
+    ])) +
+    block('拟议部署文件','Proposed deployment files',list([
+      ['<code>astribot/release/control-plane/rlark.compose.yaml</code> — 新增 <code>astribot-iam</code> 服务，复用 <code>rlark/agent</code> 镜像，挂载 <code>db-config.yaml</code> 与 <code>${R}/iam/upstream-tokens.json</code>（0600，只读），端口仅在 Compose 网络内开放；IAM 不读取 <code>rlark-ui-auth</code>。','<code>astribot/release/control-plane/rlark.compose.yaml</code> — add <code>astribot-iam</code> using the <code>rlark/agent</code> image, mounting <code>db-config.yaml</code> and <code>${R}/iam/upstream-tokens.json</code> (0600, read-only) with an internal Compose port. IAM does not read <code>rlark-ui-auth</code>.'],
+      ['<code>astribot/release/rlark-ui.nginx.conf</code> — 配置 <code>auth_request</code>、<code>/api/v1/auth/login</code>、<code>/api/iam/</code>、<code>/iam/</code>、<code>/login</code>、<code>/</code> 与 <code>/admin</code> 会话门禁（302 至 <code>/login?next=...</code>），以及过期会话重定向 <code>/internal/session</code> 和鉴权目标 <code>/internal/authorize</code>。','<code>astribot/release/rlark-ui.nginx.conf</code> — configure <code>auth_request</code>, <code>/api/v1/auth/login</code>, <code>/api/iam/</code>, <code>/iam/</code>, <code>/login</code>, the <code>/</code> and <code>/admin</code> session gate (302 to <code>/login?next=...</code>), expired-session redirect <code>/internal/session</code>, and auth target <code>/internal/authorize</code>.'],
+      ['<code>astribot/release/rlark.Dockerfile</code> 与 <code>astribot/release/images</code> — 将 <code>astribot-iam</code> 构建进 <code>rlark/agent</code> 镜像。','<code>astribot/release/rlark.Dockerfile</code> and <code>astribot/release/images</code> — build <code>astribot-iam</code> into the <code>rlark/agent</code> image.'],
+      ['<code>apps/rlark/astribot/iam/schema.sql</code> — 使用版本化迁移、<code>pg_advisory_lock</code> 与事务；表为 <code>astribot_iam_*</code>，不修改 <code>pkg/db/migrations.go</code>。','<code>apps/rlark/astribot/iam/schema.sql</code> — use versioned migrations, <code>pg_advisory_lock</code> and transactions for <code>astribot_iam_*</code> tables; do not modify <code>pkg/db/migrations.go</code>.']
+    ])) +
+    block('上游凭据','Upstream credentials',list([
+      ['发布 / provisioning 创建三个 service account：<code>astribot-iam-admin</code>（admin）、<code>astribot-iam-operator</code>（operator）和 <code>astribot-iam-user</code>（user）。Token 仅返回一次并写入 <code>${R}/iam/upstream-tokens.json</code>，文件权限为 0600。','Release and provisioning create three service accounts: <code>astribot-iam-admin</code> (admin), <code>astribot-iam-operator</code> (operator) and <code>astribot-iam-user</code> (user). Tokens are returned once and written to <code>${R}/iam/upstream-tokens.json</code> with mode 0600.'],
+      ['IAM 以只读方式加载该文件，并按人类用户角色选择上游 token；不读取 <code>rlark-ui-auth</code>，也不需要 kubeconfig 或 identity mount。','IAM reads the file read-only and selects an upstream token by human user role. It does not read <code>rlark-ui-auth</code> and needs no kubeconfig or identity mount.'],
+      ['Token 不过期，无 JWT 刷新流程。轮换时重写 token 文件并重启 IAM。文件缺失时登录仍可用，但平台 <code>/api/</code> 请求返回 503。','Tokens do not expire and require no JWT refresh. Rotate by rewriting the token file and restarting IAM. If the file is missing, sign-in still works, but platform <code>/api/</code> requests return 503.']
+    ])) +
+    block('内置角色矩阵','Built-in role matrix',table([t('role'),bi('平台','Platform'),bi('IAM 管理','IAM administration')],[
+      ['admin',bi('全部权限，含机器人电源与姿势','Full access, including robot power and pose'),bi('用户、角色、审计','Users, roles and audit')],
+      ['operator',bi('读取全部业务模块；创建、编辑和删除作业、工作流、任务、Pod 和存储。可开启终端、认领机器人并控制电源 / 姿势。','Read all business modules. Create, edit and delete Jobs, Workflows, Tasks, Pods and Storage. Open terminals, claim robots, and control power and pose.'),bi('仅个人资料与改密','Own profile and password')],
+      ['viewer',bi('只读业务模块。禁止写入和开启终端。','Read-only business access. Writes and terminal access are denied.'),bi('仅个人资料与改密','Own profile and password')]
+    ].map(([role,platform,iam]) => '<tr>' + cell(t('role'),t(role)) + cell(bi('平台','Platform'),platform) + cell(bi('IAM 管理','IAM administration'),iam) + '</tr>').join('')),true) +
+    block('安全范围与限制','Security scope and limits',list([
+      ['服务端使用 bcrypt cost 12 哈希、登录限流与 CSRF 防护。审计保留操作者快照，密码、Cookie 和令牌不得进入日志。','Use bcrypt cost 12 hashing, sign-in rate limits and server-side CSRF protection. Audit retains actor snapshots and excludes passwords, cookies and tokens.'],
+      ['nginx 通过 <code>auth_request</code> 校验权限并注入上游令牌，Gateway 继续执行原生角色与租户授权。','nginx checks permissions through <code>auth_request</code> and injects an upstream token. Gateway continues to enforce native role and tenant authorization.'],
+      ['人类控制台通过 80 端口进入 IAM。Fleet 保留直连 <code>rlark-gateway:19000</code>，使用 <code>FLEET_RLARK_URL=http://gateway.rlark.internal:19000</code> 和 service-account 令牌。持有该类令牌或 <code>rlark-ui-auth</code> Secret 的主体可绕过 IAM。需要时可用网络策略限制这一机器旁路。','Human console traffic goes through port 80 and IAM. Fleet retains direct access to <code>rlark-gateway:19000</code> using <code>FLEET_RLARK_URL=http://gateway.rlark.internal:19000</code> and a service-account token. Holders of a service-account token or the <code>rlark-ui-auth</code> Secret can bypass IAM. Network policy can limit this machine bypass if needed.'],
+      ['平台矩阵是拟议权限，Gateway 依据 nginx 注入的角色上游 token 执行相应授权；首版范围为本地账号和内置角色。','The matrix proposes permissions. Gateway enforces authorization through the role-specific upstream token injected by nginx. v1 covers local accounts and built-in roles.']
+    ]),true) + '</div></article>';
+}
+
+function login() {
+  const loading = state.scenario === 'loading';
+  return '<section class="login"><div class="panel login-card stack"><div class="login-head">' + brand() +
+    heading(bi('登录 RLark','Sign in to RLark'),bi('使用 Astribot IAM 账号登录','Use your Astribot IAM account')) +
+    '</div><form id="login-form" class="stack" novalidate' + (loading ? ' aria-busy="true"' : '') + '>' +
+    inputField('login-username',t('username'),'','autocomplete="username" required aria-describedby="login-error"') +
+    passwordField('login-password',t('password'),'current-password') + formError('login-error') +
+    '<button class="primary" type="submit"' + (loading ? ' disabled' : '') + '>' +
+    (loading ? bi('登录中…','Signing in…') : t('login')) + '</button></form>' +
+    (state.scenario === 'error' ? '<p class="form-error" role="alert">' + t('badLogin') + '</p>' : '') +
+    '<p class="muted">' + bi('这是 Astribot IAM 的 <code>/login</code> 人类登录入口。<code>/iam/</code> 管理控制台复用同一会话。原型登录后管理员进入用户演示，操作员 / 只读用户进入个人资料；生产环境则分别跳转到 <code>/admin</code> 和 <code>/</code>。','This is the Astribot IAM <code>/login</code> human sign-in entry. The <code>/iam/</code> administration console reuses the same session. In this prototype admins go to the Users demo and operators / viewers go to My Profile. Production redirects them to <code>/admin</code> and <code>/</code>, respectively.') + '</p>' +
+    '<div class="demo"><h3>' + bi('默认账号 · 仅供演示','Default accounts · Demo only') + '</h3>' +
+    '<div class="row"><code>admin / astribot</code>' + action('fill-admin',bi('填入管理员','Fill admin credentials')) + '</div>' +
+    '<div class="row"><code>user / 123</code>' + action('fill-user',bi('填入普通用户','Fill user credentials')) +
+    '</div><p class="banner">' + t('defaultWarning') + '</p></div></div></section>';
+}
+
+function usersPage() {
+  return '<div class="row between">' + heading(t('users'),bi('管理账号、角色和访问状态。','Manage accounts, roles and access status.')) +
+    action('create',t('create'),'primary') + '</div><div class="toolbar">' +
+    inputField('users-q',t('searchUsers'),state.userFilters.q,'type="search"') +
+    selectField('users-role',t('role'),[['',t('allRoles')],...roleKeys.map((role) => [role,t(role)])],state.userFilters.role) +
+    selectField('users-status',t('status'),[['',t('allStatuses')],['active',t('active')],['disabled',t('disabled')]],state.userFilters.status) +
+    '</div><section class="panel tablebox" id="records">' + userResults() + '</section>';
+}
+function userResults() {
+  const scenario = scenarioPanel(t('noneUsers'),action('create',t('create'),'primary'));
+  if (scenario) return scenario;
+  const {q,role,status} = state.userFilters;
+  const query = q.trim().toLowerCase();
+  const matches = users.filter((u) => (!role || role === u.role) && (!status || status === u.status) &&
+    (u.username.toLowerCase().includes(query) || u.name.toLowerCase().includes(query)));
+  const headers = ['username','name','role','status','created','last','actions'].map(t);
+  const rows = matches.map((u) => '<tr>' + [
+    '<strong>' + esc(u.username) + '</strong>',esc(u.name),chip(t(u.role),u.role === 'admin' ? 'accent' : ''),
+    chip(t(u.status),u.status === 'active' ? 'good' : ''),date(u.created),date(u.last),
+    u.id === account()?.id ? chip(t('you')) : button(t('actions'),'data-user="' + u.id + '" aria-label="' + t('actions') + ' · ' + esc(u.username) + '"','quiet')
+  ].map((html,index) => cell(headers[index],html)).join('') + '</tr>').join('');
+  const summary = bi('显示 ' + matches.length + ' / ' + users.length + ' 位用户','Showing ' + matches.length + ' of ' + users.length + ' users');
+  return (matches.length ? table(headers,rows) : emptyPanel(t(users.length ? 'noMatch' : 'noneUsers'),
+    users.length ? action('clear-users',t('clear')) : action('create',t('create'),'primary'))) +
+    '<div class="table-foot" role="status">' + summary + '</div>';
+}
+
+function rolesPage() {
+  const title = heading(t('roles'),bi('查看内置角色的拟议访问范围。','Review proposed access for built-in roles.'));
+  const scenario = scenarioPanel(bi('暂无角色','No roles yet'));
+  if (scenario) return title + '<section class="panel">' + scenario + '</section>';
+  const role = state.role;
+  const grant = (module,verb) => {
+    if ((module === 'audit' || module === 'settings') && ['add','remove'].includes(verb)) return 'na';
+    if (module === 'audit' && verb === 'write') return 'na';
+    if (role === 'admin') return 'allowed';
+    if (['users','audit','settings'].includes(module)) return 'denied';
+    if (verb === 'read') return 'allowed';
+    if (role === 'operator' && (operatorWrites.includes(module) || (module === 'robots' && verb === 'write'))) return 'allowed';
+    return 'denied';
+  };
+  const permission = (status) => '<span class="' + (status === 'allowed' ? 'allowed' : 'muted') +
+    '" aria-label="' + t(status) + '" title="' + t(status) + '">' + ({allowed:'✓',denied:'×',na:'—'})[status] + '</span>';
+  const rows = modules.map((module) => '<tr><th scope="row">' + t(module) + '</th>' +
+    verbs.map((verb) => '<td>' + permission(grant(module,verb)) + '</td>').join('') + '</tr>').join('');
+  const iamPermissions = [
+    ['users',bi('查看、创建、编辑、启停、删除、重置密码','View, create, edit, enable, disable, delete and reset passwords')],
+    ['roles',bi('查看内置角色及权限','View built-in roles and permissions')],
+    ['audit',bi('查看与筛选审计记录','View and filter audit events')]
+  ].map(([key,list]) => '<tr><th scope="row">' + t(key) + '</th><td>' + list + '</td><td>' +
+    permission(role === 'admin' ? 'allowed' : 'denied') + '</td></tr>').join('');
+  return title + '<div class="roles"><nav class="panel" aria-label="' + t('role') + '">' +
+    roleKeys.map((key) => button(t(key),'data-role="' + key + '" aria-pressed="' + (key === role) + '"',key === role ? 'selected' : 'quiet')).join('') +
+    '</nav><div class="stack"><section class="panel tablebox"><div class="pad row between"><h2>' +
+    bi('平台权限矩阵','Platform permission matrix') + '</h2>' + chip(t(role),'accent') + '</div>' +
+    table([t('module'),...verbs.map(t)],rows,'matrix') + '<p class="role-note">' +
+    bi('✓ 允许 · × 禁止 · — 不适用','✓ Allowed · × Denied · — Not applicable') +
+    '</p><p class="role-note">' + bi('操作员通过专用 service-account token 可认领机器人并控制电源 / 姿势；管理员拥有全部权限。只读用户仅查看业务资源，不能开启终端。','Operators can claim robots and control power and pose through their dedicated service-account token. Admins have full access. Viewers can only read business resources and cannot open terminals.') +
+    '</p></section><section class="panel tablebox"><h2 class="pad">' + bi('IAM 专用权限','IAM-only permissions') +
+    '</h2>' + table([t('module'),t('actions'),t(role)],iamPermissions,'matrix') +
+    '<p class="role-note">' + bi('所有角色可查看本人的资料并修改密码。','All roles can view their own profile and change their password.') +
+    '</p></section></div></div>';
+}
+
+function auditPage() {
+  const filters = state.auditFilters;
+  const actors = [...new Set(audit.map((e) => e.actor))].sort();
+  return heading(bi('审计日志','Audit log'),bi('查看登录和用户管理操作的结果。','Review sign-in and user management activity.')) +
+    '<div class="toolbar audit">' + inputField('audit-q',t('searchAudit'),filters.q,'type="search"') +
+    selectField('audit-actor',t('actor'),[['',t('allActors')],...actors.map((actor) => [actor,actor])],filters.actor) +
+    selectField('audit-action',t('action'),[['',t('allActions')],...eventTypes.map((key) => [key,t(key)])],filters.action) +
+    selectField('audit-result',t('result'),[['',t('allResults')],['success',t('success')],['failure',t('failure')]],filters.result) +
+    selectField('audit-time',t('time'),[['',t('allTime')],['24',t('day')],['168',t('week')]],filters.time) +
+    '</div><section class="panel tablebox" id="records">' + auditResults() + '</section>';
+}
+function auditResults() {
+  const scenario = scenarioPanel(t('noneAudit'));
+  if (scenario) return scenario;
+  const {q,actor,action:kind,result,time} = state.auditFilters;
+  const query = q.trim().toLowerCase();
+  const matches = audit.filter((e) => (!actor || actor === e.actor) && (!kind || kind === e.action) &&
+    (!result || result === e.result) && (!time || Date.parse(e.time) >= Date.now() - Number(time) * 3600000) &&
+    [e.actor,e.target,e.ip].some((value) => value.toLowerCase().includes(query)));
+  const headers = ['time','actor','action','target','result','ip','details'].map(t);
+  const rows = matches.map((e) => {
+    const expanded = state.expanded.has(e.id);
+    const controls = 'data-event="' + e.id + '" aria-expanded="' + expanded + '" aria-controls="event-' + e.id + '"';
+    return '<tr>' + [date(e.time),esc(e.actor),t(e.action),esc(e.target),chip(t(e.result),e.result === 'success' ? 'good' : 'bad'),
+      '<code>' + esc(e.ip) + '</code>',button(t(expanded ? 'collapse' : 'details'),controls,'quiet')
+    ].map((html,index) => cell(headers[index],html)).join('') + '</tr><tr class="detail" id="event-' + e.id + '"' +
+      (expanded ? '' : ' hidden') + '><td colspan="7"><dl class="facts"><div><dt>' + t('eventId') + '</dt><dd><code>EVT-' +
+      e.id + '</code></dd></div><div><dt>' + t('reason') + '</dt><dd>' + t(e.reason) + '</dd></div></dl></td></tr>';
+  }).join('');
+  return (matches.length ? table(headers,rows) : emptyPanel(t(audit.length ? 'noMatch' : 'noneAudit'),
+    audit.length ? action('clear-audit',t('clear')) : '')) + '<div class="table-foot" role="status">' +
+    bi('显示 ' + matches.length + ' / ' + audit.length + ' 条记录','Showing ' + matches.length + ' of ' + audit.length + ' events') + '</div>';
+}
+
+function profilePage() {
+  const title = heading(t('profile'),bi('查看账号信息和修改密码。','View account information and change your password.'));
+  const scenario = scenarioPanel(bi('暂无账号资料','No account details'));
+  if (scenario) return title + '<section class="panel">' + scenario + '</section>';
+  const viewer = account();
+  const facts = [['username','<code>' + esc(viewer.username) + '</code>'],['name',esc(viewer.name)],['role',chip(t(viewer.role))],
+    ['status',chip(t(viewer.status),'good')],['last',date(viewer.last)]];
+  const isDefault = Object.hasOwn(defaults,viewer.username) && defaults[viewer.username] === viewer.password;
+  return title + '<div class="profile"><section class="panel pad stack"><h2>' + bi('账号信息','Account information') +
+    '</h2><dl class="facts">' + facts.map(([label,value]) => '<div><dt>' + t(label) + '</dt><dd>' + value + '</dd></div>').join('') +
+    '</dl>' + (viewer.role !== 'admin' ? '<p class="muted">' +
+      bi('普通用户请前往 RLark 平台控制台处理业务。/iam 是 IAM 管理控制台。','Use the RLark platform console for your work. /iam is the IAM administration console.') + '</p>' : '') + (isDefault ? '<p class="banner">' + t('defaultWarning') + '</p>' : '') +
+    '</section><section class="panel pad stack"><h2>' + t('change') + '</h2><form id="profile-form" class="stack" novalidate>' +
+    passwordField('profile-current',t('current'),'current-password') + passwordField('profile-next',t('next'),'new-password') +
+    passwordField('profile-confirm',t('confirm'),'new-password') + '<small class="muted">' + t('passwordRule') +
+    '</small>' + formError('profile-error') + '<div>' + submit(t('update')) + '</div></form></section></div>';
+}
+
+function openDialog(kind,user=null,trigger=document.activeElement) {
+  dialogTrigger = trigger;
+  const editing = kind === 'edit';
+  let content = '';
+  if (['create','edit'].includes(kind)) {
+    content = '<form id="user-form" class="stack" novalidate><h2 id="dialog-title">' + t(editing ? 'edit' : 'create') + '</h2>' +
+      inputField('modal-username',t('username'),user?.username ?? '','autocomplete="username" required ' + (editing ? 'readonly' : '') + ' aria-describedby="modal-error"') +
+      inputField('modal-name',t('name'),user?.name ?? '','required aria-describedby="modal-error"') +
+      selectField('modal-role',t('role'),roleKeys.map((role) => [role,t(role)]),user?.role ?? 'operator') +
+      (editing ? '' : passwordField('modal-password',t('initialPassword'),'new-password') + '<small class="muted">' + t('passwordRule') + '</small>') +
+      formError('modal-error') + '<div class="row">' + submit(t(editing ? 'save' : 'create')) + button(t('cancel'),'data-action="dialog-close"') + '</div></form>';
+  } else if (kind === 'reset') {
+    const prompt = t('resetPrompt').replace('{name}',user.username);
+    content = '<form id="reset-form" class="stack" novalidate><h2 id="dialog-title">' + t('reset') +
+      '</h2><p>' + esc(prompt) + '</p>' + passwordField('modal-next',t('next'),'new-password') +
+      passwordField('modal-confirm',t('confirm'),'new-password') + '<small class="muted">' + t('passwordRule') +
+      '</small>' + formError('modal-error') + '<div class="row">' + submit(t('reset')) +
+      button(t('cancel'),'data-action="dialog-close"') + '</div></form>';
+  } else {
+    const key = kind + 'Prompt';
+    const prompt = (copy[key]?.[state.lang === 'zh' ? 0 : 1] ?? '').replace('{name}',user?.username ?? '');
+    content = '<section class="stack"><h2 id="dialog-title">' + t(kind) + ' · ' + esc(user?.username) +
+      '</h2><p>' + esc(prompt) + '</p>' + formError('modal-error') + '<div class="row">' +
+      button(t(kind),'data-action="confirm-' + kind + '"',kind === 'delete' ? 'danger' : 'primary') +
+      button(t('cancel'),'data-action="dialog-close"') + '</div></section>';
+  }
+  dialog.innerHTML = content;
+  dialog.dataset.kind = kind;
+  dialog.dataset.userId = user ? String(user.id) : '';
+  dialog.showModal();
+  dialog.querySelector('input,select,button')?.focus();
+}
+function closeDialog() {
+  if (!dialog.open) return;
+  dialog.close();
+  dialog.innerHTML = '';
+  dialogTrigger?.focus();
+  dialogTrigger = null;
+}
+function recordUserAction(kind,user) {
+  const eventAction = {create:'createEvent',edit:'editEvent',reset:'resetEvent',disable:'disableEvent',
+    enable:'enableEvent',delete:'deleteEvent'}[kind];
+  addEvent(eventAction,user.username);
+  const toast = {create:'userCreated',edit:'userEdited',reset:'userReset',disable:'userDisabled',
+    enable:'userEnabled',delete:'userDeleted'}[kind];
+  flash(t(toast));
+}
+function fillLogin(user,pass) {
+  state.view = 'login';
+  state.preview = false;
+  renderApp();
+  $('#login-username').value = user;
+  $('#login-password').value = pass;
+  $('#login-username').focus();
+}
+function startLogin() {
+  const username = $('#login-username')?.value.trim();
+  const password = $('#login-password')?.value;
+  if (!username || !password) { error('login-error',t('required')); return; }
+  error('login-error','');
+  const submitButton = $('#login-form button[type=submit]');
+  submitButton.disabled = true;
+  submitButton.textContent = bi('登录中…','Signing in…');
+  loginTimer = setTimeout(() => {
+    const user = users.find((entry) => entry.username === username && entry.password === password && entry.status === 'active');
+    if (!user) {
+      addEvent('loginEvent',username,'failure','eventBadLogin',username);
+      error('login-error',t('badLogin'));
+      submitButton.disabled = false;
+      submitButton.textContent = t('login');
+      return;
+    }
+    user.last = new Date().toISOString();
+    state.sessionId = user.id;
+    state.preview = false;
+    addEvent('loginEvent',username,'success','eventOK',username);
+    navigate(user.role === 'admin' ? 'users' : 'profile');
+    flash(t('signed') + ' · ' + username);
+  },state.scenario === 'loading' ? 1800 : 450);
+}
+function saveUserForm(form) {
+  const username = $('#modal-username').value.trim();
+  const name = $('#modal-name').value.trim();
+  const role = $('#modal-role').value;
+  const kind = dialog.dataset.kind;
+  const id = Number(dialog.dataset.userId);
+  const existing = users.find((user) => user.username.toLowerCase() === username.toLowerCase() && user.id !== id);
+  let message = '';
+  if (!username || !name || (!roleKeys.includes(role))) message = t('required');
+  else if (!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(username)) message = t('invalidName');
+  else if (existing) message = t('duplicate');
+  else if (kind === 'create' && $('#modal-password').value.length < 8) message = t('passwordRule');
+  if (message) { error('modal-error',message); return; }
+  let user;
+  if (kind === 'create') {
+    user = {id:state.userSequence++,username,name,role,status:'active',created:new Date().toISOString(),last:null,password:$('#modal-password').value};
+    users.unshift(user);
+  } else {
+    user = users.find((entry) => entry.id === id);
+    user.username = username; user.name = name; user.role = role;
+  }
+  recordUserAction(kind,user);
+  const returnTarget = kind === 'create' ? '[data-action="create"]' : '[data-user="' + user.id + '"]';
+  closeDialog();
+  renderApp();
+  document.querySelector(returnTarget)?.focus();
+}
+function confirmUserAction(kind) {
+  const user = users.find((entry) => entry.id === Number(dialog.dataset.userId));
+  if (!user || (user.id === account()?.id && ['disable','delete'].includes(kind))) {
+    error('modal-error',t('cannotManage')); return;
+  }
+  if (kind === 'reset') {
+    const next = $('#modal-next').value;
+    const confirm = $('#modal-confirm').value;
+    if (next.length < 8) { error('modal-error',t('passwordRule')); return; }
+    if (next !== confirm) { error('modal-error',t('mismatch')); return; }
+    user.password = next;
+  } else if (kind === 'disable') user.status = 'disabled';
+  else if (kind === 'enable') user.status = 'active';
+  else if (kind === 'delete') users.splice(users.indexOf(user),1);
+  recordUserAction(kind,user);
+  const returnTarget = kind === 'create' ? '[data-action="create"]' : '[data-user="' + user.id + '"]';
+  closeDialog();
+  renderApp();
+  document.querySelector(returnTarget)?.focus();
+}
+function userMenu(userId,trigger) {
+  const user = users.find((entry) => entry.id === userId);
+  if (!user) return;
+  const actions = ['edit','reset',user.status === 'active' ? 'disable' : 'enable','delete'];
+  const old = $('#action-menu');
+  if (old) old.remove();
+  const menu = document.createElement('div');
+  menu.id = 'action-menu';
+  menu.className = 'menu';
+  menu.style.position = 'fixed';
+  const rect = trigger.getBoundingClientRect();
+  menu.style.top = Math.min(rect.bottom,innerHeight - 216) + 'px';
+  menu.style.left = Math.max(8,Math.min(rect.left,innerWidth - 190)) + 'px';
+  menu.setAttribute('role','menu');
+  actions.forEach((kind) => {
+    const item = document.createElement('button');
+    item.textContent = t(kind);
+    item.type = 'button';
+    item.setAttribute('role','menuitem');
+    if (kind === 'delete') item.className = 'danger';
+    item.addEventListener('click',() => {
+      menu.remove();
+      if (kind === 'edit' && user.id === account()?.id) { flash(t('cannotManage')); return; }
+      openDialog(kind,user,trigger);
+    });
+    menu.append(item);
+  });
+  document.body.append(menu);
+  menu.querySelector('button')?.focus();
+}
+function changePassword() {
+  const current = $('#profile-current').value;
+  const next = $('#profile-next').value;
+  const confirm = $('#profile-confirm').value;
+  const user = account();
+  let message = '';
+  if (!current || !next || !confirm) message = t('required');
+  else if (current !== user.password) message = t('wrongCurrent');
+  else if (next.length < 8) message = t('passwordRule');
+  else if (next !== confirm) message = t('mismatch');
+  else if (next === current) message = t('samePassword');
+  if (message) { error('profile-error',message); return; }
+  user.password = next;
+  addEvent('passwordEvent',user.username);
+  renderApp();
+  flash(t('updatedPassword'));
+}
+function applyScenario(value) {
+  state.scenario = value;
+  clearTimeout(loginTimer);
+  renderApp();
+}
+function syncFilters() {
+  if (state.view === 'users') {
+    state.userFilters.q = $('#users-q')?.value ?? '';
+    state.userFilters.role = $('#users-role')?.value ?? '';
+    state.userFilters.status = $('#users-status')?.value ?? '';
+    const record = $('#records');
+    if (record) record.innerHTML = userResults();
+  } else if (state.view === 'audit') {
+    state.auditFilters.q = $('#audit-q')?.value ?? '';
+    state.auditFilters.actor = $('#audit-actor')?.value ?? '';
+    state.auditFilters.action = $('#audit-action')?.value ?? '';
+    state.auditFilters.result = $('#audit-result')?.value ?? '';
+    state.auditFilters.time = $('#audit-time')?.value ?? '';
+    const record = $('#records');
+    if (record) record.innerHTML = auditResults();
+  }
+}
+
+document.addEventListener('click',(event) => {
+  const target = event.target.closest('button,[data-view]');
+  if (!target) {
+    if (!event.target.closest('#action-menu') && !event.target.closest('[data-user]')) $('#action-menu')?.remove();
+    return;
+  }
+  if (target.dataset.view) { navigate(target.dataset.view,target.dataset.preview === 'true'); return; }
+  const actionName = target.dataset.action;
+  if (actionName === 'lang') { state.lang = state.lang === 'zh' ? 'en' : 'zh'; renderApp(); return; }
+  if (actionName === 'theme') { state.theme = state.theme === 'light' ? 'dark' : 'light'; renderApp(); return; }
+  if (actionName === 'menu') {
+    const menu = $('#account-options');
+    menu.hidden = !menu.hidden;
+    target.setAttribute('aria-expanded',String(!menu.hidden));
+    return;
+  }
+  if (actionName === 'signout') { state.sessionId = null; state.preview = false; state.view = 'login'; renderApp(); return; }
+  if (actionName === 'fill-admin') { fillLogin('admin','astribot'); return; }
+  if (actionName === 'fill-user') { fillLogin('user','123'); return; }
+  if (actionName === 'create') { openDialog('create',null,target); return; }
+  if (actionName === 'dialog-close') { closeDialog(); return; }
+  if (actionName?.startsWith('confirm-')) { confirmUserAction(actionName.slice(8)); return; }
+  if (actionName === 'clear-users') { state.userFilters = {q:'',role:'',status:''}; renderApp(); return; }
+  if (actionName === 'clear-audit') { state.auditFilters = {q:'',actor:'',action:'',result:'',time:''}; renderApp(); return; }
+  if (actionName === 'retry') { state.scenario = 'normal'; renderApp(); return; }
+  const userId = target.dataset.user;
+  if (userId) { userMenu(Number(userId),target); return; }
+  const eventId = target.dataset.event;
+  if (eventId) {
+    const id = Number(eventId);
+    state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
+    const expanded = state.expanded.has(id);
+    target.setAttribute('aria-expanded',String(expanded));
+    const detail = $('#event-' + id);
+    if (detail) detail.hidden = !expanded;
+    target.textContent = t(expanded ? 'collapse' : 'details');
+    return;
+  }
+  if (target.dataset.role) { state.role = target.dataset.role; renderApp(); return; }
+});
+document.addEventListener('click',(event) => {
+  const eye = event.target.closest('[data-eye]');
+  if (!eye) return;
+  const field = $('#' + eye.dataset.eye);
+  if (!field) return;
+  const visible = field.type === 'password';
+  field.type = visible ? 'text' : 'password';
+  eye.setAttribute('aria-label',t(visible ? 'hide' : 'show'));
+  eye.innerHTML = icon(visible ? 'eye-off' : 'eye');
+});
+document.addEventListener('change',(event) => {
+  if (event.target.id === 'scenario') applyScenario(event.target.value);
+  else if (event.target.matches('#users-role,#users-status,#audit-actor,#audit-action,#audit-result,#audit-time')) syncFilters();
+});
+document.addEventListener('input',(event) => {
+  if (event.target.matches('#users-q,#audit-q')) syncFilters();
+});
+document.addEventListener('submit',(event) => {
+  event.preventDefault();
+  if (event.target.id === 'login-form') startLogin();
+  else if (event.target.id === 'user-form') saveUserForm(event.target);
+  else if (event.target.id === 'reset-form') confirmUserAction('reset');
+  else if (event.target.id === 'profile-form') changePassword();
+});
+dialog.addEventListener('cancel',(event) => { event.preventDefault(); closeDialog(); });
+dialog.addEventListener('click',(event) => {
+  if (event.target === dialog) closeDialog();
+});
+document.addEventListener('keydown',(event) => {
+  if (event.key === 'Escape') $('#action-menu')?.remove();
+});
+renderApp();
+</script>
+</body>
+</html>

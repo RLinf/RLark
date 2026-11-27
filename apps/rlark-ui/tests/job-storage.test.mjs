@@ -27,47 +27,9 @@ test("generates browser-compatible job resource IDs", () => {
   assert.match(generateJobResourceName(), /^jo-[0-9a-f]{16}$/);
 });
 
-test("caps generated PVC storage size at 200 Gi", () => {
-  const crd = generateJobCRD({
+function storageJob(mounts) {
+  return generateJobCRD({
     name: "jo-0123456789abcdef",
-    displayName: "Readable Job",
-    type: "Custom",
-    headerRole: "actor",
-    roles: ["actor"],
-    roleResources: {
-      actor: storageResource([
-        {
-          type: "storage",
-          objectStorage: "fast-storage",
-          mountPath: "/data",
-          hostPath: "",
-          pvcSizeGb: 201,
-        },
-      ]),
-    },
-    runScript: "echo ready",
-    domain: "",
-  });
-
-  const workload = crd.spec.tasks[0].workload;
-  const claimSpec =
-    workload.template.spec.volumes[0].ephemeral.volumeClaimTemplate.spec;
-  assert.equal(claimSpec.resources.requests.storage, "200Gi");
-});
-
-test("generates an ephemeral volume claim for selected storage", () => {
-  const resourceName = "jo-0123456789abcdef";
-  const mounts = [
-    {
-      type: "storage",
-      objectStorage: "fast-storage",
-      mountPath: "/data",
-      hostPath: "",
-      pvcSizeGb: 20,
-    },
-  ];
-  const crd = generateJobCRD({
-    name: resourceName,
     displayName: "Readable Job",
     type: "Custom",
     headerRole: "actor",
@@ -76,49 +38,80 @@ test("generates an ephemeral volume claim for selected storage", () => {
     runScript: "echo ready",
     domain: "",
   });
+}
 
-  const workload = crd.spec.tasks[0].workload;
-  const volume = workload.template.spec.volumes[0];
-  const claimSpec = volume.ephemeral.volumeClaimTemplate.spec;
-
+test("a storage mount names the storage instead of a StorageClass", () => {
+  const crd = storageJob([
+    {
+      type: "storage",
+      objectStorage: "ks3",
+      mountPath: "/data",
+      hostPath: "",
+      profile: "",
+      readOnly: false,
+    },
+  ]);
+  const podSpec = crd.spec.tasks[0].workload.template.spec;
+  const volume = podSpec.volumes[0];
   assert.equal(volume.name, "data");
-  assert.equal(volume.persistentVolumeClaim, undefined);
-  assert.deepEqual(claimSpec.accessModes, ["ReadWriteOnce"]);
-  assert.equal(claimSpec.storageClassName, "fast-storage");
-  assert.equal(claimSpec.resources.requests.storage, "20Gi");
-  assert.equal(
-    workload.template.spec.containers[0].volumeMounts[0].name,
-    volume.name,
-  );
+  assert.equal(volume.ephemeral, undefined);
+  assert.deepEqual(volume.csi, {
+    driver: "storage.rlark.io",
+    volumeAttributes: { storage: "ks3" },
+  });
+  assert.equal(podSpec.containers[0].volumeMounts[0].name, volume.name);
 });
 
-test("reads ephemeral volume storage settings from a job CRD", () => {
-  const crd = generateJobCRD({
-    name: "jo-0123456789abcdef",
-    type: "Custom",
-    headerRole: "actor",
-    roles: ["actor"],
-    roleResources: {
-      actor: storageResource([
-        {
-          type: "storage",
-          objectStorage: "fast-storage",
-          mountPath: "/data",
-          hostPath: "",
-          pvcSizeGb: 20,
-        },
-      ]),
+test("a storage mount carries its profile and read-only switch", () => {
+  const crd = storageJob([
+    {
+      type: "storage",
+      objectStorage: "ks3",
+      mountPath: "/data",
+      hostPath: "",
+      profile: "archive",
+      readOnly: true,
     },
-    runScript: "echo ready",
-    domain: "",
+  ]);
+  assert.deepEqual(crd.spec.tasks[0].workload.template.spec.volumes[0].csi, {
+    driver: "storage.rlark.io",
+    readOnly: true,
+    volumeAttributes: { storage: "ks3", profile: "archive" },
   });
+});
 
-  const job = crdToJob(crd);
-  assert.deepEqual(job.mounts[0], {
+test("reads a storage mount back from a job CRD", () => {
+  const mount = {
     type: "storage",
-    objectStorage: "fast-storage",
+    objectStorage: "kpfs",
     mountPath: "/data",
     hostPath: "",
-    pvcSizeGb: 20,
-  });
+    profile: "read",
+    readOnly: true,
+  };
+  assert.deepEqual(crdToJob(storageJob([mount])).mounts[0], mount);
+});
+
+test("keeps a volume with a fixed StorageClass verbatim", () => {
+  const crd = storageJob([]);
+  const task = crd.spec.tasks[0];
+  const legacy = {
+    name: "data",
+    ephemeral: {
+      volumeClaimTemplate: {
+        spec: {
+          accessModes: ["ReadWriteOnce"],
+          storageClassName: "sc-0123456789abcdef",
+          resources: { requests: { storage: "10Gi" } },
+        },
+      },
+    },
+  };
+  task.workload.template.spec.volumes = [legacy];
+  task.workload.template.spec.containers[0].volumeMounts = [
+    { name: "data", mountPath: "/data" },
+  ];
+  const mount = crdToJob(crd).mounts[0];
+  assert.equal(mount.type, "opaque");
+  assert.deepEqual(mount.rawVolume, legacy);
 });

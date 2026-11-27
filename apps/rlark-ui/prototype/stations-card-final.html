@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,">
+<title>RLark · 场站节点</title>
+<style>
+    :root {
+      color-scheme: light;
+      --ink: #171b25;
+      --muted: #7c8492;
+      --soft: #a9b0bd;
+      --line: #e7ebf0;
+      --line-strong: #dce2ea;
+      --panel: #fff;
+      --canvas: #f4f6f9;
+      --hover: #f5f0fe;
+      --blue: #7c3aed;
+      --blue-2: #a78bfa;
+      --blue-bg: #efe9fd;
+      --green: #36c98f;
+      --green-soft: #e7f8f1;
+      --red: #ef5a7a;
+      --orange: #f59e35;
+      --shadow-soft: 0 8px 24px rgba(28,39,58,.055);
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; min-height: 100%; margin: 0;  }
+    body { background: var(--canvas); color: var(--ink); font: 13px/1.45 Inter, "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif; }
+    button, input, select { font: inherit; }
+    button, select { color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .48; }
+    :focus-visible { outline: 3px solid var(--blue-2); outline-offset: 2px; }
+    .theme-dark {
+      color-scheme: dark;
+      --ink: #f5f7fb;
+      --muted: #9ca8ba;
+      --line: #273348;
+      --line-strong: #34435a;
+      --panel: #151d2b;
+      --canvas: #0f1623;
+      --blue: #a78bfa;
+      --blue-bg: rgba(167,139,250,.18);
+      --hover: rgba(167,139,250,.08);
+    }
+    .shell-sidebar { position: fixed; z-index: 30; inset: 0 auto 0 0; width: 256px; display: flex; flex-direction: column; padding: 19px 16px 14px; border-right: 1px solid var(--line); background: var(--panel); }
+    .brand { display: flex; align-items: center; gap: 10px; min-height: 45px; margin: 0 10px 24px; color: var(--blue); font-size: 25px; font-weight: 800; letter-spacing: -.7px; }
+    .brand-mark { width: 35px; height: 35px; display: grid; place-items: center; border: 2px solid var(--blue); border-radius: 50%; }
+    .brand-mark svg { width: 22px; }
+    .nav-caption { margin: 0 10px 8px; color: var(--soft); font-size: 10px; font-weight: 800; }
+    .nav-list { display: grid; gap: 4px; }
+    .nav-item { display: flex; align-items: center; gap: 12px; min-height: 43px; padding: 0 11px; border-radius: 12px; color: #596579; font-weight: 650; text-decoration: none; white-space: nowrap; }
+    .nav-item svg { width: 17px; height: 17px; flex: none; }
+    .nav-item:hover { background: var(--hover); color: var(--ink); }
+    .nav-item.active { background: var(--blue-bg); color: var(--blue); }
+    .nav-item.active::before { position: absolute; left: 0; width: 4px; height: 28px; border-radius: 0 4px 4px 0; background: var(--blue); content: ""; }
+    .sidebar-bottom { margin-top: auto; }
+    .sidebar-bottom button.nav-item { width: 100%; border: 0; background: transparent; font: inherit; text-align: left; }
+    body.sidebar-collapsed .shell-sidebar { width: 80px; align-items: center; padding-right: 8px; padding-left: 8px; }
+    body.sidebar-collapsed .brand { width: 42px; justify-content: center; margin-right: 0; margin-left: 0; font-size: 0; }
+    body.sidebar-collapsed .brand-word, body.sidebar-collapsed .nav-caption, body.sidebar-collapsed .nav-item span { display: none; }
+    body.sidebar-collapsed .nav-item { justify-content: center; width: 46px; margin-right: auto; margin-left: auto; padding: 0; }
+    body.sidebar-collapsed .nav-item.active::before { left: -8px; }
+    body.sidebar-collapsed .shell-main { width: calc(100% - 80px); margin-left: 80px; }
+    .shell-main { width: calc(100% - 256px); min-height: 100vh; margin-left: 256px; }
+    .topbar { position: sticky; z-index: 20; top: 0; height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 0 28px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    .topbar-current { display: grid; gap: 2px; }
+    .topbar-current small { color: var(--soft); font-size: 10px; font-weight: 700; }
+    .topbar-current strong { font-size: 14px; }
+    .topbar-actions { display: flex; align-items: center; gap: 8px; }
+    .topbar-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
+    .topbar-toggle button { min-height: 28px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; }
+    .topbar-toggle button.active { background: var(--blue-bg); color: var(--blue); }
+    .topbar-icon { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); }
+    .avatar { width: 34px; height: 34px; display: grid; place-items: center; border: 2px solid var(--panel); border-radius: 50%; background: #f6d8c5; color: #604632; font-size: 11px; font-weight: 800; }
+    .page-content { display: grid; align-content: start; gap: 18px; min-width: 0; padding: 28px; padding-bottom: 52px; }
+    @media (max-width: 760px) {
+      .shell-sidebar { width: 72px; align-items: center; padding: 14px 8px; }
+      body.sidebar-collapsed .shell-sidebar { width: 72px; }
+      .brand { width: 42px; height: 42px; justify-content: center; margin: 0 0 22px; font-size: 0; }
+      .brand-mark { width: 35px; height: 35px; }
+      .brand-word, .nav-caption, .nav-item span { display: none; }
+      .nav-list { width: 100%; }
+      .nav-item { position: relative; justify-content: center; width: 46px; min-height: 46px; margin: 0 auto; padding: 0; }
+      .nav-item svg { width: 19px; height: 19px; }
+      .nav-item.active::before { left: -8px; }
+      .sidebar-bottom .nav-item { margin-top: 0; }
+      .shell-main { width: calc(100% - 72px); margin-left: 72px; }
+      body.sidebar-collapsed .shell-main { width: calc(100% - 72px); margin-left: 72px; }
+      .topbar { height: 72px; padding: 0 16px; }
+      .topbar-actions { gap: 5px; }
+      .topbar-toggle button { padding: 0 7px; }
+      .topbar-icon, .avatar { display: none; }
+      .page-content { gap: 13px; padding: 18px 16px 74px; }
+    }
+
+
+.theme-dark .nav-item { color: var(--muted); }
+.theme-dark .nav-item.active { color: var(--blue); }
+
+body {overflow-anchor:none;font-variant-numeric:tabular-nums}
+[hidden] {display:none!important}
+button,input,select {font:inherit;color:inherit}
+h1,h2,h3,p,dl,dd {margin:0}
+h1 {font-size:20px} h2 {font-size:15px} h3 {font-size:15px}
+small,.muted,dt {color:var(--muted);font-size:12px}
+code {overflow-wrap:anywhere}
+.page-content {gap:16px}
+.heading,.toolbar,.section-head,.identity,.actions,.batch,.tabs {
+  display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0
+}
+.heading,.section-head {justify-content:space-between}
+.toolbar {padding-bottom:16px;border-bottom:1px solid var(--line)}
+.toolbar input[type=search] {flex:1 1 180px}
+.toolbar input,.toolbar select,.review-grid select {
+  min-width:0;max-width:100%;min-height:40px;padding:0 10px;
+  border:1px solid var(--line);border-radius:10px;background:var(--panel)
+}
+.secondary-button,.primary-button,.icon-button {
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  height:40px;padding:0 12px;border:1px solid var(--line-strong);
+  border-radius:10px;background:var(--panel);font-size:13px;font-weight:600
+}
+.primary-button {height:42px;background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.icon-button {width:38px;height:38px;padding:0}
+.secondary-button:hover,.icon-button:hover {background:var(--hover)}
+.status {
+  display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border:1px solid var(--line);
+  border-radius:999px;font-size:12px;font-weight:600;background:var(--canvas);white-space:nowrap
+}
+.status i {width:6px;height:6px;border-radius:50%;background:var(--green)}
+.status.bad i {background:var(--red)} .status.quiet i {background:var(--muted)}
+.groups,.group,.card-list {display:grid;gap:12px;min-width:0}
+.groups {gap:24px}
+.group-heading {display:grid;gap:3px}
+.group-heading .muted {overflow-wrap:anywhere}
+.batch {padding:8px 0}
+.batch label {display:inline-flex;align-items:center;gap:8px;min-height:40px}
+.batch-tools {padding:6px 8px;border-radius:10px;background:var(--blue-bg)}
+input[type=checkbox] {accent-color:var(--blue);width:16px;height:16px;margin:0}
+.card-row {display:grid;gap:12px;align-items:stretch}
+.card-row.feature-row {grid-template-columns:repeat(var(--columns),minmax(0,460px))}
+.card-row.stock-row {grid-template-columns:repeat(var(--columns),minmax(0,350px))}
+.card,.detail,.ledger,.empty {
+  min-width:0;border:1px solid var(--line);border-radius:14px;background:var(--panel)
+}
+.card {display:flex;flex-direction:column;padding:14px;gap:12px}
+.feature {box-shadow:var(--shadow-soft)}
+.card.selected,.card.open {border-color:var(--blue-2)}
+.identity {align-items:flex-start;flex-wrap:nowrap}
+.identity input {margin-top:6px;flex:none}
+.node-title {flex:1;min-width:0;overflow-wrap:anywhere}
+.node-title small {display:block;margin-top:2px}
+.control-plane {display:flex;align-items:center;flex-wrap:wrap;gap:10px;max-width:920px;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.control-plane .node-title {min-width:140px}
+.facts {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.facts dd {font-weight:600;font-size:12px;overflow-wrap:anywhere}
+.robot-state {display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12px}
+.robot-state strong {font-weight:650}
+.warning {color:color-mix(in srgb,var(--red) 72%,var(--ink))}
+.footer {display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:10px;border-top:1px solid var(--line)}
+.stock .footer {justify-content:flex-end}
+.cameras {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+.cameras.square {grid-template-columns:repeat(2,minmax(0,1fr))}
+.frame {position:relative;display:block;min-width:0;width:100%;aspect-ratio:16/9;padding:0;
+  border:0;border-radius:9px;overflow:hidden;background:var(--canvas);text-align:left}
+.cameras:not(.square) .frame:first-child {grid-column:1/-1}
+.frame img {display:block;width:100%;height:100%;object-fit:cover}
+.frame img.stale {filter:grayscale(.55)}
+.frame.placeholder {border:1px dashed var(--line-strong);color:var(--muted)}
+.frame-caption {position:absolute;inset:auto 0 0;padding:4px 6px;font-size:11px;font-weight:650;
+  color:#fff;background:linear-gradient(transparent,rgba(12,16,27,.9));line-height:1.25}
+.placeholder .frame-caption {position:static;display:grid;place-items:center;height:100%;text-align:center;color:var(--muted);background:none}
+.frame-note {font-size:11px;display:block;font-weight:500}
+.camera-line {display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:var(--muted)}
+.camera-line span:last-child {text-align:right}
+.detail-cameras .live {color:var(--blue);font-weight:650}
+.detail {
+  display:grid;gap:16px;min-width:0;padding:16px;border-top:2px solid var(--blue-2);
+  scroll-margin:84px;container-type:inline-size
+}
+.detail-header {display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px}
+.detail-title {display:grid;gap:4px;min-width:0}
+.detail-title h3 {overflow-wrap:anywhere}
+.detail-actions {display:grid;gap:5px;min-width:0;justify-items:end}
+.detail-actions small {text-align:right}
+.detail-actions .danger:not(:disabled) {color:color-mix(in srgb,var(--red) 72%,var(--ink))}
+.detail-conflict {
+  display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-radius:10px;
+  background:color-mix(in srgb,var(--red) 9%,var(--panel))
+}
+.detail-conflict svg,.detail-column h4 svg {flex:none}
+.detail-conflict p {margin-top:2px;color:var(--ink)}
+.detail-grid {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) minmax(0,1fr);padding-top:12px;border-top:1px solid var(--line)}
+.detail-column {min-width:0;padding:0 16px;border-left:1px solid var(--line)}
+.detail-column:first-child {padding-left:0;border-left:0}
+.detail-column:last-child {padding-right:0}
+.detail-column h4,.detail-cameras h4 {
+  display:flex;align-items:center;gap:7px;margin:0 0 10px;font-size:13px
+}
+.detail-column dl {display:grid;gap:8px}
+.detail-column dd {font-size:13px;overflow-wrap:anywhere}
+.detail-column code {font-size:12px}
+.detail-cameras {display:grid;gap:8px;padding-top:12px;border-top:1px solid var(--line)}
+.detail-cameras h4 {margin:0}
+.detail-camera-grid {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.copy-value {display:grid;grid-template-columns:minmax(0,1fr) 38px;align-items:center;gap:8px}
+.copy-value code {min-width:0;white-space:normal;overflow-wrap:anywhere}
+.detail-column .network-fields {grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+.field-wide {grid-column:1/-1}
+.detail-column h4:not(:first-child) {margin-top:16px}
+.detail-conflict > div {flex:1;min-width:0}
+.detail-identifiers {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px;margin-top:8px}
+.condition-list,.detail-list {list-style:none;padding:0;margin:0}
+.condition-list li {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;padding:8px 0;border-bottom:1px solid var(--line)}
+.condition-list li:first-child {padding-top:0}
+.condition-list li:last-child {border:0}
+.condition-list li div,.detail-list li {display:grid;gap:3px;min-width:0;overflow-wrap:anywhere}
+.condition-state {justify-items:end;text-align:right}
+.condition-state .status[data-value="False"] {color:color-mix(in srgb,var(--red) 70%,var(--ink))}
+.condition-state .status[data-value="False"] i {background:var(--red)}
+.condition-state .status[data-value="Unknown"] {color:color-mix(in srgb,var(--orange) 58%,var(--ink))}
+.condition-state .status[data-value="Unknown"] i {background:var(--orange)}
+.condition-note {grid-column:1/-1;overflow-wrap:anywhere}
+.detail-list li+li {margin-top:8px}
+.detail-power {display:grid;gap:8px;padding-top:12px;border-top:1px solid var(--line)}
+.detail-power h4 {margin:0}
+.detail-power dl {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.feature .robot-state {display:grid;gap:5px}
+.robot-meta,.robot-track {display:flex;flex-wrap:wrap;gap:4px 10px}
+.robot-track {border-top:1px solid var(--line);padding-top:5px}
+@container (width < 960px) {
+  .detail-grid {grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);row-gap:12px}
+  .detail-column:nth-child(2) {padding-right:0}
+  .detail-column:last-child {grid-column:1/-1;border-left:0;border-top:1px solid var(--line);padding:12px 0 0}
+  .detail-camera-grid {grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@container (width < 640px) {
+  .detail-grid {grid-template-columns:minmax(0,1fr)}
+  .detail-column,.detail-column:first-child {padding:0;border-left:0}
+  .detail-column+.detail-column {padding:12px 0 0;border-top:1px solid var(--line)}
+  .detail-identifiers,.detail-column .network-fields {grid-template-columns:minmax(0,1fr)}
+  .detail-camera-grid,.detail-power dl {grid-template-columns:repeat(2,minmax(0,1fr))}
+  .detail-actions {justify-items:start}
+  .detail-actions small {text-align:left}
+}
+.field {min-width:0;display:grid;gap:3px}
+.no-wrap {white-space:nowrap}
+.empty,.ledger {padding:16px}
+.ledger {display:grid;gap:10px}
+.ledger summary {cursor:pointer;font-weight:650}
+.ledger-row {display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+.review {position:fixed;right:12px;bottom:12px;z-index:40;width:max-content;max-width:calc(100% - 24px)}
+.review[open] {width:min(500px,calc(100% - 24px));padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--panel);box-shadow:var(--shadow-soft);max-height:85vh;overflow:auto}
+.review summary {cursor:pointer;width:max-content;margin-left:auto;list-style:none}
+.review summary::-webkit-details-marker {display:none}
+.review-grid {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:10px 0}
+.review-grid label {display:grid;gap:3px}
+.review output {display:block;padding:10px;background:var(--canvas);border-radius:10px;font-size:12px}
+.review output p+p {margin-top:5px}
+dialog {width:min(660px,calc(100% - 24px));border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--ink);padding:16px}
+dialog::backdrop {background:rgba(12,16,27,.64)}
+dialog img {width:100%;border-radius:10px;margin-top:12px}
+#toast {position:fixed;z-index:35;left:50%;bottom:16px;transform:translateX(-50%);max-width:90vw;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-soft)}
+@media(max-width:760px) {
+  .page-content {padding-inline:12px}
+  .card {padding:12px}
+  .identity {gap:6px}
+  .topbar {gap:8px;padding:0 10px}
+  .topbar-toggle button {padding:0 5px}
+  .review-grid {grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+</style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute;overflow:hidden">
+    <symbol id="i-mark" viewBox="0 0 32 32"><path d="M4 17c2-6 10-7 12-1 2-6 10-5 12 1-2 7-9 10-12 10S6 24 4 17Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="10" r="3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-cluster" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="m3 7 9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></symbol>
+    <symbol id="i-fingerprint" viewBox="0 0 24 24"><path d="M12 11a2 2 0 0 0-2 2c0 3-.4 5.5-1.5 7M14 13c0 3.2-.3 5.7-1 7M6 15a6 6 0 1 1 12 0c0 2-.2 3.8-.7 5M4 13a8 8 0 1 1 16 0M12 5a8 8 0 0 0-8 8"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9 2 2-2 2 2 2-3 3-2-2-3 3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.4 1.1-1.4 2.4-1.7-.7a8 8 0 0 1-1.6.9l-.3 1.8h-2.8l-.3-1.8a8 8 0 0 1-1.6-.9l-1.7.7-1.4-2.4 1.4-1.1a7 7 0 0 1 0-1.9l-1.4-1.1 1.4-2.4 1.7.7a8 8 0 0 1 1.6-.9l.3-1.8h2.8l.3 1.8a8 8 0 0 1 1.6.9l1.7-.7 1.4 2.4-1.4 1.1a7 7 0 0 1 0 1.9Z" transform="translate(-1 -2)"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.2 9A7 7 0 0 1 18 6l2 6M4 12l2 6a7 7 0 0 0 11.8-3"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 5V4H4v12h1"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10M6.2 5.5a8 8 0 1 0 11.6 0"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m10.3 3.7-8 14A2 2 0 0 0 4 20.7h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 3h.01"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 1 1 4.2 1.8c-1 .8-1.8 1.2-1.8 2.7M12 17h.01"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></symbol>
+  </svg>
+  <aside class="shell-sidebar" aria-label="RLark navigation">
+    <div class="brand"><span class="brand-mark"><svg fill="none"><use href="#i-mark"/></svg></span><span class="brand-word">RLark</span></div>
+    <div class="nav-caption" data-copy="admin">管理后台</div>
+    <nav class="nav-list">
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-grid"/></svg><span data-copy="dashboard">管理工作台</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-cluster"/></svg><span data-copy="clusters">集群管理</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-list"/></svg><span data-copy="tasks">任务管理</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-globe"/></svg><span data-copy="navNetwork">网络域</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-box"/></svg><span data-copy="storage">存储管理</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-image"/></svg><span data-copy="images">镜像管理</span></a>
+      <a class="nav-item active" aria-current="page" href="#page-content"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-fingerprint"/></svg><span data-copy="stations">场站节点</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-key"/></svg><span data-copy="ssh">SSH 公钥</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-settings"/></svg><span data-copy="settings">系统配置</span></a>
+      <a class="nav-item" href="#" data-demo><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-list"/></svg><span data-copy="reference">接口参考</span></a>
+    </nav>
+    <div class="sidebar-bottom"><button class="nav-item" type="button" id="sidebar-toggle" aria-expanded="true"><svg fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-chevron"/></svg><span data-copy="collapse">收起侧栏</span></button></div>
+  </aside>
+  <main class="shell-main">
+    <header class="topbar">
+      <div class="topbar-current"><small data-copy="current">当前页面</small><strong data-copy="stations">场站节点</strong></div>
+      <div class="topbar-actions">
+        <div class="topbar-toggle" aria-label="Language"><button type="button" data-lang="zh" class="active">中</button><button type="button" data-lang="en">EN</button></div>
+        <div class="topbar-toggle" aria-label="Theme"><button type="button" data-theme="light" class="active">浅色</button><button type="button" data-theme="dark">◐ 深色</button></div>
+        <button class="topbar-icon" id="notifications" type="button" aria-label="Notifications"><svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg></button>
+        <span class="avatar" aria-label="Administrator">AD</span>
+      </div>
+    </header>
+
+<div class="page-content" id="page-content">
+  <header class="heading"><h1 data-copy="stations">场站节点</h1><button type="button" class="primary-button" data-action="join" data-copy="join">加入节点</button></header>
+  <div class="toolbar">
+    <input type="search" id="search" autocomplete="off">
+    <select id="phase"></select><select id="cluster"></select>
+    <button type="button" class="secondary-button" data-action="refresh" data-copy="refresh">刷新</button>
+    <small id="count"></small>
+  </div>
+  <div id="groups" class="groups"></div>
+  <details class="ledger" id="ledger"><summary id="ledger-title"></summary><div id="records"></div></details>
+</div></main>
+<details class="review" id="review">
+  <summary class="secondary-button" data-copy="review">评审设置</summary>
+  <div class="review-grid" id="review-controls"></div>
+  <output id="metrics"></output>
+</details>
+<dialog id="camera-dialog"></dialog>
+<p id="toast" role="status" hidden></p>
+<script>
+"use strict";
+
+const visualSamples = ["data:image/jpeg;base64,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", "data:image/jpeg;base64,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"];
+const words = {
+  stations:["场站节点","Site nodes"], admin:["管理后台","Administration"], current:["当前页面","Current page"],
+  dashboard:["管理工作台","Admin workspace"], clusters:["集群管理","Clusters"], tasks:["任务管理","Tasks"],
+  navNetwork:["网络域","Network domains"], network:["网络","Network"], storage:["存储管理","Storage"], images:["镜像管理","Image registries"],
+  ssh:["SSH 公钥","SSH keys"], settings:["系统配置","System settings"], reference:["接口参考","API reference"],
+  collapse:["收起侧栏","Collapse sidebar"], expandSide:["展开侧栏","Expand sidebar"],
+  join:["加入节点","Add node"], refresh:["刷新","Refresh"], refreshed:["节点列表已刷新","Node list refreshed"],
+  search:["搜索节点名或 UID","Search node name or UID"], all:["全部状态","All statuses"], allClusters:["所有集群","All clusters"],
+  robot:["机器人集群","Robot cluster"], stock:["普通节点","Node inventory"], control:["控制面","Control plane"],
+  Bound:["在线","Online"], Offline:["离线","Offline"], Conflict:["冲突","Conflict"], Retired:["已退役","Retired"],
+  records:["条记录","records"], empty:["没有匹配的场站节点","No matching site nodes"],
+  chooseAll:["全选当前集群机器人","Select all robots in this cluster"], selected:["已选","Selected"],
+  poseBlocked:["所选机器人需在线且已上电","Selected robots must be online and powered on"],
+  powerOn:["上电","Power on"], powerOff:["下电","Power off"], pose:["初始姿势","Home pose"],
+  expand:["展开详情","Expand details"], fold:["收起详情","Collapse details"],
+  verified:["网络已验证","Network verified"], failed:["网络探测失败","Network probe failed"], unknown:["网络未知","Network unknown"],
+  used:["已入网","Joined"], unused:["未用入网码","No join code"], expected:["期望","Desired"], actual:["实际","Actual"],
+  on:["已上电","Powered on"], off:["未上电","Powered off"], check:["自检","Self-check"], ok:["通过","Passed"],
+  pending:["待检查","Pending"], fault:["失败","Failed"], maintenance:["维护中","Maintenance"],
+  uptime:["运行时间","Uptime"], reboots:["重启","Reboots"], seen:["最近上报","Last seen"],
+  head:["头部","Head"], torso:["躯干","Torso"], left:["左腕","Left wrist"], right:["右腕","Right wrist"],
+  normal:["正常","Ready"], stale:["旧画面","Stale"], stalled:["画面停滞","Stalled"], noFrame:["无帧","No frame"], absent:["未安装","Not fitted"],
+  slow:["慢速预览 · 5 秒","Preview · 5 s"], live:["实时模拟 · 每路最高 5 帧/秒","Live simulation · up to 5 fps per view"],
+  paused:["画面刷新已暂停","Frame refresh paused"],
+  cameras:["相机","Cameras"], liveCameras:["实时相机","Live cameras"], identity:["身份","Identity"], conditions:["条件","Conditions"],
+  networkAdmission:["网络与入网","Network and admission"], nodeDetails:["节点详情","Node details"],
+  uidChanged:["节点 UID 变更","Node UID changed"], reportedUID:["当前上报 UID","Reported UID"],
+  admissionStatus:["入网状态","Admission status"], recordActions:["记录操作","Record actions"],
+  clusterName:["集群","Cluster"], clusterID:["集群 ID","Cluster ID"], boundUID:["记录绑定 UID","Recorded UID"],
+  copied:["已复制","Copied"], copyValue:["复制","Copy"], copyFailed:["无法访问剪贴板","Clipboard unavailable"],
+  noCluster:["集群未确定。","Cluster unresolved."], noAdmission:["此节点没有入网记录。","This node has no admission record."],
+  stateBlocked:["当前记录状态不允许删除。","The current record state does not allow deletion."],
+  issuer:["发码人","Issued by"], expires:["过期时间","Expires"], sshLogin:["SSH 登录","SSH login"],
+  sshFingerprint:["SSH 主机指纹","SSH host fingerprint"], admissionReason:["入网说明","Admission detail"],
+  links:["站点网络链路","Site network links"], noLinks:["该节点当前不在场站网络中。","This node is not in the site network."],
+  perHub:["每台 Hub 看到的这台节点","This node as each hub sees it"],
+  connected:["已连通","Connected"], silent:["收不到","Silent"], unanswered:["有请求无会话","Unanswered"],
+  since:["自","Since"], handshake:["最后握手","Last handshake"],
+  cameraDiagnostics:["相机诊断","Camera diagnostics"], resetCamera:["检查 USB 连接，必要时复位相机。","Check USB and reset the camera if needed."],
+  checkFrames:["检查相机服务和连接。","Check the camera service and connection."],
+  staleFrames:["检查相机上报是否继续更新。","Check whether the camera is still reporting."],
+  power:["机器人电源","Robot power"], driverOn:["启动驱动","Start driver"], driverOff:["关闭驱动","Stop driver"],
+  powered:["已上电 · 驱动停止","Powered · driver stopped"], ready:["驱动运行","Driver running"], noMaintenance:["无","None"],
+  Observed:["已观测","Observed"], IdentityMatched:["身份匹配","Identity matched"], NetworkVerified:["网络已验证","Network verified"],
+  RLarkLinked:["RLark 已连接","RLark linked"], Rebooted:["已重启","Rebooted"],
+  observationOk:["已收到节点上报。","The node reported its state."], observationMissing:["等待节点重新上报。","Waiting for the node to report again."],
+  uidOk:["绑定 UID 与上报一致。","The recorded and reported UIDs match."],
+  probeOk:["最近一次探测通过。","The latest probe passed."], probeMissing:["当前没有通过的探测结果。","No successful probe result is available."],
+  linkedOk:["节点已连接管理面。","The node is connected to the management plane."],
+  rebootOk:["检测到启动时间变化。","A boot time change was detected."], rebootMissing:["暂无重启事件。","No reboot event has been observed."],
+  wire:["WireGuard 公钥","WireGuard public key"], tunnel:["隧道地址","Tunnel address"], record:["记录名","Record name"],
+  conflictNote:["同名节点上报了另一 Node UID，此记录退出隧道网络。","A node with this name reported a different UID. This record stays out of the tunnel network."],
+  ledger:["入网记录","Admission records"], noRecords:["暂无入网记录","No admission records"], expired:["已过期","Expired"],
+  revoke:["作废入网码","Revoke code"], reissue:["重发入网码","Reissue code"], remove:["删除记录","Delete record"],
+  removeBlocked:["同名 Node 仍存在，请先移除节点。","A Node with this name still exists. Remove the node first."],
+  close:["关闭","Close"], simulated:["已执行演示操作","Demo action applied"], demo:["原型演示","Prototype only"],
+  confirm:["确认演示操作","Confirm demo action"], cancel:["取消","Cancel"], notifications:["暂无新通知","No new notifications"],
+  review:["评审设置","Review controls"], scenario:["场景","Scenario"], lang:["语言","Language"], theme:["主题","Theme"],
+  dense:["密集","Dense"], sparse:["稀疏","Sparse"], light:["浅色","Light"], dark:["深色","Dark"],
+  defaultExpandNonRobot:["预览非机器人默认展开","Preview non-robot details open"],
+  cameraLayout:["相机布局","Camera layout"], focus:["1 大 + 3 小","1 lead + 3 thumbnails"], square:["2 × 2","2 × 2"],
+  enabled:["开启","On"], disabled:["关闭","Off"],
+  heights:["实测卡高","Measured heights"], delta:["同排最大基线差","Max same-row footer delta"],
+  gap:["内容至 footer 最大留白","Max content-to-footer gap"], requests:["模拟调度累计","Simulated dispatches"],
+  perMinute:["当前目标/分钟（上限）","Current target/min (ceiling)"], drift:["最近展开变化后的锚点位移","Last expansion anchor shift"],
+  metricNote:["高度与基线取自浏览器布局。相机计数来自模拟调度，相机轮询无需网络。","Height and alignment come from the browser layout. Camera counts come from the local scheduler."],
+  zero:["空","Empty"], snapshots:["帧","frames"], reports:["状态","reports"], robots:["机器人","Robots"], compact:["库存","Inventory"],
+};
+
+const options = {
+  scenario:["dense","sparse","empty"], theme:["light","dark"], lang:["zh","en"],
+  defaultExpandNonRobot:["disabled","enabled"],
+  cameraLayout:["focus","square"],
+};
+const params = new URLSearchParams(location.search);
+const settings = Object.fromEntries(Object.entries(options).map(([key, values]) => [
+  key, values.includes(params.get(key)) ? params.get(key) : values[0],
+]));
+const t = key => words[key]?.[settings.lang === "zh" ? 0 : 1] ?? key;
+const $ = selector => document.querySelector(selector);
+const $$ = selector => [...document.querySelectorAll(selector)];
+const icon = name => '<svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><use href="#i-' + name + '"/></svg>';
+
+const fixtures = [
+  {name:"alexfu", group:"sz", cp:true},
+  {name:"s1u-01-x86", group:"sz", cameras:["normal","normal","absent","absent"]},
+  {name:"s1u-02-x86", group:"sz", cameras:["stale","normal","noFrame","absent"], phase:"Offline"},
+  {name:"s1u-03-x86", group:"sz", cameras:["normal","stalled","normal","normal"], phase:"Conflict"},
+  {name:"lab-control", group:"lab", cp:true},
+  {name:"s1u-lab-01", group:"lab", cameras:["normal","normal","normal","normal"]},
+  {name:"s1u-lab-02", group:"lab", cameras:["normal","stale","noFrame","absent"]},
+  {name:"edge-control", group:"edge", cp:true},
+  {name:"edge-gpu-01", group:"edge"},
+  {name:"edge-inference-02", group:"edge", phase:"Offline", hasNode:false, hasAdmission:true},
+  {name:"edge-record-with-long-hostname-04", group:"edge", phase:"Conflict"},
+  {name:"edge-worker-05", group:"edge"},
+  {name:"edge-legacy-06", group:"edge", phase:"Retired", hasNode:false},
+].map((node,index) => ({
+  ...node, namespace:"rlark-"+node.group, uid:"31bf7721-109d-4fc1-b59e-3faa603ac"+String(810+index),
+  phase:node.phase??"Bound", hasNode:node.hasNode??true,
+  systemUUID:"eb7fd2f6-1e94-896c-e41a-30c5994cd"+String(810+index),
+  admission:node.cameras||node.hasAdmission ? "used" : "unused",
+  actual:index===1||node.phase==="Offline"?"off":"on", desired:index===1?"off":"ready",
+  driver:index===1||node.phase==="Offline"?"off":"on",
+  address:"10.24.0."+String(31+index), reboots:index%4,
+}));
+const clusterGroups = {
+  sz:["深圳公司 S1U 调试集群","Shenzhen S1U lab"],
+  lab:["机器人验证集群","Robot validation"],
+  edge:["边缘计算集群","Edge compute"],
+};
+const names = ["head","torso","left","right"];
+const open = new Set();
+const selected = new Set();
+const admitted = new Map();
+const deleted = new Set();
+let statusFilter = "all", clusterFilter = "", search = "", anchorShift = null;
+let frameRequests = 0, reportRequests = 0, toastTimer, dialogControl;
+let featureColumns = 0, stockColumns = 0;
+const timers = new Map();
+const groupName = key => clusterGroups[key][settings.lang === "zh" ? 0 : 1];
+const nodeAt = id => fixtures.find(node => node.name === id);
+const scenarioNodes = () => fixtures.filter((node,index) =>
+  !deleted.has(node.name) && (settings.scenario==="dense" || (settings.scenario==="sparse" && [0,1,7,8].includes(index))));
+const visibleNodes = () => scenarioNodes().filter(node =>
+  (statusFilter==="all" || statusFilter===node.phase) && (!clusterFilter || clusterFilter===node.group)
+  && (node.name+" "+node.uid).includes(search.toLowerCase().trim()));
+const action = (label,key,attrs="") => `<button type="button" class="secondary-button" data-action="${key}" ${attrs}>${t(label)}</button>`;
+const status = phase => `<span class="status ${phase==="Conflict"||phase==="Offline"?"bad":phase==="Retired"?"quiet":""}"><i></i>${t(phase)}</span>`;
+const field = (label,value,wide=false) => `<div class="field${wide?" field-wide":""}"><dt>${t(label)}</dt><dd>${value}</dd></div>`;
+
+function cameraFrame(node,index) {
+  const state = node.cameras[index];
+  const image = index===0 || index===2 ? visualSamples[0] : visualSamples[1];
+  const available = state!=="absent" && state!=="noFrame";
+  const caption = `<span class="frame-caption">${t(names[index])}${state==="normal"?"":`<span class="frame-note">${t(state)}</span>`}</span>`;
+  return available
+    ? `<button class="frame" type="button" data-camera="${node.name}/${index}" aria-haspopup="dialog" aria-label="${t(names[index])} · ${t(state)}"><img alt="" class="${state==="normal"?"":"stale"}" src="${image}">${caption}</button>`
+    : `<div class="frame placeholder">${caption}</div>`;
+}
+
+function copyValue(label,value) {
+  if (!value) return "—";
+  return `<span class="copy-value"><code>${value}</code><button type="button" class="icon-button"
+    data-copy-value="${value}" aria-label="${t("copyValue")} · ${t(label)}" title="${t("copyValue")}">${icon("copy")}</button></span>`;
+}
+
+function conditionRows(node) {
+  const online = node.phase === "Bound";
+  const conflict = node.phase === "Conflict";
+  const seen = node.phase !== "Offline" && node.phase !== "Retired";
+  const conditions = [
+    ["Observed",seen?"True":"Unknown",seen?"NodeReported":"ReportStale",seen?"observationOk":"observationMissing"],
+    ["IdentityMatched",conflict?"False":seen?"True":"Unknown",conflict?"UIDMismatch":seen?"Matched":"AwaitingReport",conflict?"conflictNote":seen?"uidOk":"observationMissing"],
+    ["NetworkVerified",online?"True":conflict?"False":"Unknown",online?"ProbeSucceeded":conflict?"ProbeFailed":"AwaitingProbe",online?"probeOk":"probeMissing"],
+    ["RLarkLinked",online?"True":conflict?"False":"Unknown",online?"LinkEstablished":conflict?"IdentityConflict":"AwaitingReport",online?"linkedOk":conflict?"conflictNote":"observationMissing"],
+    ["Rebooted",node.reboots?"True":"Unknown",node.reboots?"BootTimeChanged":"NoRecentReboot",node.reboots?"rebootOk":"rebootMissing"],
+  ].sort((a,b)=>Number(a[1]==="True")-Number(b[1]==="True")||a[0].localeCompare(b[0]));
+  return `<ul class="condition-list">${conditions.map(([type,value,reason,message],index)=>`<li>
+    <div><strong>${t(type)}</strong><small><code>${type}</code></small></div>
+    <div class="condition-state"><span class="status quiet" data-value="${value}"><i></i>${value}</span>
+      <small>${settings.lang==="zh"?[23,41,58,64,78][index]+" 秒前":[23,41,58,64,78][index]+"s ago"}</small></div>
+    <small class="condition-note"><code>${reason}</code> · ${t(message)}</small>
+  </li>`).join("")}</ul>`;
+}
+
+function cameraDiagnostics(node) {
+  const issues = node.cameras?.flatMap((state,index)=>["stale","stalled","noFrame"].includes(state)
+    ? [`<li><strong>${t(names[index])} · ${t(state)}</strong><small>${t({stale:"staleFrames",stalled:"resetCamera",noFrame:"checkFrames"}[state])}</small></li>`] : []);
+  return issues?.length ? `<h4>${t("cameraDiagnostics")}</h4><ul class="detail-list">${issues.join("")}</ul>` : "";
+}
+
+function powerState(node) {
+  if (node.actual==="off") return "off";
+  return node.driver==="on" ? "ready" : "powered";
+}
+
+function details(node) {
+  const conflict = node.phase==="Conflict";
+  const retired = node.phase==="Retired";
+  const admission = admitted.get(node.name) ?? node.admission;
+  const hasAdmission = admission!=="unused";
+  const clusterKnown = Boolean(clusterGroups[node.group]);
+  const canDelete = retired || conflict || (!node.hasNode && node.phase!=="Bound");
+  const disabledReasons = [
+    ["remove",canDelete ? "" : node.hasNode ? "removeBlocked" : "stateBlocked"],
+    ["reissue",clusterKnown ? "" : "noCluster"],
+    ["revoke",!clusterKnown ? "noCluster" : hasAdmission ? "" : "noAdmission"],
+  ];
+  const recordedUID = copyValue("boundUID",node.uid);
+  const reportedUID = copyValue("reportedUID",node.uid.replace("31bf7721","6418da82"));
+  const online = node.phase==="Bound";
+  const diag = conflict?"fault":online?"ok":"pending";
+  const key = retired ? "" : "Yp79TQ2zWbd8Qv2nG02vFV7Qx7A0Wmc42A0546jT6gk=";
+  const networkFields = [
+    field("NetworkVerified",t(online?"verified":conflict?"failed":"unknown")),
+    field("admissionStatus",t(admission)),
+    field("wire",copyValue("wire",key),true),
+    field("tunnel",copyValue("tunnel",hasAdmission?node.address+" / 32":""),true),
+    field("issuer",hasAdmission?"admin":"—"),
+    field("expires",hasAdmission?"2026-11-27 16:30":"—"),
+    field("sshLogin",hasAdmission?`<code>admin@${node.address}:22</code>`:"—",true),
+    field("sshFingerprint",copyValue("sshFingerprint",hasAdmission?"SHA256:8ZOcKVCUs2rJrBF6Kf5hJzwur0A4ckhlWZDcPsQSLWw":""),true),
+    field("admissionReason",hasAdmission?t(conflict?"conflictNote":admission==="expired"?"expired":"used"):"—",true),
+  ].join("");
+  const links = retired ? `<p class="muted">${t("noLinks")}</p>` : `<p class="muted">${t("perHub")}</p>
+    <ul class="detail-list"><li><strong>hub-${node.group}-01 · ${t(online?"connected":conflict?"unanswered":"silent")}</strong>
+    <small>${t("since")} 2026-11-25 10:21 ${online?" · "+t("handshake")+" 10:24":""}</small></li></ul>`;
+  return `<section class="detail" id="detail-${node.name}" data-detail="${node.name}" aria-labelledby="detail-title-${node.name}">
+    <header class="detail-header">
+      <div class="detail-title"><small>${t("nodeDetails")}</small>
+        <div class="actions"><h3 id="detail-title-${node.name}" tabindex="-1">${node.name}</h3>${status(node.phase)}</div>
+        <small>${node.cp?t("control")+" · ":""}UID ${node.uid.slice(0,8)}…${node.uid.slice(-4)}</small>
+      </div>
+      <div class="detail-actions">
+        <div class="actions" role="group" aria-label="${t("recordActions")}">${
+          [["reissue","reissue"],["revoke","revoke"],["remove","remove"]].map(([label,kind])=>{
+            const reason = disabledReasons.find(([key])=>key===kind)[1];
+            return action(label,kind,reason?`disabled aria-describedby="${kind}-reason-${node.name}"`:"");
+          }).join("")}
+        </div>
+        ${disabledReasons.filter(([,reason])=>reason).map(([kind,reason])=>`<small id="${kind}-reason-${node.name}">${t(kind)} · ${t(reason)}</small>`).join("")}
+      </div>
+    </header>
+    ${conflict ? `<div class="detail-conflict warning" role="note">${icon("alert")}
+      <div><strong>${t("uidChanged")}</strong><p>${t("conflictNote")}</p>
+        <dl class="detail-identifiers">${field("boundUID",recordedUID)}${field("reportedUID",reportedUID)}</dl></div>
+    </div>` : ""}
+    <div class="detail-grid">
+      <section class="detail-column"><h4>${icon("fingerprint")}${t("identity")}</h4><dl>
+        ${field("record",copyValue("record",node.name))}
+        ${field("clusterName",groupName(node.group))}
+        ${field("clusterID",copyValue("clusterID",node.namespace))}
+        ${field("Node UID",copyValue("Node UID",node.uid))}
+        ${field("System UUID",copyValue("System UUID",node.systemUUID))}
+      </dl>${cameraDiagnostics(node)}</section>
+      <section class="detail-column"><h4>${icon("key")}${t("networkAdmission")}</h4>
+        <dl class="network-fields">${networkFields}</dl><h4>${t("links")}</h4>${links}
+      </section>
+      <section class="detail-column"><h4>${icon("list")}${t("conditions")}</h4>${conditionRows(node)}</section>
+    </div>
+    ${node.cameras ? `<section class="detail-power"><h4>${t("power")}</h4><dl>
+      ${field("expected",t(node.desired))}
+      ${field("actual",t(powerState(node)))}
+      ${field("check",t(diag))}
+      ${field("maintenance",t(conflict?"maintenance":"noMaintenance"))}
+      </dl><div class="actions">${
+        action("powerOn","setPowerOn")+action("driverOn","driverOn")+action("driverOff","driverOff")+action("powerOff","setPowerOff")
+        +action("pose","pose",!online||powerState(node)!=="ready"?`disabled aria-describedby="pose-reason-${node.name}"`:"")
+      }</div>${!online||powerState(node)!=="ready"?`<small id="pose-reason-${node.name}">${t("poseBlocked")}</small>`:""}</section>
+      <section class="detail-cameras" aria-labelledby="live-cameras-${node.name}">
+      <div class="section-head"><h4 id="live-cameras-${node.name}">${icon("image")}${t("liveCameras")}</h4>
+        <span class="muted" data-camera-mode="${node.name}" data-live>${t("live")}</span>
+      </div>
+      <div class="detail-camera-grid">${node.cameras.map((_,index)=>cameraFrame(node,index)).join("")}</div>
+    </section>` : ""}
+  </section>`;
+}
+
+function expander(node) {
+  const expanded = open.has(node.name);
+  return action(expanded?"fold":"expand","expand",
+    `id="exp-${node.name}" data-node="${node.name}" aria-expanded="${expanded}" aria-controls="detail-${node.name}"`);
+}
+
+function card(node) {
+  const expanded = open.has(node.name);
+  const robot = Boolean(node.cameras);
+  const network = {Bound:"verified",Offline:"unknown",Conflict:"failed",Retired:"unknown"}[node.phase];
+  const admission = admitted.get(node.name) ?? node.admission;
+  const diag = node.phase==="Conflict"?"fault":node.phase==="Offline"?"pending":"ok";
+  return `<article class="card ${robot?"feature":"stock"} ${expanded?"open":""} ${selected.has(node.name)?"selected":""}" data-card="${node.name}">
+    <header class="identity">
+      ${robot?`<input type="checkbox" aria-label="${t("selected")} ${node.name}" data-pick="${node.name}" ${selected.has(node.name)?"checked":""}>`:""}
+      <div class="node-title"><h3>${node.name}</h3><small>${node.cp?t("control")+" · ":""}${robot?"S1U":"x86_64"} · UID ${node.uid.slice(-8)}</small></div>
+      ${status(node.phase)}
+    </header>
+    <div class="robot-state"><div class="robot-meta"><span class="${network==="failed"?"warning":"muted"}">${t(network)}</span><span class="muted">${t(admission)}</span></div>
+      ${robot?`<div class="robot-track"><span>${t("expected")} <strong>${t(node.desired)}</strong> / ${t("actual")} <strong>${t(node.actual)}</strong></span>
+        <span class="${diag==="fault"?"warning":""}">${t("check")} ${t(diag)}${diag==="fault"?" · "+t("maintenance"):""}</span></div>`:""}
+    </div>
+    ${robot?`<div class="cameras ${settings.cameraLayout}">${node.cameras.map((_,i)=>cameraFrame(node,i)).join("")}</div>
+      <div class="camera-line"><span>${t("cameras")}</span><span data-camera-mode="${node.name}">${t("slow")}</span></div>`:""}
+    <dl class="facts">${field("uptime",node.phase==="Bound"?(settings.lang==="zh"?"4 天 22 小时":"4d 22h"):"—")}
+      ${field("reboots",node.reboots)}${field("seen",settings.lang==="zh"?"23 秒前":"23s ago")}</dl>
+    <footer class="footer">${robot?`<div class="actions">${action(node.actual==="off"?"powerOn":"powerOff","power",`data-node="${node.name}"`)}
+      ${action("pose","pose",`data-node="${node.name}"`+' '+(node.actual==="off"||node.phase!=="Bound"?`disabled title="${t(node.phase!=="Bound"?node.phase:"off")}"`:""))}</div>`:""}${expander(node)}</footer>
+    ${expanded?"":`<div id="detail-${node.name}" hidden></div>`}
+  </article>`;
+}
+
+function rows(nodes, robot) {
+  const columns = robot ? featureColumns : stockColumns;
+  let html = "";
+  for (let i=0;i<nodes.length;i+=columns) {
+    const row = nodes.slice(i,i+columns);
+    html += `<div class="card-row ${robot?"feature-row":"stock-row"}" style="--columns:${columns}">${row.map(card).join("")}</div>`;
+    html+=row.filter(node=>open.has(node.name)).map(details).join("");
+  }
+  return html;
+}
+
+function robotGroup(key,nodes) {
+  const robots = nodes.filter(node=>node.cameras);
+  const chosen = robots.filter(node=>selected.has(node.name));
+  const batchAttrs = `data-group="${key}"`;
+  return `<section class="group">
+    <header class="section-head"><div class="group-heading"><h2>${groupName(key)}</h2><small>${t("robot")} · rlark-${key}</small></div><span class="muted">${robots.length} ${t("robots")}</span></header>
+    ${nodes.filter(node=>!node.cameras).map(node=>`<div class="control-plane" data-card="${node.name}">
+      <div class="node-title"><h3>${node.name}</h3><small>${t("control")} · UID ${node.uid.slice(-8)}</small></div>
+      ${status(node.phase)}${expander(node)}${open.has(node.name)?"":`<div id="detail-${node.name}" hidden></div>`}</div>
+      ${open.has(node.name)?details(node):""}`).join("")}
+    ${robots.length?`<div class="batch"><label><input type="checkbox" data-select-group="${key}" ${chosen.length===robots.length?"checked":""}>${t("chooseAll")}</label>
+      ${chosen.length?`<div class="actions batch-tools"><strong>${t("selected")} ${chosen.length}</strong>
+        ${action("powerOn","batchOn",batchAttrs)}${action("powerOff","batchOff",batchAttrs)}
+        ${action("pose","batchPose",batchAttrs+(chosen.some(node=>node.actual==="off"||node.phase!=="Bound")?` disabled title="${t("poseBlocked")}"`:""))}</div>`:""}</div>`:""}
+    <div class="card-list">${rows(robots,true)}</div>
+  </section>`;
+}
+
+function render() {
+  document.documentElement.classList.toggle("theme-dark",settings.theme==="dark");
+  document.documentElement.lang=settings.lang==="zh"?"zh-CN":"en";
+  $$("[data-copy]").forEach(el=>el.textContent=t(el.dataset.copy));
+  $$("[data-theme],[data-lang]").forEach(el=>{
+    const key=el.hasAttribute("data-theme")?"theme":"lang";
+    const active=settings[key]===el.dataset[key];
+    el.classList.toggle("active",active);
+    el.setAttribute("aria-pressed",active);
+    if(key==="theme") el.textContent=t(el.dataset.theme);
+  });
+  $("#search").placeholder=t("search");
+  $("#search").setAttribute("aria-label",t("search"));
+  const data=scenarioNodes();
+  const list=visibleNodes();
+  $("#phase").innerHTML=["all","Bound","Offline","Conflict","Retired"].map(key=>
+    `<option value="${key}">${t(key)} · ${data.filter(node=>key==="all"||node.phase===key).length}</option>`).join("");
+  $("#phase").value=statusFilter;
+  $("#phase").setAttribute("aria-label",t("all"));
+  $("#cluster").innerHTML=`<option value="">${t("allClusters")}</option>`+Object.keys(clusterGroups).map(key=>
+    `<option value="${key}">${groupName(key)}</option>`).join("");
+  $("#cluster").value=clusterFilter;
+  $("#cluster").setAttribute("aria-label",t("allClusters"));
+  $("#count").textContent=`${list.length} ${t("records")}`;
+  $("#groups").innerHTML=Object.keys(clusterGroups).map(key=>{
+    const nodes=list.filter(node=>node.group===key);
+    if(!nodes.length) return "";
+    if(key!=="edge") return robotGroup(key,nodes);
+    return `<section class="group"><header class="section-head"><div class="group-heading"><h2>${groupName(key)}</h2>
+      <small>${t("stock")} · rlark-${key}</small></div><span class="muted">${nodes.length} ${t("records")}</span></header>
+      <div class="card-list">${rows(nodes,false)}</div></section>`;
+  }).join("") || `<div class="empty">${t("empty")}</div>`;
+  $$("[data-select-group]").forEach(input=>{
+    const group=list.filter(node=>node.group===input.dataset.selectGroup&&node.cameras);
+    input.indeterminate=group.some(node=>selected.has(node.name))&&!input.checked;
+  });
+  const issued=data.filter(node=>node.cameras);
+  $("#ledger-title").textContent=`${t("ledger")} · ${issued.length}`;
+  $("#records").innerHTML=issued.map(node=>`<div class="ledger-row"><strong>${node.name}</strong><span>${groupName(node.group)}</span><small>${t(admitted.get(node.name)??node.admission)}</small></div>`).join("")||`<p class="muted">${t("noRecords")}</p>`;
+  $("#review-controls").innerHTML=Object.entries(options).map(([key,values])=>
+    `<label><small>${t(key)}</small><select data-setting="${key}">${values.map(value=>
+      `<option value="${value}" ${settings[key]===value?"selected":""}>${key==="lang"?(value==="zh"?"中文":"English"):t(value==="empty"?"zero":value)}</option>`).join("")}</select></label>`).join("");
+  measure();
+}
+
+function showToast(message) {
+  const toast=$("#toast");
+  toast.textContent=message;
+  toast.hidden=false;
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>toast.hidden=true,1900);
+}
+
+function changeExpansion(id,collapse=false) {
+  const trigger=document.getElementById("exp-"+id);
+  const card=trigger.closest("[data-card]");
+  const previous=card.getBoundingClientRect().top;
+  if(collapse||open.has(id)) open.delete(id);
+  else {
+    open.clear();
+    open.add(id);
+  }
+  render();
+  const next=document.getElementById("exp-"+id);
+  const nextCard=next.closest("[data-card]");
+  window.scrollBy(0,nextCard.getBoundingClientRect().top-previous);
+  // Escape should bring the restored focus into view, even from deep inside a panel.
+  if(!open.has(id)) {
+    next.focus({preventScroll:true});
+    const rect=next.getBoundingClientRect();
+    if(rect.top<76) window.scrollBy(0,rect.top-80);
+    else if(rect.bottom>innerHeight-8) window.scrollBy(0,rect.bottom-innerHeight+12);
+  }
+  anchorShift=Math.round(nextCard.getBoundingClientRect().top-previous);
+  if (open.has(id)) {
+    const heading=document.getElementById("detail-title-"+id);
+    heading.focus({preventScroll:true});
+    const rect=heading.getBoundingClientRect();
+    if (rect.top<84 || rect.bottom>innerHeight-24) window.scrollBy(0,rect.top-96);
+  }
+  measure();
+}
+
+function showCamera(button) {
+  const [id,index]=button.dataset.camera.split("/");
+  const node=nodeAt(id);
+  const dialog=$("#camera-dialog");
+  dialogControl=button;
+  dialog.setAttribute("aria-labelledby","camera-title");
+  dialog.innerHTML=`<div class="section-head"><h2 id="camera-title">${node.name} · ${t(names[index])}</h2>
+    <button class="icon-button" aria-label="${t("close")}" data-action="close">×</button></div>
+    <img alt="${t(names[index])}" src="${visualSamples[Number(index)%2]}"><p class="muted">${t(node.cameras[index])} · ${t("demo")}</p>`;
+  dialog.showModal();
+}
+$("#camera-dialog").addEventListener("close",()=>dialogControl?.focus());
+
+function applyDefaultExpansion() {
+  open.clear();
+  if (settings.defaultExpandNonRobot==="enabled") {
+    scenarioNodes().filter(node=>!node.cameras).forEach(node=>open.add(node.name));
+  }
+}
+
+function updateSetting(key,value) {
+  settings[key]=value;
+  if(key==="scenario") { open.clear();selected.clear();deleted.clear();admitted.clear();frameRequests=0;reportRequests=0;timers.clear(); }
+  if(key==="scenario"||key==="defaultExpandNonRobot") applyDefaultExpansion();
+  const url=new URL(location.href);
+  url.searchParams.set(key,value);
+  history.replaceState(null,"",url);
+  render();
+}
+
+document.addEventListener("click",async event=>{
+  const control=event.target.closest("button,a");
+  if(!control) return;
+  if(control.hasAttribute("data-demo")) {event.preventDefault();showToast(t("demo"));return;}
+  if(control.dataset.theme||control.dataset.lang) {
+    const key=control.dataset.theme?"theme":"lang";
+    updateSetting(key,control.dataset[key]);
+    return;
+  }
+  if (control.dataset.copyValue) {
+    try {
+      await navigator.clipboard.writeText(control.dataset.copyValue);
+      showToast(t("copied"));
+    } catch {
+      showToast(t("copyFailed"));
+    }
+    return;
+  }
+  if(control.dataset.camera) {showCamera(control);return;}
+  const detail=control.closest("[data-detail]");
+  const id=control.dataset.node||detail?.dataset.detail;
+  const node=nodeAt(id);
+  switch(control.dataset.action||control.id) {
+    case "expand": changeExpansion(id);break;
+    case "close": $("#camera-dialog").close();break;
+    case "refresh": render();showToast(t("refreshed"));break;
+    case "sidebar-toggle": {
+      const collapsed=document.body.classList.toggle("sidebar-collapsed");
+      control.setAttribute("aria-expanded",!collapsed);
+      control.setAttribute("aria-label",t(collapsed?"expandSide":"collapse"));
+      break;
+    }
+    case "notifications": showToast(t("notifications"));break;
+    case "join": showToast(t("demo"));break;
+    case "setPowerOn":
+    case "setPowerOff":
+    case "driverOn":
+    case "driverOff":
+    case "power":
+    case "pose":
+    case "batchOn":
+    case "batchOff":
+    case "batchPose":
+    case "reissue":
+    case "revoke":
+    case "remove": {
+      if(!confirm(t("confirm"))) break;
+      const key=control.dataset.action;
+      const group=control.dataset.group;
+      const targets=group?visibleNodes().filter(item=>item.group===group&&selected.has(item.name)):[node];
+      if (key==="setPowerOn" || (key==="power" && node.actual==="off")) {
+        node.actual="on";
+        if (node.desired==="off") node.desired="powered";
+        node.driver=node.desired==="ready"?"on":"off";
+      }
+      else if (key==="setPowerOff" || key==="power") {
+        node.actual=node.desired="off";
+        node.driver="off";
+      }
+      if (key==="driverOn") {
+        node.actual="on";
+        node.desired="ready";
+        node.driver="on";
+      }
+      if (key==="driverOff") {
+        node.driver="off";
+        if (node.desired!=="off") node.desired="powered";
+      }
+      if(key==="batchOn"||key==="batchOff") targets.forEach(item=>{
+        item.actual=key==="batchOn"?"on":"off";
+        if (key==="batchOff") item.desired="off";
+        else if (item.desired==="off") item.desired="powered";
+        item.driver=item.desired==="ready"?"on":"off";
+      });
+      if(key==="reissue"||key==="revoke") admitted.set(id,key==="reissue"?"used":"expired");
+      if(key==="remove") {deleted.add(id);open.delete(id);}
+      render();
+      if (key==="remove") $("#search").focus({preventScroll:true});
+      if (detail && key !== "remove") {
+        document.getElementById("detail-"+id)?.querySelector('[data-action="'+key+'"]')?.focus({preventScroll:true});
+      }
+      showToast(t("simulated"));break;
+    }
+  }
+});
+
+document.addEventListener("keydown",event=>{
+  if($("#camera-dialog").open) return;
+  const owner=event.target.closest("[data-detail],[data-card]");
+  if(event.key==="Escape"&&owner) {
+    const id=owner.dataset.detail||owner.dataset.card;
+    if(open.has(id)) {event.preventDefault();changeExpansion(id,true);}
+  }
+
+});
+
+document.addEventListener("change",event=>{
+  const el=event.target;
+  if(el.dataset.setting) {updateSetting(el.dataset.setting,el.value);$("#review-controls [data-setting="+el.dataset.setting+"]").focus();return;}
+  if(el.id==="phase") {statusFilter=el.value;render();return;}
+  if(el.id==="cluster") {clusterFilter=el.value;render();return;}
+  const wasChecked=el.checked;
+  if(el.dataset.pick) {
+    const id=el.dataset.pick;
+    if(wasChecked) selected.add(id);else selected.delete(id);
+    render();$('[data-pick="'+id+'"]').focus({preventScroll:true});
+  }
+  if(el.dataset.selectGroup) {
+    const key=el.dataset.selectGroup;
+    visibleNodes().filter(node=>node.group===key&&node.cameras).forEach(node=>{
+      if(wasChecked) selected.add(node.name);else selected.delete(node.name);
+    });
+    render();$('[data-select-group="'+key+'"]').focus({preventScroll:true});
+  }
+});
+$("#search").addEventListener("input",event=>{search=event.target.value;render();});
+
+function cameraPlan() {
+  const plan = new Map();
+  const surfaces = $$("[data-camera-mode]").map(label=>{
+    const node = nodeAt(label.dataset.cameraMode);
+    const live = label.hasAttribute("data-live");
+    const wall = live ? label.parentElement.nextElementSibling : label.parentElement.previousElementSibling;
+    const bounds = wall.getBoundingClientRect();
+    const visible = !document.hidden && bounds.bottom > 72 && bounds.top < innerHeight;
+    return {label,node,live,visible};
+  });
+  for (const {node,live,visible} of surfaces) {
+    if (!visible || (!live && plan.has(node.name))) continue;
+    const frames = node.cameras.filter(state=>state!=="noFrame" && state!=="absent").length;
+    plan.set(node.name, {node,frames,live});
+  }
+  for (const {label,node,live,visible} of surfaces) {
+    const active = visible && plan.get(node.name)?.live === live;
+    const copy = t(active ? (live ? "live" : "slow") : "paused");
+    if (label.textContent !== copy) label.textContent = copy;
+    label.classList.toggle("live", live && active);
+  }
+  return [...plan.values()];
+}
+
+function measure(plan=cameraPlan()) {
+  let delta=0,gap=0;
+  for(const row of $$(".card-row")) {
+    const footers=[...row.children].map(card=>card.querySelector(".footer").getBoundingClientRect());
+    if(footers.length>1) delta=Math.max(delta,Math.max(...footers.map(f=>f.bottom))-Math.min(...footers.map(f=>f.bottom)));
+    [...row.children].forEach((card,index)=>{
+      const end=card.querySelector(".footer").previousElementSibling.getBoundingClientRect().bottom;
+      gap=Math.max(gap,footers[index].top-end);
+    });
+  }
+  const heights=selector=>[...new Set($$(selector).map(card=>Math.round(card.getBoundingClientRect().height)))].sort((a,b)=>a-b).join(" / ")||"—";
+  const feature=heights(".feature"), compact=heights(".stock"), blank=Math.round(gap), baseline=Math.round(delta);
+  const projectedFrames=plan.reduce((sum,item)=>sum+item.frames*(item.live?300:12),0);
+  const projectedReports=30*plan.filter(item=>item.live).length;
+  $("#metrics").innerHTML=`<p><strong>${t("heights")}</strong> · ${t("robots")} ${feature} px · ${t("compact")} ${compact} px</p>
+    <p>${t("delta")} ${baseline} px · ${t("gap")} ${blank} px</p>
+    <p>${t("drift")} ${anchorShift??"—"} px</p>
+    <p>${t("requests")} ${frameRequests} ${t("snapshots")} / ${reportRequests} ${t("reports")}</p>
+    <p>${t("perMinute")} ${projectedFrames} ${t("snapshots")} / ${projectedReports} ${t("reports")}</p>
+    <p class="muted">${t("metricNote")}</p>`;
+  return {feature,compact,baseline,blank,anchorShift,frameRequests,reportRequests,projectedFrames,projectedReports};
+}
+
+function dispatchSimulatedCameras() {
+  const now=performance.now();
+  const plan=cameraPlan();
+  const active=new Set(plan.map(item=>item.node.name));
+  for(const id of timers.keys()) if(!active.has(id)) timers.delete(id);
+  for(const {node,frames,live} of plan) {
+    const saved=timers.get(node.name);
+    const due=saved?.live===live?saved:{frame:now,report:now,live};
+    if(frames&&now>=due.frame) {frameRequests+=frames;due.frame=now+(live?200:5000);}
+    if(live&&now>=due.report) {reportRequests++;due.report=now+2000;}
+    timers.set(node.name,due);
+  }
+  if($("#review").open) measure(plan);
+}
+
+function resizeRows() {
+  const width=$("#groups").clientWidth;
+  const feature=Math.max(1,Math.floor((width+12)/372));
+  const stock=Math.max(1,Math.floor((width+12)/290));
+  if(feature===featureColumns&&stock===stockColumns) return;
+  featureColumns=feature;
+  stockColumns=stock;
+  render();
+}
+applyDefaultExpansion();
+new ResizeObserver(resizeRows).observe($("#groups"));
+resizeRows();
+$("#review").addEventListener("toggle",()=>{if($("#review").open) measure();});
+document.addEventListener("visibilitychange",dispatchSimulatedCameras);
+setInterval(dispatchSimulatedCameras,50);
+</script>
+</body>
+</html>

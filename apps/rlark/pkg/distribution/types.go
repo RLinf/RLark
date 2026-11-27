@@ -122,12 +122,16 @@ func (f PolicyFunc) Validate(ctx context.Context, declaration *corev1.Secret, ma
 	return f(ctx, declaration, mapping, target, object, apply)
 }
 
+// Inventory is what the engine last made of a declaration. Saving it is a write
+// to the declaration itself, so nothing in it may change unless the declaration
+// or its targets did: the declaration is identified by a digest of its content,
+// not by its resourceVersion, which every save would move on.
 type Inventory struct {
-	ObservedDeclarationResourceVersion string          `json:"observedDeclarationResourceVersion,omitempty"`
-	ObservedRevision                   string          `json:"observedRevision,omitempty"`
-	Phase                              string          `json:"phase,omitempty"`
-	Message                            string          `json:"message,omitempty"`
-	Items                              []InventoryItem `json:"items,omitempty"`
+	ObservedDeclarationDigest string          `json:"observedDeclarationDigest,omitempty"`
+	ObservedRevision          string          `json:"observedRevision,omitempty"`
+	Phase                     string          `json:"phase,omitempty"`
+	Message                   string          `json:"message,omitempty"`
+	Items                     []InventoryItem `json:"items,omitempty"`
 }
 
 type InventoryItem struct {

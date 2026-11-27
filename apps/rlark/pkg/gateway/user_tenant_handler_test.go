@@ -113,7 +113,8 @@ func TestNormalizeTenantMapDoesNotChangeSource(t *testing.T) {
 }
 
 func TestPrepareTenantResourceForCreateOverridesIdentity(t *testing.T) {
-	body, err := prepareTenantResourceForCreate([]byte(`{"metadata":{"labels":{"rlark.io/tenant-id":"forged"},"annotations":{"rlark.io/created-by":"forged"}}}`), tenant.DefaultID, "user")
+	body, err := prepareTenantResourceForCreate([]byte(`{"metadata":{"labels":{"rlark.io/tenant-id":"forged"},"annotations":{"rlark.io/created-by":"forged","rlark.io/submitted-by":"forged","rlark.io/submitter-id":"forged"}}}`),
+		tenant.DefaultID, "service-account:astribot-iam-operator", workloadSubmitter{username: "alice", id: "iam-id"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,9 @@ func TestPrepareTenantResourceForCreateOverridesIdentity(t *testing.T) {
 	if metadata["labels"].(map[string]any)[tenant.IDLabel] != tenant.DefaultID {
 		t.Fatalf("unexpected labels: %v", metadata["labels"])
 	}
-	if metadata["annotations"].(map[string]any)[tenant.CreatedByAnnotation] != "user" {
-		t.Fatalf("unexpected annotations: %v", metadata["annotations"])
+	annotations := metadata["annotations"].(map[string]any)
+	if annotations[tenant.CreatedByAnnotation] != "service-account:astribot-iam-operator" ||
+		annotations[tenant.SubmittedByAnnotation] != "alice" || annotations[tenant.SubmitterIDAnnotation] != "iam-id" {
+		t.Fatalf("unexpected annotations: %v", annotations)
 	}
 }

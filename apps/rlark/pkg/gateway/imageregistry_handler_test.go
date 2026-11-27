@@ -64,7 +64,7 @@ func TestBuildImageRegistryReplicationSecret(t *testing.T) {
 				"manifests": decodeManifestData(t, deliveryData["manifests"]),
 			})
 			require.NoError(t, err)
-			require.Len(t, deliveryDefinition.Objects, 1)
+			require.Len(t, deliveryDefinition.Objects, 2)
 			dockerSecret := deliveryDefinition.Objects[0]
 			assert.Equal(t, "ir-0123456789abcdef", dockerSecret.GetName())
 			assert.Equal(t, "rlark-system", dockerSecret.GetNamespace())

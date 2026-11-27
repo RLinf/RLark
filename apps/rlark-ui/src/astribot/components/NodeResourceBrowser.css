@@ -1,0 +1,128 @@
+/* The node list as this fork shows it. The table's official rules stay as
+   they are in styles/nodes/resource-browser.css and
+   styles/overrides/global-responsive.css; the rules here are scoped one
+   class deeper, so each wins over the official rule it widens and over
+   nothing else. */
+
+/* The address column holds a node's own and WireGuard addresses with its
+   link; the action column holds Remove beside Cordon. */
+@media not all and (max-width: 1300px) {
+  .node-resource-table .node-resource-table-head,
+  .node-resource-table .node-resource-row {
+    grid-template-columns:
+      minmax(170px, 1.35fr)
+      minmax(110px, 0.75fr)
+      minmax(100px, 0.7fr)
+      minmax(150px, 1fr)
+      minmax(140px, 0.95fr)
+      minmax(180px, 0.95fr)
+      minmax(220px, 1.4fr)
+      minmax(160px, 1.05fr)
+      20px;
+  }
+
+  .node-resource-table .node-resource-table-head.has-admin-actions,
+  .node-resource-table .node-resource-row.has-admin-actions {
+    min-width: 1550px;
+    grid-template-columns:
+      minmax(170px, 1.35fr)
+      minmax(110px, 0.75fr)
+      minmax(100px, 0.7fr)
+      minmax(150px, 1fr)
+      minmax(140px, 0.95fr)
+      minmax(180px, 0.95fr)
+      minmax(220px, 1.4fr)
+      minmax(160px, 1.05fr)
+      minmax(230px, 1.15fr);
+  }
+}
+
+@media (max-width: 1300px) {
+  .node-resource-table .node-resource-table-head.has-admin-actions,
+  .node-resource-table .node-resource-row.has-admin-actions {
+    min-width: 1290px;
+    grid-template-columns:
+      minmax(130px, 1.25fr)
+      minmax(76px, 0.65fr)
+      minmax(80px, 0.68fr)
+      minmax(100px, 0.85fr)
+      minmax(104px, 0.85fr)
+      minmax(98px, 0.8fr)
+      minmax(170px, 1.25fr)
+      minmax(120px, 0.95fr)
+      minmax(210px, 1fr);
+  }
+}
+
+.node-resource-table .node-resource-table-head.has-selection,
+.node-resource-table .node-resource-row.has-selection {
+  grid-template-columns:
+    34px
+    minmax(170px, 1.35fr)
+    minmax(110px, 0.75fr)
+    minmax(100px, 0.7fr)
+    minmax(150px, 1fr)
+    minmax(140px, 0.95fr)
+    minmax(180px, 0.95fr)
+    minmax(220px, 1.4fr)
+    minmax(160px, 1.05fr)
+    20px;
+}
+
+.node-resource-table .node-resource-table-head.has-admin-actions.has-selection,
+.node-resource-table .node-resource-row.has-admin-actions.has-selection {
+  min-width: 1600px;
+  grid-template-columns:
+    34px
+    minmax(170px, 1.35fr)
+    minmax(110px, 0.75fr)
+    minmax(100px, 0.7fr)
+    minmax(150px, 1fr)
+    minmax(140px, 0.95fr)
+    minmax(180px, 0.95fr)
+    minmax(220px, 1.4fr)
+    minmax(160px, 1.05fr)
+    minmax(230px, 1.15fr);
+}
+
+.node-resource-table .node-scheduling-actions {
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.node-removal-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  background: color-mix(in srgb, var(--blue) 8%, var(--panel));
+  font-size: 13px;
+}
+
+.node-removal-banner > span:nth-child(2) { flex: 1; }
+.node-resource-table .node-row-status { flex-wrap: wrap; }
+.node-resource-table .node-removal-pill { margin-left: 0; }
+.node-removal-banner-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); }
+.node-removal-pill { display: inline-flex; align-items: center; margin-left: 8px; padding: 3px 7px; border: 1px solid color-mix(in srgb, var(--blue) 28%, var(--line)); border-radius: 999px; color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, var(--panel)); font-size: 10px; font-weight: 600; white-space: nowrap; }
+.node-removal-pill.failed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); background: color-mix(in srgb, var(--danger) 7%, var(--panel)); }
+.node-removal-pill.succeeded { color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, var(--line)); background: color-mix(in srgb, var(--green) 7%, var(--panel)); }
+.node-removal-actions { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.node-resource-row { position: relative; }
+.node-row-removal-progress { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; overflow: hidden; pointer-events: none; }
+.node-row-removal-progress i { display: block; height: 100%; background: var(--blue); transition: width .2s ease; }
+
+.node-remove-refused {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: right;
+}
+
+/* A node whose site link is down. */
+.node-resource-table .node-resource-row.link-down {
+  box-shadow: inset 3px 0 0 var(--red);
+  background: rgba(239, 68, 68, 0.05);
+}

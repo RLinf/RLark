@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -44,6 +45,10 @@ func (s ConfigMapInventoryStore) Load(ctx context.Context, declaration *corev1.S
 	return inventory, nil
 }
 
+// Save writes the status ConfigMap and the declaration's inventory annotation,
+// each only when it differs from what is stored. The annotation lives on the
+// declaration, so patching it fires the declaration's watch; an unchanged
+// inventory therefore must not touch either object.
 func (s ConfigMapInventoryStore) Save(ctx context.Context, declaration *corev1.Secret, inventory Inventory) error {
 	data, err := json.Marshal(inventory)
 	if err != nil {
@@ -66,7 +71,7 @@ func (s ConfigMapInventoryStore) Save(ctx context.Context, declaration *corev1.S
 		}
 	} else if err != nil {
 		return err
-	} else {
+	} else if !equality.Semantic.DeepEqual(existing.Labels, status.Labels) || !equality.Semantic.DeepEqual(existing.OwnerReferences, status.OwnerReferences) || !equality.Semantic.DeepEqual(existing.Data, status.Data) {
 		status.ResourceVersion = existing.ResourceVersion
 		if err := s.Client.Update(ctx, status); err != nil {
 			return err
@@ -80,11 +85,15 @@ func (s ConfigMapInventoryStore) Save(ctx context.Context, declaration *corev1.S
 	if current.UID != declaration.UID {
 		return fmt.Errorf("declaration UID changed")
 	}
+	encoded := base64.RawStdEncoding.EncodeToString(data)
+	if current.Annotations[InventoryAnnotation] == encoded {
+		return nil
+	}
 	base := current.DeepCopy()
 	if current.Annotations == nil {
 		current.Annotations = map[string]string{}
 	}
-	current.Annotations[InventoryAnnotation] = base64.RawStdEncoding.EncodeToString(data)
+	current.Annotations[InventoryAnnotation] = encoded
 	return s.Client.Patch(ctx, current, client.MergeFrom(base))
 }
 

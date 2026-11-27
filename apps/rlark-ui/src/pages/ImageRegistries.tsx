@@ -11,6 +11,9 @@ import {
 } from "lucide-react";
 import type { Copy } from "../i18n";
 import { PageToolbar, RefreshOverlay } from "../components/shared";
+import { RegistryBrowser } from "../astribot/pages/RegistryBrowser";
+import { RegistryPassword } from "../astribot/components/RegistryPassword";
+import { registryClusterOption } from "../astribot/lib/clusterOptions";
 
 type ClusterSelectionMode = "None" | "Selected" | "All";
 type ClusterSelection = { mode: ClusterSelectionMode; clusters: string[] };
@@ -20,13 +23,10 @@ function useClusterOptions() {
   const [clusters, setClusters] = useState<ClusterOption[]>([]);
   useEffect(() => {
     clustersApi
-      .list<{ id?: string; name?: string }>()
+      .list<{ id: string; name?: string }>()
       .then((items) =>
         setClusters(
-          items.map((cluster: { id?: string; name?: string }) => ({
-            id: (cluster.name || cluster.id || "").replace(/^rlark-/, ""),
-            name: (cluster.name || cluster.id || "").replace(/^rlark-/, ""),
-          })),
+          items.map(registryClusterOption),
         ),
       )
       .catch(() => setClusters([]));
@@ -445,12 +445,7 @@ function ImageRegistryDetailPage({
             <Database size={15} />
             {zh ? "凭据信息" : "Registry Info"}
           </span>
-          <p className="storage-detail-section-copy">
-            {zh
-              ? "镜像仓库的访问地址与认证信息"
-              : "Registry access address and credentials"}
-          </p>
-          <div className="node-detail-grid storage-detail-info-grid">
+          <div className="node-detail-grid storage-detail-info-grid registry-info-strip">
             <div>
               <span className="muted">{zh ? "名称" : "Name"}</span>
               <strong>{item.name}</strong>
@@ -475,7 +470,7 @@ function ImageRegistryDetailPage({
             </div>
             <div>
               <span className="muted">{zh ? "密码" : "Password"}</span>
-              <strong>••••••••</strong>
+              <RegistryPassword registryID={item.id} zh={zh} />
             </div>
             <div>
               <span className="muted">
@@ -496,6 +491,7 @@ function ImageRegistryDetailPage({
           </div>
         </section>
       </div>
+      <RegistryBrowser key={item.id} item={item} zh={zh} copy={c} />
     </div>
   );
 }

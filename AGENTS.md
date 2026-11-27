@@ -28,6 +28,12 @@ Apply this checklist to every change:
 
 When local code conflicts with these principles, preserve required compatibility but move new code toward the documented target. Do not copy an older pattern without first establishing why it is still required.
 
+## Astribot extensions and upstream upgrades
+
+- Put new Astribot-specific implementation, tests, and configuration in the nearest Astribot directory. Use `apps/rlark/astribot/` for Go extensions, `apps/rlark-ui/src/astribot/` for UI extensions, and `astribot/` for station services, robot integrations, and Astribot deployment files.
+- Keep edits in shared RLark code limited to the integration points and common contracts the feature needs. Examples include route registration, typed controller hooks, shared navigation, and CRD schemas with their generated artifacts. If package boundaries require an Astribot implementation alongside shared code, name it `astribot_*`, document the reason, and keep the shared call site small.
+- When syncing upstream, review the full old-to-new commit range and compare the result with the Astribot branch. Verify changed features through their normal entry points, including UI and API reachability, schemas, permissions, controller and Agent behavior, deployment artifacts, and supported runtime limits. Record source coverage and environment validation separately. Resolve conflicts by preserving upstream behavior and the applicable Astribot extensions, with regression tests for both.
+
 ---
 
 ## Documentation synchronization

@@ -1,3 +1,4 @@
+import { STORAGE_DRIVER, storageMount } from "../astribot/lib/storageVolume.js";
 import type { Job, JobTag, JobType, MountType, Phase } from "../data";
 import type { CRDJob, CRDJobTask, CRDVolume, CRDWorkflow } from "../crdModels";
 import { JOB_TYPE_LABEL } from "./job.js";
@@ -15,54 +16,34 @@ function tagId(key: string, value: string): string {
     .padStart(8, "0")}`;
 }
 
-function storageGi(quantity?: string | number): number {
-  const match = String(quantity ?? "").match(/^(\d+)(?:Gi)?$/);
-  return match ? Number(match[1]) : 10;
-}
-
 type JobMount = {
   type: MountType;
   objectStorage: string;
   mountPath: string;
   hostPath: string;
-  pvcSizeGb: number;
+  profile: string;
+  readOnly: boolean;
   rawVolume?: CRDVolume;
 };
 
 // 把 Pod 模板里的一个 volume 映射成表单可消费的挂载项。
-// 表单只能编辑 hostPath 与 ephemeral/PVC 两类卷；其余卷源（emptyDir、configMap、
-// secret、projected 等）标记为 opaque 并原样保留 rawVolume，使"复制任务"不会把它们
+// 表单只能编辑 hostPath 与按名字引用 RLark 存储（csi driver storage.rlark.io）两类卷；
+// 其余卷源（emptyDir、configMap、secret、PVC、写死 StorageClass 的 ephemeral 等）
+// 标记为 opaque 并原样保留 rawVolume，使"复制任务"不会把它们
 // 降级成空的主机目录——例如 /dev/shm 的 emptyDir{medium:Memory} 必须保持内存 tmpfs。
 export function toJobMount(
   vol: CRDVolume | undefined,
   mountPath: string,
 ): JobMount {
-  if (vol?.ephemeral) {
-    const spec = vol.ephemeral.volumeClaimTemplate?.spec;
-    return {
-      type: "storage",
-      objectStorage: spec?.storageClassName ?? "",
-      mountPath,
-      hostPath: "",
-      pvcSizeGb: storageGi(spec?.resources?.requests?.storage),
-    };
-  }
-  if (vol?.persistentVolumeClaim) {
-    return {
-      type: "storage",
-      objectStorage: vol.persistentVolumeClaim.claimName,
-      mountPath,
-      hostPath: "",
-      pvcSizeGb: 10,
-    };
-  }
+  if (vol?.csi?.driver === STORAGE_DRIVER) return storageMount(vol.csi, mountPath);
   if (vol?.hostPath) {
     return {
       type: "host",
       objectStorage: "",
       mountPath,
       hostPath: vol.hostPath.path,
-      pvcSizeGb: 10,
+      profile: "",
+      readOnly: false,
     };
   }
   if (vol) {
@@ -71,7 +52,8 @@ export function toJobMount(
       objectStorage: "",
       mountPath,
       hostPath: "",
-      pvcSizeGb: 10,
+      profile: "",
+      readOnly: false,
       rawVolume: vol,
     };
   }
@@ -81,7 +63,8 @@ export function toJobMount(
     objectStorage: "",
     mountPath,
     hostPath: "",
-    pvcSizeGb: 10,
+    profile: "",
+    readOnly: false,
   };
 }
 
@@ -195,13 +178,17 @@ export function crdToJob(crd: CRDJob): Job {
         value: e.value ?? "",
       })) ?? [];
   const mounts = taskMounts(tasks[0]);
+  const annotations = crd.metadata?.annotations;
+  const creator = annotations?.["rlark.io/created-by"]?.trim();
+  const submittedBy = annotations?.["rlark.io/submitted-by"]?.trim() ||
+    (creator && !creator.startsWith("service-account:") ? creator : undefined);
   return {
     id: crd.metadata?.name ?? "",
     name: crd.metadata?.name ?? "",
     displayName,
     type: readJobType(crd, tasks),
     phase,
-    owner: "",
+    submittedBy,
     cluster: tasks
       .map((t) =>
         t.placement.nodeSelector

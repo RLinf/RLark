@@ -212,7 +212,7 @@ func TestNodeAgentUsesDedicatedRBAC(t *testing.T) {
 		Kubernetes: &types.KubernetesEnv{},
 	}
 
-	for _, c := range ComponentsForPlane(cfg) {
+	for _, c := range components {
 		if c.Name != constants.ComponentAgentNode {
 			continue
 		}

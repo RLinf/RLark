@@ -1,3 +1,4 @@
+import { StorageMountOptions } from "../astribot/components/StorageMountOptions";
 import {
   useEffect,
   useLayoutEffect,
@@ -16,11 +17,11 @@ import {
   X,
 } from "lucide-react";
 import {
-  storageClasses as mockStorageClasses,
   clusters,
   type Cluster,
   type JobType,
 } from "../data";
+import { mockStorageClasses } from "../astribot/mockBackend";
 import type { Copy } from "../i18n";
 import type { DAGEdge, DAGNode, RoleResource, WorkflowJobDef } from "../types";
 import type { CRDWorkflow } from "../crdModels";
@@ -856,9 +857,7 @@ export function CreateWorkflowModal({
               roleResources: Object.fromEntries(
                 Object.entries(job.roleResources).map(([role, rr]) => {
                   const current = rr.cluster;
-                  const match = list.find(
-                    (c) => c.id === current || c.name === current,
-                  );
+                  const match = list.find((c) => c.id === current);
                   return [
                     role,
                     { ...rr, cluster: match ? match.id : list[0].id },
@@ -894,8 +893,9 @@ export function CreateWorkflowModal({
         description?: string;
         bucket?: string;
       }>(cluster);
+      // A Job's volume names the storage; RLark resolves the StorageClass.
       const list = Object.values(data).map((item) => ({
-        id: item.storageClassName,
+        id: item.name,
         name: item.name,
         description: item.description ?? "",
         bucket: item.bucket ?? "",
@@ -1302,8 +1302,8 @@ export function CreateWorkflowModal({
   const updateRRMount = (
     role: string,
     index: number,
-    field: "objectStorage" | "mountPath" | "type" | "hostPath" | "pvcSizeGb",
-    value: string | number,
+    field: "objectStorage" | "mountPath" | "type" | "hostPath" | "profile" | "readOnly",
+    value: string | boolean,
   ) => {
     if (!activeJob) return;
     const rr = activeJob.roleResources[role];
@@ -1330,7 +1330,8 @@ export function CreateWorkflowModal({
         objectStorage: "",
         mountPath: "",
         hostPath: "",
-        pvcSizeGb: 10,
+        profile: "",
+        readOnly: false,
       },
     ];
     updateJob(activeJob.id, {
@@ -1390,7 +1391,8 @@ export function CreateWorkflowModal({
           objectStorage: "",
           mountPath: "/mnt/dataset",
           hostPath: "/host/dataset",
-          pvcSizeGb: 10,
+          profile: "",
+          readOnly: false,
         },
       ],
     };
@@ -1790,7 +1792,7 @@ export function CreateWorkflowModal({
                             >
                               {availableClusters.map((cl) => (
                                 <option key={cl.id} value={cl.id}>
-                                  {cl.name}
+                                  {cl.name === cl.id ? cl.name : `${cl.name} · ${cl.id}`}
                                 </option>
                               ))}
                             </select>
@@ -2120,27 +2122,17 @@ export function CreateWorkflowModal({
                                 />
                               </label>
                               {mount.type === "storage" && (
-                                <label className="mount-field-box mount-size-field">
-                                  <span>
-                                    {zh ? "存储大小 (Gi)" : "PVC size (Gi)"}
-                                  </span>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    max="200"
-                                    value={mount.pvcSizeGb}
-                                    onChange={(e) =>
-                                      updateRRMount(
-                                        role,
-                                        index,
-                                        "pvcSizeGb",
-                                        e.target.value === ""
-                                          ? ""
-                                          : Number(e.target.value),
-                                      )
-                                    }
-                                  />
-                                </label>
+                                <StorageMountOptions
+                                  zh={zh}
+                                  profile={mount.profile}
+                                  readOnly={mount.readOnly}
+                                  onProfile={(value) =>
+                                    updateRRMount(role, index, "profile", value)
+                                  }
+                                  onReadOnly={(value) =>
+                                    updateRRMount(role, index, "readOnly", value)
+                                  }
+                                />
                               )}
                               <button
                                 className="icon-button danger"

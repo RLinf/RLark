@@ -1,0 +1,38 @@
+/* The robot buttons (RobotControls.tsx): power and hold-to-move to the home pose. */
+.robot-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.robot-pose-button {
+  touch-action: none;
+  user-select: none;
+}
+
+.robot-pose-button.is-moving {
+  color: var(--orange);
+  border-color: var(--orange);
+}
+
+/* The first hold is sent but not acknowledged yet: visibly in flight, not yet moving. */
+.robot-pose-button.is-confirming {
+  color: var(--blue);
+  border-color: var(--blue);
+}
+
+.robot-pose-button.is-releasing {
+  opacity: 0.8;
+}
+
+.robot-controls-error {
+  color: var(--red);
+}
+
+.robot-pose-hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}

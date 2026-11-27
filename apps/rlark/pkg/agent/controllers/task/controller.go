@@ -33,13 +33,14 @@ type Controller struct {
 	triggers  *triggerBridge
 	// logMu protects logState because controller-runtime may reconcile Tasks in
 	// parallel through the same Controller instance.
-	logMu            sync.Mutex
-	logState         map[string]taskReconcileLogState
-	evidenceMu       sync.RWMutex
-	evidence         map[trigger.Key]verifiedExecution
-	observations     []kubernetesObservation
-	observationsByID map[string]kubernetesObservation
-	observationScope *KubernetesObservationScope
+	logMu                sync.Mutex
+	logState             map[string]taskReconcileLogState
+	evidenceMu           sync.RWMutex
+	evidence             map[trigger.Key]verifiedExecution
+	observations         []kubernetesObservation
+	observationsByID     map[string]kubernetesObservation
+	daemonSetPushWorkers int
+	observationScope     *KubernetesObservationScope
 }
 
 type verifiedExecution struct {

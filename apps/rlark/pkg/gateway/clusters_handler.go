@@ -50,6 +50,7 @@ type ClusterInfo struct {
 	RunningJobs            int                        `json:"runningJobs"`
 	Description            string                     `json:"description"`
 	AgentNamespaceConflict bool                       `json:"agentNamespaceConflict,omitempty"`
+	AstribotClusterInfo
 }
 
 // ClusterDetail holds details.
@@ -135,6 +136,7 @@ func buildClusterInfo(cluster rlarkv1alpha1.Cluster, nodes []rlarkv1alpha1.Node,
 		GPUModels:              []string{},
 		RobotModels:            []string{},
 	}
+	setAstribotClusterInfo(&info, cluster)
 	gpuModels := make(map[string]struct{})
 	robotModels := make(map[string]struct{})
 
@@ -347,7 +349,7 @@ func (g *Gateway) updateClusterWithCleanup(c *gin.Context, update func(*rlarkv1a
 			return
 		}
 		switch {
-		case errors.Is(err, errClusterDelisted), errors.Is(err, errClusterDraining):
+		case errors.Is(err, errClusterDelisted), errors.Is(err, errClusterDraining), errors.Is(err, errDisplayNameUsed):
 			respondError(c, http.StatusConflict, CodeResourceConflict, err.Error())
 		case apierrors.IsInvalid(err), apierrors.IsBadRequest(err):
 			respondError(c, http.StatusBadRequest, CodeInvalidRequest, err.Error())

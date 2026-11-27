@@ -1,0 +1,57 @@
+@import "./theme-overlay.css";
+
+/* Styles our hooks in RLark's pages use; main.tsx loads them after RLark's own. */
+
+.sidebar .brand-astribot .brand-logo {
+  width: var(--edition-logo-width, 124px);
+  height: var(--edition-logo-height, 38px);
+  object-fit: var(--edition-logo-fit, contain);
+}
+
+.sidebar-collapsed .brand-astribot {
+  --edition-logo-width: 40px;
+  --edition-logo-height: 40px;
+  --edition-logo-fit: cover;
+}
+
+@media (max-width: 780px) {
+  .sidebar .brand-astribot {
+    --edition-logo-width: 40px;
+    --edition-logo-height: 40px;
+    --edition-logo-fit: cover;
+  }
+}
+
+.platform-footer-astribot .platform-footer-links {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.platform-footer-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.platform-footer-brand .platform-footer-logo {
+  width: 66px;
+  height: 22px;
+  object-fit: contain;
+}
+
+/* The real name (cluster ID, Kubernetes Node name) beside a display name. */
+.real-name {
+  color: var(--muted);
+  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  font-weight: 400;
+}
+
+/* The node page's header draws every span of its line as a 3px dot (RLark's separator); the cluster name there is ours. */
+.node-insight-identity p .cluster-name,
+.node-insight-identity p .cluster-name span {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none;
+}

@@ -1,0 +1,51 @@
+name: package-proxy
+displayName: 包源出口
+category: network
+version: v0.1.0
+description: |
+  没有公网出口的站点（例如云上的构建节点）取软件包的出口：装在一个有公网的集群里、带 nodeSelector 标签的那台节点上（Deployment，宿主机网络），是一个只做 HTTP CONNECT 的转发（rlark-tools idle-relay），只放行 allow 里列出的主机名或域名，其余一律 403。使用方把它设成 HTTPS_PROXY；只转发 HTTPS，所以包源地址都要写成 https://。
+  监听在节点的站点隧道地址上（listen 写端口，地址由节点自己的隧道网卡决定），只有站点网络里的节点连得到。名字（例如 packages.rlark.internal）在 SiteNetwork 的名字表里指到这台节点的隧道地址。
+  连接静默超过 idle 就断开，让那次下载失败重来，而不是一直挂着。
+  不保存任何内容，也不解密流量：包的校验仍由使用方按 lock 里的摘要做。
+icon: package
+
+parameters:
+  - name: image
+    displayName: RLark 镜像
+    description: 带 rlark-tools 的 RLark 镜像，按 digest 引用
+    type: string
+    default: ""
+    required: true
+
+  - name: port
+    displayName: 监听端口
+    type: string
+    default: "5481"
+    required: true
+
+  - name: interface
+    displayName: 监听网卡
+    description: 只在这块网卡的地址上监听（站点隧道网卡）
+    type: string
+    default: st-wg0
+    required: true
+
+  - name: nodeSelector
+    displayName: 节点选择
+    description: 所在节点的标签 label=value
+    type: string
+    default: rlark.io/package-proxy=true
+    required: true
+
+  - name: allow
+    displayName: 放行的包源
+    description: 逗号分隔的主机名；以 . 开头表示一个域名及其下所有名字，例如 repo.huaweicloud.com,.pythonhosted.org
+    type: string
+    default: ""
+    required: true
+
+  - name: idle
+    displayName: 静默断开时间
+    type: string
+    default: 60s
+    required: false

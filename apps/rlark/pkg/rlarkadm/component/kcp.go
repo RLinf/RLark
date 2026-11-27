@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"time"
 
 	"github.com/rlinf/rlark/api/config"
@@ -36,11 +37,14 @@ func PostDeployKCP(ctx context.Context, cfg *types.DeployConfig) error {
 		return fmt.Errorf("kubeconfig not found in context")
 	}
 
-	// Extract KCP admin kubeconfig and save to ConfigMap
-	if err := extractAndSaveKCPKubeconfig(ctx, clientset, kubeconfig); err != nil {
-		return err
-	}
+	return PostDeployKCPWithIdentity(ctx, clientset, kubeconfig, func(_ string, admin []byte) error {
+		return saveKCPKubeconfig(ctx, clientset, admin)
+	})
+}
 
+// PostDeployKCPWithIdentity initializes KCP using an explicitly supplied
+// identity publisher. Astribot issues separate credentials for each component.
+func PostDeployKCPWithIdentity(ctx context.Context, clientset kubernetes.Interface, kubeconfig string, publish func(string, []byte) error) error {
 	// Install CRDs via exec
 	pods, err := clientset.CoreV1().Pods(constants.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=" + constants.ComponentKCP,
@@ -52,6 +56,14 @@ func PostDeployKCP(ctx context.Context, cfg *types.DeployConfig) error {
 		return fmt.Errorf("no kcp pods found")
 	}
 	podName := pods.Items[0].Name
+
+	admin, err := readKCPAdminKubeconfig(ctx, kubeconfig, podName)
+	if err != nil {
+		return err
+	}
+	if err := publish(podName, admin); err != nil {
+		return err
+	}
 
 	installer := &ExecCRDInstaller{
 		PodName:    podName,
@@ -65,44 +77,30 @@ func PostDeployKCP(ctx context.Context, cfg *types.DeployConfig) error {
 	return createUIAuthSecretInKCP(ctx, clientset, kubeconfig)
 }
 
-// extractAndSaveKCPKubeconfig extracts the admin kubeconfig from KCP pod and saves it to a ConfigMap.
-func extractAndSaveKCPKubeconfig(ctx context.Context, clientset kubernetes.Interface, kubeconfig string) error {
-	logger := log.GetLogger()
-	pods, err := clientset.CoreV1().Pods(constants.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app=" + constants.ComponentKCP,
-	})
-	if err != nil {
-		return fmt.Errorf("list kcp pods: %w", err)
-	}
-	if len(pods.Items) == 0 {
-		return fmt.Errorf("no kcp pods found")
-	}
-
-	podName := pods.Items[0].Name
-
-	// Wait for admin.kubeconfig to be available
-	deadline := time.Now().Add(60 * time.Second)
-	var kubeconfigData string
+func readKCPAdminKubeconfig(ctx context.Context, kubeconfig, podName string) ([]byte, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
 	for {
 		cmd := kubectlCommand(kubeconfig, "-n", constants.Namespace, "exec", podName, "--", "cat", constants.KCPDataDir+"/admin.kubeconfig")
-		var buf bytes.Buffer
-		cmd.Stdout = &buf
-		err := cmd.Run()
-		if err == nil && buf.Len() > 0 {
-			kubeconfigData = buf.String()
-			break
+		output, err := exec.CommandContext(waitCtx, cmd.Path, cmd.Args[1:]...).Output()
+		if err == nil && len(output) > 0 {
+			return output, nil
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout waiting for kcp admin.kubeconfig: %w", err)
+		select {
+		case <-waitCtx.Done():
+			return nil, fmt.Errorf("wait for kcp admin kubeconfig: %w", waitCtx.Err())
+		case <-time.After(2 * time.Second):
 		}
-		time.Sleep(2 * time.Second)
 	}
+}
 
+func saveKCPKubeconfig(ctx context.Context, clientset kubernetes.Interface, admin []byte) error {
+	logger := log.GetLogger()
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "rlark-kcp-kubeconfig"},
-		Data:       map[string]string{"admin.kubeconfig": kubeconfigData},
+		Data:       map[string]string{"admin.kubeconfig": string(admin)},
 	}
-	_, err = clientset.CoreV1().ConfigMaps(constants.Namespace).Create(ctx, cm, metav1.CreateOptions{})
+	_, err := clientset.CoreV1().ConfigMaps(constants.Namespace).Create(ctx, cm, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
 			_, err = clientset.CoreV1().ConfigMaps(constants.Namespace).Update(ctx, cm, metav1.UpdateOptions{})

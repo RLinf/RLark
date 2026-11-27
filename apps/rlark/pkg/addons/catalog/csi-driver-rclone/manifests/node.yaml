@@ -7,9 +7,11 @@ metadata:
     app: csi-driver-rclone-node
 spec:
   updateStrategy:
-    type: RollingUpdate
+    type: {{ .Values.nodeUpdateStrategy }}
+    {{- if eq .Values.nodeUpdateStrategy "RollingUpdate" }}
     rollingUpdate:
       maxUnavailable: 1
+    {{- end }}
   selector:
     matchLabels:
       app: csi-driver-rclone-node
@@ -34,7 +36,7 @@ spec:
       containers:
         - name: rclone
           image: {{ .Values.rcloneImage }}
-          imagePullPolicy: Always
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
           args:
             - "-v={{ .Values.nodeLogLevel }}"
             - "--nodeid=$(NODE_ID)"
@@ -46,6 +48,10 @@ spec:
                   fieldPath: spec.nodeName
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
+            {{- if .Values.nodeTpsLimit }}
+            - name: RCLONE_TPSLIMIT
+              value: "{{ .Values.nodeTpsLimit }}"
+            {{- end }}
           securityContext:
             privileged: true
           livenessProbe:
@@ -64,7 +70,7 @@ spec:
               mountPropagation: Bidirectional
         - name: node-driver-registrar
           image: {{ .Values.nodeDriverRegistrarImage }}
-          imagePullPolicy: Always
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
           args:
             - "--csi-address=$(ADDRESS)"
             - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
@@ -81,7 +87,7 @@ spec:
               mountPath: /registration
         - name: liveness-probe
           image: {{ .Values.livenessProbeImage }}
-          imagePullPolicy: Always
+          imagePullPolicy: {{ .Values.nodeImagePullPolicy }}
           args:
             - "--csi-address=/csi/csi.sock"
             - "--probe-timeout=3s"

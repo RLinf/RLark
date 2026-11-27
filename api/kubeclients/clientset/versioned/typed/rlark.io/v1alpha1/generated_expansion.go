@@ -21,6 +21,8 @@ type AddonExpansion interface{}
 
 type ClusterExpansion interface{}
 
+type ClusterProvisionExpansion interface{}
+
 type ClusterUpgradeJobExpansion interface{}
 
 type DomainExpansion interface{}
@@ -30,6 +32,8 @@ type DomainPeerExpansion interface{}
 type JobExpansion interface{}
 
 type NodeExpansion interface{}
+
+type NodeJoinExpansion interface{}
 
 type PodExpansion interface{}
 

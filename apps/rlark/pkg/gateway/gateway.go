@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -22,12 +23,14 @@ import (
 	"github.com/rlinf/rlark/apps/rlark/pkg/gateway/storage"
 	"github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/persistence"
+	"github.com/rlinf/rlark/apps/rlark/pkg/submission"
 	"github.com/rlinf/rlark/apps/rlark/pkg/tenant"
 )
 
 // Gateway provides HTTP handlers for resource CRUD APIs.
 type Gateway struct {
 	config Config
+	astribotState
 
 	kubeClient versioned.Interface
 	rawClient  kubernetes.Interface
@@ -57,6 +60,7 @@ type Gateway struct {
 
 	serverTransport *http.Transport
 	jwtSigningKey   []byte
+	submissionKey   ed25519.PublicKey
 	users           userProvider
 	tenants         tenant.Provider
 }
@@ -74,12 +78,16 @@ func NewGateway(config Config) *Gateway {
 		storageClients: make(map[string]*storage.Client),
 		tenants:        tenant.StaticProvider{},
 	}
+	g.setupAstribot()
 	return g
 }
 
 // Run runs the component.
 func (g *Gateway) Run(ctx context.Context) error {
 	if err := g.init(ctx); err != nil {
+		return err
+	}
+	if err := g.startAstribot(ctx); err != nil {
 		return err
 	}
 
@@ -97,6 +105,13 @@ func (g *Gateway) Run(ctx context.Context) error {
 
 func (g *Gateway) init(ctx context.Context) error {
 	logger := log.FromContext(ctx)
+	if path := g.config.SubmissionVerificationKeyPath; path != "" {
+		key, err := submission.LoadPublicKey(path)
+		if err != nil {
+			return fmt.Errorf("load workload submission verification key: %w", err)
+		}
+		g.submissionKey = key
+	}
 	// init Kubernetes client
 	restConfig, err := g.config.KubeClientConfig.BuildRestConfig()
 	if err != nil {
@@ -109,6 +124,9 @@ func (g *Gateway) init(ctx context.Context) error {
 	g.rawClient, err = kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("create raw Kubernetes client: %w", err)
+	}
+	if err := g.initAstribot(restConfig); err != nil {
+		return err
 	}
 	g.users = secretUserProvider{client: g.rawClient, namespace: g.managementNamespace()}
 	if err := g.loadJWTSigningKey(ctx); err != nil {

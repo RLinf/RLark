@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/rlinf/rlark/apps/rlark/astribot/idlerelay"
 	rlarklog "github.com/rlinf/rlark/apps/rlark/pkg/log"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarktools/raylauncher"
 	"github.com/rlinf/rlark/apps/rlark/pkg/rlarktools/sshd"
@@ -24,6 +25,7 @@ func main() {
 	cmd.AddCommand(newSupervisorCommand())
 	cmd.AddCommand(newRayLauncherCommand())
 	cmd.AddCommand(newIdleCommand())
+	cmd.AddCommand(idlerelay.Command())
 
 	if err := cmd.Execute(); err != nil {
 		var exitErr *raylauncher.ExitError
@@ -89,7 +91,7 @@ func newRayLauncherCommand() *cobra.Command {
 		}
 		return err
 	}}
-	cmd.Flags().StringVar(&role, "role", "", "Ray role: head or worker")
+	cmd.Flags().StringVar(&role, "role", "", "Ray role: head or worker; empty for a Task that joins no Ray cluster")
 	cmd.Flags().StringVar(&ray, "ray-binary", "ray", "Ray CLI executable")
 	cmd.Flags().StringVar(&bash, "bash-binary", "/bin/bash", "Shell used only for compatibility user scripts")
 	cmd.Flags().StringVar(&python, "python-binary", "python", "Python executable used for Ray cluster readiness")

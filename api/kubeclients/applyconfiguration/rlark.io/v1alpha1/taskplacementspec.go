@@ -23,6 +23,13 @@ package v1alpha1
 // TaskPlacementSpec describes scheduling constraints for the workload.
 type TaskPlacementSpecApplyConfiguration struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// PerNode runs one instance of the Task on every node that NodeSelector
+	// matches, like a Kubernetes DaemonSet or a cloud daemon service: a node
+	// that joins the class gets an instance, a node that leaves takes its
+	// instance with it, and neither changes the Task's spec. The class of nodes
+	// must lie in one cluster. On Kubernetes the carrier is
+	// rlinf.io/kubernetes-daemonset; a per-node Task cannot be a Job's head.
+	PerNode *bool `json:"perNode,omitempty"`
 }
 
 // TaskPlacementSpecApplyConfiguration constructs a declarative configuration of the TaskPlacementSpec type for use with
@@ -42,5 +49,13 @@ func (b *TaskPlacementSpecApplyConfiguration) WithNodeSelector(entries map[strin
 	for k, v := range entries {
 		b.NodeSelector[k] = v
 	}
+	return b
+}
+
+// WithPerNode sets the PerNode field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PerNode field is set to the value of the last call.
+func (b *TaskPlacementSpecApplyConfiguration) WithPerNode(value bool) *TaskPlacementSpecApplyConfiguration {
+	b.PerNode = &value
 	return b
 }

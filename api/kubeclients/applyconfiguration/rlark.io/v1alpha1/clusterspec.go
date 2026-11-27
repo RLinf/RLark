@@ -22,18 +22,31 @@ package v1alpha1
 //
 // ClusterSpec declares the durable operational state of a data-plane cluster.
 type ClusterSpecApplyConfiguration struct {
+	// DisplayName is a human-readable name; metadata.name remains the stable cluster ID.
+	DisplayName *string `json:"displayName,omitempty"`
 	// AgentNamespace is the management-plane namespace that contains the agent heartbeat Lease and Node CRs.
 	AgentNamespace        *string `json:"agentNamespace,omitempty"`
 	Cordoned              *bool   `json:"cordoned,omitempty"`
 	Draining              *bool   `json:"draining,omitempty"`
 	Delisted              *bool   `json:"delisted,omitempty"`
 	DrainPreviousCordoned *bool   `json:"drainPreviousCordoned,omitempty"`
+	// NodeAgents declares the cluster's node Agents. The cluster Agent keeps them as one DaemonSet,
+	// so a Kubernetes Node that joins and matches the selector gets its node Agent without further action.
+	NodeAgents *ClusterNodeAgentsApplyConfiguration `json:"nodeAgents,omitempty"`
 }
 
 // ClusterSpecApplyConfiguration constructs a declarative configuration of the ClusterSpec type for use with
 // apply.
 func ClusterSpec() *ClusterSpecApplyConfiguration {
 	return &ClusterSpecApplyConfiguration{}
+}
+
+// WithDisplayName sets the DisplayName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DisplayName field is set to the value of the last call.
+func (b *ClusterSpecApplyConfiguration) WithDisplayName(value string) *ClusterSpecApplyConfiguration {
+	b.DisplayName = &value
+	return b
 }
 
 // WithAgentNamespace sets the AgentNamespace field in the declarative configuration to the given value
@@ -73,5 +86,13 @@ func (b *ClusterSpecApplyConfiguration) WithDelisted(value bool) *ClusterSpecApp
 // If called multiple times, the DrainPreviousCordoned field is set to the value of the last call.
 func (b *ClusterSpecApplyConfiguration) WithDrainPreviousCordoned(value bool) *ClusterSpecApplyConfiguration {
 	b.DrainPreviousCordoned = &value
+	return b
+}
+
+// WithNodeAgents sets the NodeAgents field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the NodeAgents field is set to the value of the last call.
+func (b *ClusterSpecApplyConfiguration) WithNodeAgents(value *ClusterNodeAgentsApplyConfiguration) *ClusterSpecApplyConfiguration {
+	b.NodeAgents = value
 	return b
 }

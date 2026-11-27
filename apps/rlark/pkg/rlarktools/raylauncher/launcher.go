@@ -55,8 +55,8 @@ var prepareAndExecScript string
 var clusterCheckProgram string
 
 func (c Config) Validate() error {
-	if c.Role != RoleHead && c.Role != RoleWorker {
-		return fmt.Errorf("ray role must be head or worker")
+	if c.Role != "" && c.Role != RoleHead && c.Role != RoleWorker {
+		return fmt.Errorf("ray role must be head, worker or empty")
 	}
 	if c.RayBinary == "" {
 		return fmt.Errorf("ray binary is required")
@@ -96,6 +96,9 @@ func Run(ctx context.Context, config Config) error {
 			}
 			return nil
 		}
+	}
+	if config.Role == "" {
+		return runWithoutRay(ctx, config)
 	}
 	setRayDefaults()
 	if err := executableChecker(config.RayBinary); err != nil {

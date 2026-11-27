@@ -1,0 +1,3935 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#f3f5f8" />
+    <title>RLark · 场站节点原型</title>
+    <style>
+      :root {
+        --app-bg: #eef1f5;
+        --panel: #fff;
+        --panel-soft: #f8fafc;
+        --canvas: #f4f6f9;
+        --ink: #171b25;
+        --muted: #7c8492;
+        --soft: #a9b0bd;
+        --line: #e7ebf0;
+        --line-strong: #dce2ea;
+        --accent: #7c3aed;
+        --accent-2: #a78bfa;
+        --accent-bg: #efe9fd;
+        --accent-ink: #5b21b6;
+        --blue: #7042d8;
+        --blue-bg: #eef3ff;
+        --blue-ink: #3556b8;
+        --green: #168a61;
+        --green-2: #36c98f;
+        --green-bg: #e7f8f1;
+        --red: #cf3f61;
+        --red-2: #ef5a7a;
+        --red-bg: #fdeef2;
+        --orange: #c77a12;
+        --orange-bg: #fff5e5;
+        --shadow: 0 18px 50px rgba(28, 39, 58, 0.07);
+        --shadow-soft: 0 8px 24px rgba(28, 39, 58, 0.055);
+        --shadow-float: 0 24px 70px rgba(20, 27, 45, 0.2);
+        color-scheme: light;
+      }
+      :root[data-theme="dark"] {
+        --app-bg: #0b111c;
+        --panel: #151d2b;
+        --panel-soft: #182234;
+        --canvas: #0f1623;
+        --ink: #f5f7fb;
+        --muted: #9ca8ba;
+        --soft: #748196;
+        --line: #273348;
+        --line-strong: #33425b;
+        --accent: #a78bfa;
+        --accent-2: #c4b5fd;
+        --accent-bg: rgba(167, 139, 250, 0.18);
+        --accent-ink: #d6c8ff;
+        --blue: #a78bfa;
+        --blue-bg: rgba(120, 156, 255, 0.13);
+        --blue-ink: #a8bdff;
+        --green: #48d8a2;
+        --green-2: #48d8a2;
+        --green-bg: rgba(72, 216, 162, 0.12);
+        --red: #ff8fa8;
+        --red-2: #ff8fa8;
+        --red-bg: rgba(255, 143, 168, 0.12);
+        --orange: #f6b45e;
+        --orange-bg: rgba(246, 180, 94, 0.12);
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+        --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.22);
+        --shadow-float: 0 24px 70px rgba(0, 0, 0, 0.5);
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+      body {
+        background: var(--app-bg);
+        color: var(--ink);
+        font:
+          13px/1.5 Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      svg {
+        display: block;
+        flex: none;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      code,
+      .mono {
+        font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+      }
+      .ico {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .app-frame {
+        display: grid;
+        grid-template-columns: 224px minmax(0, 1fr);
+        width: 100%;
+        height: 100dvh;
+        overflow: hidden;
+        background: var(--panel);
+      }
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+        min-width: 0;
+        padding: 18px 13px;
+        border-right: 1px solid var(--line);
+        background: linear-gradient(180deg, var(--panel), var(--panel-soft));
+        overflow-y: auto;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 8px 8px;
+      }
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 11px;
+        background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+        color: #fff;
+        font-weight: 800;
+        font-size: 16px;
+        box-shadow: 0 7px 18px rgba(124, 58, 237, 0.24);
+      }
+      .brand-text {
+        display: grid;
+        line-height: 1.2;
+      }
+      .brand-text strong {
+        font-size: 13px;
+      }
+      .brand-text small {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .side-group {
+        display: grid;
+        gap: 4px;
+      }
+      .side-label {
+        padding: 0 10px 4px;
+        color: var(--soft);
+        font-size: 9px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 38px;
+        padding: 7px 10px;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .nav-item svg {
+        color: var(--soft);
+      }
+      .nav-item:hover {
+        background: var(--canvas);
+        color: var(--ink);
+      }
+      .nav-item.active {
+        background: var(--accent-bg);
+        color: var(--accent-ink);
+      }
+      .nav-item.active svg {
+        color: var(--accent);
+      }
+      .nav-item em {
+        margin-left: auto;
+        padding: 1px 7px;
+        border-radius: 999px;
+        background: var(--panel);
+        color: var(--muted);
+        font-size: 10px;
+        font-style: normal;
+      }
+      .sidebar-bottom {
+        margin-top: auto;
+        padding: 12px 10px;
+        border-top: 1px solid var(--line);
+      }
+      .sidebar-bottom strong {
+        display: block;
+        font-size: 11px;
+      }
+      .sidebar-bottom small {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .workspace {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        background: var(--canvas);
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        min-height: 62px;
+        padding: 10px 22px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .top-left,
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      .top-crumb {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .top-crumb strong {
+        color: var(--ink);
+        font-weight: 700;
+      }
+      .top-crumb .sep {
+        color: var(--soft);
+      }
+      .top-actions {
+        margin-left: auto;
+      }
+      .env-chip,
+      .user-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 30px;
+        padding: 4px 9px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--panel);
+        font-size: 10px;
+        font-weight: 650;
+        white-space: nowrap;
+      }
+      .env-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 0 3px var(--green-bg);
+      }
+      .avatar {
+        display: grid;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: var(--accent-bg);
+        color: var(--accent-ink);
+        font-size: 10px;
+        font-weight: 800;
+      }
+      .topbar-tools {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-left: 8px;
+        border-left: 1px solid var(--line);
+      }
+      .tool-button,
+      .lang-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        min-height: 30px;
+        padding: 0 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+      }
+      .tool-button:hover,
+      .lang-button:hover {
+        border-color: var(--accent-2);
+        color: var(--accent-ink);
+      }
+      .mobile-menu {
+        display: none;
+      }
+      .page-scroll {
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        overflow: auto;
+        overscroll-behavior: contain;
+      }
+      .page-content {
+        width: 100%;
+        min-width: 0;
+        padding: 26px 26px 38px;
+      }
+      .page-head {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 22px;
+        margin-bottom: 18px;
+      }
+      .page-head-main {
+        min-width: 0;
+      }
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .page-head h1 {
+        margin: 6px 0 6px;
+        font-size: 27px;
+        line-height: 1.12;
+        letter-spacing: -0.045em;
+      }
+      .page-head p {
+        max-width: 780px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .page-head-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: none;
+      }
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-height: 36px;
+        padding: 0 12px;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        background: var(--panel);
+        color: var(--ink);
+        font-size: 11px;
+        font-weight: 750;
+        white-space: nowrap;
+      }
+      .button:hover {
+        border-color: var(--accent-2);
+        color: var(--accent-ink);
+      }
+      .button.primary {
+        border-color: var(--accent);
+        background: linear-gradient(180deg, #8b5cf6, #7c3aed);
+        color: #fff;
+        box-shadow: 0 7px 16px rgba(124, 58, 237, 0.2);
+      }
+      .button.danger {
+        border-color: color-mix(in srgb, var(--red) 35%, var(--line));
+        color: var(--red);
+        background: var(--panel);
+      }
+      .button.ghost {
+        border-color: transparent;
+        background: transparent;
+        color: var(--muted);
+      }
+      .button.small {
+        min-height: 30px;
+        padding: 0 9px;
+        border-radius: 8px;
+        font-size: 10px;
+      }
+      .button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+      .icon-button {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--panel);
+        color: var(--muted);
+      }
+
+      .overview-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+        margin-bottom: 17px;
+      }
+      .overview-card {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        min-width: 0;
+        min-height: 106px;
+        padding: 16px 18px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--panel);
+        box-shadow: var(--shadow-soft);
+      }
+      .overview-icon {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
+        flex: none;
+        border-radius: 14px;
+      }
+      .overview-card.purple .overview-icon {
+        background: #f1eafe;
+        color: #7c3aed;
+      }
+      .overview-card.green .overview-icon {
+        background: #e5f8f1;
+        color: #159b6b;
+      }
+      .overview-card.orange .overview-icon {
+        background: #fff1df;
+        color: #e47a14;
+      }
+      .overview-card.red .overview-icon {
+        background: #ffe9ee;
+        color: #cf3f61;
+      }
+      .overview-copy {
+        min-width: 0;
+      }
+      .overview-copy small,
+      .overview-copy strong,
+      .overview-copy em {
+        display: block;
+      }
+      .overview-copy small {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .overview-copy strong {
+        margin-top: 3px;
+        color: var(--ink);
+        font-size: 23px;
+        line-height: 1.12;
+      }
+      .overview-copy em {
+        margin-top: 4px;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 10px;
+        font-style: normal;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      :root[data-theme="dark"] .overview-card.purple .overview-icon {
+        background: rgba(167, 139, 250, 0.16);
+        color: #c4b5fd;
+      }
+      :root[data-theme="dark"] .overview-card.green .overview-icon {
+        background: rgba(72, 216, 162, 0.13);
+        color: #48d8a2;
+      }
+      :root[data-theme="dark"] .overview-card.orange .overview-icon {
+        background: rgba(246, 180, 94, 0.13);
+        color: #f6b45e;
+      }
+      :root[data-theme="dark"] .overview-card.red .overview-icon {
+        background: rgba(255, 143, 168, 0.13);
+        color: #ff8fa8;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 9px;
+        margin-bottom: 13px;
+      }
+      .search-field {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        flex: 1 1 300px;
+        min-width: min(280px, 100%);
+        height: 40px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--panel);
+        color: var(--muted);
+      }
+      .search-field input {
+        width: 100%;
+        min-width: 0;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--ink);
+        font: inherit;
+        font-size: 11px;
+      }
+      .filter-select {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 38px;
+        padding: 0 10px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+        color: var(--muted);
+      }
+      .filter-select select {
+        max-width: 210px;
+        min-width: 130px;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--ink);
+        font: inherit;
+        font-size: 11px;
+      }
+      .toolbar-count {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 10px;
+        white-space: nowrap;
+      }
+      .panel {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 17px;
+        background: var(--panel);
+        box-shadow: var(--shadow-soft);
+        overflow: hidden;
+      }
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        min-height: 60px;
+        padding: 13px 17px;
+        border-bottom: 1px solid var(--line);
+      }
+      .panel-head-main {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        min-width: 0;
+      }
+      .panel-head h2 {
+        margin: 0;
+        color: var(--ink);
+        font-size: 14px;
+        font-weight: 750;
+      }
+      .panel-head p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .count-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 27px;
+        height: 23px;
+        padding: 0 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--canvas);
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .bulk-bar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 9px 15px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-soft);
+      }
+      .bulk-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-right: auto;
+        color: var(--ink);
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .bulk-title svg {
+        color: var(--accent);
+      }
+      .bulk-actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .bulk-bottom {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 15px;
+        border-top: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .bulk-bottom[hidden] {
+        display: none;
+      }
+      .bulk-bottom strong {
+        margin-right: auto;
+        font-size: 11px;
+      }
+      .table-scroll {
+        width: 100%;
+        min-width: 0;
+        overflow-x: auto;
+        overscroll-behavior-inline: contain;
+      }
+      .data-table {
+        width: 100%;
+        min-width: 1134px;
+        border-collapse: separate;
+        border-spacing: 0;
+        table-layout: fixed;
+      }
+      .data-table th {
+        height: 38px;
+        padding: 0 10px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-soft);
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 750;
+        text-align: left;
+        white-space: nowrap;
+      }
+      .data-table td {
+        min-height: 52px;
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--line);
+        color: var(--ink);
+        font-size: 10.5px;
+        vertical-align: middle;
+      }
+      .data-table tbody tr:last-child td {
+        border-bottom: 0;
+      }
+      .data-table tbody tr:hover td {
+        background: var(--row-hover);
+      }
+      .data-table tbody tr.selected td {
+        background: var(--accent-bg);
+      }
+      .data-table tbody tr {
+        cursor: pointer;
+      }
+      .data-table .check-cell {
+        width: 34px;
+        text-align: center;
+      }
+      .data-table input[type="checkbox"] {
+        width: 14px;
+        height: 14px;
+        accent-color: var(--accent);
+      }
+      .node-table th:nth-child(1) {
+        width: 34px;
+      }
+      .node-table th:nth-child(2) {
+        width: 180px;
+      }
+      .node-table th:nth-child(3) {
+        width: 165px;
+      }
+      .node-table th:nth-child(4) {
+        width: 100px;
+      }
+      .node-table th:nth-child(5) {
+        width: 105px;
+      }
+      .node-table th:nth-child(6) {
+        width: 105px;
+      }
+      .node-table th:nth-child(7) {
+        width: 115px;
+      }
+      .node-table th:nth-child(8) {
+        width: 80px;
+      }
+      .node-table th:nth-child(9) {
+        width: 65px;
+      }
+      .node-table th:nth-child(10) {
+        width: 95px;
+      }
+      .node-table th:nth-child(11) {
+        width: 90px;
+      }
+      .node-cell {
+        min-width: 0;
+      }
+      .node-name {
+        display: block;
+        max-width: 210px;
+        overflow: hidden;
+        color: var(--ink);
+        font-size: 11px;
+        font-weight: 750;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .node-id {
+        display: inline-block;
+        max-width: 150px;
+        margin-top: 3px;
+        padding: 1px 5px;
+        overflow: hidden;
+        border-radius: 5px;
+        background: var(--canvas);
+        color: var(--muted);
+        font-size: 9px;
+        text-overflow: ellipsis;
+        vertical-align: middle;
+      }
+      .mono-value {
+        font-size: 9px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .node-name-line {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+      .cp-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 1px 5px;
+        border-radius: 5px;
+        background: var(--accent-bg);
+        color: var(--accent-ink);
+        font-size: 8px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        min-height: 21px;
+        padding: 3px 7px;
+        border-radius: 999px;
+        font-size: 9px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+      .status i {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+      .status.online {
+        background: var(--green-bg);
+        color: var(--green);
+      }
+      .status.offline {
+        background: var(--orange-bg);
+        color: var(--orange);
+      }
+      .status.conflict,
+      .status.expired,
+      .status.failed {
+        background: var(--red-bg);
+        color: var(--red);
+      }
+      .status.pending {
+        background: var(--orange-bg);
+        color: var(--orange);
+      }
+      .status.joined {
+        background: var(--green-bg);
+        color: var(--green);
+      }
+      .status.neutral {
+        background: var(--canvas);
+        color: var(--muted);
+      }
+      .network-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 9px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .network-state.ok {
+        color: var(--green);
+      }
+      .network-state.bad {
+        color: var(--red);
+      }
+      .network-state.unknown {
+        color: var(--muted);
+      }
+      .state-cell {
+        display: grid;
+        justify-items: start;
+        gap: 4px;
+      }
+      .admission-key {
+        display: inline-block;
+        max-width: 105px;
+        padding: 2px 5px;
+        overflow: hidden;
+        border-radius: 5px;
+        background: var(--canvas);
+        color: var(--muted);
+        font-size: 9px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .model-chip {
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 650;
+      }
+      .uptime-cell {
+        display: grid;
+        gap: 2px;
+      }
+      .uptime-cell small {
+        color: var(--muted);
+        font-size: 9px;
+      }
+      .time-cell {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .link-button {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--accent-ink);
+        font: inherit;
+        font-size: 9px;
+        font-weight: 750;
+      }
+      .records-panel {
+        margin-top: 16px;
+      }
+      .records-table {
+        min-width: 1160px;
+      }
+      .record-node {
+        display: grid;
+        gap: 3px;
+        min-width: 190px;
+      }
+      .record-node strong {
+        font-size: 10px;
+      }
+      .record-node small {
+        max-width: 270px;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 9px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .record-times {
+        display: grid;
+        gap: 2px;
+        color: var(--muted);
+        font-size: 9px;
+        white-space: nowrap;
+      }
+      .table-actions {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .table-actions .button {
+        min-height: 28px;
+        padding: 0 8px;
+        font-size: 9px;
+      }
+      .table-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 9px 15px;
+        border-top: 1px solid var(--line);
+        background: var(--panel-soft);
+      }
+      .table-foot small {
+        color: var(--muted);
+        font-size: 9px;
+      }
+      .row-note {
+        display: block;
+        max-width: 250px;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 9px;
+        overflow-wrap: anywhere;
+      }
+      .empty-state {
+        padding: 44px 16px;
+        color: var(--muted);
+        font-size: 12px;
+        text-align: center;
+      }
+      .operations-panel {
+        margin: 0 0 14px;
+        padding: 14px 16px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+      }
+      .operations-panel .ops-list {
+        margin-top: 10px;
+        border-top: 1px solid var(--line);
+      }
+      .operations-panel .ops-list > div {
+        display: grid;
+        grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: center;
+        padding: 9px 2px;
+        border-bottom: 1px solid var(--line);
+        font-size: 10.5px;
+      }
+      .operations-panel .ops-list > div:last-child {
+        border-bottom: 0;
+      }
+      .operations-panel .ops-list > div > span:nth-child(2) {
+        color: var(--muted);
+      }
+      .toast {
+        position: fixed;
+        right: 22px;
+        bottom: 22px;
+        z-index: 90;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        max-width: min(420px, calc(100vw - 32px));
+        padding: 10px 14px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        font-size: 11px;
+      }
+      .toast svg {
+        color: var(--green);
+      }
+
+      /* Detail drawer: same fixed-header / tab / scroll / footer composition as StationDrawer. */
+      .scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        background: rgba(12, 18, 28, 0.42);
+        backdrop-filter: blur(2px);
+      }
+      .drawer {
+        position: fixed;
+        inset: 0 0 0 auto;
+        z-index: 101;
+        display: flex;
+        flex-direction: column;
+        width: min(650px, 100vw);
+        border-left: 1px solid var(--line);
+        background: var(--panel);
+        box-shadow: -18px 0 50px rgba(16, 22, 32, 0.18);
+        animation: drawer-in 0.2s ease-out;
+      }
+      .drawer-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 18px 20px 14px;
+        border-bottom: 1px solid var(--line);
+        flex: none;
+      }
+      .drawer-head-main {
+        min-width: 0;
+      }
+      .drawer-head h2 {
+        margin: 5px 0 8px;
+        font-size: 20px;
+        letter-spacing: -0.025em;
+        overflow-wrap: anywhere;
+      }
+      .drawer-meta {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .drawer-meta-text {
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .drawer-tabs {
+        display: flex;
+        gap: 4px;
+        padding: 0 20px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+        flex: none;
+      }
+      .drawer-tabs button {
+        position: relative;
+        min-height: 42px;
+        padding: 0 11px;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 750;
+      }
+      .drawer-tabs button[aria-selected="true"] {
+        color: var(--accent-ink);
+      }
+      .drawer-tabs button[aria-selected="true"]:after {
+        position: absolute;
+        right: 8px;
+        bottom: -1px;
+        left: 8px;
+        height: 2px;
+        border-radius: 2px;
+        background: var(--accent);
+        content: "";
+      }
+      .drawer-body {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 16px 20px 22px;
+        overscroll-behavior: contain;
+      }
+      .drawer-panel {
+        display: grid;
+        gap: 14px;
+      }
+      .facts-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--canvas);
+      }
+      .fact {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+        padding: 11px;
+        border-right: 1px solid var(--line);
+      }
+      .fact:last-child {
+        border-right: 0;
+      }
+      .fact small {
+        color: var(--muted);
+        font-size: 9px;
+      }
+      .fact strong {
+        font-size: 11px;
+        overflow-wrap: anywhere;
+      }
+      .detail-card {
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: var(--panel);
+      }
+      .detail-card-head {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-bottom: 12px;
+        color: var(--ink);
+        font-size: 12px;
+        font-weight: 750;
+      }
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 11px 14px;
+      }
+      .detail-item {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+      .detail-item.wide {
+        grid-column: 1/-1;
+      }
+      .detail-item small {
+        color: var(--muted);
+        font-size: 9px;
+      }
+      .detail-item strong,
+      .detail-item code {
+        font-size: 10px;
+        overflow-wrap: anywhere;
+      }
+      .copy-value {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+      }
+      .copy-value code {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .copy-mini {
+        width: 25px;
+        height: 25px;
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--panel);
+        color: var(--muted);
+      }
+      .robot-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .robot-fact {
+        display: grid;
+        gap: 6px;
+        padding: 9px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--canvas);
+      }
+      .robot-fact small {
+        color: var(--muted);
+        font-size: 9px;
+      }
+      .robot-actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 11px;
+      }
+      .rules {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .rules summary {
+        cursor: pointer;
+      }
+      .rules p {
+        margin: 7px 0 0;
+        line-height: 1.55;
+      }
+      .camera-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+      }
+      .camera-item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 9px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--canvas);
+      }
+      .camera-icon {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        background: var(--accent-bg);
+        color: var(--accent-ink);
+      }
+      .camera-item span:last-child {
+        display: grid;
+        gap: 2px;
+      }
+      .camera-item small {
+        color: var(--muted);
+        font-size: 9px;
+      }
+      .network-hero {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 14px;
+        border: 1px solid color-mix(in srgb, var(--green) 25%, var(--line));
+        border-radius: 13px;
+        background: color-mix(in srgb, var(--green) 7%, var(--panel));
+      }
+      .network-hero-icon {
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: var(--green-bg);
+        color: var(--green);
+      }
+      .network-hero strong {
+        display: block;
+        font-size: 12px;
+      }
+      .network-hero small {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .hub-list {
+        display: grid;
+      }
+      .hub-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        gap: 10px;
+        align-items: center;
+        padding: 9px 0;
+        border-top: 1px solid var(--line);
+        font-size: 10px;
+      }
+      .hub-row small {
+        color: var(--muted);
+      }
+      .condition-list {
+        display: grid;
+      }
+      .condition-row {
+        display: grid;
+        grid-template-columns: 9px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: start;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .condition-row:last-child {
+        border-bottom: 0;
+      }
+      .condition-dot {
+        width: 8px;
+        height: 8px;
+        margin-top: 5px;
+        border-radius: 50%;
+        background: var(--green);
+      }
+      .condition-row.false .condition-dot {
+        background: var(--red);
+      }
+      .condition-row.unknown .condition-dot {
+        background: var(--orange);
+      }
+      .condition-copy {
+        display: grid;
+        gap: 3px;
+        min-width: 0;
+      }
+      .condition-copy strong {
+        font-size: 11px;
+      }
+      .condition-copy small {
+        color: var(--muted);
+        font-size: 9px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+      .condition-side {
+        display: grid;
+        justify-items: end;
+        gap: 3px;
+        font-size: 9px;
+      }
+      .condition-side small {
+        color: var(--muted);
+      }
+      .drawer-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+        border-top: 1px solid var(--line);
+        background: var(--panel);
+        flex: none;
+      }
+      .drawer-foot-left,
+      .drawer-foot-actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .drawer-hint {
+        max-width: 210px;
+        color: var(--muted);
+        font-size: 9px;
+        line-height: 1.4;
+      }
+      .drawer-foot-actions {
+        justify-content: flex-end;
+        margin-left: auto;
+      }
+      .confirm-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 120;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+        background: rgba(12, 18, 28, 0.48);
+      }
+      .confirm-dialog {
+        width: min(430px, 100%);
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--panel);
+        box-shadow: var(--shadow-float);
+      }
+      .confirm-dialog h3 {
+        font-size: 15px;
+      }
+      .confirm-dialog p {
+        margin: 9px 0 16px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.55;
+      }
+      .confirm-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 7px;
+      }
+      @keyframes drawer-in {
+        from {
+          transform: translateX(16px);
+          opacity: 0.7;
+        }
+        to {
+          transform: none;
+          opacity: 1;
+        }
+      }
+
+      @media (max-width: 1200px) {
+        .overview-grid {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .overview-card {
+          padding: 14px;
+          gap: 10px;
+        }
+        .overview-icon {
+          width: 36px;
+          height: 36px;
+        }
+        .data-table {
+          min-width: 1220px;
+        }
+      }
+      @media (max-width: 900px) {
+        .sidebar {
+          width: 210px;
+        }
+        .app-frame {
+          grid-template-columns: 210px minmax(0, 1fr);
+        }
+        .page-content {
+          padding: 22px 18px 32px;
+        }
+        .topbar {
+          padding-inline: 16px;
+        }
+        .overview-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .page-head {
+          align-items: flex-start;
+        }
+      }
+      @media (max-width: 680px) {
+        .app-frame {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .sidebar {
+          position: fixed;
+          inset: 0 auto 0 0;
+          z-index: 150;
+          width: min(280px, 86vw);
+          transform: translateX(-105%);
+          transition: transform 0.18s ease;
+          box-shadow: var(--shadow-float);
+        }
+        .sidebar.open {
+          transform: translateX(0);
+          z-index: 161;
+        }
+        .mobile-menu {
+          display: grid;
+          place-items: center;
+          width: 33px;
+          height: 33px;
+          padding: 0;
+          border: 1px solid var(--line);
+          border-radius: 8px;
+          background: var(--panel);
+          color: var(--muted);
+        }
+        .topbar {
+          min-height: 54px;
+          padding: 8px 12px;
+        }
+        .top-crumb {
+          display: none;
+        }
+        .top-actions .env-chip,
+        .top-actions .user-name {
+          display: none;
+        }
+        .topbar-tools {
+          margin-left: 0;
+          padding-left: 5px;
+        }
+        .page-content {
+          padding: 18px 13px 30px;
+        }
+        .page-head {
+          flex-direction: column;
+          gap: 12px;
+          margin-bottom: 15px;
+        }
+        .page-head h1 {
+          font-size: 24px;
+        }
+        .page-head-actions {
+          width: 100%;
+        }
+        .page-head-actions .button {
+          flex: 1;
+        }
+        .overview-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 9px;
+          margin-bottom: 13px;
+        }
+        .overview-card {
+          min-height: 88px;
+          padding: 11px;
+          gap: 9px;
+          border-radius: 14px;
+        }
+        .overview-icon {
+          width: 32px;
+          height: 32px;
+          border-radius: 10px;
+        }
+        .overview-copy strong {
+          font-size: 20px;
+        }
+        .overview-copy em {
+          font-size: 9px;
+        }
+        .toolbar {
+          gap: 7px;
+          margin-bottom: 11px;
+        }
+        .search-field {
+          flex-basis: 100%;
+          height: 38px;
+        }
+        .filter-select {
+          flex: 1 1 130px;
+          min-width: 0;
+        }
+        .filter-select select {
+          width: 100%;
+          min-width: 0;
+          max-width: none;
+        }
+        .toolbar-count {
+          margin-left: auto;
+        }
+        .panel {
+          border-radius: 14px;
+        }
+        .panel-head {
+          min-height: 54px;
+          padding: 11px 12px;
+        }
+        .panel-head-main {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .panel-head h2 {
+          font-size: 13px;
+        }
+        .bulk-bar {
+          padding: 9px 11px;
+        }
+        .bulk-title {
+          flex-basis: 100%;
+        }
+        .bulk-actions {
+          width: 100%;
+        }
+        .bulk-actions .button {
+          flex: 1 1 100%;
+          justify-content: center;
+        }
+        .bulk-bottom {
+          position: sticky;
+          bottom: 0;
+          z-index: 2;
+          box-shadow: var(--sticky-shadow);
+        }
+        .scrim {
+          z-index: 160;
+        }
+        .drawer {
+          z-index: 161;
+        }
+        .drawer-head {
+          padding: 15px 14px 12px;
+        }
+        .drawer-head h2 {
+          font-size: 18px;
+        }
+        .drawer-tabs {
+          padding: 0 12px;
+        }
+        .drawer-body {
+          padding: 13px 13px 18px;
+        }
+        .facts-strip {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .fact:nth-child(2) {
+          border-right: 0;
+        }
+        .fact:nth-child(-n + 2) {
+          border-bottom: 1px solid var(--line);
+        }
+        .drawer-foot {
+          align-items: stretch;
+          flex-direction: column;
+          padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+        }
+        .drawer-foot-left {
+          justify-content: space-between;
+        }
+        .drawer-foot-actions {
+          width: 100%;
+          margin: 0;
+        }
+        .drawer-foot-actions .button {
+          flex: 1 1 auto;
+        }
+        .drawer-hint {
+          max-width: none;
+        }
+        .condition-side {
+          min-width: 65px;
+        }
+      }
+      @media (max-width: 420px) {
+        .overview-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .overview-card {
+          padding: 9px;
+          gap: 8px;
+        }
+        .overview-icon {
+          width: 29px;
+          height: 29px;
+        }
+        .overview-copy small {
+          font-size: 9px;
+        }
+        .overview-copy strong {
+          font-size: 19px;
+        }
+        .overview-copy em {
+          font-size: 8px;
+        }
+        .page-head p {
+          font-size: 11px;
+        }
+        .toolbar-count {
+          font-size: 9px;
+        }
+        .drawer-meta .status {
+          font-size: 8px;
+          padding-inline: 6px;
+        }
+        .drawer-foot-actions .button {
+          padding-inline: 7px;
+          font-size: 9px;
+        }
+        .detail-grid {
+          gap: 9px;
+        }
+        .robot-actions .button {
+          flex: 1 1 calc(50% - 6px);
+        }
+      }
+      @media (max-width: 350px) {
+        .overview-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .topbar-tools .tool-button span {
+          display: none;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <svg
+      width="0"
+      height="0"
+      aria-hidden="true"
+      style="position: absolute; overflow: hidden"
+    >
+      <symbol id="i-grid" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      </symbol>
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="9" y="2.5" width="6" height="6" rx="1.5" />
+        <rect x="2.5" y="15.5" width="6" height="6" rx="1.5" />
+        <rect x="15.5" y="15.5" width="6" height="6" rx="1.5" />
+        <path d="M12 8.5v3.5M5.5 15.5V12h13v3.5" />
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24">
+        <rect x="3" y="3.5" width="18" height="7" rx="2" />
+        <rect x="3" y="13.5" width="18" height="7" rx="2" />
+        <path d="M7 7h.01M7 17h.01M11 7h6M11 17h6" />
+      </symbol>
+      <symbol id="i-jobs" viewBox="0 0 24 24">
+        <path
+          d="M9 6h12M9 12h12M9 18h12M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"
+        />
+      </symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" />
+        <path
+          d="M3 12h18M12 3c2.6 2.7 3.9 5.7 3.9 9S14.6 18.3 12 21c-2.6-2.7-3.9-5.7-3.9-9S9.4 5.7 12 3Z"
+        />
+      </symbol>
+      <symbol id="i-storage" viewBox="0 0 24 24">
+        <ellipse cx="12" cy="5" rx="8" ry="3" />
+        <path
+          d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"
+        />
+      </symbol>
+      <symbol id="i-image" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="18" height="16" rx="2.5" />
+        <circle cx="8.5" cy="9.5" r="1.5" />
+        <path d="m4 17 5-5 4 4 3-3 4 4" />
+      </symbol>
+      <symbol id="i-finger" viewBox="0 0 24 24">
+        <path
+          d="M12 3a7 7 0 0 0-7 7v3M19 13v-3a7 7 0 0 0-3-5.7M5 17v-4a7 7 0 0 1 14 0v2.5M8.5 20v-8a3.5 3.5 0 0 1 7 0v7"
+        />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <circle cx="10.5" cy="10.5" r="6.5" />
+        <path d="m15.5 15.5 5 5" />
+      </symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24">
+        <path d="M20 11a8 8 0 1 0-2.3 6.4M20 5v6h-6" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M6 6l12 12M18 6 6 18" />
+      </symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24">
+        <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="m5 12.5 4.5 4.5L19 7" />
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24">
+        <path d="M12 3 5 6v5c0 4.4 3 8.4 7 10 4-1.6 7-5.6 7-10V6l-7-3Z" />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-wifi" viewBox="0 0 24 24">
+        <path
+          d="M4 9a12 12 0 0 1 16 0M7 12.5a8 8 0 0 1 10 0M10 16a4 4 0 0 1 4 0"
+        />
+        <circle cx="12" cy="19" r="1" />
+      </symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24">
+        <path d="M12 3 2.8 20h18.4L12 3Z" />
+        <path d="M12 9v5M12 17.5h.01" />
+      </symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24">
+        <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 8.5 8.5 0 1 0 20.5 14.5Z" />
+      </symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4" />
+        <path
+          d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"
+        />
+      </symbol>
+      <symbol id="i-power" viewBox="0 0 24 24">
+        <path d="M12 3v9" />
+        <path d="M6.2 6.2a8 8 0 1 0 11.6 0" />
+      </symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24">
+        <path
+          d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"
+        />
+        <circle cx="12" cy="13" r="3.2" />
+      </symbol>
+      <symbol id="i-key" viewBox="0 0 24 24">
+        <circle cx="8" cy="15" r="4" />
+        <path d="m11 12 8-8 3 3-3 3-2-2-2 2-2-2-2 2" />
+      </symbol>
+      <symbol id="i-user" viewBox="0 0 24 24">
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4.5 21a7.5 7.5 0 0 1 15 0" />
+      </symbol>
+      <symbol id="i-menu" viewBox="0 0 24 24">
+        <path d="M4 6h16M4 12h16M4 18h16" />
+      </symbol>
+    </svg>
+
+    <div class="app-frame">
+      <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+        <div class="brand">
+          <span class="brand-mark">R</span
+          ><span class="brand-text"
+            ><strong>RLark Admin</strong
+            ><small data-l10n="adminConsole">管理后台</small></span
+          >
+        </div>
+        <div class="side-group">
+          <span class="side-label" data-l10n="workbench">工作台</span
+          ><a class="nav-item" href="#"
+            ><svg class="ico"><use href="#i-grid" /></svg
+            ><span data-l10n="dashboard">管理工作台</span></a
+          >
+        </div>
+        <div class="side-group">
+          <span class="side-label" data-l10n="clusters">集群</span
+          ><a class="nav-item" href="#"
+            ><svg class="ico"><use href="#i-network" /></svg
+            ><span data-l10n="clusterList">集群列表</span></a
+          ><a class="nav-item" href="#"
+            ><svg class="ico"><use href="#i-server" /></svg
+            ><span data-l10n="nodes">节点管理</span></a
+          >
+        </div>
+        <div class="side-group">
+          <span class="side-label" data-l10n="operations">运维</span
+          ><a class="nav-item" href="#"
+            ><svg class="ico"><use href="#i-jobs" /></svg
+            ><span data-l10n="jobs">任务管理</span></a
+          ><a class="nav-item" href="#"
+            ><svg class="ico"><use href="#i-globe" /></svg
+            ><span data-l10n="domains">网络域</span></a
+          ><a class="nav-item" href="#"
+            ><svg class="ico"><use href="#i-storage" /></svg
+            ><span data-l10n="storage">存储管理</span></a
+          ><a class="nav-item" href="#"
+            ><svg class="ico"><use href="#i-image" /></svg
+            ><span data-l10n="images">镜像管理</span></a
+          ><a class="nav-item active" href="#" aria-current="page"
+            ><svg class="ico"><use href="#i-finger" /></svg
+            ><span data-l10n="siteNodes">场站节点</span><em>8</em></a
+          >
+        </div>
+        <div class="sidebar-bottom">
+          <strong data-l10n="clusterName">深圳公司 S1U 调试集群</strong
+          ><small data-l10n="clusterSummary">8 个节点 · 6 在线 · 1 冲突</small>
+        </div>
+      </aside>
+      <div class="workspace">
+        <header class="topbar">
+          <div class="top-left">
+            <button
+              id="mobileMenu"
+              class="mobile-menu"
+              type="button"
+              aria-label="Open menu"
+            >
+              <svg class="ico"><use href="#i-menu" /></svg>
+            </button>
+            <div class="top-crumb">
+              <span data-l10n="operations">运维</span><span class="sep">/</span
+              ><strong data-l10n="siteNodes">场站节点</strong>
+            </div>
+          </div>
+          <div class="top-actions">
+            <span class="env-chip"
+              ><i class="env-dot"></i>s1u-robot ·
+              <span data-l10n="online">在线</span></span
+            ><span class="user-chip"
+              ><span class="avatar">S</span
+              ><span class="user-name" data-l10n="administrator"
+                >系统管理员</span
+              ></span
+            >
+            <div class="topbar-tools">
+              <button class="tool-button" id="themeToggle" type="button">
+                <svg class="ico"><use id="themeIcon" href="#i-moon" /></svg
+                ><span id="themeText">深色</span></button
+              ><button class="lang-button" id="languageToggle" type="button">
+                EN
+              </button>
+            </div>
+          </div>
+        </header>
+        <div class="page-scroll" id="pageScroll">
+          <main class="page-content">
+            <div class="page-head">
+              <div class="page-head-main">
+                <span class="eyebrow"
+                  ><svg class="ico"><use href="#i-finger" /></svg
+                  ><span data-l10n="eyebrow">运维管理</span></span
+                >
+                <h1 data-l10n="title">场站节点</h1>
+                <p data-l10n="description">
+                  查看场站机器的身份、心跳和入网状态。选择节点可查看完整网络与入网详情。
+                </p>
+              </div>
+              <div class="page-head-actions">
+                <button class="button primary" id="joinBtn" type="button">
+                  <svg class="ico"><use href="#i-key" /></svg
+                  ><span data-l10n="joinNode">加入节点</span>
+                </button>
+              </div>
+            </div>
+
+            <section class="overview-grid" aria-label="Site node summary">
+              <article class="overview-card purple">
+                <span class="overview-icon"
+                  ><svg class="ico"><use href="#i-finger" /></svg
+                ></span>
+                <div class="overview-copy">
+                  <small data-l10n="totalNodes">场站节点总数</small
+                  ><strong id="statTotal">8</strong
+                  ><em data-l10n="loadedRecords">当前记录</em>
+                </div>
+              </article>
+              <article class="overview-card green">
+                <span class="overview-icon"
+                  ><svg class="ico"><use href="#i-check" /></svg
+                ></span>
+                <div class="overview-copy">
+                  <small data-l10n="bound">在线</small><strong>5</strong
+                  ><em data-l10n="freshHeartbeat">心跳正常</em>
+                </div>
+              </article>
+              <article class="overview-card orange">
+                <span class="overview-icon"
+                  ><svg class="ico"><use href="#i-wifi" /></svg
+                ></span>
+                <div class="overview-copy">
+                  <small data-l10n="offline">离线</small><strong>2</strong
+                  ><em data-l10n="staleHeartbeat">心跳超时</em>
+                </div>
+              </article>
+              <article class="overview-card red">
+                <span class="overview-icon"
+                  ><svg class="ico"><use href="#i-alert" /></svg
+                ></span>
+                <div class="overview-copy">
+                  <small data-l10n="conflict">冲突</small><strong>1</strong
+                  ><em data-l10n="uidChanged">节点 UID 不一致</em>
+                </div>
+              </article>
+            </section>
+
+            <div class="toolbar" role="search">
+              <label class="search-field"
+                ><svg class="ico"><use href="#i-search" /></svg
+                ><input
+                  id="searchInput"
+                  type="search"
+                  data-l10n-placeholder="searchPlaceholder"
+                  placeholder="搜索节点名或 UID"
+                  aria-label="搜索节点名或 UID"
+              /></label>
+              <label class="filter-select"
+                ><svg class="ico"><use href="#i-finger" /></svg
+                ><select id="phaseFilter" aria-label="状态筛选">
+                  <option value="all" data-l10n="allStates">
+                    所有状态（不含已移除）
+                  </option>
+                  <option value="Bound" data-l10n="bound">在线</option>
+                  <option value="Offline" data-l10n="offline">离线</option>
+                  <option value="Conflict" data-l10n="conflict">冲突</option>
+                  <option value="Retired" data-l10n="retired">
+                    已移除
+                  </option></select
+                ><svg class="ico"><use href="#i-chevron" /></svg
+              ></label>
+              <button class="button" id="toolbarRefresh" type="button">
+                <svg class="ico"><use href="#i-refresh" /></svg
+                ><span data-l10n="refresh">刷新</span>
+              </button>
+              <label class="filter-select"
+                ><svg class="ico"><use href="#i-network" /></svg
+                ><select id="clusterFilter" aria-label="集群筛选">
+                  <option value="all" data-l10n="allClusters">所有集群</option>
+                  <option value="s1u">深圳公司 S1U 调试集群</option>
+                  <option value="gpu">深圳公司本地开发集群</option></select
+                ><svg class="ico"><use href="#i-chevron" /></svg
+              ></label>
+              <button
+                class="button"
+                id="operationsButton"
+                type="button"
+                aria-expanded="false"
+              >
+                <svg class="ico"><use href="#i-jobs" /></svg
+                ><span data-l10n="nodeOperations">节点操作</span>
+              </button>
+              <small class="toolbar-count"
+                ><span id="resultCount">8</span>
+                <span data-l10n="results">条结果</span></small
+              >
+            </div>
+
+            <section class="operations-panel" id="operationsPanel" hidden>
+              <div class="panel-head">
+                <div class="panel-head-main">
+                  <h2 data-l10n="operationsHistory">节点操作记录</h2>
+                  <p data-l10n="operationsHistoryDesc">按集群筛选的最近操作</p>
+                </div>
+                <span class="count-pill">3</span>
+              </div>
+              <div class="ops-list">
+                <div>
+                  <strong>s1u-03-x86</strong><span>Remove · Reset</span
+                  ><span class="status pending"><i></i>Running</span>
+                </div>
+                <div>
+                  <strong>legacy-x86</strong><span>Join · Install</span
+                  ><span class="status failed"><i></i>Failed</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel node-panel" aria-labelledby="nodeTableTitle">
+              <header class="panel-head">
+                <div class="panel-head-main">
+                  <h2 id="nodeTableTitle" data-l10n="siteNodeRecords">
+                    场站节点
+                  </h2>
+                  <p>
+                    <span id="nodeCount">8</span>
+                    <span data-l10n="records">条记录</span>
+                  </p>
+                </div>
+                <span class="count-pill" id="nodeCountPill">8</span>
+              </header>
+              <div
+                class="bulk-bar"
+                role="group"
+                aria-label="Robot bulk controls"
+              >
+                <label class="bulk-title"
+                  ><svg class="ico"><use href="#i-power" /></svg
+                  ><span id="selectionSummary"
+                    >机器人：已选 0 / 3 台</span
+                  ></label
+                >
+                <div class="bulk-actions">
+                  <button
+                    class="button small"
+                    data-bulk="ready"
+                    type="button"
+                    disabled
+                    data-l10n="powerOn"
+                  >
+                    上电并自动驱动</button
+                  ><button
+                    class="button small"
+                    data-bulk="off"
+                    type="button"
+                    disabled
+                    data-l10n="powerOff"
+                  >
+                    关闭驱动并下电</button
+                  ><button
+                    class="button small"
+                    data-bulk="pose"
+                    type="button"
+                    disabled
+                  >
+                    <svg class="ico"><use href="#i-finger" /></svg
+                    ><span data-l10n="homePose">初始姿势</span>
+                  </button>
+                </div>
+              </div>
+              <div class="table-scroll">
+                <table class="data-table node-table">
+                  <thead>
+                    <tr>
+                      <th class="check-cell">
+                        <input
+                          id="selectAllRobots"
+                          type="checkbox"
+                          aria-label="Select all robots"
+                        />
+                      </th>
+                      <th data-l10n="node">节点</th>
+                      <th data-l10n="cluster">集群</th>
+                      <th data-l10n="state">状态</th>
+                      <th data-l10n="network">网络</th>
+                      <th data-l10n="admission">入网</th>
+                      <th data-l10n="wireGuardKey">WireGuard 公钥</th>
+                      <th data-l10n="model">机型</th>
+                      <th data-l10n="reboots">重启</th>
+                      <th data-l10n="uptime">运行时间</th>
+                      <th data-l10n="lastSeen">最近上报</th>
+                    </tr>
+                  </thead>
+                  <tbody id="nodeRows"></tbody>
+                </table>
+              </div>
+              <div class="table-foot">
+                <small
+                  ><span data-l10n="showing">显示</span> 8 / 8
+                  <span data-l10n="records">条记录</span></small
+                >
+                <button
+                  class="button small"
+                  id="loadMoreBtn"
+                  type="button"
+                  data-l10n="loadMore"
+                >
+                  加载更多
+                </button>
+              </div>
+              <div class="bulk-bottom" id="bulkBottom" hidden>
+                <strong id="bottomSelection"></strong
+                ><button
+                  class="button small"
+                  data-bulk="ready"
+                  type="button"
+                  disabled
+                  data-l10n="powerOn"
+                >
+                  上电并自动驱动</button
+                ><button
+                  class="button small"
+                  data-bulk="off"
+                  type="button"
+                  disabled
+                  data-l10n="powerOff"
+                >
+                  关闭驱动并下电</button
+                ><button
+                  class="button small"
+                  data-bulk="pose"
+                  type="button"
+                  disabled
+                  data-l10n="homePose"
+                >
+                  初始姿势</button
+                ><button
+                  class="button small ghost"
+                  id="clearSelection"
+                  type="button"
+                  data-l10n="clear"
+                >
+                  清空
+                </button>
+              </div>
+            </section>
+
+            <section class="panel records-panel" aria-labelledby="recordsTitle">
+              <header class="panel-head">
+                <div class="panel-head-main">
+                  <h2 id="recordsTitle" data-l10n="admissionRecords">
+                    入网记录
+                  </h2>
+                  <p data-l10n="admissionDesc">
+                    每台使用入网码或 SSH 加入的节点一条；码本身不会保存。
+                  </p>
+                </div>
+                <span class="count-pill" id="admissionCount">4</span>
+              </header>
+              <div class="table-scroll">
+                <table class="data-table records-table">
+                  <thead>
+                    <tr>
+                      <th data-l10n="node">节点</th>
+                      <th data-l10n="cluster">集群</th>
+                      <th data-l10n="state">状态</th>
+                      <th data-l10n="issuer">发码人</th>
+                      <th data-l10n="issued">发码时间</th>
+                      <th data-l10n="expires">过期时间</th>
+                      <th data-l10n="wireGuardKey">WireGuard 公钥</th>
+                      <th data-l10n="tunnelAddress">隧道地址</th>
+                      <th data-l10n="actions">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="admissionRows"></tbody>
+                </table>
+              </div>
+            </section>
+          </main>
+        </div>
+      </div>
+    </div>
+
+    <div class="scrim" id="drawerScrim" hidden></div>
+    <aside
+      class="drawer"
+      id="stationDrawer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="drawerTitle"
+      hidden
+    >
+      <header class="drawer-head">
+        <div class="drawer-head-main">
+          <span class="eyebrow" data-l10n="identityDetails">身份详情</span>
+          <h2 id="drawerTitle">s1u-02-x86</h2>
+          <div class="drawer-meta" id="drawerMeta"></div>
+        </div>
+        <button
+          class="icon-button"
+          id="closeDrawer"
+          type="button"
+          aria-label="Close"
+        >
+          <svg class="ico"><use href="#i-x" /></svg>
+        </button>
+      </header>
+      <div class="drawer-tabs" role="tablist" aria-label="Station details">
+        <button
+          type="button"
+          role="tab"
+          id="tab-overview"
+          aria-controls="panel-overview"
+          aria-selected="true"
+          data-tab="overview"
+          data-l10n="overview"
+        >
+          概览</button
+        ><button
+          type="button"
+          role="tab"
+          id="tab-network"
+          aria-controls="panel-network"
+          aria-selected="false"
+          data-tab="network"
+          data-l10n="network"
+        >
+          网络</button
+        ><button
+          type="button"
+          role="tab"
+          id="tab-conditions"
+          aria-controls="panel-conditions"
+          aria-selected="false"
+          data-tab="conditions"
+          data-l10n="conditions"
+        >
+          条件
+        </button>
+      </div>
+      <div class="drawer-body">
+        <section
+          class="drawer-panel"
+          id="panel-overview"
+          role="tabpanel"
+          aria-labelledby="tab-overview"
+        >
+          <div class="facts-strip">
+            <div class="fact">
+              <small data-l10n="uptime">运行时间</small
+              ><strong id="factUptime">6 天</strong>
+            </div>
+            <div class="fact">
+              <small data-l10n="reboots">重启次数</small
+              ><strong id="factReboots">1</strong>
+            </div>
+            <div class="fact">
+              <small data-l10n="lastSeen">最近上报</small
+              ><strong id="factSeen">23 秒前</strong>
+            </div>
+            <div class="fact">
+              <small data-l10n="cluster">集群</small
+              ><strong id="factCluster">S1U 调试集群</strong>
+            </div>
+          </div>
+          <section class="detail-card">
+            <div class="detail-card-head">
+              <svg class="ico"><use href="#i-user" /></svg
+              ><span data-l10n="identity">身份</span>
+            </div>
+            <div class="detail-grid">
+              <div class="detail-item">
+                <small data-l10n="recordName">记录名</small
+                ><strong id="factRecord">s1u-02-x86</strong>
+              </div>
+              <div class="detail-item">
+                <small data-l10n="cluster">集群</small
+                ><strong id="factCluster2">深圳公司 S1U 调试集群</strong>
+              </div>
+              <div class="detail-item wide">
+                <small>Node UID</small
+                ><span class="copy-value"
+                  ><code id="factUID">31d92cc8-019f-4ded-9817-821ac6579a24</code
+                  ><button
+                    class="copy-mini"
+                    type="button"
+                    data-copy="uid"
+                    aria-label="Copy Node UID"
+                  >
+                    <svg class="ico"><use href="#i-check" /></svg></button
+                ></span>
+              </div>
+              <div class="detail-item wide">
+                <small>System UUID</small
+                ><span class="copy-value"
+                  ><code>1c6f50a1-882e-815b-83c0-30c5994cd819</code
+                  ><button
+                    class="copy-mini"
+                    type="button"
+                    data-copy="uuid"
+                    aria-label="Copy System UUID"
+                  >
+                    <svg class="ico"><use href="#i-check" /></svg></button
+                ></span>
+              </div>
+            </div>
+          </section>
+          <section class="detail-card" id="robotDetail">
+            <div class="detail-card-head">
+              <svg class="ico"><use href="#i-power" /></svg
+              ><span data-l10n="robotPower">机器人电源</span>
+            </div>
+            <div class="robot-grid">
+              <div class="robot-fact">
+                <small data-l10n="desired">期望</small
+                ><span class="status joined"
+                  ><i></i><span data-l10n="powered">上电</span></span
+                >
+              </div>
+              <div class="robot-fact">
+                <small data-l10n="now">现在</small
+                ><span class="status joined"
+                  ><i></i><span data-l10n="powered">上电</span></span
+                >
+              </div>
+              <div class="robot-fact">
+                <small data-l10n="maintenance">维护</small
+                ><span class="status neutral"
+                  ><i></i><span data-l10n="none">无</span></span
+                >
+              </div>
+              <div class="robot-fact">
+                <small data-l10n="selfCheck">自检</small
+                ><span class="status joined"
+                  ><i></i><span data-l10n="healthy">正常</span></span
+                >
+              </div>
+            </div>
+            <details class="rules">
+              <summary data-l10n="powerRules">电源与维护规则</summary>
+              <p data-l10n="powerRuleText">
+                期望状态保存在节点上；该上电没电或驱动停止时会自动恢复。急停或硬件故障时不会重拉；机器人正在使用时，下电会等它空闲。
+              </p>
+            </details>
+            <div class="robot-actions">
+              <button
+                class="button small"
+                type="button"
+                data-drawer-power="on"
+                data-l10n="powerOnShort"
+              >
+                上电</button
+              ><button
+                class="button small"
+                type="button"
+                data-drawer-power="driver-on"
+                data-l10n="driverOn"
+              >
+                启动驱动</button
+              ><button
+                class="button small"
+                type="button"
+                data-drawer-power="driver-off"
+                data-l10n="driverOff"
+              >
+                关闭驱动</button
+              ><button
+                class="button small danger"
+                type="button"
+                data-drawer-power="off"
+                data-l10n="powerOffShort"
+              >
+                下电</button
+              ><button
+                class="button small"
+                type="button"
+                data-drawer-power="pose"
+                data-l10n="homePose"
+              >
+                初始姿势
+              </button>
+            </div>
+          </section>
+          <section class="detail-card">
+            <div class="detail-card-head">
+              <svg class="ico"><use href="#i-camera" /></svg
+              ><span data-l10n="cameras">相机</span>
+            </div>
+            <div class="camera-grid">
+              <div class="camera-item">
+                <span class="camera-icon"
+                  ><svg class="ico"><use href="#i-camera" /></svg></span
+                ><span
+                  ><strong data-l10n="headCamera">头部</strong
+                  ><small>在线 · 30 fps</small></span
+                >
+              </div>
+              <div class="camera-item">
+                <span class="camera-icon"
+                  ><svg class="ico"><use href="#i-camera" /></svg></span
+                ><span
+                  ><strong data-l10n="leftWrist">左腕</strong
+                  ><small>在线 · 30 fps</small></span
+                >
+              </div>
+              <div class="camera-item">
+                <span class="camera-icon"
+                  ><svg class="ico"><use href="#i-camera" /></svg></span
+                ><span
+                  ><strong data-l10n="rightWrist">右腕</strong
+                  ><small>在线 · 30 fps</small></span
+                >
+              </div>
+              <div class="camera-item">
+                <span class="camera-icon"
+                  ><svg class="ico"><use href="#i-camera" /></svg></span
+                ><span
+                  ><strong data-l10n="backCamera">背部</strong
+                  ><small>在线 · 15 fps</small></span
+                >
+              </div>
+            </div>
+          </section>
+        </section>
+        <section
+          class="drawer-panel"
+          id="panel-network"
+          role="tabpanel"
+          aria-labelledby="tab-network"
+          hidden
+        >
+          <div class="network-hero">
+            <span class="network-hero-icon"
+              ><svg class="ico"><use href="#i-wifi" /></svg
+            ></span>
+            <div>
+              <strong id="networkHeroTitle">网络已验证</strong
+              ><small id="networkHeroNote"
+                >6 个 Hub 全部连通 · 最近探测 8 秒前</small
+              >
+            </div>
+          </div>
+          <section class="detail-card">
+            <div class="detail-card-head">
+              <svg class="ico"><use href="#i-key" /></svg
+              ><span data-l10n="tunnelAndAdmission">隧道与入网</span>
+            </div>
+            <div class="detail-grid">
+              <div class="detail-item wide">
+                <small data-l10n="wireGuardKey">WireGuard 公钥</small
+                ><span class="copy-value"
+                  ><code id="drawerWG">5E9Iw0BvF8K2pQ7mN4rT1xLc6yHs3dJa</code
+                  ><button
+                    class="copy-mini"
+                    type="button"
+                    data-copy="wg"
+                    aria-label="Copy WireGuard key"
+                  >
+                    <svg class="ico"><use href="#i-check" /></svg></button
+                ></span>
+              </div>
+              <div class="detail-item">
+                <small data-l10n="tunnelAddress">隧道地址</small
+                ><strong id="drawerTunnel">10.254.240.7</strong>
+              </div>
+              <div class="detail-item">
+                <small data-l10n="admission">入网状态</small
+                ><strong id="drawerAdmission">已入网</strong>
+              </div>
+              <div class="detail-item">
+                <small data-l10n="issuer">发码人</small
+                ><strong id="drawerIssuer">admin</strong>
+              </div>
+              <div class="detail-item">
+                <small data-l10n="expires">过期时间</small
+                ><strong id="drawerExpires">2026-11-25 16:53</strong>
+              </div>
+              <div class="detail-item wide">
+                <small>SSH Login</small
+                ><strong
+                  ><code id="drawerSSH">root@10.254.240.7:22</code></strong
+                >
+              </div>
+              <div class="detail-item wide">
+                <small data-l10n="hostFingerprint">SSH 主机指纹</small
+                ><span class="copy-value"
+                  ><code id="drawerHostKey"
+                    >SHA256:8f3c1d9e2a7b4c6d0e5f1a2b3c4d5e6f7a8b9c0d</code
+                  ><button
+                    class="copy-mini"
+                    type="button"
+                    data-copy="hostkey"
+                    aria-label="Copy SSH host key"
+                  >
+                    <svg class="ico"><use href="#i-check" /></svg></button
+                ></span>
+              </div>
+            </div>
+          </section>
+          <section class="detail-card">
+            <div class="detail-card-head">
+              <svg class="ico"><use href="#i-network" /></svg
+              ><span data-l10n="hubProbes">Hub 探测</span>
+            </div>
+            <div class="hub-list">
+              <div class="hub-row">
+                <strong>s1u-hub-01</strong><small>12 ms</small
+                ><span class="network-state ok" data-l10n="reachable"
+                  >可达</span
+                >
+              </div>
+              <div class="hub-row">
+                <strong>s1u-hub-02</strong><small>18 ms</small
+                ><span class="network-state ok" data-l10n="reachable"
+                  >可达</span
+                >
+              </div>
+              <div class="hub-row">
+                <strong>s1u-hub-03</strong><small>21 ms</small
+                ><span class="network-state ok" data-l10n="reachable"
+                  >可达</span
+                >
+              </div>
+            </div>
+          </section>
+        </section>
+        <section
+          class="drawer-panel"
+          id="panel-conditions"
+          role="tabpanel"
+          aria-labelledby="tab-conditions"
+          hidden
+        >
+          <div class="condition-list">
+            <div class="condition-row">
+              <i class="condition-dot"></i>
+              <div class="condition-copy">
+                <strong data-l10n="heartbeat">心跳</strong
+                ><small
+                  >Observed · a fresh authenticated observation is
+                  available</small
+                >
+              </div>
+              <div class="condition-side">
+                <strong class="network-state ok" data-l10n="normal">正常</strong
+                ><small>12 秒前</small>
+              </div>
+            </div>
+            <div class="condition-row">
+              <i class="condition-dot"></i>
+              <div class="condition-copy">
+                <strong data-l10n="identityMatched">身份匹配</strong
+                ><small
+                  >IdentityMatched · the reporting Node matches this
+                  record</small
+                >
+              </div>
+              <div class="condition-side">
+                <strong class="network-state ok" data-l10n="normal">正常</strong
+                ><small>3 天前</small>
+              </div>
+            </div>
+            <div class="condition-row">
+              <i class="condition-dot"></i>
+              <div class="condition-copy">
+                <strong data-l10n="networkVerified">网络已验证</strong
+                ><small
+                  >NetworkVerified · all available peers answered through the
+                  tunnel</small
+                >
+              </div>
+              <div class="condition-side">
+                <strong class="network-state ok" data-l10n="normal">正常</strong
+                ><small>17 分钟前</small>
+              </div>
+            </div>
+            <div class="condition-row">
+              <i class="condition-dot"></i>
+              <div class="condition-copy">
+                <strong data-l10n="rlarkLinked">节点已就绪</strong
+                ><small
+                  >RLarkLinked · the corresponding RLark Node is Ready</small
+                >
+              </div>
+              <div class="condition-side">
+                <strong class="network-state ok" data-l10n="normal">正常</strong
+                ><small>2 天前</small>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <footer class="drawer-foot">
+        <div class="drawer-foot-left">
+          <button
+            class="button"
+            type="button"
+            id="drawerCloseBottom"
+            data-l10n="close"
+          >
+            关闭</button
+          ><small class="drawer-hint" id="deleteHint" data-l10n="deleteBlocked"
+            >节点仍在集群中，需先删除节点才能删除记录。</small
+          >
+        </div>
+        <div class="drawer-foot-actions">
+          <button class="button" type="button" id="drawerReissue">
+            <svg class="ico"><use href="#i-key" /></svg
+            ><span data-l10n="reissue">重发入网码</span></button
+          ><button
+            class="button"
+            type="button"
+            id="drawerRevoke"
+            data-l10n="revoke"
+          >
+            作废入网码</button
+          ><button
+            class="button danger"
+            type="button"
+            id="drawerDelete"
+            disabled
+          >
+            <svg class="ico"><use href="#i-trash" /></svg
+            ><span data-l10n="deleteRecord">删除记录</span>
+          </button>
+        </div>
+      </footer>
+    </aside>
+    <div class="confirm-scrim" id="confirmScrim" hidden>
+      <div
+        class="confirm-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirmTitle"
+      >
+        <h3 id="confirmTitle" data-l10n="confirmDelete">删除场站记录？</h3>
+        <p id="confirmText">删除后，仍在上报的节点会按新机器重新登记。</p>
+        <div class="confirm-actions">
+          <button
+            class="button"
+            id="confirmCancel"
+            type="button"
+            data-l10n="cancel"
+          >
+            取消</button
+          ><button
+            class="button danger"
+            id="confirmDelete"
+            type="button"
+            data-l10n="delete"
+          >
+            删除记录
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="scrim" id="navScrim" hidden></div>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden>
+      <svg class="ico"><use href="#i-check" /></svg><span id="toastText"></span>
+    </div>
+
+    <script>
+      (() => {
+        const text = {
+          zh: {
+            adminConsole: "管理后台",
+            workbench: "工作台",
+            dashboard: "管理工作台",
+            clusters: "集群",
+            clusterList: "集群列表",
+            nodes: "节点管理",
+            operations: "运维",
+            jobs: "任务管理",
+            domains: "网络域",
+            storage: "存储管理",
+            images: "镜像管理",
+            siteNodes: "场站节点",
+            clusterName: "深圳公司 S1U 调试集群",
+            clusterSummary: "8 个节点 · 6 在线 · 1 冲突",
+            online: "在线",
+            administrator: "系统管理员",
+            themeLight: "浅色",
+            themeDark: "深色",
+            eyebrow: "运维管理",
+            title: "场站节点",
+            description:
+              "查看场站机器的身份、心跳和入网状态。选择节点可查看完整网络与入网详情。",
+            refresh: "刷新",
+            joinNode: "加入节点",
+            totalNodes: "场站节点总数",
+            loadedRecords: "当前记录",
+            bound: "在线",
+            freshHeartbeat: "心跳正常",
+            offline: "离线",
+            staleHeartbeat: "心跳超时",
+            conflict: "冲突",
+            uidChanged: "节点 UID 不一致",
+            searchPlaceholder: "搜索节点名或 UID",
+            allStates: "所有状态（不含已移除）",
+            retired: "已移除",
+            allClusters: "所有集群",
+            nodeOperations: "节点操作",
+            results: "条结果",
+            operationsHistory: "节点操作记录",
+            operationsHistoryDesc: "按集群筛选的最近操作",
+            siteNodeRecords: "场站节点",
+            records: "条记录",
+            node: "节点",
+            cluster: "集群",
+            state: "状态",
+            network: "网络",
+            admission: "入网",
+            model: "机型",
+            reboots: "重启",
+            wireGuardKey: "WireGuard 公钥",
+            uptime: "运行时间",
+            lastSeen: "最近上报",
+            select: "选择",
+            issuer: "发码人",
+            issued: "发码时间",
+            expires: "过期时间",
+            tunnelAddress: "隧道地址",
+            actions: "操作",
+            powerOn: "上电并自动驱动",
+            powerOff: "关闭驱动并下电",
+            homePose: "初始姿势",
+            clear: "清空",
+            admissionRecords: "入网记录",
+            admissionDesc:
+              "每台使用入网码或 SSH 加入的节点一条；码本身不会保存。",
+            identityDetails: "身份详情",
+            overview: "概览",
+            conditions: "条件",
+            identity: "身份",
+            recordName: "记录名",
+            robotPower: "机器人电源",
+            desired: "期望",
+            now: "现在",
+            powered: "上电",
+            maintenance: "维护",
+            none: "无",
+            selfCheck: "自检",
+            healthy: "正常",
+            powerRules: "电源与维护规则",
+            powerRuleText:
+              "期望状态保存在节点上；该上电没电或驱动停止时会自动恢复。急停或硬件故障时不会重拉；机器人正在使用时，下电会等它空闲。",
+            powerOnShort: "上电",
+            driverOn: "启动驱动",
+            driverOff: "关闭驱动",
+            powerOffShort: "下电",
+            cameras: "相机",
+            headCamera: "头部",
+            leftWrist: "左腕",
+            rightWrist: "右腕",
+            backCamera: "背部",
+            tunnelAndAdmission: "隧道与入网",
+            hostFingerprint: "SSH 主机指纹",
+            hubProbes: "Hub 探测",
+            reachable: "可达",
+            heartbeat: "心跳",
+            normal: "正常",
+            identityMatched: "身份匹配",
+            networkVerified: "网络已验证",
+            rlarkLinked: "节点已就绪",
+            close: "关闭",
+            deleteBlocked: "节点仍在集群中，需先删除节点才能删除记录。",
+            reissue: "重发入网码",
+            revoke: "作废入网码",
+            deleteRecord: "删除记录",
+            confirmDelete: "删除场站记录？",
+            cancel: "取消",
+            delete: "删除记录",
+            all: "所有",
+            networkVerifiedShort: "已验证",
+            networkFailed: "探测失败",
+            networkUnknown: "未知",
+            notUsed: "未用入网码",
+            controlPlane: "控制面",
+            machineRobot: "机器人",
+            phaseBound: "在线",
+            phaseOffline: "离线",
+            phaseConflict: "冲突",
+            phaseRetired: "已移除",
+            admissionJoined: "已入网",
+            admissionPending: "待使用",
+            admissionRedeemed: "入网中",
+            admissionExpired: "已过期或作废",
+            noModel: "—",
+            noValue: "—",
+            deleteConfirmBody: "删除后，仍在上报的节点会按新机器重新登记。",
+            filterConflict: "冲突",
+            showing: "显示",
+            loadMore: "加载更多",
+            revokeConfirmBody: "作废后这条入网码不能再使用。",
+            clearJoinConfirmBody:
+              "这会按名称删除该节点（如果已创建），并清理入网记录。",
+            codeReissued: "已重新签发入网码。新码只显示一次，请立即复制。",
+            codeRevoked: "入网码已作废。",
+            recordDeleted: "场站节点记录已删除。",
+            bulkOnDone: "已提交上电并启动驱动。",
+            bulkOffDone: "已提交关闭驱动并下电。",
+            poseDone: "初始姿势指令已发送。",
+            copyDone: "已复制。",
+            poweredStatus: "上电",
+            networkSummaryOk: "6 个 Hub 全部连通 · 最近探测 8 秒前",
+            networkSummaryBad: "Hub 探测失败 · 请查看链路详情",
+            issuedBy: "发码",
+            on: "正常",
+            off: "未知",
+            unknown: "未知",
+            issuerLabel: "发码人",
+            rowTableDescription: "节点名、UID、身份和网络状态",
+            linkCopied: "已复制",
+            selectAll: "全选机器人",
+            noticeTitle: "危险操作",
+          },
+          en: {
+            adminConsole: "Admin console",
+            workbench: "Workbench",
+            dashboard: "Dashboard",
+            clusters: "Clusters",
+            clusterList: "Cluster list",
+            nodes: "Node management",
+            operations: "Operations",
+            jobs: "Jobs",
+            domains: "Domains",
+            storage: "Storage",
+            images: "Image registries",
+            siteNodes: "Site Nodes",
+            clusterName: "Shenzhen S1U test cluster",
+            clusterSummary: "8 nodes · 6 online · 1 conflict",
+            online: "Online",
+            administrator: "Administrator",
+            themeLight: "Light",
+            themeDark: "Dark",
+            eyebrow: "Operations",
+            title: "Site Nodes",
+            description:
+              "Review site machine identity, heartbeat, and admission status. Select a node for full network and admission details.",
+            refresh: "Refresh",
+            joinNode: "Add node",
+            totalNodes: "Site nodes",
+            loadedRecords: "Current records",
+            bound: "Online",
+            freshHeartbeat: "Heartbeat fresh",
+            offline: "Offline",
+            staleHeartbeat: "Heartbeat stale",
+            conflict: "Conflict",
+            uidChanged: "Node UID mismatch",
+            searchPlaceholder: "Search node name or UID",
+            allStates: "All states (excluding removed)",
+            retired: "Removed",
+            allClusters: "All clusters",
+            nodeOperations: "Node operations",
+            results: "results",
+            operationsHistory: "Node operation records",
+            operationsHistoryDesc: "Recent operations for this cluster",
+            siteNodeRecords: "Site Nodes",
+            records: "records",
+            node: "Node",
+            cluster: "Cluster",
+            state: "Status",
+            network: "Network",
+            admission: "Admission",
+            model: "Model",
+            reboots: "Reboots",
+            wireGuardKey: "WireGuard key",
+            uptime: "Uptime",
+            lastSeen: "Last report",
+            select: "Select",
+            issuer: "Issued by",
+            issued: "Issued",
+            expires: "Expires",
+            tunnelAddress: "Tunnel address",
+            actions: "Actions",
+            powerOn: "Power on and start driver",
+            powerOff: "Stop driver and power off",
+            homePose: "Home pose",
+            clear: "Clear",
+            admissionRecords: "Admission records",
+            admissionDesc:
+              "One record per node admitted by code or SSH. Codes are never stored.",
+            identityDetails: "Identity details",
+            overview: "Overview",
+            conditions: "Conditions",
+            identity: "Identity",
+            recordName: "Record name",
+            robotPower: "Robot power",
+            desired: "Desired",
+            now: "Now",
+            powered: "Powered",
+            maintenance: "Maintenance",
+            none: "None",
+            selfCheck: "Self-check",
+            healthy: "Healthy",
+            powerRules: "Power and maintenance rules",
+            powerRuleText:
+              "The desired state is stored on the Node and reconciled when power or the driver is unexpectedly lost. It is not restarted during emergency stop or hardware faults. Power-off waits until the robot is idle.",
+            powerOnShort: "Power on",
+            driverOn: "Start driver",
+            driverOff: "Stop driver",
+            powerOffShort: "Power off",
+            cameras: "Cameras",
+            headCamera: "Head",
+            leftWrist: "Left wrist",
+            rightWrist: "Right wrist",
+            backCamera: "Back",
+            tunnelAndAdmission: "Tunnel and admission",
+            hostFingerprint: "SSH host fingerprint",
+            hubProbes: "Hub probes",
+            reachable: "Reachable",
+            heartbeat: "Heartbeat",
+            normal: "Normal",
+            identityMatched: "Identity matched",
+            networkVerified: "Network verified",
+            rlarkLinked: "RLark linked",
+            close: "Close",
+            deleteBlocked:
+              "The Node is still in the cluster. Remove it before deleting this record.",
+            reissue: "Reissue code",
+            revoke: "Revoke code",
+            deleteRecord: "Delete record",
+            confirmDelete: "Delete this site record?",
+            cancel: "Cancel",
+            delete: "Delete record",
+            all: "All",
+            networkVerifiedShort: "Verified",
+            networkFailed: "Probe failed",
+            networkUnknown: "Unknown",
+            notUsed: "Unused",
+            controlPlane: "Control plane",
+            machineRobot: "Robot",
+            phaseBound: "Online",
+            phaseOffline: "Offline",
+            phaseConflict: "Conflict",
+            phaseRetired: "Removed",
+            admissionJoined: "Joined",
+            admissionPending: "Pending",
+            admissionRedeemed: "Joining",
+            admissionExpired: "Expired or revoked",
+            noModel: "—",
+            noValue: "—",
+            deleteConfirmBody:
+              "A node still reporting under this name will register again as a new machine.",
+            filterConflict: "Conflict",
+            showing: "Showing",
+            loadMore: "Load more",
+            revokeConfirmBody: "The join code will no longer be redeemable.",
+            clearJoinConfirmBody:
+              "This removes the Node by name if it exists and clears its admission record.",
+            codeReissued:
+              "A new join code was issued. It is shown once, so copy it now.",
+            codeRevoked: "The join code was revoked.",
+            recordDeleted: "The site node record was deleted.",
+            bulkOnDone: "Power-on and driver-start requested.",
+            bulkOffDone: "Driver-stop and power-off requested.",
+            poseDone: "Home pose command sent.",
+            copyDone: "Copied.",
+            poweredStatus: "Powered",
+            networkSummaryOk: "All 6 hubs connected · last probe 8 seconds ago",
+            networkSummaryBad: "Hub probe failed · see link details",
+            issuedBy: "Issued",
+            on: "Healthy",
+            off: "Unknown",
+            unknown: "Unknown",
+            issuerLabel: "Issuer",
+            rowTableDescription: "Node name, UID, identity and network status",
+            linkCopied: "Copied",
+            selectAll: "Select robots",
+            noticeTitle: "Dangerous action",
+          },
+        };
+        const clusters = {
+          s1u: { zh: "深圳公司 S1U 调试集群", en: "Shenzhen S1U test cluster" },
+          gpu: { zh: "深圳公司本地开发集群", en: "Shenzhen local GPU cluster" },
+        };
+        const nodes = [
+          {
+            name: "s1u-hub-01",
+            uid: "4fd62c79-629f-4fec-b0a3-7fe739757021",
+            uuid: "78aa5e6c-10d2-4f5b-9ac5-44c98a6b01c1",
+            cluster: "s1u",
+            phase: "Bound",
+            network: "verified",
+            admission: "Joined",
+            key: "5G04sN3JOyTz9F1aP4xWm6Qv8cK2dR7s",
+            model: "s1u",
+            reboots: 0,
+            uptime: "13 天 20 小时",
+            lastSeen: "7 秒前",
+            labels: { robot: true, cp: true },
+            robot: true,
+            hasNode: true,
+            system: "Ubuntu 22.04 · aarch64",
+            tunnel: "10.254.240.1",
+            ssh: "root@10.254.240.1:22",
+            host: "SHA256:ab19d8e72544f921a6f9d83cb7e0aa91",
+            power: "ready",
+          },
+          {
+            name: "s1u-02-x86",
+            uid: "31d92cc8-019f-4ded-9817-821ac6579a24",
+            uuid: "1c6f50a1-882e-815b-83c0-30c5994cd819",
+            cluster: "s1u",
+            phase: "Bound",
+            network: "verified",
+            admission: "Joined",
+            key: "5E9Iw0BvF8K2pQ7mN4rT1xLc6yHs3dJa",
+            model: "s1u",
+            reboots: 1,
+            uptime: "6 天",
+            lastSeen: "23 秒前",
+            labels: { robot: true },
+            robot: true,
+            hasNode: true,
+            system: "Ubuntu 22.04 · x86_64",
+            tunnel: "10.254.240.7",
+            ssh: "root@10.254.240.7:22",
+            host: "SHA256:8f3c1d9e2a7b4c6d0e5f1a2b3c4d5e6f",
+            power: "ready",
+          },
+          {
+            name: "s1u-03-x86",
+            uid: "a5f244ad-3bc9-4220-b14c-7becf602e316",
+            uuid: "3661390e-920b-4d65-92fa-fdb29cb98df9",
+            cluster: "s1u",
+            phase: "Offline",
+            network: "unknown",
+            admission: "Joined",
+            key: "LQt9/xLjhc9X3qVg6cJ2mM0aR5pK1nYd",
+            model: "s1u",
+            reboots: 2,
+            uptime: "3 天 20 小时",
+            lastSeen: "13 分钟前",
+            labels: { robot: true },
+            robot: true,
+            hasNode: true,
+            system: "Ubuntu 22.04 · x86_64",
+            tunnel: "10.254.240.8",
+            ssh: "admin@10.254.240.8:22",
+            host: "SHA256:51aaf44b12cd7f9bb136fb5514c19c20",
+            power: "off",
+          },
+          {
+            name: "gpu-node-10-2",
+            uid: "b4a0810a-e899-4240-8779-306193c54b82",
+            uuid: "0dfa9b6a-1c7d-4678-a90c-31371dd882f1",
+            cluster: "gpu",
+            phase: "Bound",
+            network: "failed",
+            admission: "Joined",
+            key: "uAC5Qh10D7xR9m3sK1eT6aL0vB2pN8zF",
+            model: "A100",
+            reboots: 0,
+            uptime: "47 分钟",
+            lastSeen: "16 秒前",
+            labels: {},
+            robot: false,
+            hasNode: true,
+            system: "Ubuntu 22.04 · x86_64",
+            tunnel: "10.254.240.22",
+            ssh: "root@10.11.14.32:22",
+            host: "SHA256:640289abcd03581709efabcd4a98e921",
+            power: "unknown",
+          },
+          {
+            name: "legacy-node-07",
+            uid: "ce8bac2a-d4db-453c-b1fd-c359921ae424",
+            uuid: "9c8a3491-1884-4d52-92d6-40744c91b184",
+            cluster: "gpu",
+            phase: "Conflict",
+            network: "failed",
+            admission: "Unused",
+            key: "DwjZ57W8YabX2f0pG4mN1kVq3cR9sT6u",
+            model: "—",
+            reboots: 0,
+            uptime: "—",
+            lastSeen: "2 分钟前",
+            labels: {},
+            robot: false,
+            hasNode: false,
+            system: "—",
+            tunnel: "—",
+            ssh: "—",
+            host: "—",
+            power: "unknown",
+          },
+          {
+            name: "robot-lab-04",
+            uid: "61e13bc9-a917-4ccf-bdc8-e8650abd0923",
+            uuid: "84771991-b3f4-4a9a-972b-f684246f3251",
+            cluster: "s1u",
+            phase: "Bound",
+            network: "verified",
+            admission: "Pending",
+            key: "9A3tJk5pM2zL8qR1vF6cN0xD4wH7sB9e",
+            model: "s1u",
+            reboots: 3,
+            uptime: "19 天 18 小时",
+            lastSeen: "32 秒前",
+            labels: { robot: true },
+            robot: true,
+            hasNode: true,
+            system: "Ubuntu 22.04 · aarch64",
+            tunnel: "10.254.240.9",
+            ssh: "robot@10.254.240.9:22",
+            host: "SHA256:fb7107ca667102f58ea6a38bd842ab1c",
+            power: "ready",
+          },
+          {
+            name: "edge-camera-02",
+            uid: "df847e1f-d67a-4be7-9f4f-9f2480734a4b",
+            uuid: "ffbc817d-1c0a-4463-8551-2606f8d190ea",
+            cluster: "gpu",
+            phase: "Bound",
+            network: "verified",
+            admission: "Joined",
+            key: "UA0s9K8xWz3rN1aV5mF2eT7cP4qL6hJd",
+            model: "edge",
+            reboots: 1,
+            uptime: "8 天 3 小时",
+            lastSeen: "1 分钟前",
+            labels: {},
+            robot: false,
+            hasNode: true,
+            system: "Ubuntu 20.04 · aarch64",
+            tunnel: "10.254.240.33",
+            ssh: "operator@10.12.8.33:22",
+            host: "SHA256:9d485388047251a0bfcaf212ff020c11",
+            power: "unknown",
+          },
+          {
+            name: "s1u-05-x86",
+            uid: "b03955a3-46f1-49b7-9df8-efba2bd4cc82",
+            uuid: "48aad39d-3a77-44a4-a9fc-ef2249813f11",
+            cluster: "s1u",
+            phase: "Offline",
+            network: "unknown",
+            admission: "Unused",
+            key: "pH2u8mK1Jf6sA5cD9eL0vR3xN7qB4wYz",
+            model: "s1u",
+            reboots: 4,
+            uptime: "2 天 11 小时",
+            lastSeen: "21 分钟前",
+            labels: { robot: true },
+            robot: true,
+            hasNode: true,
+            system: "Ubuntu 22.04 · x86_64",
+            tunnel: "10.254.240.13",
+            ssh: "root@10.254.240.13:22",
+            host: "SHA256:107f2bc933daa5b7fc290c28d1e6c0ab",
+            power: "off",
+          },
+        ];
+        const admissions = [
+          {
+            node: "s1u-01-x86",
+            cluster: "s1u",
+            state: "Joined",
+            issuer: "admin",
+            issued: "2026-11-24 11:32",
+            expires: "2026-11-25 11:32",
+            key: "YxGnFRDjE+8kZ5Np7Jm0qWs2HvA9cL3d",
+            tunnel: "10.254.240.3",
+            ssh: "",
+            host: "",
+            reason: "",
+          },
+          {
+            node: "s1u-06-x86",
+            cluster: "s1u",
+            state: "Pending",
+            issuer: "sliu",
+            issued: "2026-11-24 11:30",
+            expires: "2026-11-25 11:30",
+            key: "",
+            tunnel: "—",
+            ssh: "",
+            host: "",
+            reason: "",
+          },
+          {
+            node: "s1u-03-x86",
+            cluster: "s1u",
+            state: "Redeemed",
+            issuer: "admin",
+            issued: "2026-11-23 10:08",
+            expires: "2026-11-24 10:08",
+            key: "LQt9/xLjhc9X3qVg6cJ2mM0aR5pK1nYd",
+            tunnel: "10.254.240.8",
+            ssh: "",
+            host: "",
+            reason: "Hub reachable; waiting for node readiness",
+            stuck: true,
+          },
+          {
+            node: "gpu-old-09",
+            cluster: "gpu",
+            state: "Expired",
+            issuer: "admin",
+            issued: "2026-11-17 10:08",
+            expires: "2026-11-18 10:08",
+            key: "",
+            tunnel: "10.254.240.9",
+            ssh: "SSH robot@10.11.107.154:22",
+            host: "SHA256:03a82f4c8d7791e2b632a10c19d6742f",
+            reason: "Code expired before use",
+          },
+        ];
+        const state = {
+          lang: "zh",
+          theme: "light",
+          phase: "all",
+          cluster: "all",
+          query: "",
+          selected: null,
+          tab: "overview",
+          chosen: new Set(),
+          drawerReturn: null,
+          confirmWork: null,
+        };
+        const $ = (selector, root = document) => root.querySelector(selector);
+        const $$ = (selector, root = document) => [
+          ...root.querySelectorAll(selector),
+        ];
+        const t = (key) => text[state.lang][key] ?? key;
+        // The fixture durations are written in Chinese; show their English form when the page is.
+        function duration(value) {
+          if (state.lang === "zh" || !value || value === "—") return value;
+          return String(value)
+            .replace(/(\d+)\s*天/g, "$1 d")
+            .replace(/(\d+)\s*小时/g, "$1 h")
+            .replace(/(\d+)\s*分钟前/g, "$1m ago")
+            .replace(/(\d+)\s*分钟/g, "$1 min")
+            .replace(/(\d+)\s*秒前/g, "$1s ago");
+        }
+        const icon = (name) =>
+          `<svg class="ico" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+        const escapeHTML = (value) =>
+          String(value ?? "").replace(
+            /[&<>"']/g,
+            (char) =>
+              ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+              })[char],
+          );
+        const clusterName = (id) => clusters[id]?.[state.lang] ?? id;
+        const phaseLabel = (phase) =>
+          ({
+            Bound: t("phaseBound"),
+            Offline: t("phaseOffline"),
+            Conflict: t("phaseConflict"),
+            Retired: t("phaseRetired"),
+          })[phase] ?? phase;
+        const admissionLabel = (value) =>
+          ({
+            Joined: t("admissionJoined"),
+            Pending: t("admissionPending"),
+            Redeemed: t("admissionRedeemed"),
+            Expired: t("admissionExpired"),
+            Unused: t("notUsed"),
+          })[value] ?? value;
+        const networkLabel = (value) =>
+          value === "verified"
+            ? t("networkVerifiedShort")
+            : value === "failed"
+              ? t("networkFailed")
+              : t("networkUnknown");
+        const networkClass = (value) =>
+          value === "verified" ? "ok" : value === "failed" ? "bad" : "unknown";
+        const statusClass = (item) =>
+          ({
+            Bound: "online",
+            Offline: "offline",
+            Conflict: "conflict",
+            Retired: "neutral",
+          })[item.phase] ?? "neutral";
+        const nodeAdmission = (node) =>
+          admissions.find((item) => item.node === node);
+        const visibleNodes = () =>
+          nodes.filter((node) => {
+            const matchesPhase =
+              state.phase === "all" || node.phase === state.phase;
+            const matchesCluster =
+              state.cluster === "all" || node.cluster === state.cluster;
+            const haystack = [node.name, node.uid, node.cluster, node.model]
+              .join(" ")
+              .toLowerCase();
+            return (
+              matchesPhase &&
+              matchesCluster &&
+              haystack.includes(state.query.toLowerCase())
+            );
+          });
+        const statusPill = (value, kind) =>
+          `<span class="status ${kind}"><i></i>${escapeHTML(value)}</span>`;
+        const shortKey = (value) => (value ? `${value.slice(0, 10)}…` : "—");
+
+        function renderNodes() {
+          const rows = visibleNodes();
+          $("#resultCount").textContent = rows.length;
+          $("#nodeCount").textContent = rows.length;
+          $("#nodeCountPill").textContent = rows.length;
+          const body = $("#nodeRows");
+          body.innerHTML = rows
+            .map((node) => {
+              const record = nodeAdmission(node.name);
+              const joined =
+                record?.state === "Joined" ||
+                (!record && node.phase === "Bound");
+              const admission = record
+                ? record.state
+                : joined
+                  ? "Joined"
+                  : "Unused";
+              const admissionKind =
+                admission === "Joined"
+                  ? "joined"
+                  : admission === "Expired"
+                    ? "expired"
+                    : admission === "Unused"
+                      ? "neutral"
+                      : "pending";
+              const network =
+                node.network === "verified"
+                  ? `<span class="network-state ok">${icon("check")} ${escapeHTML(networkLabel(node.network))}</span>`
+                  : node.network === "failed"
+                    ? `<span class="network-state bad">${icon("alert")} ${escapeHTML(networkLabel(node.network))}</span>`
+                    : `<span class="network-state unknown">${icon("wifi")} ${escapeHTML(networkLabel(node.network))}</span>`;
+              return `<tr tabindex="0" data-node="${escapeHTML(node.name)}" class="${state.selected === node.name ? "selected" : ""}" aria-label="${escapeHTML(node.name)} · ${escapeHTML(phaseLabel(node.phase))}">
+        <td class="check-cell">${node.robot ? `<input type="checkbox" data-select-node="${escapeHTML(node.name)}" aria-label="${state.lang === "zh" ? "选中机器人" : "Select robot"} ${escapeHTML(node.name)}" ${state.chosen.has(node.name) ? "checked" : ""}>` : ""}</td>
+        <td class="node-cell"><div class="node-name-line"><strong class="node-name" title="${escapeHTML(node.name)}">${escapeHTML(node.name)}</strong>${node.labels.cp ? `<span class="cp-chip">${escapeHTML(t("controlPlane"))}</span>` : ""}</div><code class="node-id" title="${escapeHTML(node.uid)}">${escapeHTML(node.uid.slice(0, 8))}…${escapeHTML(node.uid.slice(-4))}</code></td>
+        <td title="${escapeHTML(clusterName(node.cluster))}">${escapeHTML(clusterName(node.cluster))}</td>
+        <td>${statusPill(phaseLabel(node.phase), statusClass(node))}</td>
+        <td>${node.phase === "Retired" ? `<span class="status neutral"><i></i>—</span>` : network}</td>
+        <td>${statusPill(admissionLabel(admission), admissionKind)}</td>
+        <td><code class="admission-key" title="${escapeHTML(node.key)}">${escapeHTML(shortKey(node.key))}</code></td>
+        <td><span class="model-chip">${escapeHTML(node.model || t("noModel"))}</span></td>
+        <td>${node.reboots ?? "—"}</td>
+        <td>${escapeHTML(duration(node.uptime))}</td>
+        <td class="time-cell" title="2026-11-24T11:32:56+08:00">${escapeHTML(duration(node.lastSeen))}</td>
+      </tr>`;
+            })
+            .join("");
+          const visibleRobotNames = rows
+            .filter((row) => row.robot)
+            .map((row) => row.name);
+          const selectedVisible = visibleRobotNames.filter((name) =>
+            state.chosen.has(name),
+          );
+          $("#selectionSummary").textContent =
+            state.lang === "zh"
+              ? `机器人：已选 ${selectedVisible.length} / ${visibleRobotNames.length} 台`
+              : `Robots · ${selectedVisible.length}/${visibleRobotNames.length} selected`;
+          $("#selectAllRobots").checked =
+            visibleRobotNames.length > 0 &&
+            selectedVisible.length === visibleRobotNames.length;
+          $("#selectAllRobots").indeterminate =
+            selectedVisible.length > 0 &&
+            selectedVisible.length < visibleRobotNames.length;
+          const buttons = $$("[data-bulk]");
+          buttons.forEach((button) =>
+            button.disabled === undefined
+              ? null
+              : (button.disabled = selectedVisible.length === 0),
+          );
+          $("#bulkBottom").hidden = selectedVisible.length === 0;
+          $("#bottomSelection").textContent =
+            state.lang === "zh"
+              ? `已选 ${selectedVisible.length} 台机器人`
+              : `${selectedVisible.length} robots selected`;
+          $("#bulkBottom")
+            .querySelectorAll("[data-bulk]")
+            .forEach(
+              (button) => (button.disabled = selectedVisible.length === 0),
+            );
+          if (rows.length === 0)
+            body.innerHTML = `<tr><td class="empty-state" colspan="11">${state.lang === "zh" ? "没有匹配的场站节点" : "No matching site nodes"}</td></tr>`;
+        }
+
+        function renderAdmissions() {
+          $("#admissionCount").textContent = admissions.length;
+          $("#admissionRows").innerHTML = admissions
+            .map((item, index) => {
+              const expired = item.state === "Expired";
+              const stateClass =
+                item.stuck || expired
+                  ? "expired"
+                  : item.state === "Joined"
+                    ? "joined"
+                    : item.state === "Pending"
+                      ? "pending"
+                      : "pending";
+              const stateText = item.stuck
+                ? state.lang === "zh"
+                  ? "卡住"
+                  : "Stuck"
+                : admissionLabel(item.state);
+              const detail = [
+                item.ssh,
+                item.host ? `Host key ${item.host}` : "",
+                item.reason,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              return `<tr data-admission="${index}"><td><div class="record-node"><strong>${escapeHTML(item.node)}</strong>${item.key ? `<small>WG ${escapeHTML(shortKey(item.key))}</small>` : ""}${detail ? `<small title="${escapeHTML(detail)}">${escapeHTML(detail)}</small>` : ""}</div></td>
+        <td>${escapeHTML(clusterName(item.cluster))}</td><td>${statusPill(stateText, stateClass)}</td><td>${escapeHTML(item.issuer || "—")}</td><td><span class="record-times">${escapeHTML(item.issued)}</span></td><td><span class="record-times">${escapeHTML(item.expires)}</span></td><td><code class="admission-key" title="${escapeHTML(item.key)}">${escapeHTML(shortKey(item.key))}</code></td><td><code class="mono-value">${escapeHTML(item.tunnel)}</code></td>
+        <td><div class="table-actions"><button class="button small" data-reissue="${index}" type="button">${state.lang === "zh" ? "重发" : "Reissue"}</button>${item.state === "Pending" ? `<button class="button small danger" data-revoke="${index}" type="button">${state.lang === "zh" ? "作废" : "Revoke"}</button>` : ""}${item.state === "Redeemed" ? `<button class="button small danger" data-clear="${index}" type="button">${state.lang === "zh" ? "清掉重来" : "Start over"}</button>` : ""}</div></td></tr>`;
+            })
+            .join("");
+        }
+
+        function setLanguage(lang) {
+          state.lang = lang;
+          document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+          $$("[data-l10n]").forEach((element) => {
+            const key = element.dataset.l10n;
+            element.textContent = text[lang][key] ?? element.textContent;
+          });
+          $$("[data-l10n-placeholder]").forEach(
+            (element) =>
+              (element.placeholder =
+                text[lang][element.dataset.l10nPlaceholder] ?? ""),
+          );
+          $("#languageToggle").textContent = lang === "zh" ? "EN" : "中文";
+          $("#themeText").textContent =
+            lang === "zh"
+              ? state.theme === "light"
+                ? "深色"
+                : "浅色"
+              : state.theme === "light"
+                ? "Dark"
+                : "Light";
+          $("#searchInput").setAttribute(
+            "aria-label",
+            text[lang].searchPlaceholder,
+          );
+          $("#phaseFilter").setAttribute("aria-label", text[lang].state);
+          $("#clusterFilter").setAttribute("aria-label", text[lang].cluster);
+          renderNodes();
+          renderAdmissions();
+          if (state.selected) renderDrawer(state.selected);
+        }
+
+        function setTheme(theme) {
+          state.theme = theme;
+          document.documentElement.dataset.theme = theme;
+          $("#themeIcon").setAttribute(
+            "href",
+            theme === "light" ? "#i-moon" : "#i-sun",
+          );
+          $("#themeText").textContent =
+            state.lang === "zh"
+              ? theme === "light"
+                ? "深色"
+                : "浅色"
+              : theme === "light"
+                ? "Dark"
+                : "Light";
+        }
+        function toast(message) {
+          const box = $("#toast");
+          $("#toastText").textContent = message;
+          box.hidden = false;
+          clearTimeout(toast.timer);
+          toast.timer = setTimeout(() => (box.hidden = true), 2300);
+        }
+        function selectTab(name, focus = false) {
+          state.tab = name;
+          $$('.drawer-tabs [role="tab"]').forEach((tab) => {
+            const active = tab.dataset.tab === name;
+            tab.setAttribute("aria-selected", String(active));
+            tab.tabIndex = active ? 0 : -1;
+            if (active && focus) tab.focus();
+          });
+          $$(".drawer-panel").forEach(
+            (panel) => (panel.hidden = panel.id !== `panel-${name}`),
+          );
+        }
+        function renderDrawer(node) {
+          state.selected = node.name;
+          $("#drawerTitle").textContent = node.name;
+          const record = nodeAdmission(node.name);
+          const netText = networkLabel(node.network);
+          const online = node.phase === "Bound";
+          $("#drawerMeta").innerHTML =
+            `${statusPill(phaseLabel(node.phase), statusClass(node))}<span class="drawer-meta-text">${escapeHTML(clusterName(node.cluster))}</span><span class="network-state ${networkClass(node.network)}">${icon(node.network === "failed" ? "alert" : "wifi")} ${escapeHTML(netText)}</span><span class="drawer-meta-text">${t("lastSeen")} ${escapeHTML(node.lastSeen)}</span>`;
+          $("#factUptime").textContent = duration(node.uptime);
+          $("#factReboots").textContent = node.reboots;
+          $("#factSeen").textContent = duration(node.lastSeen);
+          $("#factCluster").textContent = clusterName(node.cluster);
+          $("#factRecord").textContent = node.name;
+          $("#factCluster2").textContent = clusterName(node.cluster);
+          $("#factUID").textContent = node.uid;
+          $("#drawerWG").textContent = node.key || "—";
+          $("#drawerTunnel").textContent = node.tunnel;
+          $("#drawerAdmission").textContent = admissionLabel(
+            record?.state ?? node.admission,
+          );
+          $("#drawerIssuer").textContent = record?.issuer || "—";
+          $("#drawerExpires").textContent = record?.expires || "—";
+          $("#drawerSSH").textContent = node.ssh;
+          $("#drawerHostKey").textContent = node.host;
+          $("#networkHeroTitle").textContent =
+            node.network === "verified"
+              ? t("networkVerifiedShort")
+              : networkLabel(node.network);
+          $("#networkHeroNote").textContent =
+            node.network === "verified"
+              ? text[state.lang].networkSummaryOk
+              : text[state.lang].networkSummaryBad;
+          $("#robotDetail").hidden = !node.robot;
+          const eligible =
+            node.phase === "Conflict" ||
+            node.phase === "Retired" ||
+            !node.hasNode;
+          $("#drawerDelete").disabled = !eligible;
+          $("#deleteHint").hidden = eligible;
+          $("#drawerRevoke").disabled = !record || record.state !== "Pending";
+          selectTab(state.tab || "overview");
+          $("#drawerScrim").hidden = false;
+          $("#stationDrawer").hidden = false;
+          $("#closeDrawer").focus();
+        }
+        function closeDrawer() {
+          if ($("#stationDrawer").hidden) return;
+          $("#drawerScrim").hidden = true;
+          $("#stationDrawer").hidden = true;
+          state.selected = null;
+          if (state.drawerReturn?.isConnected) state.drawerReturn.focus();
+        }
+        function viewNode(name) {
+          const node = nodes.find((item) => item.name === name);
+          if (!node) return;
+          state.drawerReturn = document.activeElement;
+          renderDrawer(node);
+        }
+        function confirmDelete() {
+          const node = nodes.find((item) => item.name === state.selected);
+          if (!node) return;
+          openConfirmation(
+            state.lang === "zh"
+              ? `删除场站记录 ${node.name}？`
+              : `Delete site record ${node.name}?`,
+            text[state.lang].deleteConfirmBody,
+            t("deleteRecord"),
+            deleteRecord,
+          );
+        }
+        function openConfirmation(title, description, actionLabel, action) {
+          state.confirmWork = action;
+          $("#confirmTitle").textContent = title;
+          $("#confirmText").textContent = description;
+          $("#confirmDelete").textContent = actionLabel;
+          $("#confirmScrim").hidden = false;
+          $("#confirmDelete").focus();
+        }
+        function closeConfirmation() {
+          state.confirmWork = null;
+          $("#confirmScrim").hidden = true;
+        }
+        function completeConfirmation() {
+          const action = state.confirmWork;
+          closeConfirmation();
+          action?.();
+        }
+        function revokeAdmission(index) {
+          const admission = admissions[index];
+          if (!admission) return;
+          openConfirmation(
+            state.lang === "zh"
+              ? `作废 ${admission.node} 的入网码？`
+              : `Revoke the join code for ${admission.node}?`,
+            state.lang === "zh"
+              ? "作废后这条入网码不能再使用。"
+              : "The join code will no longer be redeemable.",
+            t("revoke"),
+            () => {
+              admission.state = "Expired";
+              renderAdmissions();
+              toast(text[state.lang].codeRevoked);
+            },
+          );
+        }
+        function clearAdmission(index) {
+          const admission = admissions[index];
+          if (!admission) return;
+          openConfirmation(
+            state.lang === "zh"
+              ? `清理 ${admission.node} 的入网？`
+              : `Clear the unfinished join for ${admission.node}?`,
+            state.lang === "zh"
+              ? "这会按名称删除该节点（如果已创建），并清理入网记录。"
+              : "This removes the Node by name if it exists and clears its admission record.",
+            state.lang === "zh" ? "清掉重来" : "Start over",
+            () => {
+              const at = admissions.indexOf(admission);
+              if (at >= 0) admissions.splice(at, 1);
+              renderAdmissions();
+              toast(
+                state.lang === "zh"
+                  ? "入网记录已清理。"
+                  : "Admission record cleared.",
+              );
+            },
+          );
+        }
+        function deleteRecord() {
+          const name = state.selected;
+          const index = nodes.findIndex((item) => item.name === name);
+          if (index >= 0) nodes.splice(index, 1);
+          const admissionIndex = admissions.findIndex(
+            (item) => item.node === name,
+          );
+          if (admissionIndex >= 0) admissions.splice(admissionIndex, 1);
+          closeDrawer();
+          renderNodes();
+          renderAdmissions();
+          toast(text[state.lang].recordDeleted);
+        }
+        function applyFilter() {
+          state.query = $("#searchInput").value.trim().toLowerCase();
+          state.phase = $("#phaseFilter").value;
+          state.cluster = $("#clusterFilter").value;
+          renderNodes();
+        }
+        function updateSelected(name, checked) {
+          if (checked) state.chosen.add(name);
+          else state.chosen.delete(name);
+          renderNodes();
+        }
+        function bulkAction(action) {
+          const selected = visibleNodes().filter(
+            (node) => state.chosen.has(node.name) && node.robot,
+          );
+          if (!selected.length) return;
+          const message =
+            action === "ready"
+              ? text[state.lang].bulkOnDone
+              : action === "off"
+                ? text[state.lang].bulkOffDone
+                : text[state.lang].poseDone;
+          toast(`${message} (${selected.length})`);
+        }
+        function refresh() {
+          const button = $("#toolbarRefresh");
+          button.disabled = true;
+          button.classList.add("is-loading");
+          setTimeout(() => {
+            button.disabled = false;
+            button.classList.remove("is-loading");
+            toast(
+              state.lang === "zh"
+                ? "场站节点已刷新。"
+                : "Site nodes refreshed.",
+            );
+          }, 550);
+        }
+
+        document.addEventListener("input", (event) => {
+          if (event.target.id === "searchInput") applyFilter();
+        });
+        document.addEventListener("change", (event) => {
+          if (
+            event.target.id === "phaseFilter" ||
+            event.target.id === "clusterFilter"
+          )
+            applyFilter();
+          if (event.target.id === "selectAllRobots") {
+            visibleNodes()
+              .filter((node) => node.robot)
+              .forEach((node) =>
+                event.target.checked
+                  ? state.chosen.add(node.name)
+                  : state.chosen.delete(node.name),
+              );
+            renderNodes();
+          }
+          if (event.target.matches("[data-select-node]"))
+            updateSelected(
+              event.target.dataset.selectNode,
+              event.target.checked,
+            );
+        });
+        document.addEventListener("click", (event) => {
+          const row = event.target.closest("tr[data-node]");
+          if (row && !event.target.closest("button,input,a,select")) {
+            state.drawerReturn = row;
+            viewNode(row.dataset.node);
+            return;
+          }
+          const tab = event.target.closest("[data-tab]");
+          if (tab) {
+            selectTab(tab.dataset.tab);
+            return;
+          }
+          const bulk = event.target.closest("[data-bulk]");
+          if (bulk) {
+            bulkAction(bulk.dataset.bulk);
+            return;
+          }
+          const reissue = event.target.closest("[data-reissue]");
+          if (reissue) {
+            const admission = admissions[Number(reissue.dataset.reissue)];
+            admission.issuer = "admin";
+            admission.state = "Pending";
+            admission.issued = "2026-11-24 12:00";
+            admission.expires = "2026-11-25 12:00";
+            renderAdmissions();
+            toast(text[state.lang].codeReissued);
+            return;
+          }
+          const revoke = event.target.closest("[data-revoke]");
+          if (revoke) {
+            revokeAdmission(Number(revoke.dataset.revoke));
+            return;
+          }
+          const clear = event.target.closest("[data-clear]");
+          if (clear) {
+            clearAdmission(Number(clear.dataset.clear));
+            return;
+          }
+          if (event.target.closest("#joinBtn")) {
+            toast(
+              state.lang === "zh" ? "打开“加入节点”页面" : "Opening Add node",
+            );
+            return;
+          }
+          if (event.target.closest("#loadMoreBtn")) {
+            toast(
+              state.lang === "zh"
+                ? "已加载全部示例记录。"
+                : "All sample records are loaded.",
+            );
+            return;
+          }
+          if (event.target.closest("#toolbarRefresh")) {
+            refresh();
+            return;
+          }
+          if (event.target.closest("#selectAllRobots")) return;
+          if (event.target.closest("#clearSelection")) {
+            state.chosen.clear();
+            renderNodes();
+            return;
+          }
+          if (
+            event.target.closest("#drawerScrim") ||
+            event.target.closest("#closeDrawer") ||
+            event.target.closest("#drawerCloseBottom")
+          ) {
+            closeDrawer();
+            return;
+          }
+          if (event.target.closest("#drawerReissue")) {
+            const record = nodeAdmission(state.selected);
+            if (record) {
+              record.state = "Pending";
+              record.issued = "2026-11-24 12:00";
+              record.expires = "2026-11-25 12:00";
+            }
+            toast(text[state.lang].codeReissued);
+            renderAdmissions();
+            return;
+          }
+          if (event.target.closest("#drawerRevoke")) {
+            const index = admissions.findIndex(
+              (record) => record.node === state.selected,
+            );
+            if (index >= 0) revokeAdmission(index);
+            return;
+          }
+          if (event.target.closest("#drawerDelete")) {
+            confirmDelete();
+            return;
+          }
+          if (
+            event.target.closest("#confirmCancel") ||
+            event.target.id === "confirmScrim"
+          ) {
+            closeConfirmation();
+            return;
+          }
+          if (event.target.closest("#confirmDelete")) {
+            completeConfirmation();
+            return;
+          }
+          if (event.target.closest("#themeToggle")) {
+            setTheme(state.theme === "light" ? "dark" : "light");
+            return;
+          }
+          if (event.target.closest("#languageToggle")) {
+            setLanguage(state.lang === "zh" ? "en" : "zh");
+            return;
+          }
+          if (event.target.closest("#operationsButton")) {
+            const panel = $("#operationsPanel");
+            panel.hidden = !panel.hidden;
+            $("#operationsButton").setAttribute(
+              "aria-expanded",
+              String(!panel.hidden),
+            );
+            return;
+          }
+          if (event.target.closest("#mobileMenu")) {
+            const nav = $("#sidebar");
+            nav.classList.add("open");
+            $("#navScrim").hidden = false;
+            return;
+          }
+          if (event.target.closest("#navScrim")) {
+            $("#sidebar").classList.remove("open");
+            $("#navScrim").hidden = true;
+            return;
+          }
+          if (event.target.closest("[data-drawer-power]")) {
+            toast(text[state.lang].poseDone);
+          }
+        });
+        document.addEventListener("keydown", (event) => {
+          const row = event.target.closest?.("tr[data-node]");
+          if (
+            row &&
+            (event.key === "Enter" || event.key === " ") &&
+            !event.target.closest("button,input,a,select")
+          ) {
+            event.preventDefault();
+            state.drawerReturn = row;
+            viewNode(row.dataset.node);
+            return;
+          }
+          if (!$("#stationDrawer").hidden) {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              if (!$("#confirmScrim").hidden) {
+                closeConfirmation();
+                return;
+              }
+              closeDrawer();
+              return;
+            }
+            const active = event.target.closest("[role=tab]");
+            if (active) {
+              const tabs = $$("[role=tab]", $("#stationDrawer"));
+              const index = tabs.indexOf(active);
+              const next =
+                event.key === "ArrowRight"
+                  ? tabs[(index + 1) % tabs.length]
+                  : event.key === "ArrowLeft"
+                    ? tabs[(index + tabs.length - 1) % tabs.length]
+                    : event.key === "Home"
+                      ? tabs[0]
+                      : event.key === "End"
+                        ? tabs[tabs.length - 1]
+                        : null;
+              if (next) {
+                event.preventDefault();
+                selectTab(next.dataset.tab, true);
+                return;
+              }
+            }
+            if (event.key === "Tab") {
+              const drawer = $("#stationDrawer");
+              const focusables = $$(
+                [
+                  "button:not(:disabled)",
+                  "input:not(:disabled)",
+                  "select:not(:disabled)",
+                  "[tabindex]:not([tabindex='-1'])",
+                ].join(","),
+                drawer,
+              ).filter((item) => item.getClientRects().length);
+              const first = focusables[0],
+                last = focusables[focusables.length - 1];
+              if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+              } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+              }
+            }
+          }
+          if (event.key === "Escape" && !$("#confirmScrim").hidden)
+            closeConfirmation();
+        });
+        setLanguage("zh");
+        renderNodes();
+        renderAdmissions();
+      })();
+    </script>
+  </body>
+</html>

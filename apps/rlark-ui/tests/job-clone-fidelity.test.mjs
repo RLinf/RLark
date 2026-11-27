@@ -73,7 +73,8 @@ test("maps volumes the form cannot edit to opaque mounts", () => {
     objectStorage: "",
     mountPath: "/mnt/data",
     hostPath: "/data",
-    pvcSizeGb: 10,
+    profile: "",
+    readOnly: false,
   });
   const opaque = job.resources[0].mounts[1];
   assert.equal(opaque.type, "opaque");
@@ -120,7 +121,8 @@ test("skips opaque mounts that lost their original volume definition", () => {
       objectStorage: "",
       mountPath: "/dev/shm",
       hostPath: "",
-      pvcSizeGb: 10,
+      profile: "",
+      readOnly: false,
     },
   ]);
 

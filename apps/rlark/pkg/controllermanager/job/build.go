@@ -27,10 +27,15 @@ import (
 func nodeMatchesSelector(node *rlarkv1alpha1.Node, selector map[string]string) bool {
 	labels := node.Status.ObservedNodeLabels
 	if labels == nil {
-		labels = map[string]string{}
+		labels = node.Labels // Compatibility before Agents reported observed labels.
 	}
 	for key, rawValue := range selector {
 		nodeValue, ok := labels[key]
+		if key == rlarkv1alpha1.LabelNodeCategory || strings.HasPrefix(key, rlarkv1alpha1.LabelNodeCategory+"-") {
+			if declared, found := node.Annotations[key]; found {
+				nodeValue, ok = declared, true
+			}
+		}
 		if !ok {
 			// Administrator metadata such as rlark.io/node-category-* lives on
 			// the management Node CR as annotations, not on the data plane.
@@ -55,6 +60,9 @@ func nodeMatchesSelector(node *rlarkv1alpha1.Node, selector map[string]string) b
 }
 
 func (r *Reconciler) resolveTaskNamespace(ctx context.Context, t *rlarkv1alpha1.JobTaskTemplate) (string, error) {
+	if t.Placement.PerNode {
+		return r.resolvePerNodeNamespace(ctx, t)
+	}
 	var nodeList rlarkv1alpha1.NodeList
 	if err := r.List(ctx, &nodeList); err != nil {
 		return "", fmt.Errorf("list Nodes for Task template %q: %w", t.Name, err)
@@ -285,6 +293,9 @@ func setNetworkEnvironment(spec *rlarkv1alpha1.TaskSpec, domain string) {
 }
 
 func setSSHEnvironment(spec *rlarkv1alpha1.TaskSpec, publicKey string) {
+	if setDeclaredSSHEnvironment(spec, publicKey) {
+		return
+	}
 	parameters, _ := json.Marshal(taskapi.SSHEnvironmentParametersV1{AuthorizedKeys: []string{publicKey}, Port: 2222})
 	environment := rlarkv1alpha1.TaskEnvironment{Type: taskapi.EnvironmentTypeSSH, Version: taskapi.EnvironmentVersionSSHV1, Parameters: apiextensionsv1.JSON{Raw: parameters}}
 	for i := range spec.Environments {
@@ -320,6 +331,7 @@ func setRayExecution(spec *rlarkv1alpha1.TaskSpec, job *rlarkv1alpha1.Job, templ
 		parameters.Role = taskapi.RayRoleHead
 		parameters.HeadTaskName = ""
 	}
+	clearRoleWithoutHead(&parameters)
 	raw, _ := json.Marshal(parameters)
 	workload.Kind = taskapi.WorkloadTypeRay
 	workload.Version = taskapi.WorkloadVersionRayV1
@@ -358,6 +370,7 @@ func buildRayAnnotations(job *rlarkv1alpha1.Job, t rlarkv1alpha1.JobTaskTemplate
 	if headTaskName := findHeadTaskName(job); headTaskName != "" {
 		annotations[rlarkv1alpha1.RayHeadTaskNameAnnotation] = headTaskName
 	}
+	dropRoleWithoutHead(annotations)
 	return annotations
 }
 
@@ -383,6 +396,9 @@ func findHeadTaskName(job *rlarkv1alpha1.Job) string {
 
 // taskReplicas 返回任务模板的副本数（pod 数量），未显式设置时默认为 1。
 func taskReplicas(t rlarkv1alpha1.JobTaskTemplate) int32 {
+	if t.Placement.PerNode {
+		return perNodeReplicas
+	}
 	if t.Workload.Carrier.Type != taskapi.CarrierTypeKubernetesDeployment && t.Workload.Carrier.Type != taskapi.CarrierTypeKubernetesStatefulSet {
 		return 1
 	}
@@ -425,6 +441,9 @@ func validateTaskTemplates(job *rlarkv1alpha1.Job) error {
 		}
 		if strings.TrimSpace(template.Workload.Carrier.Version) == "" {
 			return fmt.Errorf("%s.workload.carrier.version must not be empty", path)
+		}
+		if err := validatePerNodeTemplate(template, path); err != nil {
+			return err
 		}
 
 		if template.Workload.Template == nil {

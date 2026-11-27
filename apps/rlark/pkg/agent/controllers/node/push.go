@@ -35,6 +35,10 @@ const (
 	nodeUnschedulableLabel = "rlark.io/unschedulable"
 )
 
+func isManagementOwnedNodeLabel(key string) bool {
+	return key == rlarkv1alpha1.LabelNodeCategory || strings.HasPrefix(key, rlarkv1alpha1.LabelNodeCategory+"-") || isSiteOwnedNodeLabel(key)
+}
+
 // isManagementOwnedNodeAnnotation reports whether a Node annotation is authored
 // on the management plane. Categories live here so an administrator decision is
 // not overwritten by annotations found on the data-plane Kubernetes Node.
@@ -47,7 +51,7 @@ func isManagementOwnedNodeAnnotation(key string) bool {
 		rlarkv1alpha1.LabelNodeCategory + "-" + string(rlarkv1alpha1.NodeCategoryRobot):
 		return true
 	default:
-		return false
+		return isSiteOwnedNodeAnnotation(key)
 	}
 }
 
@@ -415,15 +419,10 @@ func (r *pushNodeReconciler) updateManagementNode(ctx context.Context, logger lo
 		return reconcile.Result{RequeueAfter: HeartbeatInterval}, nil
 	}
 
-	// Annotations still merge (only rlark.io/ system annotations flow from
-	// k8s Node; management-owned annotations stay untouched). Labels: only
-	// rlark.io/ system labels are pushed from data plane to metadata.labels.
-	// Non-system labels (team.example/*, kubernetes.io/*) are observed through
-	// status.ObservedNodeLabels instead. Gateway label edits are relayed
-	// directly to the data-plane Kubernetes Node, so they are not written here.
+	report := beginNodeReport(&mgmtNode)
 	mgmtNode.Annotations = mergeManagementAnnotations(mgmtNode.Annotations, desiredNode.Annotations)
 	mgmtNode.Labels = mergeSystemLabels(mgmtNode.Labels, desiredNode.Labels)
-	if err := r.c.ManagementClient.Update(ctx, &mgmtNode); err != nil {
+	if err := report.patch(ctx, r.c.ManagementClient, &mgmtNode); err != nil {
 		logger.Error(err, "failed to update management Node spec")
 		return reconcile.Result{RequeueAfter: HeartbeatInterval}, err
 	}
@@ -467,7 +466,7 @@ func mergeSystemLabels(managed, observed map[string]string) map[string]string {
 		result[k] = v
 	}
 	for k, v := range observed {
-		if strings.HasPrefix(k, "rlark.io/") {
+		if strings.HasPrefix(k, "rlark.io/") && !isManagementOwnedNodeLabel(k) {
 			result[k] = v
 		}
 	}

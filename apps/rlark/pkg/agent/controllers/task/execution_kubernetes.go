@@ -149,6 +149,20 @@ func NewKubernetesHost(controller *Controller, execution *coordinator.Coordinato
 		Implementations: implementations,
 		Lifecycle:       kubernetesLifecycle{controller: controller},
 		AfterExecution:  controller.recordVerifiedExecution,
+		StatusFromReconcile: func(result coordinator.ReconcileResult, snapshot coordination.TaskSnapshot) *host.StatusIntent {
+			if snapshot.CarrierSelector.Type != taskapi.CarrierTypeKubernetesDaemonSet {
+				return nil
+			}
+			observed := result.Evaluation
+			return &host.StatusIntent{
+				ObjectUID: snapshot.Identity.ObjectUID, Generation: snapshot.Identity.Generation,
+				Phase: string(observed.Observation.Phase), MessageSet: true, Message: observed.Observation.Message,
+				ObservedSet: true, Observed: host.TaskObservation{
+					Nodes: instanceNodes(observed.Instances), Instances: perNodeInstances(observed.Instances),
+				},
+				Priority: host.StatusPriorityWorkload,
+			}
+		},
 		Admit: func(ctx context.Context, input host.LifecycleInput) error {
 			return execution.AdmitTask(ctx, input.Snapshot)
 		},

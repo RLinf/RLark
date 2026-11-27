@@ -19,7 +19,7 @@ func loadSwaggerData(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return data
+	return withAstribotSwagger(t, data)
 }
 
 func TestSwaggerOperationsAreRegisteredRoutes(t *testing.T) {
@@ -44,7 +44,8 @@ func TestSwaggerOperationsAreRegisteredRoutes(t *testing.T) {
 			if _, ok := registered[method+" "+path]; !ok {
 				t.Errorf("OpenAPI operation is not registered by Gateway.RegisterRoutes: %s %s", method, path)
 			}
-			if _, ok := operation.Responses["401"]; ok {
+			jwtProtectedStationRoute := strings.HasPrefix(path, "/api/v1/station/")
+			if _, ok := operation.Responses["401"]; ok && !jwtProtectedStationRoute && (method != "POST" || path != "/api/v1/certificates/revoke") {
 				t.Errorf("OpenAPI operation declares unsupported 401 response: %s %s", method, path)
 			}
 		}
@@ -139,7 +140,6 @@ var routesUndocumentedInSwagger = map[string]struct{}{
 	"GET /api/v1/certificates/agent":                                  {},
 	"GET /api/v1/certificates/agent/{cluster_id}":                     {},
 	"POST /api/v1/certificates/agent":                                 {},
-	"POST /api/v1/certificates/revoke":                                {},
 	"GET /api/v1/ssh-user-keys":                                       {},
 	"POST /api/v1/ssh-user-keys":                                      {},
 	"DELETE /api/v1/ssh-user-keys/{id}":                               {},

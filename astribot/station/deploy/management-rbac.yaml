@@ -1,0 +1,267 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: station-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: station-member-credentials
+---
+# The release's credentials for the member clusters (rlarkctl release, the Gateway's new clusters): station-controller
+# keeps their addresses at the SiteNetwork's names, as Station's own.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rlark-release-member-credentials
+---
+# Station controller and Station API read per-site Gateway relay tokens from
+# this management Secrets namespace. Extend resourceNames when adding a site.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-relay-tokens
+  namespace: default
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["station-relay-token-office", "station-relay-token-lab"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-relay-tokens
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-relay-tokens
+subjects:
+- kind: ServiceAccount
+  name: station-controller
+  namespace: station-system
+- kind: ServiceAccount
+  name: station-api
+  namespace: station-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-controller-member-credentials
+  namespace: rlark-release-member-credentials
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-controller-member-credentials
+  namespace: rlark-release-member-credentials
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-controller-member-credentials
+subjects:
+- kind: ServiceAccount
+  name: station-controller
+  namespace: station-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: station-api
+  namespace: station-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: station-controller
+  namespace: station-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: station-api-management
+rules:
+- apiGroups: ["rlinf.io"]
+  resources: ["clusters"]
+  verbs: ["get", "list"]
+# A machine admitted under a name the management plane knows: the labels its
+# admission declares are put on that Node before it joins (bootstrap.go).
+- apiGroups: ["rlinf.io"]
+  resources: ["nodes"]
+  verbs: ["patch"]
+# create: a node's first report makes its record; status: every report is
+# patched into status.observation (kubernetes_observation.go).
+# list: a node reports its peers by public key, and station-api stores each
+# under the member enrolled with that key.
+- apiGroups: ["station.rlark.io"]
+  resources: ["networkenrollments"]
+  verbs: ["get", "list", "create", "update"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["networkenrollments/status"]
+  verbs: ["patch"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["nodeadmissions"]
+  # delete: a machine that redeems a new code clears what it left of a join it never finished.
+  verbs: ["list", "update", "delete"]
+# The registry cache of a new node's site: the node is admitted when it is filled.
+- apiGroups: ["rlinf.io"]
+  resources: ["addons"]
+  verbs: ["list"]
+# The uplink setup the NodeClass of a new machine declares (GET /b/<code>/uplink),
+# and the factory host keys the hubs of a site look for (discovery).
+- apiGroups: ["station.rlark.io"]
+  resources: ["nodeclasses"]
+  verbs: ["get", "list"]
+# The machines the hubs of a site find on its network (POST /v1/network/discovered),
+# where the site declares discovery.
+- apiGroups: ["station.rlark.io"]
+  resources: ["sitenetworks"]
+  verbs: ["get"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["machines"]
+  verbs: ["get", "list", "create", "update"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["machines/status"]
+  verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: station-api-management
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: station-api-management
+subjects:
+- kind: ServiceAccount
+  name: station-api
+  namespace: station-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-controller-member-credentials
+  namespace: station-member-credentials
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-controller-member-credentials
+  namespace: station-member-credentials
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-controller-member-credentials
+subjects:
+- kind: ServiceAccount
+  name: station-controller
+  namespace: station-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: station-controller-management
+rules:
+- apiGroups: ["rlinf.io"]
+  resources: ["clusters", "nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["sitenetworks", "networkenrollments", "nodeadmissions", "nodeclasses"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["rlinf.io"]
+  resources: ["nodejoins"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["robotmodels"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["machines"]
+  verbs: ["delete"]
+# A node's record passes to the Node a new admission let in under its name.
+- apiGroups: ["station.rlark.io"]
+  resources: ["networkenrollments"]
+  verbs: ["patch"]
+# The nodes of a NodeClass follow what the class declares now; an admission
+# says what RLark put right of the machine's earlier node by itself.
+- apiGroups: ["station.rlark.io"]
+  resources: ["nodeadmissions"]
+  verbs: ["update", "patch"]
+- apiGroups: ["rlinf.io"]
+  resources: ["nodes"]
+  verbs: ["patch"]
+- apiGroups: ["station.rlark.io"]
+  resources: ["sitenetworks/status", "networkenrollments/status", "nodeadmissions/status"]
+  verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: station-controller-management
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: station-controller-management
+subjects:
+- kind: ServiceAccount
+  name: station-controller
+  namespace: station-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-controller-management-leader-election
+  namespace: station-system
+rules:
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "create", "update", "patch", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-controller-management-leader-election
+  namespace: station-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-controller-management-leader-election
+subjects:
+- kind: ServiceAccount
+  name: station-controller
+  namespace: station-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-api-member-credentials
+  namespace: station-member-credentials
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-api-member-credentials
+  namespace: station-member-credentials
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-api-member-credentials
+subjects:
+- kind: ServiceAccount
+  name: station-api
+  namespace: station-system

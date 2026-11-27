@@ -72,7 +72,7 @@ func TestTaskAssemblyBuildReturnsOnlyCompleteWiring(t *testing.T) {
 	if c.host.Bundle.Implementations != c.execution.Implementations.(workloadImplementationRegistry) || a.resync.host != c.host || a.resync.namespace != input.ManagementNamespace {
 		t.Fatal("Host, Coordinator, observations and resync were not assembled together")
 	}
-	if c.observationScope.Namespace != tenant.DefaultNamespace || len(a.observers.controllers) != 2 || requests.Load() != 10 {
+	if c.observationScope.Namespace != tenant.DefaultNamespace || len(a.observers.controllers) != 3 || requests.Load() != 15 {
 		t.Fatalf("scope=%v observers=%d preflight=%d", c.observationScope, len(a.observers.controllers), requests.Load())
 	}
 	if c.PullMaxConcurrentReconciles != 2 || c.PushMaxConcurrentReconciles != 3 || a.setupTried {
@@ -153,14 +153,14 @@ func TestTaskAssemblyLatePreflightFailureIsRecoverable(t *testing.T) {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		allowed := requests.Add(1) != 10
+		allowed := requests.Add(1) != 15
 		if err := json.NewEncoder(w).Encode(map[string]any{"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectAccessReview", "status": map[string]any{"allowed": allowed}}); err != nil {
 			t.Error(err)
 		}
 	}))
 	defer server.Close()
 	input.LocalConfig = &rest.Config{Host: server.URL}
-	if a, err := BuildKubernetesTaskAssembly(context.Background(), input); err == nil || a != nil || requests.Load() != 10 {
+	if a, err := BuildKubernetesTaskAssembly(context.Background(), input); err == nil || a != nil || requests.Load() != 15 {
 		t.Fatalf("late preflight failure: assembly=%v err=%v requests=%d", a, err, requests.Load())
 	}
 	if _, err := BuildKubernetesTaskAssembly(context.Background(), input); err != nil {
@@ -285,7 +285,7 @@ func TestTaskAssemblySetupIsSingleAttemptEvenAfterFailure(t *testing.T) {
 			if err := a.Setup(management, local); err == nil || len(management.added)+len(local.added) != count {
 				t.Fatal("Setup retried on a partially installed manager")
 			}
-			if requests.Load() != 10 {
+			if requests.Load() != 15 {
 				t.Fatal("Setup performed API activity or started watches")
 			}
 		})

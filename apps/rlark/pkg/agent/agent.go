@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -35,7 +34,7 @@ type Agent struct {
 
 	localListener net.Listener
 	localDialer   utils.Dial
-	ready         atomic.Bool
+	ready         readiness
 	drainMu       sync.Mutex
 	drain         context.CancelFunc
 }
@@ -66,6 +65,9 @@ func (a *Agent) init(ctx context.Context) error {
 	var err error
 	a.config.AgentType = strings.ToLower(a.config.AgentType)
 	a.config.Execution.Image = a.config.Image
+	if err := a.config.AstribotConfig.apply(); err != nil {
+		return err
+	}
 	if err := a.config.Validate(); err != nil {
 		return fmt.Errorf("validate agent config: %w", err)
 	}
@@ -150,6 +152,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		cancel()
 	}()
 
+	services := a.astribotServices()
 	tunnels := tunnelRoles(a.config)
 	err := runWithRegistration(ctx, func(ctx context.Context, registered func()) error {
 		return a.runRegistrationTunnel(ctx, tunnels[0], registered)
@@ -161,7 +164,8 @@ func (a *Agent) Run(ctx context.Context) error {
 		if err != nil {
 			return nil, err
 		}
-		components := append([]func(context.Context) error{a.runLocalHTTPServer}, roles...)
+		components := append([]func(context.Context) error{a.runLocalHTTPServer}, services...)
+		components = append(components, roles...)
 		for _, role := range tunnels[1:] {
 			components = append(components, func(ctx context.Context) error { return a.runTunnel(ctx, role) })
 		}

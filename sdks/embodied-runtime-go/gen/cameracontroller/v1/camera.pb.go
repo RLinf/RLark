@@ -403,16 +403,14 @@ type OpenCameraRequest struct {
 	//
 	// Frame-mode still-image encodings (each message is one complete,
 	// independently decodable frame):
-	//
-	//	"jpeg"  — JPEG-compressed frames (default)
-	//	"png"   — PNG lossless-compressed frames
-	//	"bmp"   — BMP uncompressed frames
-	//	"tiff"  — TIFF lossless-compressed frames
+	//   "jpeg"  — JPEG-compressed frames (default)
+	//   "png"   — PNG lossless-compressed frames
+	//   "bmp"   — BMP uncompressed frames
+	//   "tiff"  — TIFF lossless-compressed frames
 	//
 	// Bitstream-mode encodings (concatenate chunks for a valid stream):
-	//
-	//	"h264"  — H.264 Annex B elementary stream
-	//	"h265"  — H.265 (HEVC) Annex B elementary stream
+	//   "h264"  — H.264 Annex B elementary stream
+	//   "h265"  — H.265 (HEVC) Annex B elementary stream
 	//
 	// The ffmpeg driver captures in whatever format the device provides and
 	// transcodes to the requested output. For example, a YUYV-only camera

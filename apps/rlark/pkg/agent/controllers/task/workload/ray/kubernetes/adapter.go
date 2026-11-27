@@ -75,6 +75,7 @@ func (a *Adapter) Info(context.Context) (workload.TypeInfo, error) {
 			Roots: []workload.ObservationRoot{
 				{Group: appsv1.SchemeGroupVersion.Group, Version: appsv1.SchemeGroupVersion.Version, Kind: CarrierDeployment, CarrierType: taskapi.CarrierTypeKubernetesDeployment, InstanceProfile: kubernetesruntime.ObservationReplicaSetControllerV1},
 				{Group: appsv1.SchemeGroupVersion.Group, Version: appsv1.SchemeGroupVersion.Version, Kind: CarrierStatefulSet, CarrierType: taskapi.CarrierTypeKubernetesStatefulSet, InstanceProfile: kubernetesruntime.ObservationDirectControllerV1},
+				{Group: appsv1.SchemeGroupVersion.Group, Version: appsv1.SchemeGroupVersion.Version, Kind: CarrierDaemonSet, CarrierType: taskapi.CarrierTypeKubernetesDaemonSet, InstanceProfile: kubernetesruntime.ObservationDirectControllerV1},
 			},
 		}},
 	}, nil
@@ -173,6 +174,10 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 	if err != nil {
 		return executionplan.Plan{}, err
 	}
+	rollout, err := daemonSetRollout(kind, request.Task.Configuration.Carrier)
+	if err != nil {
+		return executionplan.Plan{}, err
+	}
 	namespace := ""
 	if a.namespace != nil {
 		namespace = a.namespace(request.Task.Identity)
@@ -216,6 +221,8 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 		primary = BuildDeployment(task, namespace, spec, replicas)
 	case CarrierStatefulSet:
 		primary = BuildStatefulSet(task, namespace, spec, replicas)
+	case CarrierDaemonSet:
+		primary = BuildDaemonSet(task, namespace, spec, rollout)
 	default:
 		return executionplan.Plan{}, fault.New(fault.InvalidArgument, "unsupported builtin Kubernetes carrier kind")
 	}
@@ -250,8 +257,8 @@ func (a *Adapter) Compile(_ context.Context, request workload.CompileRequest) (e
 		},
 	}}
 	processes := []executionprocess.Declaration{}
-	if role == rlarkv1alpha1.RayRoleHead || role == rlarkv1alpha1.RayRoleWorker {
-		args := []string{"ray-launcher", "--role=" + role}
+	if role == rlarkv1alpha1.RayRoleHead || role == rlarkv1alpha1.RayRoleWorker || role == "" {
+		args := launcherArgs(role)
 		if domain != "" {
 			args = append(args, "--wait-network")
 		}
@@ -381,8 +388,8 @@ func (a *Adapter) Observe(_ context.Context, request workload.ObserveRequest) (w
 	if err != nil {
 		return workload.Observation{}, err
 	}
-	if phase == rlarkv1alpha1.TaskPhasePending && HasFailedScheduling(request.Instances) {
-		message = "FailedScheduling"
+	if reason, found := PendingReason(request.Instances); found && phase == rlarkv1alpha1.TaskPhasePending {
+		message = reason
 	}
 	return workload.Observation{Phase: workload.Phase(phase), Message: message}, nil
 }
@@ -395,8 +402,8 @@ func decodeConfiguration(request workload.CompileRequest) (*rlarkv1alpha1.Task, 
 	if err != nil {
 		return nil, nil, taskapi.RayExecutionParametersV1{}, fault.Wrap(fault.InvalidArgument, "decode Ray execution parameters", err)
 	}
-	if ray.Role != taskapi.RayRoleHead && ray.Role != taskapi.RayRoleWorker {
-		return nil, nil, taskapi.RayExecutionParametersV1{}, fault.New(fault.InvalidArgument, "Ray execution role must be head or worker")
+	if ray.Role != "" && ray.Role != taskapi.RayRoleHead && ray.Role != taskapi.RayRoleWorker {
+		return nil, nil, taskapi.RayExecutionParametersV1{}, fault.New(fault.InvalidArgument, "Ray execution role must be head, worker or empty")
 	}
 	identity := request.Task.Identity
 	task := &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: identity.Logical.Name, Namespace: identity.Logical.Namespace, UID: types.UID(identity.ObjectUID), Generation: identity.Generation}}
@@ -423,6 +430,8 @@ func kubernetesCarrierKind(carrier coordination.VersionedConfiguration) (string,
 		return CarrierDeployment, nil
 	case taskapi.CarrierTypeKubernetesStatefulSet:
 		return CarrierStatefulSet, nil
+	case taskapi.CarrierTypeKubernetesDaemonSet:
+		return CarrierDaemonSet, nil
 	default:
 		return "", fault.New(fault.InvalidArgument, "unsupported Kubernetes carrier type")
 	}
@@ -441,6 +450,8 @@ func decodeKubernetesCarrier(carrier coordination.VersionedConfiguration) (strin
 			return "", nil, fault.Wrap(fault.InvalidArgument, "decode replicated Kubernetes carrier parameters", err)
 		}
 		return kind, decoded.Replicas, nil
+	case CarrierDaemonSet:
+		return kind, nil, nil
 	default:
 		return "", nil, fault.New(fault.InvalidArgument, "unsupported Kubernetes carrier type")
 	}
@@ -479,6 +490,8 @@ func gvkFor(object runtime.Object) schema.GroupVersionKind {
 		return appsv1.SchemeGroupVersion.WithKind("Deployment")
 	case *appsv1.StatefulSet:
 		return appsv1.SchemeGroupVersion.WithKind("StatefulSet")
+	case *appsv1.DaemonSet:
+		return appsv1.SchemeGroupVersion.WithKind("DaemonSet")
 	case *corev1.ConfigMap:
 		return corev1.SchemeGroupVersion.WithKind("ConfigMap")
 	case *corev1.Service:
@@ -532,6 +545,8 @@ func ObserveObject(kind string, object agentruntime.Object, instances agentrunti
 			return "", "", err
 		}
 		phase, message = StatefulSetStatusPhase(&manifest)
+	case CarrierDaemonSet:
+		return observeDaemonSet(object.Manifest.Object, instances)
 	default:
 		return "", "", fmt.Errorf("unsupported workload kind %q", kind)
 	}

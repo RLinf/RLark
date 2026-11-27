@@ -1,0 +1,350 @@
+# The S1U robot x86's model configuration (extensions/s1u): the node tuner, the Orin, the power, the cameras, the clock,
+# the robot's device layer and its Station, one Pod on every S1U robot. Privileged in the host's PID namespace (tuner,
+# clock): it writes the host's /etc, /boot/grub and sysfs.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: s1u-robot
+  namespace: rlark-system
+  labels:
+    app.kubernetes.io/name: s1u-robot
+  # How a new version reaches the robots is RLark's own rollout of what it places (the cluster agent's): one robot
+  # first, then a tenth of the Ready robots at a time, and only robots nobody uses (the Node's rlark.io/in-use: a
+  # Station that serves a Run, a session on the device layer). A robot that is away has no place in it and gets the
+  # version when it is back (11-14: s1u_02 cut off kept the old version from s1u_01 under Kubernetes' own rollout).
+  # Replacing the Pod changes nothing of the robot's power: its desired state is on its Node and on the host.
+  annotations:
+    rlark.io/rollout: '{"whenIdle":true}'
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: s1u-robot
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: s1u-robot
+    spec:
+      nodeSelector:
+        {{ index (splitList "=" .Values.nodeSelector) 0 }}: "{{ index (splitList "=" .Values.nodeSelector) 1 }}"
+      # The robot's own layer stays through what keeps other Pods off a node: its category's taints, a cordon, the
+      # node's pressure, a node not ready or cut off from the API server. Not out-of-service: a robot declared gone is
+      # gone.
+      tolerations:
+        - {key: rlark.io/node-category, operator: Exists}
+        - {key: node-role.kubernetes.io/control-plane, operator: Exists}
+        - {key: node.kubernetes.io/unschedulable, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/disk-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/memory-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/pid-pressure, operator: Exists, effect: NoSchedule}
+        - {key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute}
+        - {key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute}
+      priorityClassName: system-node-critical
+      serviceAccountName: s1u-robot
+      {{- if .Values.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      {{- end }}
+      hostPID: true
+      hostNetwork: true
+      # The Station's Run gets its time to leave: its Ray node and launcher 15 s each, then what is left of them.
+      terminationGracePeriodSeconds: 60
+      {{- if or .Values.orinPayloads .Values.deviceImage }}
+      initContainers:
+        {{- if .Values.deviceImage }}
+        # The device layer's data directory is root's, all of it, and open to read, whoever made it: kubelet makes
+        # it so, one that was on the robot before this Addon may be anybody's with what is in it (a robot set up by
+        # hand; s1u-01: its run, captures and cache directories were the vendor account's, and the device layer
+        # could not write its socket's directory). The device layer runs as root without DAC_OVERRIDE and writes
+        # there only as the owner. What is root's and the owner's to write already is not touched; other
+        # filesystems mounted below are not entered.
+        - name: device-data
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              find /device-data -xdev ! \( -user 0 -group 0 \) -exec chown -h 0:0 {} +
+              find /device-data -xdev -type d ! -perm -u+rwx -exec chmod u+rwx {} +
+              find /device-data -xdev -type f ! -perm -u+rw -exec chmod u+rw {} +
+              chmod 0755 /device-data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, FOWNER, DAC_OVERRIDE]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: device-data, mountPath: /device-data}
+        {{- end }}
+        {{- if .Values.orinPayloads }}
+        # Each payload's /payload into this Pod, for the orin container to place on the Orin.
+        {{- range $i, $payload := splitList "," .Values.orinPayloads }}
+        - name: payload-{{ $i }}
+          image: {{ index (splitList "=" $payload) 1 }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/sh, -ec, 'rm -rf /payloads/{{ index (splitList "=" $payload) 0 }} && mkdir -p /payloads/{{ index (splitList "=" $payload) 0 }} && cp -a /payload/. /payloads/{{ index (splitList "=" $payload) 0 }}/']
+          securityContext:
+            allowPrivilegeEscalation: false
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: payloads, mountPath: /payloads}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: tuner
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          workingDir: /s1u/tuner
+          command: [/usr/bin/python3, /s1u/tuner/node_tuner.py]
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - {name: S1U_IMAGE, value: "{{ .Values.image }}"}
+            - {name: S1U_NODE_WANTED, value: "{{ .Values.profile }}"}
+            - {name: S1U_NODE_REBOOT, value: "{{ .Values.reboot }}"}
+            - {name: S1U_SITE_TIME_SOURCE, value: "{{ .Values.timeSource }}"}
+            - {name: S1U_NODE_ROLLOUT, value: "{{ .Values.rollout }}"}
+            - {name: S1U_NODE_ROLLOUT_SECONDS, value: "{{ .Values.rolloutSeconds }}"}
+            - {name: S1U_NODE_ROLLOUT_PARALLEL, value: "{{ .Values.rolloutParallel }}"}
+            - {name: S1U_NODE_POWER_OFF, value: "{{ .Values.powerOff }}"}
+          securityContext:
+            privileged: true
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: host, mountPath: /host}
+        # The robot's Orin (orin/orin.py) over the robot's internal network. Its login is mounted in memory, never on
+        # disk; it has no capability and writes only to directories of root's.
+        - name: orin
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [/usr/bin/python3, /s1u/orin/orin.py]
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - {name: S1U_NODE_PROFILE, value: /s1u/tuner/node_profile.env}
+            - {name: S1U_NODE_WANTED, value: "{{ .Values.profile }}"}
+            - {name: S1U_ORIN_RETIRED_UNITS, value: "{{ .Values.orinRetiredUnits }}"}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: orin-access, mountPath: /orin-access, readOnly: true}
+            - {name: shm, mountPath: /dev/shm}
+            - {name: host, mountPath: /host}
+            - {name: state, mountPath: /state}
+            - {name: in-use, mountPath: /in-use, readOnly: true}
+            - {name: payloads, mountPath: /payloads, readOnly: true}
+            # The camera service's requests (a USB reset of cameras, a stuck camera's diagnosis) and their results,
+            # and where each camera is on the Orin's USB.
+            - {name: camera, mountPath: /camera}
+        # The robot's power, driver start and restart (device/power.py): the vendor's buttons through its ROS master,
+        # on a Unix socket only, which RLark reaches on the node. No capability: ROS over the host's network.
+        - name: power
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/bash, -c, "source /opt/ros/noetic/setup.bash && exec python3 /s1u/device/power.py"]
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - {name: S1U_NODE_PROFILE, value: /s1u/tuner/node_profile.env}
+            - {name: S1U_SERVICE_SOCKET, value: /services/s1u-power.sock}
+            # The robot's desired state as last read from its Node, for while the API server is away.
+            - {name: S1U_POWER_STATE, value: /state/power.json}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: services, mountPath: /services}
+            - {name: in-use, mountPath: /in-use, readOnly: true}
+            # The node tuner's maintenance lease (/run/rlark/s1u/maintenance), and the Run that holds the robot, which
+            # this container writes (/run/rlark/s1u/claim).
+            - {name: host, mountPath: /host}
+            - {name: state, mountPath: /state}
+        # The robot's cameras (device/cameras.py): the body's cameras from the vendor's ROS topics, read from start to
+        # stop, served read-only on the node's address (port 18891: the state, each view's JPEG and stream, the wall),
+        # which RLark's Gateway reaches through the API server's proxy of this Pod; cameras without frames brought
+        # back (the vendor's driver restarted, a USB reset asked of the orin container through /camera) or left stuck
+        # with the orin container's diagnosis, the state on the Node (rlark.io/camera-state, rlark.io/cameras). No
+        # capability: ROS over the host's network.
+        - name: video
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [/bin/bash, -c, "source /opt/ros/noetic/setup.bash && exec python3 /s1u/device/cameras.py"]
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            # Where the port listens: the node's address (the site tunnel's), which is this Pod's.
+            - name: S1U_NODE_ADDRESS
+              valueFrom: {fieldRef: {fieldPath: status.hostIP}}
+            - {name: S1U_NODE_PROFILE, value: /s1u/tuner/node_profile.env}
+            - {name: S1U_BODIES, value: /s1u/tuner/bodies.json}
+            - {name: S1U_CAMERA_DIRECTORY, value: /camera}
+          # Ready once it answers, whatever the cameras are: their state is the Node's label.
+          readinessProbe:
+            httpGet: {path: /cameras, port: 18891}
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 200m, memory: 128Mi}
+            limits: {cpu: "1", memory: 256Mi}
+          volumeMounts:
+            - {name: camera, mountPath: /camera}
+            # Whether the robot is in use: a stuck camera's driver is restarted only while it is not.
+            - {name: in-use, mountPath: /in-use, readOnly: true}
+        # The robot's clock held to the site's time (clock/clock.py): it trims the frequency of the NIC hardware clock
+        # at the root of the vendor's own time chain. Privileged for that clock's device (/dev/ptpN).
+        - name: clock
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          command: [/usr/bin/python3, /s1u/clock/clock.py]
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+            - {name: S1U_NODE_PROFILE, value: /s1u/tuner/node_profile.env}
+            - {name: S1U_NODE_WANTED, value: "{{ .Values.profile }}"}
+            - {name: S1U_SITE_TIME_SOURCE, value: "{{ .Values.timeSource }}"}
+          securityContext:
+            privileged: true
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: host, mountPath: /host}
+            # Whether the robot is in use: the clock jumps only while it is not.
+            - {name: in-use, mountPath: /in-use, readOnly: true}
+            # The machine's own hosts file, not kubelet's copy of it from when the Pod started: the time source is a
+            # name the station-gateway keeps there (the site's names, written in place), so a site whose hub moves is
+            # followed at the next measurement without the Pod started again.
+            - {name: hosts, mountPath: /etc/hosts, readOnly: true}
+        {{- if .Values.deviceImage }}
+        # The robot's device layer (the Addon's deviceImage, whose /device/start it runs): the program that holds the
+        # robot's SDK connection for the sessions of the site's application, which attach to it on the host
+        # (/run/fleet). It starts once the tuner has written which robot this x86 is (/run/rlark/s1u/robot.json, the
+        # Node's labels rlark.io/robot-id and rlark.io/robot-body), reads the node profile and the bodies' cameras
+        # read-only, powers an unpowered robot for a session through the power service's socket (and never off),
+        # marks the robot in use and leaves the robot's self-check under /run/rlark/s1u. The cameras' drivers and
+        # their recovery are the video container's, not the device layer's. Its command thread runs alone at
+        # SCHED_FIFO on the profile's SDK core (SYS_NICE for that, and nothing else); its other threads keep to the
+        # device layer's CPUs by themselves.
+        - name: device
+          image: {{ .Values.deviceImage }}
+          imagePullPolicy: IfNotPresent
+          command: [/device/start]
+          # Ready once its control endpoint answers: from its start on, whether or not the robot is powered.
+          readinessProbe:
+            tcpSocket: {port: 33334}
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [SYS_NICE]
+          resources:
+            requests: {cpu: "2", memory: 2Gi}
+            limits: {cpu: "8", memory: 2Gi}
+          volumeMounts:
+            - {name: device-data, mountPath: /var/lib/fleet}
+            - {name: device-run, mountPath: /run/fleet}
+            - {name: device-token, mountPath: /site-token, readOnly: true}
+            - {name: device-shm, mountPath: /dev/shm}
+            - {name: profile, mountPath: /etc/rlark/s1u, readOnly: true}
+            - {name: host, mountPath: /run/rlark/s1u}
+            - {name: services, mountPath: /run/rlark/services}
+            - {name: in-use, mountPath: /run/rlark/in-use}
+        # The robot's standing Station (/device/start --station, the device layer's image: the two change together):
+        # while a Run holds the robot (the claim the power container keeps in /run/rlark/s1u/claim) it asks the site's
+        # application at stationControlURL, with the site token, how to join that Run, and runs a Ray node and the
+        # Run's env worker, which attaches to the device layer (/run/fleet); it marks the robot in use meanwhile. Its
+        # own memory limit, so that an env worker that runs away ends this container alone: this Pod's limits together
+        # stay within what the node profile leaves the Pods (S1U_KUBERNETES_MEMORY_MIB, kubepods.slice's memory.max),
+        # else the kernel ends an arbitrary one of its node-critical containers first; its own /dev/shm for Ray's
+        # object store (256 MiB, counted in this container's memory).
+        - name: station
+          image: {{ .Values.deviceImage }}
+          imagePullPolicy: IfNotPresent
+          command: [/device/start, --station]
+          env:
+            - {name: STATION_CONTROL_URL, value: "{{ .Values.stationControlURL }}"}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {memory: 2Gi}
+            limits: {memory: 2304Mi}
+          volumeMounts:
+            - {name: device-data, mountPath: /var/lib/fleet}
+            - {name: device-run, mountPath: /run/fleet}
+            - {name: device-token, mountPath: /site-token, readOnly: true}
+            - {name: station-shm, mountPath: /dev/shm}
+            - {name: profile, mountPath: /etc/rlark/s1u, readOnly: true}
+            - {name: host, mountPath: /run/rlark/s1u, readOnly: true}
+            - {name: in-use, mountPath: /run/rlark/in-use}
+        {{- end }}
+      volumes:
+        - name: orin-access
+          secret:
+            secretName: {{ .Values.orinAccessSecret }}
+            defaultMode: 0400
+            # The node profile does not wait for the Orin's login to exist.
+            optional: true
+        - name: shm
+          emptyDir: {medium: Memory, sizeLimit: 8Mi}
+        - name: payloads
+          emptyDir: {sizeLimit: 256Mi}
+        # What the camera service and the orin container tell each other (a USB reset asked for, its result): the
+        # Pod's own, kept across a restart of either container.
+        - name: camera
+          emptyDir: {sizeLimit: 1Mi}
+        - name: host
+          hostPath: {path: /run/rlark/s1u, type: DirectoryOrCreate}
+        - name: hosts
+          hostPath: {path: /etc/hosts, type: File}
+        # What must outlast a boot and is root's (the Orin's record).
+        - name: state
+          hostPath: {path: /var/lib/rlark/s1u, type: DirectoryOrCreate}
+        # The node-local services RLark reaches on this node (their Unix sockets).
+        - name: services
+          hostPath: {path: /run/rlark/services, type: DirectoryOrCreate}
+        # What each component that uses the robot marks (a session attached to the device layer, a Station with a Run).
+        - name: in-use
+          hostPath: {path: /run/rlark/in-use, type: DirectoryOrCreate}
+        {{- if .Values.deviceImage }}
+        # The node profile and the bodies as the tuner installs them on the host. Created empty on a robot that just
+        # joined: the device layer waits for the tuner.
+        - name: profile
+          hostPath: {path: /etc/rlark/s1u, type: DirectoryOrCreate}
+        # The device layer's data on the host (what its sessions record before it is uploaded) and its run directory,
+        # where the application's Station on the same robot finds its socket.
+        - name: device-data
+          hostPath: {path: {{ .Values.deviceData }}, type: DirectoryOrCreate}
+        - name: device-run
+          hostPath: {path: {{ .Values.deviceData }}/run, type: DirectoryOrCreate}
+        - name: device-token
+          secret:
+            secretName: {{ .Values.deviceTokenSecret }}
+            defaultMode: 0400
+        - name: device-shm
+          emptyDir: {medium: Memory, sizeLimit: 512Mi}
+        - name: station-shm
+          emptyDir: {medium: Memory, sizeLimit: 512Mi}
+        {{- end }}

@@ -113,6 +113,9 @@ func validateObservationAccess(ctx context.Context, mapper meta.RESTMapper, revi
 			if err := add(corev1.SchemeGroupVersion.WithKind("Pod"), "get", "list", "watch"); err != nil {
 				return nil, err
 			}
+			if err := add(corev1.SchemeGroupVersion.WithKind("Event"), "list", "watch"); err != nil {
+				return nil, err
+			}
 			for _, gvk := range profile.Intermediates {
 				if err := add(gvk, "get"); err != nil {
 					return nil, err
@@ -193,7 +196,11 @@ func (c *Controller) newObservationRunner(scopedCache cache.Cache, scope Kuberne
 		// Unmanaged construction must not reserve names in controller-runtime's
 		// irreversible process-global registry. Validate this group's names here;
 		// the owning Controller/assembly permits only one installation.
-		options := controller.TypedOptions[runtimeObservationRequest]{Reconciler: r, MaxConcurrentReconciles: c.PushMaxConcurrentReconciles, ReconciliationTimeout: 30 * time.Second, SkipNameValidation: new(true)}
+		workers := c.PushMaxConcurrentReconciles
+		if plan.root.GVK.Kind == "DaemonSet" && c.daemonSetPushWorkers > 0 {
+			workers = c.daemonSetPushWorkers
+		}
+		options := controller.TypedOptions[runtimeObservationRequest]{Reconciler: r, MaxConcurrentReconciles: workers, ReconciliationTimeout: 30 * time.Second, SkipNameValidation: new(true)}
 		// Separate scoped factories may observe the same GVK. Controller names must
 		// still be unique without embedding unconstrained Runtime IDs in metrics.
 		scopeHash := sha256.Sum256([]byte(string(scope.RuntimeID) + "\x00" + scope.Namespace + "\x00" + scope.ManagementNamespace))
@@ -211,6 +218,9 @@ func (c *Controller) newObservationRunner(scopedCache cache.Cache, scope Kuberne
 		}
 		if plan.profile != nil {
 			if err := observer.Watch(source.TypedKind(scopedCache, client.Object(&corev1.Pod{}), runtimePodHandler(scope))); err != nil {
+				return nil, err
+			}
+			if err := observer.Watch(source.TypedKind(scopedCache, client.Object(&corev1.Event{}), podStartFailureHandler(scope))); err != nil {
 				return nil, err
 			}
 		}

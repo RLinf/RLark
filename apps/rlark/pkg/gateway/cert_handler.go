@@ -59,13 +59,7 @@ func (g *Gateway) handleSignAgentCert(c *gin.Context) {
 		return
 	}
 
-	if err := g.storeAgentCertSecret(c.Request.Context(), req.ClusterID, caCertPEM, []byte(agentCertPEM), []byte(agentKeyPEM)); err != nil {
-		logger.Error(err, "failed to store agent cert secret")
-	} else {
-		logger.Info("agent cert stored as secret", "cluster_id", req.ClusterID)
-	}
-
-	c.JSON(http.StatusOK, signAgentCertResponse{
+	g.respondAgentCertStored(c, signAgentCertResponse{
 		ClusterID:  req.ClusterID,
 		CACert:     string(caCertPEM),
 		AgentCert:  agentCertPEM,

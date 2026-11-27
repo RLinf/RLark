@@ -1,0 +1,49 @@
+.robot-models-page { max-width: 1080px; }
+.robot-models-page .page-header { margin-bottom: 4px; }
+.robot-models-page .page-actions { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.robot-model-grid { display: grid; gap: 14px; margin: 18px 0; }
+
+.robot-model-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.robot-model-header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 16px 20px; }
+.robot-model-icon { flex: none; display: grid; width: 42px; height: 42px; place-items: center; border-radius: 12px; background: color-mix(in srgb, var(--blue) 12%, var(--panel)); color: var(--blue); }
+.robot-model-identity { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.robot-model-identity h2 { margin: 0 0 3px; font-size: 18px; }
+.robot-model-identity small, .robot-model-references { color: var(--muted); font-size: 12px; }
+.robot-model-delete { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); color: var(--danger); }
+.robot-model-delete:hover:enabled { background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }
+.robot-model-delete:disabled { color: var(--soft); cursor: not-allowed; }
+
+.robot-model-capabilities { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); }
+.robot-model-capabilities > section { padding: 16px 20px 18px; min-width: 0; }
+.robot-model-capabilities > section + section { border-left: 1px solid var(--line); }
+.robot-model-capabilities h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 14px; }
+.robot-model-capabilities h3 svg { color: var(--blue); }
+.robot-model-capabilities h4 { margin: 16px 0 5px; font-size: 13px; }
+.robot-model-capabilities p { color: var(--muted); margin: 4px 0; font-size: 12px; }
+.robot-model-variants { display: grid; gap: 8px; margin: 0; }
+.robot-model-variants > div { padding: 9px 10px; background: var(--panel-2); border-radius: 8px; }
+.robot-model-variants dt { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; }
+.robot-model-variants dt small { color: var(--muted); }
+.robot-model-variants dd { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 0; }
+.robot-model-variants dd span { padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); font-size: 12px; }
+#root .robot-model-joints { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+#root .robot-model-joints > :is(thead, tbody) > tr > :is(th, td) {
+  height: 34px;
+  padding: 6px 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: inherit;
+  text-align: left;
+  white-space: normal;
+  border-bottom: 1px solid var(--line);
+}
+#root .robot-model-joints > :is(thead, tbody) > tr > :nth-child(2) { text-align: center; font-variant-numeric: tabular-nums; }
+.robot-model-joints tbody th { font-weight: 500; }
+
+@media (max-width: 760px) {
+  .robot-model-header { padding: 14px; }
+  .robot-model-references { order: 1; width: 100%; }
+  .robot-model-capabilities { grid-template-columns: minmax(0, 1fr); }
+  .robot-model-capabilities > section { padding: 14px; }
+  .robot-model-capabilities > section + section { border-left: 0; border-top: 1px solid var(--line); }
+}

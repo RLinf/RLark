@@ -5,6 +5,16 @@ import { readStyles } from "./read-styles.mjs";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
+test("node drain and resume confirmations require an explicit Job start", async () => {
+  const page = await read("../src/admin/AdminPage.tsx");
+  for (const handler of ["toggleCordon", "drainNode"]) {
+    const match = page.match(new RegExp(`const ${handler} = async[\\s\\S]*?(?=\\n  const |$)`));
+    assert.ok(match, handler);
+    assert.match(match[0], /显式启动对应的任务（Job）/);
+    assert.match(match[0], /Explicitly start the corresponding Job/);
+  }
+});
+
 test("does not read the removed node status reason field", async () => {
   // Node status reasons are expressed through conditions; status.reason no
   // longer exists in the CRD and must not be rendered.

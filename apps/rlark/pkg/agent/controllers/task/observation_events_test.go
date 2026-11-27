@@ -474,3 +474,36 @@ func TestDeletedRootConfirmationIgnoresLaggingCache(t *testing.T) {
 		}
 	}
 }
+
+func TestPodStartFailureEventIsScopedAndRetainsPodUID(t *testing.T) {
+	scope := KubernetesObservationScope{Namespace: "runtime"}
+	queue := workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[runtimeObservationRequest]())
+	defer queue.ShutDown()
+	h := podStartFailureHandler(scope)
+	report := &corev1.Event{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "runtime"},
+		Type:       corev1.EventTypeWarning, Reason: "FailedMount",
+		InvolvedObject: corev1.ObjectReference{Kind: "Pod", Namespace: "runtime", Name: "worker", UID: "old-pod"},
+	}
+	for _, tc := range []struct {
+		edit func(*corev1.Event)
+		want int
+	}{
+		{func(e *corev1.Event) { e.InvolvedObject.Namespace = "another" }, 0},
+		{func(e *corev1.Event) { e.Reason = "Unhealthy" }, 0},
+		{func(e *corev1.Event) { e.InvolvedObject.UID = "" }, 0},
+		{func(*corev1.Event) {}, 1},
+	} {
+		input := report.DeepCopy()
+		tc.edit(input)
+		h.Create(context.Background(), event.TypedCreateEvent[client.Object]{Object: input}, queue)
+		if got := queue.Len(); got != tc.want {
+			t.Fatalf("queued %d requests for %#v, want %d", got, input.InvolvedObject, tc.want)
+		}
+	}
+	hint, _ := queue.Get()
+	defer queue.Done(hint)
+	if !hint.Pod || hint.UID != report.InvolvedObject.UID || hint.Key.Name != report.InvolvedObject.Name {
+		t.Fatalf("unexpected observation hint: %#v", hint)
+	}
+}

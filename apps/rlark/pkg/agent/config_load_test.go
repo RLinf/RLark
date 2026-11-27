@@ -125,7 +125,7 @@ func TestStartupConfigRoleMatrix(t *testing.T) {
 		{[]string{"--node-startup=embedded", "--node-name=invalid:node"}, false, false},
 		{[]string{"--mode=node", "--node-name=node-a", "--tensorboard-image=x"}, false, false},
 		{[]string{"--embedded-node-metrics-bind-address=:8082"}, false, false},
-		{[]string{"--node-startup=embedded", "--node-name=node-a", "--embedded-node-metrics-bind-address=0.0.0.0:8081"}, false, false},
+		{[]string{"--node-startup=embedded", "--node-name=node-a", "--metrics-bind-address=:8081", "--embedded-node-metrics-bind-address=0.0.0.0:8081"}, false, false},
 		{[]string{"--metrics-bind-address=:invalid"}, false, false},
 		{[]string{"--in-cluster", "--kubeconfig=x"}, false, false},
 		{[]string{"--leader-election", "--leader-election-key=invalid/key/extra"}, false, false},

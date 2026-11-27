@@ -121,7 +121,8 @@ export interface RoleResource {
     objectStorage: string;
     mountPath: string;
     hostPath: string;
-    pvcSizeGb: number | "";
+    profile: string;
+    readOnly: boolean;
     rawVolume?: CRDVolume;
   }>;
   advanced?: {
@@ -149,6 +150,7 @@ export interface CRDNodeLite {
     annotations?: Record<string, string>;
   };
   spec?: {
+    displayName?: string;
     unschedulable?: boolean;
   };
   status?: {
@@ -213,9 +215,14 @@ export interface CRDNode {
     annotations?: Record<string, string>;
     creationTimestamp?: string;
     generation?: number;
+    // The stored object's version: a merge patch that carries it is applied only if the object has not changed
+    // meanwhile, so two administrators cannot silently overwrite each other's restart request.
+    resourceVersion?: string;
   };
   spec: {
     agentType?: string;
+    // The operator's name; metadata.name stays the Kubernetes Node name.
+    displayName?: string;
     unschedulable?: boolean;
     operations?: Array<{
       id: string;
@@ -224,6 +231,9 @@ export interface CRDNode {
   };
   status?: {
     phase?: string;
+    // The UID of the data-plane Kubernetes Node the Agent observes: the identity a station record is bound to
+    // (spec.nodeUID). A same-named Node reporting another UID is a replacement machine.
+    kubernetesNodeUID?: string;
     conditions?: Array<{
       type: string;
       status: "True" | "False" | "Unknown";

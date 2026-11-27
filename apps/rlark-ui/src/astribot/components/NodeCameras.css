@@ -1,0 +1,51 @@
+.node-cameras-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.node-camera {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.node-camera img,
+.node-camera-blank {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  background: #000;
+  object-fit: contain;
+}
+
+.node-camera-blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  color: #c9ced6;
+  font-size: 12px;
+  text-align: center;
+}
+
+.node-camera.is-missing .node-camera-blank {
+  background: var(--canvas);
+  color: var(--muted);
+}
+
+.node-camera figcaption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.node-camera-note {
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}

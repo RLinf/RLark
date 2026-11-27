@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -30,7 +31,6 @@ type Installer struct {
 
 // Install installs the components.
 func (d *Installer) Install(cfg *types.DeployConfig, certBundle *cert.Bundle) error {
-	logger := log.GetLogger()
 	kubeconfig := cfg.Kubernetes.Kubeconfig
 	if kubeconfig == "" {
 		kubeconfig = clientcmd.NewDefaultClientConfigLoadingRules().GetDefaultFilename()
@@ -40,13 +40,21 @@ func (d *Installer) Install(cfg *types.DeployConfig, certBundle *cert.Bundle) er
 	if err != nil {
 		return fmt.Errorf("build kubeconfig: %w", err)
 	}
+	return d.InstallTo(context.Background(), restConfig, cfg, certBundle)
+}
+
+// InstallTo installs the components into the cluster restConfig reaches: the Gateway installs a new cluster's
+// agent this way, with the cluster's credential held in memory only. The control plane's kcp needs Install, whose
+// kubeconfig file kubectl reads.
+func (d *Installer) InstallTo(ctx context.Context, restConfig *rest.Config, cfg *types.DeployConfig, certBundle *cert.Bundle) error {
+	logger := log.FromContext(ctx)
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return fmt.Errorf("create clientset: %w", err)
 	}
 	// Inject runtime dependencies into context
-	ctx := runtime.WithClientset(context.Background(), clientset)
-	ctx = runtime.WithKubeconfig(ctx, kubeconfig)
+	ctx = runtime.WithClientset(ctx, clientset)
+	ctx = runtime.WithKubeconfig(ctx, d.kubeconfig)
 
 	if err := ensureNamespace(ctx, clientset); err != nil {
 		return err
@@ -69,6 +77,9 @@ func (d *Installer) Install(cfg *types.DeployConfig, certBundle *cert.Bundle) er
 		if err := createCertSecret(ctx, clientset, cfg, certBundle); err != nil {
 			return err
 		}
+	}
+	if err := putImagePullCredentials(ctx, clientset, cfg.Kubernetes.ImagePullCredentials); err != nil {
+		return err
 	}
 
 	if cfg.DB != nil {
@@ -105,7 +116,13 @@ func (d *Installer) Install(cfg *types.DeployConfig, certBundle *cert.Bundle) er
 		}
 
 		// Post-deploy hook
-		if c.PostDeployFn != nil {
+		if c.Name == constants.ComponentKCP {
+			if err := component.PostDeployKCPWithIdentity(ctx, clientset, d.kubeconfig, func(pod string, admin []byte) error {
+				return issueKCPIdentities(ctx, d.kubeconfig, clientset, pod, admin)
+			}); err != nil {
+				return err
+			}
+		} else if c.PostDeployFn != nil {
 			if err := c.PostDeployFn(ctx, cfg); err != nil {
 				return err
 			}

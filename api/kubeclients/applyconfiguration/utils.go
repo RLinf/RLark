@@ -39,6 +39,22 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.AddonStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Cluster"):
 		return &rlarkiov1alpha1.ClusterApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterNodeAgents"):
+		return &rlarkiov1alpha1.ClusterNodeAgentsApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterProvision"):
+		return &rlarkiov1alpha1.ClusterProvisionApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterProvisionFacts"):
+		return &rlarkiov1alpha1.ClusterProvisionFactsApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterProvisionGPU"):
+		return &rlarkiov1alpha1.ClusterProvisionGPUApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterProvisionMachine"):
+		return &rlarkiov1alpha1.ClusterProvisionMachineApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterProvisionSpec"):
+		return &rlarkiov1alpha1.ClusterProvisionSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterProvisionStage"):
+		return &rlarkiov1alpha1.ClusterProvisionStageApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ClusterProvisionStatus"):
+		return &rlarkiov1alpha1.ClusterProvisionStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterSpec"):
 		return &rlarkiov1alpha1.ClusterSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterStatus"):
@@ -91,6 +107,18 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.NodeIdentityApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeInfo"):
 		return &rlarkiov1alpha1.NodeInfoApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeJoin"):
+		return &rlarkiov1alpha1.NodeJoinApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeJoinFacts"):
+		return &rlarkiov1alpha1.NodeJoinFactsApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeJoinMachine"):
+		return &rlarkiov1alpha1.NodeJoinMachineApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeJoinSpec"):
+		return &rlarkiov1alpha1.NodeJoinSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeJoinStatus"):
+		return &rlarkiov1alpha1.NodeJoinStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeJoinTiming"):
+		return &rlarkiov1alpha1.NodeJoinTimingApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeNetworkCapability"):
 		return &rlarkiov1alpha1.NodeNetworkCapabilityApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeOperationRequest"):
@@ -119,6 +147,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.PodStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PullProgress"):
 		return &rlarkiov1alpha1.PullProgressApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("RolloutPolicy"):
+		return &rlarkiov1alpha1.RolloutPolicyApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Task"):
 		return &rlarkiov1alpha1.TaskApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskDrainRequest"):
@@ -127,6 +157,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &rlarkiov1alpha1.TaskDrainStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskEnvironment"):
 		return &rlarkiov1alpha1.TaskEnvironmentApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("TaskInstanceStatus"):
+		return &rlarkiov1alpha1.TaskInstanceStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskPlacementSpec"):
 		return &rlarkiov1alpha1.TaskPlacementSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("TaskRuntimeSpec"):

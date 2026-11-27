@@ -34,6 +34,7 @@ func (a *Agent) runRegistrationTunnel(ctx context.Context, role string, register
 	}
 	connect := func() error {
 		startedAt := time.Now()
+		ready, changed := a.ready.announce(header)
 		ws, _, err := a.serverClient.DialWebsocket(ctx, header)
 		if err != nil {
 			return err
@@ -60,13 +61,15 @@ func (a *Agent) runRegistrationTunnel(ctx context.Context, role string, register
 
 		session := remotedialer.NewClientSessionWithDialer(auth, ws, netDialer)
 		defer session.Close()
+		go closeWhenChanged(session, changed, sessCtx)
 
 		_, err = session.Serve(sessCtx)
 		stage, duration := session.Diagnostics()
-		logger.Info("tunnel session ended", "role", role, "duration", duration, "stage", stage)
+		logger.Info("tunnel session ended", "role", role, "ready", ready, "duration", duration, "stage", stage)
 		_ = startedAt
-		return err
+		return changedOr(changed, err)
 	}
+	connect = reconnectOnChange(ctx, connect)
 
 	for {
 		if err := connect(); err != nil {

@@ -80,7 +80,7 @@ function AvailabilityBadge({
  * AdminNodeRowMenu — compact "⋯" dropdown for an admin node row.
  * Provides cordon/uncordon, drain/undrain, and unmanage (remove RLark Node CR) actions.
  */
-function AdminNodeRowMenu({
+export function AdminNodeRowMenu({
   node,
   schedulingKind,
   updating,

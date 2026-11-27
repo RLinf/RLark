@@ -19,6 +19,11 @@ const (
 
 // ClusterSpec declares the durable operational state of a data-plane cluster.
 type ClusterSpec struct {
+	// DisplayName is a human-readable name; metadata.name remains the stable cluster ID.
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9一-龥._-]+$`
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
 	// AgentNamespace is the management-plane namespace that contains the agent heartbeat Lease and Node CRs.
 	// +kubebuilder:validation:MinLength=1
 	AgentNamespace        string `json:"agentNamespace"`
@@ -26,6 +31,10 @@ type ClusterSpec struct {
 	Draining              bool   `json:"draining,omitempty"`
 	Delisted              bool   `json:"delisted,omitempty"`
 	DrainPreviousCordoned bool   `json:"drainPreviousCordoned,omitempty"`
+	// NodeAgents declares the cluster's node Agents. The cluster Agent keeps them as one DaemonSet,
+	// so a Kubernetes Node that joins and matches the selector gets its node Agent without further action.
+	// +optional
+	NodeAgents *ClusterNodeAgents `json:"nodeAgents,omitempty"`
 }
 
 // ClusterStatus reports the controller's current observation of a data-plane cluster.

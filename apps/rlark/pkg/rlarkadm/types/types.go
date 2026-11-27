@@ -79,7 +79,8 @@ type KubernetesEnv struct {
 	// node-agent for image pre-pull progress monitoring. Defaults to
 	// /run/containerd/containerd.sock when empty. Set this for non-standard
 	// runtimes such as k3s (/run/k3s/containerd/containerd.sock).
-	ContainerdSocket string `json:"containerdSocket,omitempty" yaml:"containerd-socket,omitempty"`
+	ContainerdSocket      string `json:"-" yaml:"-"`
+	AstribotKubernetesEnv `json:",inline" yaml:",inline"`
 }
 
 // ComponentConfig holds configuration options.

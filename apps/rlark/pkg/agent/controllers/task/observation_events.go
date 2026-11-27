@@ -95,6 +95,27 @@ func runtimePodHandler(scope KubernetesObservationScope) handler.TypedEventHandl
 	return runtimeEventHandler(scope, true)
 }
 
+// podStartFailureHandler treats a warning as a hint to re-read the same Pod
+// incarnation. A replaced Pod cannot inherit the event.
+func podStartFailureHandler(scope KubernetesObservationScope) handler.TypedEventHandler[client.Object, runtimeObservationRequest] {
+	return handler.TypedEnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []runtimeObservationRequest {
+		report, ok := object.(*corev1.Event)
+		if !ok || report.Namespace != scope.Namespace || report.Type != corev1.EventTypeWarning {
+			return nil
+		}
+		pod := report.InvolvedObject
+		if pod.Kind != "Pod" || pod.Namespace != scope.Namespace || pod.Name == "" || pod.UID == "" {
+			return nil
+		}
+		switch report.Reason {
+		case "FailedMount", "FailedAttachVolume", "FailedScheduling":
+			return []runtimeObservationRequest{{Key: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, UID: pod.UID, Pod: true}}
+		default:
+			return nil
+		}
+	})
+}
+
 type runtimeObservationReconciler struct {
 	push    pushRuntimeReconciler
 	profile *kubernetesruntime.ObservationProfile

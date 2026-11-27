@@ -53,6 +53,7 @@ const (
 	// ReasonStatusWriteConflict distinguishes the expected, benign case of
 	// another writer having won a race from a genuine write failure.
 	ReasonStatusWriteConflict = "StatusWriteConflict"
+	ReasonWaitingForInput     = "WaitingForInput"
 )
 
 // Reconciler reconciles resources.
@@ -170,13 +171,14 @@ func (s Shell) RunStateMachine(
 
 		changed, err := r.ReconcileStateMachine(ctx, obj)
 		awaitingCleanup := errors.Is(err, ErrRequeueAfterChildCleanup)
-		if err != nil && !awaitingCleanup {
+		awaitingInput := errors.Is(err, ErrRequeueWaiting)
+		if err != nil && !awaitingCleanup && !awaitingInput {
 			logger.Error(err, "reconcile failed")
 			s.Warnf(obj, ReasonReconcileFailed, "Reconcile failed: %v", err)
 			return Result{Reason: ReasonReconcileFailed}, err
 		}
 
-		if !awaitingCleanup {
+		if !awaitingCleanup && !awaitingInput {
 			if recorder, ok := r.(ObservedGenerationRecorder); ok {
 				if recorder.SetObservedGeneration(obj, obj.GetGeneration()) {
 					changed = true
@@ -195,6 +197,13 @@ func (s Shell) RunStateMachine(
 			}
 		}
 
+		if awaitingInput {
+			return Result{
+				Outcome: sharedreconcile.OutcomeWaitingForChange,
+				Reason:  ReasonWaitingForInput,
+				Retry:   sharedreconcile.RetryDirective{Class: sharedreconcile.RetryInProgress, After: WaitingRequeue},
+			}, nil
+		}
 		if awaitingCleanup {
 			return Result{
 				Outcome: sharedreconcile.OutcomeCleanupInProgress,

@@ -93,6 +93,9 @@ func (g *Gateway) installClusterAddon(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "addonName is required")
 		return
 	}
+	if !g.publishAddonPackageFor(c, clusterID, req.AddonName, &req.Version, req.Values) {
+		return
+	}
 
 	addonCR := &rlarkv1alpha1.Addon{
 		ObjectMeta: metav1.ObjectMeta{
@@ -143,6 +146,9 @@ func (g *Gateway) updateClusterAddon(c *gin.Context) {
 	if req.Values != nil {
 		existing.Spec.Values = req.Values
 	}
+	if !g.publishAddonPackageFor(c, clusterID, existing.Spec.AddonName, &existing.Spec.Version, existing.Spec.Values) {
+		return
+	}
 
 	result, err := g.kubeClient.RlinfV1alpha1().Addons(clusterID).Update(ctx, existing, metav1.UpdateOptions{})
 	if err != nil {
@@ -159,6 +165,9 @@ func (g *Gateway) deleteClusterAddon(c *gin.Context) {
 
 	if err := g.kubeClient.RlinfV1alpha1().Addons(clusterID).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
+		return
+	}
+	if !g.deleteAddonPackages(c, clusterID, name) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})

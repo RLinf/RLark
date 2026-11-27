@@ -11,11 +11,11 @@
     "skipLibCheck": true
   },
   "include": [
+    "src/vite-env.d.ts",
     "src/api.ts",
     "src/backend.ts",
     "src/utils/clipboard.ts",
     "src/utils/crd.ts",
-    "src/utils/deployYaml.ts",
     "src/utils/imageReference.ts",
     "src/utils/job.ts",
     "src/utils/jobPhase.ts",
@@ -30,6 +30,14 @@
     "src/utils/sshKeys.ts",
     "src/utils/terminalKeyboard.ts",
     "src/utils/workerEvents.ts",
+    "src/astribot/api.ts",
+    "src/astribot/iam/portal.ts",
+    "src/astribot/mockBackend.ts",
+    "src/astribot/lib",
+    "src/astribot/components/NodeName.tsx",
+    "src/astribot/components/ClusterName.tsx",
+    "src/astribot/components/NodeLinks.tsx",
+    "src/astribot/components/NodeNetworkAddresses.tsx",
     "src/utils/yaml.ts"
   ]
 }

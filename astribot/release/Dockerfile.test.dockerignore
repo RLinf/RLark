@@ -1,0 +1,4 @@
+# The tests run on the tree as committed: a host's installed packages and build outputs never enter them.
+**/node_modules
+apps/rlark-ui/dist
+.git

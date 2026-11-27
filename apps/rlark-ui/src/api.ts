@@ -69,7 +69,13 @@ async function authenticatedFetch(
   }
 
   const response = await fetch(input, { ...init, headers });
-  if (response.status === 401) {
+  // A 401 answers the token this request carried. If the stored token has been
+  // replaced while the request was in flight, the console has a newer session
+  // than the response knows about, so that verdict is stale and is ignored.
+  if (
+    response.status === 401 &&
+    sessionStorage.getItem(AUTH_TOKEN_KEY) === token
+  ) {
     clearAuthSession();
     window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   }

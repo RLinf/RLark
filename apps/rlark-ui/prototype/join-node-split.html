@@ -1,0 +1,1761 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>加入节点原型</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap");
+
+:root {
+  --app-bg: #eef1f5;
+  --panel: #ffffff;
+  --panel-soft: #f8fafc;
+  --canvas: #f4f6f9;
+  --ink: #171b25;
+  --muted: #7c8492;
+  --soft: #a9b0bd;
+  --line: #e7ebf0;
+  --line-strong: #dce2ea;
+  --accent: #7c3aed;
+  --accent-2: #a78bfa;
+  --accent-bg: #efe9fd;
+  --accent-ink: #5b21b6;
+  --green: #168a61;
+  --green-2: #36c98f;
+  --green-bg: #e7f8f1;
+  --red: #cf3f61;
+  --red-2: #ef5a7a;
+  --red-bg: #fdeef2;
+  --orange: #c77a12;
+  --orange-bg: #fff5e5;
+  --blue-bg: #eef3ff;
+  --blue-ink: #3556b8;
+  --code-bg: #141925;
+  --code-ink: #e7ecf5;
+  --shadow: 0 18px 50px rgba(28, 39, 58, 0.07);
+  --shadow-soft: 0 8px 24px rgba(28, 39, 58, 0.055);
+  --row-hover: #faf8ff;
+  --sticky-shadow: 0 -12px 26px rgba(28, 39, 58, 0.06);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --app-bg: #0b111c;
+    --panel: #151d2b;
+    --panel-soft: #182234;
+    --canvas: #0f1623;
+    --ink: #f5f7fb;
+    --muted: #9ca8ba;
+    --soft: #748196;
+    --line: #273348;
+    --line-strong: #33425b;
+    --accent: #a78bfa;
+    --accent-2: #c4b5fd;
+    --accent-bg: rgba(167, 139, 250, 0.18);
+    --accent-ink: #d6c8ff;
+    --green: #48d8a2;
+    --green-2: #48d8a2;
+    --green-bg: rgba(72, 216, 162, 0.12);
+    --red: #ff8fa8;
+    --red-2: #ff8fa8;
+    --red-bg: rgba(255, 143, 168, 0.12);
+    --orange: #f6b45e;
+    --orange-bg: rgba(246, 180, 94, 0.12);
+    --blue-bg: rgba(120, 156, 255, 0.13);
+    --blue-ink: #a8bdff;
+    --code-bg: #0a0f18;
+    --code-ink: #dbe4f3;
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+    --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.22);
+    --row-hover: #1a2435;
+    --sticky-shadow: 0 -12px 26px rgba(0, 0, 0, 0.28);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --app-bg: #0b111c;
+  --panel: #151d2b;
+  --panel-soft: #182234;
+  --canvas: #0f1623;
+  --ink: #f5f7fb;
+  --muted: #9ca8ba;
+  --soft: #748196;
+  --line: #273348;
+  --line-strong: #33425b;
+  --accent: #a78bfa;
+  --accent-2: #c4b5fd;
+  --accent-bg: rgba(167, 139, 250, 0.18);
+  --accent-ink: #d6c8ff;
+  --green: #48d8a2;
+  --green-2: #48d8a2;
+  --green-bg: rgba(72, 216, 162, 0.12);
+  --red: #ff8fa8;
+  --red-2: #ff8fa8;
+  --red-bg: rgba(255, 143, 168, 0.12);
+  --orange: #f6b45e;
+  --orange-bg: rgba(246, 180, 94, 0.12);
+  --blue-bg: rgba(120, 156, 255, 0.13);
+  --blue-ink: #a8bdff;
+  --code-bg: #0a0f18;
+  --code-ink: #dbe4f3;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.22);
+  --row-hover: #1a2435;
+  --sticky-shadow: 0 -12px 26px rgba(0, 0, 0, 0.28);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--app-bg); }
+body {
+  min-width: 0;
+  margin: 0;
+  background:
+    radial-gradient(circle at 82% 4%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 28%),
+    var(--app-bg);
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+h1, h2, h3, p { margin: 0; }
+h1, h2, h3 { text-wrap: balance; }
+code, .mono { font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; }
+svg { flex: none; }
+[hidden] { display: none !important; }
+::selection { background: var(--accent-bg); color: var(--accent-ink); }
+:where(button, a, input, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.ico { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ico-sm { width: 14px; height: 14px; }
+.ico-lg { width: 20px; height: 20px; }
+.muted { color: var(--muted); }
+.soft { color: var(--soft); }
+
+/* ── shell ─────────────────────────────────────────────────────── */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  height: env(safe-area-inset-top, 0px);
+  z-index: 10;
+  background: var(--app-bg);
+}
+.topbar {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 58px;
+  padding: 0 max(22px, env(safe-area-inset-left)) 0 max(22px, env(safe-area-inset-right));
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--app-bg) 86%, transparent);
+  backdrop-filter: blur(14px);
+}
+.brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border-radius: 8px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--accent) 30%, transparent);
+  font-size: 12px;
+  font-weight: 800;
+}
+.brand strong { font-size: 13px; letter-spacing: -0.01em; }
+.proto-tag {
+  padding: 2px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.top-crumb { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--muted); font-size: 11.5px; }
+.top-crumb .sep { color: var(--soft); }
+.top-crumb strong { color: var(--ink); font-weight: 600; }
+.top-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.seg {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.seg-btn {
+  height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.seg-btn.active { background: var(--accent-bg); color: var(--accent-ink); }
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+}
+.icon-btn:hover { color: var(--ink); border-color: var(--line-strong); }
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  border-radius: 50%;
+  background: var(--accent-bg);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.page {
+  width: 100%;
+  margin: 0 auto;
+  padding: 28px max(24px, env(safe-area-inset-left)) 64px max(24px, env(safe-area-inset-right));
+}
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 22px; margin-bottom: 18px; }
+.eyebrow { color: var(--muted); font-size: 10.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; }
+.page-head h1 { margin: 4px 0 5px; font-size: 29px; line-height: 1.18; letter-spacing: -0.035em; }
+.page-head p { max-width: 650px; color: var(--muted); font-size: 12.5px; }
+.page-head-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; padding-top: 6px; }
+.page-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 18px; color: var(--soft); font-size: 10.5px; }
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+.card + .card { margin-top: 16px; }
+.setup { display: grid; gap: 18px; padding: 21px 24px; }
+.section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.section-head h2 { font-size: 15.5px; letter-spacing: -0.015em; }
+.section-head p { margin-top: 3px; color: var(--muted); font-size: 11.5px; }
+.section-meta { color: var(--soft); font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; }
+
+.cluster-row { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; }
+.field { display: grid; gap: 6px; min-width: 0; }
+.field > span, .field > label > span { color: var(--muted); font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em; }
+.select-wrap { position: relative; min-width: 290px; }
+.select-wrap select {
+  width: 100%;
+  height: 40px;
+  padding: 0 38px 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  appearance: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+.select-wrap .chev { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.cluster-state { display: flex; align-items: center; gap: 9px; height: 40px; color: var(--muted); font-size: 10.5px; }
+.cluster-state .mono { font-size: 10.5px; }
+
+.mode-tabs {
+  display: flex;
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--canvas);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.mode-tabs::-webkit-scrollbar { display: none; }
+.mode-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 1 0 auto;
+  min-width: 154px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mode-tab:hover { color: var(--ink); }
+.mode-tab.active {
+  border-color: var(--line-strong);
+  background: var(--panel);
+  color: var(--accent-ink);
+  box-shadow: 0 2px 7px rgba(28, 39, 58, 0.07);
+}
+.mode-note { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); font-size: 11px; }
+.mode-note .ico { margin-top: 1px; color: var(--accent); }
+.mode-note strong { color: var(--ink); font-weight: 600; }
+
+/* ── workspace ─────────────────────────────────────────────────── */
+.workspace { overflow: hidden; }
+.workspace-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 20px 24px 0; }
+.workspace-head h2 { font-size: 15.5px; letter-spacing: -0.015em; }
+.workspace-head p { margin-top: 3px; color: var(--muted); font-size: 11.5px; }
+.head-actions { display: flex; align-items: center; gap: 11px; flex: 0 0 auto; padding-top: 2px; }
+.scan-note { color: var(--soft); font-size: 10.5px; white-space: nowrap; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 7px 16px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.btn.primary:hover { filter: brightness(0.93); }
+.btn.secondary { border-color: var(--line-strong); background: var(--panel); color: var(--ink); }
+.btn.secondary:hover { border-color: var(--accent); color: var(--accent-ink); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+.btn.ghost:hover { background: var(--canvas); color: var(--ink); }
+.btn.sm { height: 29px; padding: 0 9px; font-size: 10.5px; border-radius: 8px; }
+.btn.danger-ghost { border-color: color-mix(in srgb, var(--red) 30%, var(--line)); background: transparent; color: var(--red); }
+.btn:disabled { cursor: not-allowed; opacity: 0.5; box-shadow: none; }
+.link-btn { padding: 0; border: 0; background: transparent; color: var(--accent-ink); font-size: 10.5px; font-weight: 700; }
+.link-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
+.link-btn:disabled { cursor: not-allowed; opacity: .45; text-decoration: none; }
+
+.credential-strip {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 14px 24px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel-soft);
+}
+.credential-title { display: flex; align-items: center; gap: 9px; min-width: 168px; }
+.cred-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--accent-bg); color: var(--accent-ink); }
+.credential-title strong { display: block; font-size: 11.5px; }
+.credential-title small { display: block; margin-top: 1px; color: var(--muted); font-size: 10px; }
+.credential-item { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.credential-item > div { display: grid; gap: 1px; min-width: 0; }
+.credential-item .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px var(--green-bg); }
+.credential-item strong { font-size: 10.5px; }
+.credential-item small { color: var(--muted); font-size: 10px; }
+.credential-strip .spacer { flex: 1 1 16px; }
+
+.table-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 24px 0; }
+.search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 33px;
+  min-width: 255px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--muted);
+}
+.search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 11.5px; }
+.search input::placeholder { color: var(--soft); }
+.tool-count { margin-left: auto; color: var(--soft); font-size: 10.5px; white-space: nowrap; }
+.select-all { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+.select-all input { accent-color: var(--accent); }
+.mobile-only { display: none; }
+
+.table-wrap { padding: 9px 24px 0; }
+.machine-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.machine-table th {
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--line);
+  color: var(--soft);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-align: left;
+  text-transform: uppercase;
+}
+.machine-table td { padding: 10px 9px; border-bottom: 1px solid var(--line); vertical-align: middle; font-size: 11.5px; }
+.machine-table tr:last-child td { border-bottom: 0; }
+.machine-table tbody tr { transition: background 120ms ease; }
+.machine-table tbody tr:hover { background: var(--row-hover); }
+.machine-table tbody tr.is-selected { background: var(--accent-bg); }
+.machine-table tbody tr.is-disabled { color: var(--muted); }
+.machine-table tbody tr.is-disabled .machine-id strong { color: var(--muted); }
+.machine-table .check-col { width: 34px; padding-right: 0; }
+.machine-table .machine-col { width: 30%; }
+.machine-table .site-col { width: 19%; }
+.machine-table .reach-col { width: 20%; }
+.machine-table .seen-col { width: 11%; }
+.machine-table .state-col { width: 20%; }
+.machine-table input[type="checkbox"], .machine-card input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; }
+.machine-table input[type="checkbox"]:disabled, .machine-card input[type="checkbox"]:disabled { cursor: not-allowed; }
+.machine-id { display: grid; gap: 3px; min-width: 0; }
+.machine-id strong { overflow: hidden; color: var(--ink); font-size: 11.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.machine-sub { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 10px; }
+.machine-sub .mac { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 999px; font-size: 9.5px; font-weight: 700; }
+.chip.model { background: var(--accent-bg); color: var(--accent-ink); }
+.site-cell { display: grid; gap: 2px; min-width: 0; }
+.site-cell strong { font-size: 11px; font-weight: 600; }
+.site-cell .mono { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.reach { display: flex; flex-wrap: wrap; gap: 4px; }
+.reach-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 6px; font-size: 9.5px; font-weight: 700; white-space: nowrap; }
+.reach-chip.ok { background: var(--green-bg); color: var(--green); }
+.reach-chip.bad { background: var(--red-bg); color: var(--red); }
+.reach-chip .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.row-state { display: grid; gap: 3px; min-width: 0; }
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.status .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.status-online, .status-success { background: var(--green-bg); color: var(--green); }
+.status-running { background: var(--blue-bg); color: var(--blue-ink); }
+.status-failed { background: var(--red-bg); color: var(--red); }
+.status-waiting { background: var(--orange-bg); color: var(--orange); }
+.state-note { color: var(--muted); font-size: 9.5px; line-height: 1.35; overflow-wrap: anywhere; white-space: normal; }
+.state-action { width: fit-content; }
+.row-link { padding: 0; border: 0; background: transparent; color: var(--accent-ink); font-size: 9.5px; font-weight: 700; }
+.row-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+.empty-state { display: grid; place-items: center; gap: 7px; padding: 36px 18px 32px; text-align: center; }
+.empty-icon { display: grid; place-items: center; width: 42px; height: 42px; margin-bottom: 2px; border-radius: 13px; background: var(--accent-bg); color: var(--accent-ink); }
+.empty-state h3 { font-size: 13px; }
+.empty-state p { max-width: 420px; color: var(--muted); font-size: 11px; }
+.empty-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
+
+.selection-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+  padding: 12px 24px max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  box-shadow: var(--sticky-shadow);
+  backdrop-filter: blur(10px);
+}
+.selection-info { display: flex; align-items: center; gap: 11px; color: var(--muted); font-size: 10.5px; }
+.selection-info strong { color: var(--ink); font-size: 12px; }
+.selection-actions { display: flex; align-items: center; gap: 12px; }
+.selection-hint { color: var(--soft); font-size: 10px; text-align: right; }
+
+/* ── forms ─────────────────────────────────────────────────────── */
+.panel-pad { padding: 18px 24px 0; }
+.form-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 13px; }
+.field.span-6 { grid-column: span 6; }
+.field.span-4 { grid-column: span 4; }
+.field.span-3 { grid-column: span 3; }
+.field.span-2 { grid-column: span 2; }
+.input-wrap { position: relative; }
+.input, .field select, .field textarea {
+  width: 100%;
+  height: 37px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 11.5px;
+}
+.field textarea { height: auto; min-height: 70px; padding: 9px 11px; resize: vertical; }
+.input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); outline: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+.field select { appearance: none; }
+.field .helper { color: var(--soft); font-size: 10px; }
+.field .field-error { display: none; color: var(--red); font-size: 10px; font-weight: 600; }
+.field.has-error .input, .field.has-error select { border-color: var(--red); }
+.field.has-error .field-error { display: block; }
+.input-wrap .eye {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+}
+.input-wrap .eye:hover { background: var(--canvas); color: var(--ink); }
+.input-wrap.has-eye .input { padding-right: 38px; }
+.form-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 15px 24px 0;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: var(--blue-bg);
+  color: var(--blue-ink);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+.form-note .ico { margin-top: 1px; }
+.form-actions { display: flex; justify-content: flex-end; gap: 9px; padding: 17px 24px 20px; }
+.form-actions .btn { min-width: 92px; }
+.advanced { margin: 14px 24px 0; border-top: 1px dashed var(--line); }
+.advanced summary { padding: 11px 0 4px; color: var(--muted); font-size: 10.5px; font-weight: 600; cursor: pointer; list-style: none; }
+.advanced summary::-webkit-details-marker { display: none; }
+.advanced summary .chev { display: inline-block; margin-right: 4px; vertical-align: -2px; transition: transform 150ms ease; }
+.advanced[open] summary .chev { transform: rotate(90deg); }
+.advanced .form-grid { padding-bottom: 2px; }
+.code-result {
+  margin: 16px 24px 0;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 11px;
+  background: var(--accent-bg);
+}
+.code-result-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.code-result-title { display: flex; align-items: center; gap: 8px; color: var(--accent-ink); font-size: 11.5px; font-weight: 750; }
+.code-once { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.code-field { display: grid; gap: 5px; margin-top: 11px; }
+.code-field > span { color: var(--muted); font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.code-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--code-bg);
+  color: var(--code-ink);
+  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+.code-block code { overflow-x: auto; white-space: nowrap; scrollbar-width: thin; }
+.copy-btn { flex: 0 0 auto; display: inline-grid; place-items: center; width: 25px; height: 25px; border: 1px solid rgba(255,255,255,.18); border-radius: 6px; background: rgba(255,255,255,.07); color: #dbe4f3; }
+.copy-btn:hover { background: rgba(255,255,255,.14); }
+.code-wait { display: flex; align-items: center; gap: 7px; margin-top: 11px; color: var(--orange); font-size: 10.5px; font-weight: 600; }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 40%, transparent); animation: pulse 1.8s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 35%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+/* ── operations ────────────────────────────────────────────────── */
+.ops-card { overflow: hidden; }
+.ops-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 19px 24px 13px; flex-wrap: wrap; }
+.ops-head h2 { font-size: 15.5px; letter-spacing: -0.015em; }
+.ops-head .sub { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.ops-summary { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.ops-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; font-size: 9.5px; font-weight: 700; }
+.ops-chip .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.ops-chip.running { background: var(--blue-bg); color: var(--blue-ink); }
+.ops-chip.failed { background: var(--red-bg); color: var(--red); }
+.ops-chip.waiting { background: var(--orange-bg); color: var(--orange); }
+.ops-chip.success { background: var(--green-bg); color: var(--green); }
+.ops-list { border-top: 1px solid var(--line); }
+.ops-row {
+  display: grid;
+  grid-template-columns: minmax(210px, 1.2fr) minmax(230px, 1.5fr) 106px minmax(150px, auto);
+  gap: 16px;
+  align-items: center;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.ops-row:last-child { border-bottom: 0; }
+.ops-row.is-failed { background: color-mix(in srgb, var(--red-bg) 58%, var(--panel)); }
+.ops-row.is-waiting { background: color-mix(in srgb, var(--orange-bg) 45%, var(--panel)); }
+.ops-row.is-success { background: color-mix(in srgb, var(--green-bg) 34%, var(--panel)); }
+.ops-machine { display: grid; gap: 3px; min-width: 0; }
+.ops-machine strong { overflow: hidden; color: var(--ink); font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.ops-meta { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 9.5px; }
+.ops-meta .op-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-chip { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 999px; background: var(--canvas); color: var(--muted); font-size: 9px; font-weight: 700; }
+.ops-step { display: grid; gap: 5px; min-width: 0; }
+.ops-step-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 10px; }
+.ops-step-line strong { overflow: hidden; color: var(--ink); font-size: 10.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.ops-step-line .n { color: var(--soft); font-family: "JetBrains Mono", monospace; font-size: 9.5px; white-space: nowrap; }
+.progress { height: 5px; overflow: hidden; border-radius: 999px; background: var(--line); }
+.progress i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 300ms ease; }
+.ops-row.is-failed .progress i { background: var(--red); }
+.ops-row.is-success .progress i { background: var(--green); }
+.ops-row.is-waiting .progress { background: repeating-linear-gradient(90deg, var(--line) 0 5px, transparent 5px 9px); }
+.ops-reason { display: flex; align-items: flex-start; gap: 5px; margin-top: 1px; color: var(--red); font-size: 9.5px; line-height: 1.4; }
+.ops-reason .ico { margin-top: 1px; }
+.ops-updated { color: var(--soft); font-size: 9.5px; white-space: nowrap; }
+.ops-status { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.ops-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+.ops-detail { grid-column: 1 / -1; display: grid; gap: 4px; padding: 4px 0 2px 0; }
+.stage-row { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); font-size: 10px; }
+.stage-dot { display: grid; place-items: center; width: 15px; height: 15px; margin-top: 1px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--soft); font-size: 8px; flex: 0 0 auto; }
+.stage-row.done .stage-dot { border-color: var(--green); background: var(--green-bg); color: var(--green); }
+.stage-row.current .stage-dot { border-color: var(--accent); background: var(--accent-bg); color: var(--accent-ink); }
+.stage-row.failed .stage-dot { border-color: var(--red); background: var(--red-bg); color: var(--red); }
+.stage-row.current, .stage-row.failed { color: var(--ink); }
+.stage-state { margin-left: auto; color: var(--soft); font-size: 9px; white-space: nowrap; }
+.ops-foot { padding: 10px 24px 13px; color: var(--soft); font-size: 10px; }
+
+/* ── toast ─────────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  right: max(20px, env(safe-area-inset-right));
+  bottom: max(20px, env(safe-area-inset-bottom));
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 10px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-size: 11px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast .ico { color: var(--green); }
+
+/* The workspace takes the full page; join operations sit below it. */
+.join-body { display: block; margin-top: 16px; }
+.join-main { min-width: 0; }
+.join-main > .card { margin-top: 0; }
+.join-rail { min-width: 0; margin-top: 16px; }
+.join-rail .ops-card { margin-top: 0; }
+
+@media (max-width: 1100px) {
+  .ops-row { grid-template-columns: minmax(190px, 1.1fr) minmax(200px, 1.4fr) auto; }
+  .ops-updated { display: none; }
+  .ops-status { align-items: flex-end; }
+  .ops-actions { justify-content: flex-end; }
+}
+
+@media (max-width: 760px) {
+  .topbar { min-height: 52px; padding: 0 16px; gap: 12px; }
+  .top-crumb, .proto-tag { display: none; }
+  .brand strong { font-size: 12px; }
+  .page { padding: 19px max(16px, env(safe-area-inset-left)) 44px max(16px, env(safe-area-inset-right)); }
+  .page-head { flex-direction: column; gap: 12px; margin-bottom: 15px; }
+  .page-head h1 { font-size: 25px; }
+  .page-head-actions { width: 100%; padding-top: 0; }
+  .page-head-actions .btn { width: 100%; }
+  .card { border-radius: 15px; }
+  .setup { padding: 17px 16px; gap: 15px; }
+  .section-head { gap: 10px; }
+  .cluster-row { align-items: stretch; gap: 10px; }
+  .select-wrap { min-width: 0; width: 100%; }
+  .cluster-state { height: auto; padding-top: 0; }
+  .mode-tabs { padding: 3px; gap: 4px; }
+  .mode-tab { min-width: 100px; height: 37px; font-size: 10.5px; padding: 0 8px; }
+  .workspace-head { flex-direction: column; gap: 10px; padding: 17px 16px 0; }
+  .head-actions { width: 100%; justify-content: space-between; }
+  .credential-strip { margin: 12px 16px 0; padding: 10px; gap: 9px; align-items: flex-start; flex-direction: column; }
+  .credential-title { min-width: 0; }
+  .credential-item { width: 100%; }
+  .credential-strip .spacer { display: none; }
+  .credential-strip .link-btn { margin-left: 39px; }
+  .table-tools { padding: 12px 16px 0; gap: 8px; }
+  .search { min-width: 0; flex: 1 1 100%; }
+  .tool-count { margin-left: 0; }
+  .select-all { margin-left: auto; }
+  .desktop-only { display: none; }
+  .mobile-only { display: block; }
+  .machine-cards { display: grid; gap: 8px; padding: 9px 16px 0; }
+  .machine-card {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 11px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: var(--panel);
+  }
+  .machine-card.is-selected { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: var(--accent-bg); }
+  .machine-card.is-disabled { color: var(--muted); opacity: 0.78; }
+  .machine-card.is-disabled .machine-id strong { color: var(--muted); }
+  .machine-card .machine-id { gap: 4px; }
+  .machine-card .machine-id strong { white-space: normal; overflow-wrap: anywhere; }
+  .machine-card .machine-sub { flex-wrap: wrap; }
+  .machine-card .machine-sub .mac { white-space: normal; overflow-wrap: anywhere; }
+  .machine-card .card-check { display: flex; align-items: flex-start; padding-top: 1px; }
+  .machine-card .card-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right; }
+  .machine-card .card-location { display: flex; align-items: center; gap: 7px; grid-column: 2 / 3; color: var(--muted); font-size: 10px; min-width: 0; }
+  .machine-card .card-location .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .machine-card .card-bottom { grid-column: 2 / 4; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .machine-card .reach { gap: 4px; }
+  .machine-card .row-state { align-items: flex-end; }
+  .machine-card .state-note { text-align: right; white-space: normal; overflow-wrap: anywhere; }
+  .selection-bar { flex-direction: column; align-items: stretch; gap: 9px; margin-top: 10px; padding: 11px 16px calc(11px + env(safe-area-inset-bottom)); }
+  .selection-info { justify-content: space-between; }
+  .selection-actions { justify-content: space-between; }
+  .selection-hint { display: none; }
+  .selection-actions .btn { flex: 1; }
+  .panel-pad { padding: 15px 16px 0; }
+  .form-grid { grid-template-columns: minmax(0, 1fr); gap: 11px; }
+  .field.span-6, .field.span-4, .field.span-3, .field.span-2 { grid-column: 1 / -1; }
+  .form-note { margin: 13px 16px 0; }
+  .form-actions { padding: 15px 16px 17px; }
+  .form-actions .btn { flex: 1; }
+  .advanced { margin: 13px 16px 0; }
+  .code-result { margin: 14px 16px 0; }
+  .code-block { font-size: 9.8px; }
+  .ops-head { padding: 16px 16px 11px; gap: 9px; }
+  .ops-head .head-actions { justify-content: flex-end; }
+  .ops-row { grid-template-columns: minmax(0, 1fr); gap: 7px; padding: 12px 16px; }
+  .ops-row .ops-status { flex-direction: row; align-items: center; justify-content: space-between; width: 100%; }
+  .ops-row .ops-actions { grid-column: 1 / -1; justify-content: flex-start; padding-top: 1px; }
+  .ops-row .ops-updated { display: none; }
+  .ops-row .ops-step { order: 2; }
+  .ops-row .ops-machine { order: 1; }
+  .ops-row .ops-status { order: 3; }
+  .ops-detail { padding-top: 2px; }
+  .ops-foot { padding: 9px 16px 12px; }
+  .stage-row { font-size: 9.5px; }
+  .toast { left: 16px; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); max-width: none; }
+  .page-foot { flex-direction: column; gap: 4px; }
+}
+
+@media (max-width: 420px) {
+  .mode-tab { min-width: 96px; }
+  .mode-tab .ico { width: 13px; height: 13px; }
+  .credential-item small { display: block; }
+  .machine-card { grid-template-columns: 20px minmax(0, 1fr); }
+  .machine-card .card-meta { grid-column: 2; flex-direction: row; align-items: center; justify-content: space-between; text-align: left; }
+  .machine-card .card-bottom { grid-column: 2; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+</style>
+</head>
+<body>
+
+
+<svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-cluster" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="18" r="2.2"/><circle cx="19" cy="18" r="2.2"/><path d="M12 7.2v3.1M6.6 16.3l3.5-4.1M17.4 16.3l-3.5-4.1"/></symbol>
+  <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="4.2"/><path d="M12 12 18 6"/><path d="M12 3.8v1.6M20.2 12h-1.6M12 20.2v-1.6M3.8 12h1.6"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7 9 3.4 3L7 15"/><path d="M13 15h4"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.2"/><path d="m10.4 12.6 7.2-7.2 2 2-2.2 2.2 1.5 1.5-2 2-1.5-1.5-1.3 1.3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.4"/><path d="m16 16 4.2 4.2"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-13.5-5.4L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 13.5 5.4L20 16"/><path d="M20 20v-4h-4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.4 4.3L19 7.2"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.6 21 20H3L12 3.6Z"/><path d="M12 9.5v4.4"/><path d="M12 17.2h.01"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 11.2v5.1"/><path d="M12 7.8h.01"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-2.8 7.4-7 9-4.2-1.6-7-4.7-7-9V6l7-2.5Z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="12" rx="2"/><path d="M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.8 12S6 6.6 12 6.6 21.2 12 21.2 12 18 17.4 12 17.4 2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="m4 4 16 16"/><path d="M9.9 6.9A9.9 9.9 0 0 1 12 6.6c6 0 9.2 5.4 9.2 5.4a15 15 0 0 1-2.4 2.9"/><path d="M6.2 8.1A15.7 15.7 0 0 0 2.8 12S6 17.4 12 17.4c.9 0 1.8-.1 2.6-.4"/><path d="M10.2 10.2a2.6 2.6 0 0 0 3.6 3.6"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="m11 18-6-6 6-6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 7.5v5l3.2 1.8"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.8v1.7M12 19.5v1.7M21.2 12h-1.7M4.5 12H2.8M18.5 5.5l-1.2 1.2M6.7 17.3l-1.2 1.2M18.5 18.5l-1.2-1.2M6.7 6.7 5.5 5.5"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15.2A8.6 8.6 0 0 1 8.8 4 8.6 8.6 0 1 0 20 15.2Z"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">R</span>
+    <strong>RLark</strong>
+    <span class="proto-tag">上下布局</span>
+  </div>
+  <div class="top-actions">
+    <div class="seg" role="group" aria-label="Language">
+      <button type="button" class="seg-btn active" data-lang="zh" aria-pressed="true">中</button>
+      <button type="button" class="seg-btn" data-lang="en" aria-pressed="false">EN</button>
+    </div>
+    <button type="button" class="icon-btn" id="theme-toggle" aria-label="切换到暗色">
+      <svg class="ico"><use href="#i-moon"/></svg>
+    </button>
+    <span class="avatar" aria-hidden="true">A</span>
+  </div>
+</header>
+
+<main class="page">
+  <div class="page-head">
+    <div>
+      <div class="eyebrow" data-i18n="pageEyebrow">场站节点</div>
+      <h1 data-i18n="pageTitle">加入节点</h1>
+      <p data-i18n="pageDesc">把机器加入集群：从场地发现的机器中勾选，或用 SSH / 入网码接入。</p>
+    </div>
+    <div class="page-head-actions">
+      <button type="button" class="btn secondary" id="back-btn">
+        <svg class="ico ico-sm"><use href="#i-arrow-left"/></svg>
+        <span data-i18n="back">返回场站节点</span>
+      </button>
+    </div>
+  </div>
+
+  <section class="card setup" aria-labelledby="setup-title">
+    <div class="section-head">
+      <div>
+        <h2 id="setup-title" data-i18n="setupTitle">集群与方式</h2>
+        <p data-i18n="setupDesc">选择目标集群，再决定机器怎么加入。</p>
+      </div>
+      <span class="section-meta" data-i18n="methodCount">3 种方式</span>
+    </div>
+    <div class="cluster-row">
+      <label class="field" style="flex:1 1 340px;">
+        <span data-i18n="clusterLabel">目标集群</span>
+        <span class="select-wrap">
+          <select id="cluster-select" aria-label="目标集群">
+            <option value="rlark-robot-s1u-01" selected>深圳公司S1U调试集群（rlark-robot-s1u-01）</option>
+            <option value="rlark-local-dev-gpu">深圳公司本地开发集群（rlark-local-dev-gpu）</option>
+          </select>
+          <svg class="ico ico-sm chev"><use href="#i-chevron"/></svg>
+        </span>
+      </label>
+      <div class="cluster-state">
+        <span class="status status-online"><span class="dot"></span><span data-i18n="clusterOnline">在线</span></span>
+        <span class="mono">rlark-robot-s1u-01</span>
+      </div>
+    </div>
+    <div class="mode-tabs" role="tablist" aria-label="加入方式">
+      <button type="button" class="mode-tab active" role="tab" aria-selected="true" data-mode="machines">
+        <svg class="ico ico-sm"><use href="#i-radar"/></svg>
+        <span data-i18n="modeMachines">未加入的机器</span>
+      </button>
+      <button type="button" class="mode-tab" role="tab" aria-selected="false" data-mode="ssh">
+        <svg class="ico ico-sm"><use href="#i-terminal"/></svg>
+        <span data-i18n="modeSsh">SSH 入网</span>
+      </button>
+      <button type="button" class="mode-tab" role="tab" aria-selected="false" data-mode="code">
+        <svg class="ico ico-sm"><use href="#i-key"/></svg>
+        <span data-i18n="modeCode">入网码</span>
+      </button>
+    </div>
+    <p class="mode-note" id="mode-note">
+      <svg class="ico ico-sm"><use href="#i-info"/></svg>
+      <span id="mode-note-text">从场地 Hub 扫描到的机器中勾选，RLark 自动登录、命名并入网。</span>
+    </p>
+  </section>
+
+  <div class="join-body"><div class="join-main"><section class="card workspace" id="panel-machines" aria-labelledby="machines-title">
+    <div class="workspace-head">
+      <div>
+        <h2 id="machines-title" data-i18n="machinesTitle">未加入的机器</h2>
+        <p data-i18n="machinesDesc">勾选后 RLark 自动登录、命名并入网；场地 Hub 约每 30 秒扫一次。</p>
+      </div>
+      <div class="head-actions">
+        <span class="scan-note" data-i18n="lastScan">上次扫描 12 秒前</span>
+        <button type="button" class="btn secondary sm" id="refresh-machines">
+          <svg class="ico ico-sm"><use href="#i-refresh"/></svg>
+          <span data-i18n="refresh">刷新</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="credential-strip">
+      <div class="credential-title">
+        <span class="cred-icon"><svg class="ico"><use href="#i-server"/></svg></span>
+        <div><strong><span data-i18n="model">机型</span> s1u</strong><small data-i18n="credSub">Orin 与 x86 的登录口令</small></div>
+      </div>
+      <div class="credential-item">
+        <span class="dot"></span>
+        <div><strong>Orin <span data-i18n="configured">已配置</span></strong><small data-i18n="fromFleet">来自 fleet-orin-access</small></div>
+      </div>
+      <div class="credential-item">
+        <span class="dot"></span>
+        <div><strong>x86 <span data-i18n="configured">已配置</span></strong><small data-i18n="adminEntered">admin 录入</small></div>
+      </div>
+      <span class="spacer"></span>
+      <button type="button" class="link-btn" id="edit-credentials" data-i18n="change">更改</button>
+    </div>
+
+    <div class="table-tools">
+      <label class="search">
+        <svg class="ico ico-sm"><use href="#i-search"/></svg>
+        <input id="machine-search" type="search" placeholder="搜索序列号、MAC 或地址" data-i18n-placeholder="searchPlaceholder" autocomplete="off">
+      </label>
+      <label class="select-all"><input type="checkbox" id="select-all-toolbar"> <span data-i18n="selectAll">全选可加入</span></label>
+      <span class="tool-count" id="machine-count">共 5 台</span>
+    </div>
+
+    <div class="table-wrap desktop-only">
+      <table class="machine-table">
+        <thead>
+          <tr>
+            <th class="check-col"><input type="checkbox" id="select-all" aria-label="全选可加入"></th>
+            <th class="machine-col" data-i18n="colMachine">机器</th>
+            <th class="site-col" data-i18n="colLocation">位置</th>
+            <th class="reach-col" data-i18n="colReach">可达性</th>
+            <th class="seen-col" data-i18n="colSeen">发现</th>
+            <th class="state-col" data-i18n="colState">状态</th>
+          </tr>
+        </thead>
+        <tbody id="machine-tbody"></tbody>
+      </table>
+    </div>
+    <div class="machine-cards mobile-only" id="machine-cards"></div>
+
+    <div class="empty-state" id="machine-empty" hidden>
+      <span class="empty-icon"><svg class="ico ico-lg"><use href="#i-radar"/></svg></span>
+      <h3 id="empty-title">没有找到匹配的机器</h3>
+      <p id="empty-desc">试试清空搜索，或改用 SSH 入网。</p>
+      <div class="empty-actions">
+        <button type="button" class="btn secondary sm" id="empty-clear">清空搜索</button>
+        <button type="button" class="btn ghost sm" id="empty-ssh">改用 SSH 入网</button>
+      </div>
+    </div>
+
+    <div class="selection-bar" id="selection-bar">
+      <div class="selection-info">
+        <strong id="selected-count">已选 1 台</strong>
+        <button type="button" class="link-btn" id="clear-selection" data-i18n="clear">清空</button>
+      </div>
+      <div class="selection-actions">
+        <span class="selection-hint" data-i18n="joinHint">加入后自动登录、命名并入网</span>
+        <button type="button" class="btn primary" id="join-selected">
+          <svg class="ico ico-sm"><use href="#i-plus"/></svg>
+          <span data-i18n="joinSelected">加入所选机器</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card workspace" id="panel-ssh" aria-labelledby="ssh-title" hidden>
+    <div class="workspace-head">
+      <div>
+        <h2 id="ssh-title" data-i18n="sshTitle">SSH 入网</h2>
+        <p data-i18n="sshDesc">填机器地址和账号，RLark 通过 SSH 完成安装并入网。</p>
+      </div>
+    </div>
+    <div class="panel-pad">
+      <div class="form-grid">
+        <label class="field span-4">
+          <span data-i18n="addr">机器地址</span>
+          <input class="input" id="ssh-address" value="10.11.13.20" placeholder="10.11.13.20" autocomplete="off">
+          <span class="helper" data-i18n="addrHint">IP 或主机名</span>
+          <span class="field-error" id="ssh-address-error">请填写机器地址</span>
+        </label>
+        <label class="field span-2">
+          <span data-i18n="port">SSH 端口</span>
+          <input class="input" id="ssh-port" value="22" inputmode="numeric">
+          <span class="helper" data-i18n="portHint">默认 22</span>
+        </label>
+        <label class="field span-3">
+          <span data-i18n="user">SSH 账号</span>
+          <input class="input" id="ssh-user" value="root" autocomplete="off">
+          <span class="field-error" id="ssh-user-error">请填写 SSH 账号</span>
+        </label>
+        <label class="field span-3">
+          <span data-i18n="pass">SSH 密码</span>
+          <span class="input-wrap has-eye">
+            <input class="input" id="ssh-password" type="password" value="rlark-demo" autocomplete="new-password">
+            <button type="button" class="eye" id="password-eye" aria-label="显示密码">
+              <svg class="ico ico-sm"><use href="#i-eye"/></svg>
+            </button>
+          </span>
+          <span class="field-error" id="ssh-password-error">请填写 SSH 密码</span>
+        </label>
+        <label class="field span-3">
+          <span data-i18n="nodeName">节点名（选填）</span>
+          <input class="input" id="ssh-node" placeholder="s1u-06-x86" autocomplete="off">
+          <span class="helper" data-i18n="nodeNameHint">留空由 RLark 命名</span>
+        </label>
+        <label class="field span-3">
+          <span data-i18n="tunnel">隧道端点（选填）</span>
+          <input class="input" id="ssh-tunnel" placeholder="10.11.13.20:51820" autocomplete="off">
+          <span class="helper" data-i18n="tunnelHint">默认使用场地隧道地址</span>
+        </label>
+      </div>
+      <div class="form-note">
+        <svg class="ico ico-sm"><use href="#i-shield"/></svg>
+        <span data-i18n="sshNote">密码只用于本次登录，不会保存；安装完成后会重启 kubelet。</span>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn secondary" id="ssh-reset" data-i18n="reset">重置</button>
+        <button type="button" class="btn primary" id="ssh-submit">
+          <svg class="ico ico-sm"><use href="#i-terminal"/></svg>
+          <span data-i18n="sshSubmit">SSH 入网</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card workspace" id="panel-code" aria-labelledby="code-title" hidden>
+    <div class="workspace-head">
+      <div>
+        <h2 id="code-title" data-i18n="codeTitle">入网码</h2>
+        <p data-i18n="codeDesc">生成一次性入网码，在机器上执行一行命令完成注册。</p>
+      </div>
+    </div>
+    <div class="panel-pad">
+      <div class="form-grid">
+        <label class="field span-3">
+          <span data-i18n="codeNode">节点名</span>
+          <input class="input" id="code-node" value="s1u-05-x86" autocomplete="off">
+        </label>
+        <label class="field span-3">
+          <span data-i18n="codeKind">类型</span>
+          <select id="code-kind">
+            <option value="robot" selected data-i18n="kindRobot">机器人</option>
+            <option value="other" data-i18n="kindOther">其他</option>
+          </select>
+        </label>
+        <label class="field span-3">
+          <span data-i18n="codeSite">场地</span>
+          <input class="input" id="code-site" value="lab" autocomplete="off">
+        </label>
+        <label class="field span-3">
+          <span data-i18n="codeTtl">有效期</span>
+          <select id="code-ttl">
+            <option value="1h" data-i18n="ttl1h">1 小时</option>
+            <option value="24h" selected data-i18n="ttl24h">24 小时</option>
+            <option value="7d" data-i18n="ttl7d">7 天</option>
+          </select>
+        </label>
+      </div>
+      <details class="advanced">
+        <summary><svg class="ico ico-sm chev"><use href="#i-chevron"/></svg><span data-i18n="advanced">高级：标签与污点</span></summary>
+        <div class="form-grid" style="padding-top:10px;">
+          <label class="field span-3">
+            <span data-i18n="labels">标签</span>
+            <textarea id="code-labels" placeholder="rlark.io/robot-model=Astribot S1"></textarea>
+          </label>
+          <label class="field span-3">
+            <span data-i18n="taints">污点</span>
+            <textarea id="code-taints" placeholder="rlark.io/node-category=robot:NoSchedule"></textarea>
+          </label>
+        </div>
+      </details>
+      <div class="form-actions">
+        <button type="button" class="btn secondary" id="code-reset" data-i18n="reset">重置</button>
+        <button type="button" class="btn primary" id="code-generate">
+          <svg class="ico ico-sm"><use href="#i-key"/></svg>
+          <span data-i18n="codeGenerate">生成入网码</span>
+        </button>
+      </div>
+    </div>
+    <div class="code-result" id="code-result">
+      <div class="code-result-head">
+        <div>
+          <div class="code-result-title"><svg class="ico ico-sm"><use href="#i-key"/></svg><span data-i18n="codeOnceTitle">入网码已生成</span></div>
+          <div class="code-once" data-i18n="codeOnce">入网码只显示一次，请立即复制。</div>
+        </div>
+        <button type="button" class="link-btn" id="code-regenerate" data-i18n="regenerate">重新生成</button>
+      </div>
+      <div class="code-field">
+        <span data-i18n="codeCommand">在机器上执行</span>
+        <div class="code-block">
+          <code id="code-command">curl -fsSL https://10.11.14.128:18443/join.sh | sudo sh -s -- --code RLK-7F3K-9Q2M</code>
+          <button type="button" class="copy-btn" data-copy="code-command" aria-label="复制命令"><svg class="ico ico-sm"><use href="#i-copy"/></svg></button>
+        </div>
+      </div>
+      <div class="code-field">
+        <span data-i18n="codeValue">入网码</span>
+        <div class="code-block">
+          <code id="code-value">RLK-7F3K-9Q2M</code>
+          <button type="button" class="copy-btn" data-copy="code-value" aria-label="复制入网码"><svg class="ico ico-sm"><use href="#i-copy"/></svg></button>
+        </div>
+      </div>
+      <div class="code-wait"><span class="pulse"></span><span data-i18n="codeWaiting">等待机器使用入网码</span></div>
+    </div>
+    <div class="form-note" style="margin-bottom:18px;">
+      <svg class="ico ico-sm"><use href="#i-info"/></svg>
+      <span data-i18n="codeWaitingHint">机器执行命令后，入网操作会出现在下面的列表。</span>
+    </div>
+  </section>
+
+  </div><aside class="join-rail"><section class="card ops-card" aria-labelledby="ops-title">
+    <div class="ops-head">
+      <div>
+        <h2 id="ops-title" data-i18n="opsTitle">入网操作</h2>
+        <div class="sub" data-i18n="opsDesc">操作在服务端继续；离开页面不会中断。</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;">
+        <div class="ops-summary" id="ops-summary"></div>
+        <button type="button" class="btn ghost sm" id="refresh-ops">
+          <svg class="ico ico-sm"><use href="#i-refresh"/></svg>
+          <span data-i18n="refresh">刷新</span>
+        </button>
+      </div>
+    </div>
+    <div class="ops-list" id="ops-list"></div>
+    <div class="ops-foot" data-i18n="opsFoot">操作由控制面执行，关闭页面不会停止。</div>
+  </section></aside></div>
+
+  <footer class="page-foot">
+    <span data-i18n="footerLeft">RLark Open Source · 加入节点原型</span>
+    <span data-i18n="footerRight">原型数据仅用于布局评审</span>
+  </footer>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite">
+  <svg class="ico ico-sm"><use href="#i-check"/></svg>
+  <span id="toast-text"></span>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const T = {
+    zh: {
+      crumbSite: "场站节点", pageEyebrow: "场站节点", pageTitle: "加入节点",
+      pageDesc: "把机器加入集群：从场地发现的机器中勾选，或用 SSH / 入网码接入。",
+      back: "返回场站节点", setupTitle: "集群与方式", setupDesc: "选择目标集群，再决定机器怎么加入。",
+      methodCount: "3 种方式", clusterLabel: "目标集群", clusterOnline: "在线",
+      modeMachines: "未加入的机器", modeSsh: "SSH 入网", modeCode: "入网码",
+      noteMachines: "从场地 Hub 扫描到的机器中勾选，RLark 自动登录、命名并入网。",
+      noteSsh: "提供机器地址和 SSH 凭据，RLark 直接登录并完成安装。",
+      noteCode: "生成一次性入网码，在机器上执行一行命令；RLark 不直接登录。",
+      machinesTitle: "未加入的机器", machinesDesc: "勾选后 RLark 自动登录、命名并入网；场地 Hub 约每 30 秒扫一次。",
+      lastScan: "上次扫描 12 秒前", refresh: "刷新", model: "机型", credSub: "Orin 与 x86 的登录口令",
+      configured: "已配置", fromFleet: "来自 fleet-orin-access", adminEntered: "admin 录入", change: "更改",
+      searchPlaceholder: "搜索序列号、MAC 或地址", selectAll: "全选可加入",
+      count: "共 {n} 台", colMachine: "机器", colLocation: "位置", colReach: "可达性", colSeen: "发现", colState: "状态",
+      reachOk: "通", reachBad: "不通", stateAvailable: "可选", stateDisabled: "不可选", stateJoining: "已在入网中",
+      viewProgress: "查看进度", reasonX86: "x86 登录失败", reasonOrin: "Orin 不可达",
+      selectedCount: "已选 {n} 台", clear: "清空", joinSelected: "加入所选机器", joinHint: "加入后自动登录、命名并入网",
+      emptyTitle: "没有找到匹配的机器", emptyDesc: "试试清空搜索，或改用 SSH 入网。",
+      emptyAllTitle: "场地网络里还没有发现未加入的机器", emptyAllDesc: "确认机器已上电并接入场地网络，然后刷新。",
+      clearSearch: "清空搜索", useSsh: "改用 SSH 入网",
+      sshTitle: "SSH 入网", sshDesc: "填机器地址和账号，RLark 通过 SSH 完成安装并入网。",
+      addr: "机器地址", addrHint: "IP 或主机名", port: "SSH 端口", portHint: "默认 22", user: "SSH 账号", pass: "SSH 密码",
+      nodeName: "节点名（选填）", nodeNameHint: "留空由 RLark 命名", tunnel: "隧道端点（选填）", tunnelHint: "默认使用场地隧道地址",
+      sshNote: "密码只用于本次登录，不会保存；安装完成后会重启 kubelet。", reset: "重置", sshSubmit: "SSH 入网",
+      codeTitle: "入网码", codeDesc: "生成一次性入网码，在机器上执行一行命令完成注册。",
+      codeNode: "节点名", codeKind: "类型", codeSite: "场地", codeTtl: "有效期", kindRobot: "机器人", kindOther: "其他", ttl1h: "1 小时", ttl24h: "24 小时", ttl7d: "7 天", advanced: "高级：标签与污点", labels: "标签", taints: "污点",
+      codeGenerate: "生成入网码", codeOnceTitle: "入网码已生成", codeOnce: "入网码只显示一次，请立即复制。",
+      codeCommand: "在机器上执行", codeValue: "入网码", regenerate: "重新生成", codeWaiting: "等待机器使用入网码",
+      codeWaitingHint: "机器执行命令后，入网操作会出现在下面的列表。", copy: "复制", copied: "已复制",
+      opsTitle: "入网操作", opsDesc: "操作在服务端继续；离开页面不会中断。", opsFoot: "操作由控制面执行，关闭页面不会停止。",
+      running: "进行中", failed: "失败", waiting: "等待", joined: "已加入", detail: "查看", hide: "收起",
+      retry: "重试", revoke: "作废", viewNode: "查看节点", copyCommand: "复制命令",
+      sourceBatch: "批量", sourceSsh: "SSH", sourceCode: "入网码",
+      stepOf: "第 {n}/{total} 步", successStep: "已完成", waitingStep: "等待机器执行命令",
+      reasonSsh: "SSH 认证失败：请检查账号或密码", reasonX86: "x86 登录失败：口令可能已变更",
+      reasonWaiting: "已生成入网码，等待机器执行命令", justNow: "刚刚", secondsAgo: "{n} 秒前", minuteAgo: "1 分钟前", minutesAgo: "{n} 分钟前",
+      toastAdmitted: "已提交 {n} 台机器加入", toastSsh: "已提交 SSH 入网", toastRetry: "已重新提交",
+      toastRevoked: "已作废入网码", toastCode: "已生成新的入网码", toastCopied: "已复制到剪贴板", showPassword: "显示密码", hidePassword: "隐藏密码",
+      req: "请填写此项", reqAddress: "请填写机器地址", reqUser: "请填写 SSH 账号", reqPassword: "请填写 SSH 密码",
+      footerLeft: "RLark Open Source · 加入节点原型", footerRight: "原型数据仅用于布局评审",
+      themeToggle: "切换主题", clearSearchAria: "清空搜索", proto: "原型"
+    },
+    en: {
+      crumbSite: "Site nodes", pageEyebrow: "Site nodes", pageTitle: "Join nodes",
+      pageDesc: "Add machines to a cluster: pick discovered machines, or join over SSH or with a code.",
+      back: "Back to site nodes", setupTitle: "Cluster and method", setupDesc: "Choose the target cluster, then how machines join.",
+      methodCount: "3 methods", clusterLabel: "Target cluster", clusterOnline: "Online",
+      modeMachines: "Discovered machines", modeSsh: "SSH join", modeCode: "Join code",
+      noteMachines: "Pick machines discovered by site Hubs; RLark logs in, names, and joins them.",
+      noteSsh: "Provide an address and SSH credentials; RLark logs in and installs.",
+      noteCode: "Issue a one-time code and run one command on the machine; RLark does not log in.",
+      machinesTitle: "Discovered machines", machinesDesc: "Selected machines are logged into, named, and joined automatically. Site Hubs scan about every 30 seconds.",
+      lastScan: "Last scan 12s ago", refresh: "Refresh", model: "Model", credSub: "Orin and x86 login credentials",
+      configured: "Configured", fromFleet: "from fleet-orin-access", adminEntered: "entered by admin", change: "Change",
+      searchPlaceholder: "Search serial, MAC, or address", selectAll: "Select joinable",
+      count: "{n} machines", colMachine: "Machine", colLocation: "Location", colReach: "Reachability", colSeen: "Seen", colState: "State",
+      reachOk: "OK", reachBad: "Down", stateAvailable: "Joinable", stateDisabled: "Not joinable", stateJoining: "Joining",
+      viewProgress: "View progress", reasonX86: "x86 login failed", reasonOrin: "Orin unreachable",
+      selectedCount: "{n} selected", clear: "Clear", joinSelected: "Join selected", joinHint: "Logs in, names, and joins automatically",
+      emptyTitle: "No matching machines", emptyDesc: "Clear the search, or use SSH join.",
+      emptyAllTitle: "No unjoined machines discovered yet", emptyAllDesc: "Make sure machines are powered and on the site network, then refresh.",
+      clearSearch: "Clear search", useSsh: "Use SSH join",
+      sshTitle: "Join over SSH", sshDesc: "Enter the machine address and account; RLark installs and joins over SSH.",
+      addr: "Machine address", addrHint: "IP or hostname", port: "SSH port", portHint: "Default 22", user: "SSH account", pass: "SSH password",
+      nodeName: "Node name (optional)", nodeNameHint: "Leave empty to let RLark name it", tunnel: "Tunnel endpoint (optional)", tunnelHint: "Uses the site tunnel by default",
+      sshNote: "The password is used once and not stored; kubelet restarts after installation.", reset: "Reset", sshSubmit: "Join over SSH",
+      codeTitle: "Join code", codeDesc: "Issue a one-time code and run one command on the machine.",
+      codeNode: "Node name", codeKind: "Type", codeSite: "Site", codeTtl: "Valid for", kindRobot: "Robot", kindOther: "Other", ttl1h: "1 hour", ttl24h: "24 hours", ttl7d: "7 days", advanced: "Advanced: labels and taints", labels: "Labels", taints: "Taints",
+      codeGenerate: "Generate code", codeOnceTitle: "Join code generated", codeOnce: "The code is shown once; copy it now.",
+      codeCommand: "Run on the machine", codeValue: "Join code", regenerate: "Regenerate", codeWaiting: "Waiting for the machine to use the code",
+      codeWaitingHint: "After the machine runs the command, the join operation appears below.", copy: "Copy", copied: "Copied",
+      opsTitle: "Join operations", opsDesc: "Operations continue on the server; leaving this page does not stop them.", opsFoot: "Operations run on the control plane; closing this page does not stop them.",
+      running: "Running", failed: "Failed", waiting: "Waiting", joined: "Joined", detail: "View", hide: "Hide",
+      retry: "Retry", revoke: "Revoke", viewNode: "View node", copyCommand: "Copy command",
+      sourceBatch: "Batch", sourceSsh: "SSH", sourceCode: "Code",
+      stepOf: "Stage {n}/{total}", successStep: "Completed", waitingStep: "Waiting for the machine",
+      reasonSsh: "SSH authentication failed: check the account or password", reasonX86: "x86 login failed: the password may have changed",
+      reasonWaiting: "Code issued; waiting for the machine to run it", justNow: "just now", secondsAgo: "{n}s ago", minuteAgo: "1m ago", minutesAgo: "{n}m ago",
+      toastAdmitted: "Submitted {n} machines", toastSsh: "SSH join submitted", toastRetry: "Retried",
+      toastRevoked: "Code revoked", toastCode: "New join code generated", toastCopied: "Copied to clipboard", showPassword: "Show password", hidePassword: "Hide password",
+      req: "Required", reqAddress: "Enter the machine address", reqUser: "Enter the SSH account", reqPassword: "Enter the SSH password",
+      footerLeft: "RLark Open Source · Join nodes prototype", footerRight: "Prototype data for layout review only",
+      themeToggle: "Toggle theme", clearSearchAria: "Clear search", proto: "Prototype"
+    }
+  };
+
+  const BATCH_STEPS = [
+    { zh: "受理", en: "Admit" }, { zh: "预检", en: "Preflight" }, { zh: "配置隧道", en: "Configure tunnel" },
+    { zh: "发送安装包", en: "Push installer" }, { zh: "安装并入网", en: "Install and join" },
+    { zh: "确认 Node", en: "Verify Node" }, { zh: "确认 RLark", en: "Verify RLark" },
+    { zh: "确认 Addons", en: "Verify addons" }, { zh: "轮换入口主机密钥", en: "Rotate entry key" }
+  ];
+  const SSH_STEPS = [
+    { zh: "登录机器", en: "Log in" }, { zh: "安装依赖", en: "Install dependencies" },
+    { zh: "初始化节点", en: "Initialize node" }, { zh: "加入集群", en: "Join cluster" },
+    { zh: "配置隧道", en: "Configure tunnel" }, { zh: "确认网络", en: "Verify network" },
+    { zh: "确认 RLark", en: "Verify RLark" }, { zh: "完成", en: "Complete" }
+  ];
+
+  const state = {
+    lang: load("rlark-proto-lang", "zh"),
+    theme: load("rlark-proto-theme", null),
+    mode: "machines",
+    search: "",
+    codeGenerated: true,
+    code: "RLK-7F3K-9Q2M",
+    machines: [
+      { id: "m1", serial: "1432325026100", mac: "3c:6d:66:b1:0c:a4", model: "s1u", site: "lab", address: "10.11.13.20", orin: true, x86: false, seen: "11:32:58", status: "disabled", reason: "reasonX86", selected: false },
+      { id: "m2", serial: "1432325026101", mac: "3c:6d:66:b1:0c:a5", model: "s1u", site: "lab", address: "10.11.13.21", orin: true, x86: true, seen: "11:33:04", status: "available", nodeName: "s1u-06-x86", selected: true },
+      { id: "m3", serial: "1432325026102", mac: "3c:6d:66:b1:0c:a6", model: "s1u", site: "lab", address: "10.11.13.22", orin: true, x86: true, seen: "11:33:11", status: "available", nodeName: "s1u-07-x86", selected: false },
+      { id: "m4", serial: "1432325026103-LONG-SERIAL-0001", mac: "3c:6d:66:ff:ee:dd", model: "s1u", site: "lab", address: "10.11.13.230", orin: true, x86: true, seen: "11:33:18", status: "available", nodeName: "s1u-08-x86", selected: false },
+      { id: "m5", serial: "1432325026104", mac: "3c:6d:66:b1:0c:a8", model: "s1u", site: "lab", address: "10.11.13.24", orin: true, x86: true, seen: "11:31:42", status: "joining", nodeName: "s1u-01-x86", op: "op1", selected: false }
+    ],
+    operations: [
+      { id: "op1", name: "s1u-01-x86", opName: "node-op-3fb89c89", source: "batch", status: "running", step: 5, updated: "12s", detail: false },
+      { id: "op2", name: "s1u-03-x86", opName: "node-op-7a2f19c4", source: "ssh", status: "running", step: 4, updated: "1m", detail: false },
+      { id: "op3", name: "s1u-04-x86", opName: "node-op-4c8e2b71", source: "ssh", status: "failed", step: 2, updated: "3m", detail: false, reason: "reasonSsh" },
+      { id: "op4", name: "s1u-05-x86", opName: "admission-9d2e7f3a", source: "code", status: "waiting", step: 0, updated: "now", detail: false, reason: "reasonWaiting" },
+      { id: "op5", name: "s1u-02-x86", opName: "node-op-6e1a8b52", source: "batch", status: "success", step: 9, updated: "now", detail: false }
+    ]
+  };
+
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+  const t = (key) => T[state.lang][key] ?? key;
+  const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  const fmt = (key, vars) => t(key).replace(/\{(\w+)\}/g, (_, key) => vars[key] ?? "");
+  const sourceLabel = (source) => t(source === "batch" ? "sourceBatch" : source === "ssh" ? "sourceSsh" : "sourceCode");
+  const sourceClass = (source) => source;
+  const opSteps = (op) => op.source === "ssh" ? SSH_STEPS : BATCH_STEPS;
+  const totalFor = (op) => op.source === "ssh" ? 8 : 9;
+  const stepLabel = (op) => {
+    const steps = opSteps(op);
+    return op.step > 0 && op.step <= steps.length ? steps[op.step - 1][state.lang] : "";
+  };
+
+  function load(key, fallback) {
+    try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
+  }
+  function save(key, value) {
+    try { localStorage.setItem(key, value); } catch { /* ignore */ }
+  }
+
+  function applyLang() {
+    document.documentElement.lang = state.lang === "zh" ? "zh-CN" : "en";
+    $$("[data-i18n]").forEach((node) => {
+      const key = node.getAttribute("data-i18n");
+      if (T[state.lang][key] !== undefined) node.textContent = T[state.lang][key];
+    });
+    $$("[data-i18n-placeholder]").forEach((node) => {
+      const key = node.getAttribute("data-i18n-placeholder");
+      if (T[state.lang][key] !== undefined) node.setAttribute("placeholder", T[state.lang][key]);
+    });
+    $$("[data-lang]").forEach((node) => {
+      const active = node.getAttribute("data-lang") === state.lang;
+      node.classList.toggle("active", active);
+      node.setAttribute("aria-pressed", String(active));
+    });
+    $('#cluster-select').setAttribute("aria-label", t("clusterLabel"));
+    $('#select-all-toolbar').closest("label").querySelector("span").textContent = t("selectAll");
+    $('#selected-count').textContent = fmt("selectedCount", { n: selectedCount() });
+    $('#join-selected span').textContent = t("joinSelected");
+    $('#machine-search').setAttribute("placeholder", t("searchPlaceholder"));
+    $('#mode-note-text').textContent = t("note" + (state.mode === "machines" ? "Machines" : state.mode === "ssh" ? "Ssh" : "Code"));
+    $('#empty-title').textContent = t(state.search ? "emptyTitle" : "emptyAllTitle");
+    $('#empty-desc').textContent = t(state.search ? "emptyDesc" : "emptyAllDesc");
+    $('#empty-clear').textContent = t("clearSearch");
+    $('#empty-ssh').textContent = t("useSsh");
+    $('#password-eye').setAttribute("aria-label", t("copy"));
+    renderMachines();
+    renderOps();
+    updateThemeButton();
+  }
+
+  function applyTheme() {
+    if (state.theme) document.documentElement.dataset.theme = state.theme;
+    updateThemeButton();
+  }
+  function updateThemeButton() {
+    const dark = state.theme ? state.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    const btn = $("#theme-toggle");
+    if (!btn) return;
+    btn.querySelector("use").setAttribute("href", dark ? "#i-sun" : "#i-moon");
+    btn.setAttribute("aria-label", t("themeToggle"));
+  }
+  function toggleTheme() {
+    const dark = state.theme ? state.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    state.theme = dark ? "light" : "dark";
+    document.documentElement.dataset.theme = state.theme;
+    save("rlark-proto-theme", state.theme);
+    updateThemeButton();
+  }
+
+  function selectedCount() {
+    return state.machines.filter((m) => m.selected && m.status === "available").length;
+  }
+  function visibleMachines() {
+    const q = state.search.trim().toLowerCase();
+    if (!q) return state.machines;
+    return state.machines.filter((m) => [m.serial, m.mac, m.model, m.site, m.address, m.nodeName || ""].join(" ").toLowerCase().includes(q));
+  }
+  function toggleMachine(id) {
+    const m = state.machines.find((item) => item.id === id);
+    if (!m || m.status !== "available") return;
+    m.selected = !m.selected;
+    renderMachines();
+  }
+  function selectAllVisible() {
+    const visible = visibleMachines().filter((m) => m.status === "available");
+    if (!visible.length) return;
+    const all = visible.every((m) => m.selected);
+    visible.forEach((m) => { m.selected = !all; });
+    renderMachines();
+  }
+  function updateSelectionBar() {
+    const count = selectedCount();
+    $('#selected-count').textContent = fmt("selectedCount", { n: count });
+    $('#join-selected').disabled = count === 0;
+    $('#clear-selection').disabled = count === 0;
+    const visible = visibleMachines().filter((m) => m.status === "available");
+    const selectedVisible = visible.filter((m) => m.selected).length;
+    const all = visible.length > 0 && selectedVisible === visible.length;
+    const boxes = $$("#select-all, #select-all-toolbar");
+    boxes.forEach((box) => {
+      box.checked = all;
+      box.indeterminate = selectedVisible > 0 && !all;
+      box.disabled = visible.length === 0;
+    });
+  }
+
+  function reachChip(ok, label) {
+    return `<span class="reach-chip ${ok ? "ok" : "bad"}"><span class="dot"></span>${esc(label)} ${esc(t(ok ? "reachOk" : "reachBad"))}</span>`;
+  }
+
+  function rowState(m) {
+    if (m.status === "joining") {
+      return `<span class="status status-running"><span class="dot"></span>${esc(t("stateJoining"))}</span><button type="button" class="row-link state-action" data-action="view-op" data-op="${esc(m.op)}">${esc(t("viewProgress"))}</button>`;
+    }
+    if (m.status === "disabled") {
+      return `<span class="status status-failed"><span class="dot"></span>${esc(t("stateDisabled"))}</span><span class="state-note">${esc(t(m.reason || "reasonX86"))}</span>`;
+    }
+    return `<span class="status status-online"><span class="dot"></span>${esc(t("stateAvailable"))}</span>`;
+  }
+
+  function machineRow(m) {
+    const checked = m.selected ? "checked" : "";
+    const disabled = m.status !== "available" ? "disabled" : "";
+    return `<tr data-id="${esc(m.id)}" class="${m.selected ? "is-selected" : ""} ${m.status !== "available" ? "is-disabled" : ""}">
+      <td class="check-col"><input type="checkbox" ${checked} ${disabled} data-select="${esc(m.id)}" aria-label="${esc(m.serial)}"></td>
+      <td><div class="machine-id"><strong>${esc(m.serial)}</strong><span class="machine-sub"><span class="chip model">${esc(m.model)}</span><span class="mac mono">${esc(m.mac)}</span></span></div></td>
+      <td><div class="site-cell"><strong>${esc(m.site)}</strong><span class="mono">${esc(m.address)}</span></div></td>
+      <td><div class="reach">${reachChip(m.orin, "Orin")}${reachChip(m.x86, "x86")}</div></td>
+      <td class="seen-cell"><span class="mono soft" style="font-size:9.5px;">${esc(m.seen)}</span></td>
+      <td><div class="row-state">${rowState(m)}</div></td>
+    </tr>`;
+  }
+
+  function machineCard(m) {
+    const checked = m.selected ? "checked" : "";
+    const disabled = m.status !== "available" ? "disabled" : "";
+    return `<div class="machine-card ${m.selected ? "is-selected" : ""} ${m.status !== "available" ? "is-disabled" : ""}" data-id="${esc(m.id)}">
+      <div class="card-check"><input type="checkbox" ${checked} ${disabled} data-select="${esc(m.id)}" aria-label="${esc(m.serial)}"></div>
+      <div class="machine-id"><strong>${esc(m.serial)}</strong><span class="machine-sub"><span class="chip model">${esc(m.model)}</span><span class="mac mono">${esc(m.mac)}</span></span></div>
+      <div class="card-meta">${reachChip(m.orin, "Orin")}${reachChip(m.x86, "x86")}</div>
+      <div class="card-location"><span>${esc(m.site)}</span><span class="soft">·</span><span class="mono">${esc(m.address)}</span><span class="soft" style="margin-left:auto;">${esc(m.seen)}</span></div>
+      <div class="card-bottom"><div class="row-state">${rowState(m)}</div></div>
+    </div>`;
+  }
+
+  function renderMachines() {
+    const visible = visibleMachines();
+    $('#machine-tbody').innerHTML = visible.map(machineRow).join("");
+    $('#machine-cards').innerHTML = visible.map(machineCard).join("");
+    $('#machine-count').textContent = fmt("count", { n: visible.length });
+    const empty = visible.length === 0;
+    $('#machine-empty').hidden = !empty;
+    $('.table-wrap').hidden = empty;
+    $('#machine-cards').hidden = empty;
+    $('#selection-bar').hidden = empty;
+    $('#empty-title').textContent = t(state.search ? "emptyTitle" : "emptyAllTitle");
+    $('#empty-desc').textContent = t(state.search ? "emptyDesc" : "emptyAllDesc");
+    const emptyClear = $('#empty-clear');
+    emptyClear.textContent = state.search ? t("clearSearch") : t("refresh");
+    emptyClear.dataset.refresh = state.search ? "" : "1";
+    updateSelectionBar();
+  }
+
+  function opState(op) {
+    if (op.status === "running") return { cls: "status-running", label: t("running") };
+    if (op.status === "failed") return { cls: "status-failed", label: t("failed") };
+    if (op.status === "waiting") return { cls: "status-waiting", label: t("waiting") };
+    return { cls: "status-success", label: t("joined") };
+  }
+
+  function progressWidth(op) {
+    const total = totalFor(op);
+    if (op.status === "waiting") return 0;
+    return Math.max(0, Math.min(100, (op.step / total) * 100));
+  }
+
+  function detailRows(op) {
+    const steps = opSteps(op);
+    const current = op.status === "failed" ? op.step : op.step;
+    return steps.map((step, index) => {
+      const n = index + 1;
+      let cls = "";
+      let stateText = "";
+      if (op.status === "success" || n < current) { cls = "done"; stateText = "✓"; }
+      else if (n === current && op.status === "running") { cls = "current"; stateText = "•"; }
+      else if (n === current && op.status === "failed") { cls = "failed"; stateText = "!"; }
+      else { stateText = ""; }
+      return `<div class="stage-row ${cls}"><span class="stage-dot">${stateText}</span><span>${esc(step[state.lang])}</span><span class="stage-state">${cls === "done" ? "done" : cls === "current" ? t("running") : cls === "failed" ? t("failed") : ""}</span></div>`;
+    }).join("");
+  }
+
+  function opRow(op) {
+    const status = opState(op);
+    const step = op.status === "waiting" ? t("waitingStep") : op.status === "success" ? t("successStep") : stepLabel(op);
+    const n = op.status === "success" ? totalFor(op) : op.step;
+    const total = totalFor(op);
+    const reason = op.status === "failed" && op.reason ? `<div class="ops-reason"><svg class="ico ico-sm"><use href="#i-alert"/></svg><span>${esc(t(op.reason))}</span></div>` : "";
+    const rowClass = op.status === "failed" ? "is-failed" : op.status === "waiting" ? "is-waiting" : op.status === "success" ? "is-success" : "";
+    const actions = [];
+    if (op.status === "failed") actions.push(`<button type="button" class="btn primary sm" data-action="retry" data-op="${esc(op.id)}">${esc(t("retry"))}</button>`);
+    if (op.status === "waiting") {
+      actions.push(`<button type="button" class="btn secondary sm" data-action="copy-code">${esc(t("copyCommand"))}</button>`);
+      actions.push(`<button type="button" class="btn danger-ghost sm" data-action="revoke" data-op="${esc(op.id)}">${esc(t("revoke"))}</button>`);
+    }
+    if (op.status === "success") actions.push(`<button type="button" class="btn secondary sm" data-action="view-node">${esc(t("viewNode"))}</button>`);
+    else actions.push(`<button type="button" class="btn ghost sm" data-action="detail" data-op="${esc(op.id)}">${esc(t(op.detail ? "hide" : "detail"))}</button>`);
+    return `<div class="ops-row ${rowClass}">
+      <div class="ops-machine"><strong>${esc(op.name)}</strong><span class="ops-meta"><span class="source-chip">${esc(sourceLabel(op.source))}</span><span class="op-name mono">${esc(op.opName)}</span></span></div>
+      <div class="ops-step">
+        <div class="ops-step-line"><strong>${esc(step)}</strong><span class="n">${op.status === "running" || op.status === "failed" ? fmt("stepOf", { n, total }) : ""}</span></div>
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${op.status === "success" ? total : op.step}"><i style="width:${progressWidth(op)}%"></i></div>
+        ${reason}
+      </div>
+      <div class="ops-updated">${esc(op.status === "waiting" ? t("justNow") : op.updated === "12s" ? fmt("secondsAgo", { n: 12 }) : op.updated === "1m" ? t("minuteAgo") : op.updated === "3m" ? fmt("minutesAgo", { n: 3 }) : t("justNow"))}</div>
+      <div class="ops-status"><span class="status ${status.cls}"><span class="dot"></span>${esc(status.label)}</span><div class="ops-actions">${actions.join("")}</div></div>
+      ${op.detail ? `<div class="ops-detail">${detailRows(op)}</div>` : ""}
+    </div>`;
+  }
+
+  function renderOps() {
+    const counts = { running: 0, failed: 0, waiting: 0, success: 0 };
+    state.operations.forEach((op) => { counts[op.status] += 1; });
+    const chips = [];
+    if (counts.running) chips.push(`<span class="ops-chip running"><span class="dot"></span>${esc(t("running"))} ${counts.running}</span>`);
+    if (counts.waiting) chips.push(`<span class="ops-chip waiting"><span class="dot"></span>${esc(t("waiting"))} ${counts.waiting}</span>`);
+    if (counts.failed) chips.push(`<span class="ops-chip failed"><span class="dot"></span>${esc(t("failed"))} ${counts.failed}</span>`);
+    if (counts.success) chips.push(`<span class="ops-chip success"><span class="dot"></span>${esc(t("joined"))} ${counts.success}</span>`);
+    $('#ops-summary').innerHTML = chips.join("");
+    $('#ops-list').innerHTML = state.operations.map(opRow).join("");
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    $$(".mode-tab").forEach((tab) => {
+      const active = tab.dataset.mode === mode;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+    });
+    $("#panel-machines").hidden = mode !== "machines";
+    $("#panel-ssh").hidden = mode !== "ssh";
+    $("#panel-code").hidden = mode !== "code";
+    $('#mode-note-text').textContent = t(mode === "machines" ? "noteMachines" : mode === "ssh" ? "noteSsh" : "noteCode");
+  }
+
+  function toast(message) {
+    const box = $("#toast");
+    $("#toast-text").textContent = message;
+    box.classList.add("show");
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => box.classList.remove("show"), 2600);
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(t("toastCopied"));
+    } catch {
+      toast(t("toastCopied"));
+    }
+  }
+
+  function nodeNameFor(m) {
+    return m.nodeName || m.serial;
+  }
+
+  function admitSelected() {
+    const chosen = state.machines.filter((m) => m.selected && m.status === "available");
+    if (!chosen.length) return;
+    chosen.forEach((m, index) => {
+      state.operations.unshift({
+        id: "new-" + Date.now() + "-" + index, name: nodeNameFor(m), opName: "node-op-" + Math.random().toString(16).slice(2, 10),
+        source: "batch", status: "running", step: 1, updated: "now", detail: false
+      });
+    });
+    state.machines = state.machines.filter((m) => !chosen.includes(m));
+    renderMachines();
+    renderOps();
+    toast(fmt("toastAdmitted", { n: chosen.length }));
+  }
+
+  function resetSshForm() {
+    $("#ssh-address").value = "";
+    $("#ssh-port").value = "22";
+    $("#ssh-user").value = "";
+    $("#ssh-password").value = "";
+    $("#ssh-node").value = "";
+    $("#ssh-tunnel").value = "";
+    $$(".field.has-error", $("#panel-ssh")).forEach((field) => field.classList.remove("has-error"));
+  }
+
+  function submitSsh() {
+    const address = $("#ssh-address");
+    const user = $("#ssh-user");
+    const password = $("#ssh-password");
+    let first = null;
+    [["#ssh-address", "ssh-address-error", "reqAddress"], ["#ssh-user", "ssh-user-error", "reqUser"], ["#ssh-password", "ssh-password-error", "reqPassword"]].forEach(([input, error, key]) => {
+      const field = $(input).closest(".field");
+      const bad = !$(input).value.trim();
+      field.classList.toggle("has-error", bad);
+      $(error).textContent = t(key);
+      if (bad && !first) first = input;
+    });
+    if (first) { $(first).focus(); return; }
+    const name = $("#ssh-node").value.trim() || address.value.trim();
+    state.operations.unshift({
+      id: "ssh-" + Date.now(), name, opName: "node-join-" + Math.random().toString(16).slice(2, 10),
+      source: "ssh", status: "running", step: 1, updated: "now", detail: false
+    });
+    renderOps();
+    password.value = "";
+    toast(t("toastSsh"));
+  }
+
+  function generateCode() {
+    const node = $("#code-node").value.trim();
+    if (!node) { $("#code-node").focus(); return; }
+    const code = "RLK-" + Math.random().toString(36).slice(2, 6).toUpperCase() + "-" + Math.random().toString(36).slice(2, 6).toUpperCase();
+    state.code = code;
+    const command = `curl -fsSL https://10.11.14.128:18443/join.sh | sudo sh -s -- --code ${code}`;
+    $("#code-value").textContent = code;
+    $("#code-command").textContent = command;
+    $("#code-result").hidden = false;
+    const existing = state.operations.find((op) => op.source === "code" && op.status === "waiting");
+    if (existing) {
+      existing.name = node;
+      existing.opName = "admission-" + Math.random().toString(16).slice(2, 10);
+      existing.updated = "now";
+    } else {
+      state.operations.unshift({ id: "code-" + Date.now(), name: node, opName: "admission-" + Math.random().toString(16).slice(2, 10), source: "code", status: "waiting", step: 0, updated: "now", detail: false, reason: "reasonWaiting" });
+    }
+    renderOps();
+    toast(t("toastCode"));
+  }
+
+  function retryOp(id) {
+    const op = state.operations.find((item) => item.id === id);
+    if (!op) return;
+    op.status = "running";
+    op.step = 1;
+    op.reason = null;
+    op.updated = "now";
+    renderOps();
+    toast(t("toastRetry"));
+  }
+
+  function revokeOp(id) {
+    state.operations = state.operations.filter((item) => item.id !== id);
+    renderOps();
+    toast(t("toastRevoked"));
+  }
+
+  function viewOp(id) {
+    const op = state.operations.find((item) => item.id === id);
+    if (!op) return;
+    op.detail = true;
+    renderOps();
+    $("#ops-list").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // events
+  document.addEventListener("click", (event) => {
+    const tab = event.target.closest("[data-mode]");
+    if (tab) { setMode(tab.dataset.mode); return; }
+    const lang = event.target.closest("[data-lang]");
+    if (lang) {
+      state.lang = lang.dataset.lang;
+      save("rlark-proto-lang", state.lang);
+      applyLang();
+      return;
+    }
+    const detail = event.target.closest("[data-action=detail]");
+    if (detail) {
+      const op = state.operations.find((item) => item.id === detail.dataset.op);
+      if (op) { op.detail = !op.detail; renderOps(); }
+      return;
+    }
+    const retry = event.target.closest("[data-action=retry]");
+    if (retry) { retryOp(retry.dataset.op); return; }
+    const revoke = event.target.closest("[data-action=revoke]");
+    if (revoke) { revokeOp(revoke.dataset.op); return; }
+    const view = event.target.closest("[data-action=view-op]");
+    if (view) { viewOp(view.dataset.op); return; }
+    if (event.target.closest("[data-action=copy-code]")) {
+      copyText(`curl -fsSL https://10.11.14.128:18443/join.sh | sudo sh -s -- --code ${state.code}`);
+      return;
+    }
+    if (event.target.closest("[data-action=view-node]")) {
+      toast(state.lang === "zh" ? "打开节点详情" : "Open node details");
+      return;
+    }
+    const copy = event.target.closest("[data-copy]");
+    if (copy) {
+      const target = $("#" + copy.dataset.copy);
+      if (target) copyText(target.textContent);
+      return;
+    }
+    const row = event.target.closest("[data-id]");
+    if (row && !event.target.closest("button, a, input, label")) {
+      toggleMachine(row.dataset.id);
+    }
+  });
+
+  document.addEventListener("change", (event) => {
+    const box = event.target.closest("[data-select]");
+    if (box) {
+      const m = state.machines.find((item) => item.id === box.dataset.select);
+      if (!m) return;
+      m.selected = box.checked;
+      renderMachines();
+    }
+  });
+
+  document.addEventListener("input", (event) => {
+    if (event.target.id === "machine-search") {
+      state.search = event.target.value;
+      renderMachines();
+    }
+  });
+
+  $("#select-all").addEventListener("change", selectAllVisible);
+  $("#select-all-toolbar").addEventListener("change", selectAllVisible);
+  $("#join-selected").addEventListener("click", admitSelected);
+  $("#clear-selection").addEventListener("click", () => {
+    state.machines.forEach((m) => { m.selected = false; });
+    renderMachines();
+  });
+  $("#refresh-machines").addEventListener("click", () => {
+    renderMachines();
+    toast(state.lang === "zh" ? "已刷新未加入的机器" : "Discovered machines refreshed");
+  });
+  $("#refresh-ops").addEventListener("click", renderOps);
+  $("#empty-clear").addEventListener("click", () => {
+    if ($("#empty-clear").dataset.refresh) {
+      renderMachines();
+      toast(state.lang === "zh" ? "已刷新未加入的机器" : "Discovered machines refreshed");
+      return;
+    }
+    state.search = "";
+    $("#machine-search").value = "";
+    renderMachines();
+  });
+  $("#empty-ssh").addEventListener("click", () => setMode("ssh"));
+  $("#ssh-submit").addEventListener("click", submitSsh);
+  $("#ssh-reset").addEventListener("click", resetSshForm);
+  $("#password-eye").addEventListener("click", () => {
+    const input = $("#ssh-password");
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    $("#password-eye").innerHTML = `<svg class="ico ico-sm"><use href="#i-${show ? "eye-off" : "eye"}"/></svg>`;
+    $("#password-eye").setAttribute("aria-label", show ? t("hidePassword") : t("showPassword"));
+  });
+  $("#code-generate").addEventListener("click", generateCode);
+  $("#code-regenerate").addEventListener("click", generateCode);
+  $("#code-reset").addEventListener("click", () => {
+    $("#code-node").value = "";
+    $("#code-kind").value = "robot";
+    $("#code-site").value = "";
+    $("#code-ttl").value = "24h";
+    $("#code-result").hidden = true;
+  });
+  $("#theme-toggle").addEventListener("click", toggleTheme);
+  $("#back-btn").addEventListener("click", () => toast(state.lang === "zh" ? "返回场站节点（原型）" : "Back to site nodes (prototype)"));
+  $("#edit-credentials").addEventListener("click", () => toast(state.lang === "zh" ? "打开口令编辑（原型）" : "Open credential editor (prototype)"));
+
+  // progress simulation
+  setInterval(() => {
+    let changed = false;
+    state.operations.forEach((op) => {
+      if (op.status !== "running") return;
+      const total = totalFor(op);
+      // Keep the demo's running rows running: progress advances to the last
+      // step but does not roll into success, so the comparison page always
+      // shows a live operation. The success row is seeded separately.
+      if (op.step < total - 1) {
+        op.step += 1;
+        op.updated = "now";
+        changed = true;
+      }
+    });
+    if (changed) renderOps();
+  }, 6000);
+
+  // init
+  applyTheme();
+  applyLang();
+  setMode("machines");
+})();
+</script>
+
+</body>
+</html>

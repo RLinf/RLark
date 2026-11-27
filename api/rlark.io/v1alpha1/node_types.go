@@ -105,6 +105,11 @@ type NodeRuntimeReference struct {
 // NodeSpec contains only management-owned durable desired state. Agents must not
 // write this section; administrative APIs own Unschedulable and Operations.
 type NodeSpec struct {
+	// DisplayName is the operator's name; metadata.name remains the node identity.
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9一-龥._-]+$`
+	// +optional
+	DisplayName string `json:"displayName,omitempty"`
 	// AgentType is a reserved compatibility field for the Node access form.
 	//
 	// Deprecated: use Runtime.Type for new integrations. This field must remain in

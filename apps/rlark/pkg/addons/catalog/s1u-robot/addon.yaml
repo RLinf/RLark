@@ -1,0 +1,154 @@
+name: s1u-robot
+displayName: S1U 机器人节点
+category: other
+version: v1.7.3
+description: |
+  S1U 机器人 x86 的机型配置：新机器入网后套上，之后一直保持。一个 DaemonSet（s1u-robot），镜像由 RLark 构建（extensions/s1u），加上声明了 deviceImage 时的设备层：
+  1. 节点调优（tuner）：让宿主机符合节点规格（内核隔离核和统一 cgroup 层级（cgroup v2）、厂商进程和 k8s 的 CPU 范围与权重、kubelet 的 CPU 管理和内存预留、调频策略、调度器参数，开机时由宿主机上的单元重新套上），结果写在节点标签 rlark.io/node-profile-state（ok / drift / kubelet-restart-required / reboot-required）；新机器要重启一次才生效，没人用时自己重启。按 S1U 节点规格核对整台：标签 rlark.io/node-conformance（ok / not-ok），三段指纹和不成立的项写在节点注解上。机器人在用指有组件在 /run/rlark/in-use 下标着（Station 在服务一个 Run、设备层有会话接着，含遥操作）；电机上电、驱动在跑不算在用。会打断使用的事（规格要的整机重启和 kubelet 重启、人要求的重启、Orin 载荷换版本）叫维护，只在没人用时由节点调优自己做完一圈：在宿主机上拿一张租约（/run/rlark/s1u/maintenance），电源容器据此拒绝新的会话接入（Run 会看到 maintenance 和原因）并把机器人临时降到这件事需要的程度（整机重启：停驱动并下电；重启 kubelet：只停驱动；换载荷：不降），做完或租约到期后按原来的期望状态恢复，期望状态本身从不改写，所以人下电的机器人做完仍是下电。急停按下或硬件报错时不开始。进行到哪一步在节点标签 rlark.io/maintenance-state（none / waiting / queued / lowering / acting / failed）和注解 rlark.io/maintenance（做什么、为什么等、从何时起）。
+  2. Orin（orin）：经机器人内网把本机器人的 Orin 对到声明：x86 经 Orin 上网的单元（s1u-orin-uplink）、相机的 USB 规则（Orbbec 和 RealSense 两家的设备归 Orin 账户）和相机容器请求的单路相机 USB 复位（按 Orin 上 /etc/config/camera_info.json 里的序列号找设备）、站点的 adb 密钥，以及 orinPayloads 声明的载荷（镜像里的 /payload，按版本放到 Orin、开机自启、节点调优为它拿到维护租约时才切换）。没有人登录 Orin。Orin 的 ssh 主机密钥首次信任后记在节点上，变了就停下，等人在节点注解 s1u.rlark.io/orin-host-key-confirm 上确认新的指纹。状态：标签 s1u.rlark.io/orin-state，注解 s1u.rlark.io/orin。
+  3. 时钟（clock）：声明了站点时间源时，微调厂商时间链源头那块网卡硬件时钟的速率，把机器人的 x86 和 Orin 一起对到站点时间；不改厂商的进程和文件。差 100 ms 以上时直接跳一次，只在驱动没跑、没有 Run 认领、没有组件标着在用时跳（Run 里的时间戳从不跳）；没人认领又空闲、驱动在跑的机器人由节点调优做一圈维护（kind clock：停驱动、跳、放开后电源容器按期望拉回）。时间源是站点 Hub 的隧道地址，Hub 上的 station-gateway 在那里用 SNTP 给出 Hub 自己的时间。没声明时什么都不做。状态：标签 rlark.io/clock-state，注解 rlark.io/clock-report（offset_ms 等）。
+  4. 电源（power）：机器人该是什么样是它的期望状态，记在 RLark 的节点对象上：节点标签 rlark.io/robot-power = off / powered（上电、驱动不跑）/ ready（上电、驱动在跑），在控制台站点节点页上改（单台四个按钮：上电、启动驱动、关闭驱动、下电；批量：勾选多台或全选后“上电并启动驱动”“关闭驱动并下电”）或经网关改；没有这个标签的机器人按 ready 对待，所以新入网的机器人自动上电、启动驱动（在节点调优本次开机第一次表态之后：规格欠一次重启的新机器先重启、再第一次上电）。本容器每几秒对一次账，机器人不在任何任务里时也一样：该上电而没电就上电，该跑驱动而驱动掉了（崩了、或有人在厂商页面上停了）就重新启动，并把这次恢复记下来；急停被按下或硬件报错时不重拉，停在 estop / fault，解除后再收敛；一次没拉起来的，隔 30 秒、60 秒……最长 10 分钟再试。往下只在人把期望状态调低时做一次（先停驱动，手臂缓缓下落，5 秒后再下电），并等到没有组件标着机器人在用；认领机器人的 Run 可经网关 POST nodes/<节点>/robot-restart 要一次重启（driver：停驱动、等手臂落下、再起驱动；power：中间再下电 10 秒），期望状态不动，只在认领者是它、在用标记都写着它的 Run、没有维护时做，进度在节点注解 rlark.io/power.restart；节点调优持有维护租约期间按租约临时降低、不往上拉，租约结束后恢复；期望是 off 或 powered 而机器人更高时不动它。任务用了机器人（设备层在会话接入时在本机 socket 上按 bring_up）就不管原来的期望把它拉起来，并且从这时起这台机器人的期望就是 ready，任务结束后也是，直到有人在 RLark 上重新设置（标签值可以带“.设置时间”后缀，节点页这样写，所以同一个状态再设一次也算新值）。当前生效的期望在节点标签 rlark.io/power-desired。现在的状态在节点标签 rlark.io/power-state（off / powered / ready / estop / fault / unknown），期望、为什么没在收敛、最近几次自动恢复在节点注解 rlark.io/power。厂商控制中心的按钮（电源 / 启动 / 重启，外加 bring_up、shut_down）仍在本机 Unix socket /run/rlark/services/s1u-power.sock 上，规则同厂商页面；把机器人压到期望状态以下的按键会被拒绝（要下电请在 RLark 上改期望状态）。同一个 socket 上还有厂商页面的“初始姿势”（POST /pose {"pose":"home","action":"hold"|"stop"}，经网关 POST nodes/<节点>/robot-pose 由节点 agent 转到这里）：按住时第一次向厂商 web 服务（S1U_ROS_IP_ADDRESS:5141 的 /msg）发 pose_running，之后每次按住续期，松手（stop）或 0.5 秒没有新的按住就发 pose_stop；没上电、驱动没跑、被 Run 占用或在用、维护中时拒绝。本容器还盯着自己的节点（只看这一个节点的 watch），把节点标签 rlark.io/robot-claim（哪个 Run 持有机器人，由网关授予、续期和结束）在一秒内镜像到宿主机 /run/rlark/s1u/claim（{"holder"}，没人持有时没有这个文件）；管理面不可达时文件保持原样。
+  5. 相机（video）：机器人相机的唯一出口和看护。从启动起一直订阅本机体的各路相机（节点标签 rlark.io/robot-body：s1u 是 head、torso、wrist_left、wrist_right，s1u_observer 是 head、torso；厂商的压缩话题，不解码），在节点地址的 18891 端口只读地给出：GET /cameras（状态 JSON）、/cameras/<view>.jpg、/cameras/<view>/stream?fps=N（multipart JPEG 原样转发）、/cameras/wall.jpg 和 /cameras/wall/stream（四路 2x2 缩略图，256x144）。RLark 的网关经集群 API 代理到这个端口并做鉴权（GET /api/v1/rlinf.io/v1alpha1/nodes/{name}/cameras…），控制台节点页和应用都从网关看。每路相机的状态只看话题本身：ok / slow（低于 10 帧每秒持续 30 秒）/ stale（5 秒没有帧）/ absent（启动以来没见过）。没有帧的相机按阶梯自动恢复，每路相机各走各的，有没有 Run 在用都做，每一步在节点上记一条事件：先重启厂商相机驱动（最多 3 次，间隔 60 秒起翻倍到 900 秒；所有相机约 25 秒没画面；开机后驱动也是这样被拉起的），再请 orin 容器对没画面的那几路做 USB 复位并再重启一次驱动（这次重启也算给其余还有重启次数的没画面相机），仍不行就是 stuck（相机需要断电或 USB 复位）；USB 复位后 5 分钟内又停的直接 stuck（疑似硬件：复位管不住，需要断电或现场检查接线）。USB 复位没做成（ssh、Orin 或 orin 容器不通）不重启驱动，按这路相机的间隔再请；Orin 的 USB 上没有这路相机的直接 stuck 并写明复位没做。stuck 的相机退出阶梯，只在机器人没人用时每小时重启一次驱动（每次驱动重启都会让好的相机断帧约 25 秒，有 Run 在用时不做），直到它又连续 5 分钟有画面，或改接到别的 USB 口（路径变了；复位不改路径），从阶梯开头重来；机器人整机重启（控制台的“重启”、断电再开）后相机容器也从头开始；控制台的启动/关闭驱动不重启 ROS master，不解除 stuck。其余相机照常走各自的阶梯。stuck 时 orin 容器在 Orin 上只读地查一次，诊断写进事件 CameraStuck 和这路相机的 diagnosis：在不在 USB 上、在哪个口（路径、速率、经几级 hub）、厂商相机进程在不在、Orbbec SDK 打开的相机日志里彩色和深度流是否还在。orin 容器每分钟报一次各路相机在 USB 上的位置（usb），一路相机所在 hub 上的相机比同一根口下另一个 hub 上的少时给出建议（usb_advice：建议改接独立根口），只是建议、不改状态。容器启动后的前 90 秒不动手；帧率低的相机只重启驱动、每小时最多一次。状态：节点标签 rlark.io/camera-state（ok / recovering / degraded / stuck），注解 rlark.io/cameras（和 GET /cameras 相同的 JSON）。
+  6. 设备层（device，声明了 deviceImage 才有）：持有机器人 SDK 连接的程序，镜像由用机器人的应用提供（镜像里的 /device/start）。机器人是哪台、什么机体由节点调优从节点标签 rlark.io/robot-id、rlark.io/robot-body 写到宿主机 /run/rlark/s1u/robot.json，不用按台配置。有会话接到没上电的机器人时，设备层自己经电源服务上电、启动驱动。它自己跑机器人自检：没上电时每分钟跑不用上电的项（ROS master、厂商监控、机体的各路相机；相机的驱动和恢复归上面的相机容器，设备层只看自己收到的帧），上电后每分钟、以及每次会话接入时跑全部项（关节反馈、驱动故障、关节、夹爪、相机），接入时没过就拒绝这次会话并写明是哪一项；结果由节点调优发到节点标签 rlark.io/self-check-state（ok / failed / pending）和注解 rlark.io/self-check（JSON，最长 2000 字符，太长时截短的是各项的说明）。
+  7. Station（station，声明了 deviceImage 才有，同一个镜像的 /device/start --station）：机器人上常驻的 Station。机器人被一个 Run 占用（/run/rlark/s1u/claim）时，带站点令牌向 stationControlURL 取这个 Run 的连接参数，起 Ray 节点和 Run 的 env worker（经 /run/fleet 接设备层），期间在 /run/rlark/in-use 下标着在用；占用换了或没了就退出。它有自己的内存上限（请求 2 GiB、上限 2.25 GiB：整个 Pod 的上限加起来放得进节点规格给 Pod 的内存，失控的 env worker 才只让这个容器重启）和自己的 /dev/shm（内存卷 1 GiB，Ray 的 object store）；Pod 停止时给 60 秒退出。
+  会让机器人离线或停工的动作（规格要的重启、载荷换版本）按 rollout 分批放行：节点标签 rlark.io/rollout-wave 是批次，rolloutParallel 是同时进行的台数上限。人要求的整机重启：节点标签 rlark.io/restart-request（任意值，同一个值只做一次），结果在注解 rlark.io/restart-request-state。
+  宿主机上的文件都在 /etc/rlark/s1u、/run/rlark/s1u、/var/lib/rlark/s1u 和带 rlark-s1u 名字的单元与配置片段里；设备层读宿主机上的 /etc/rlark/s1u/node_profile.env 得到它的 CPU 和机器人地址。
+icon: cpu
+
+parameters:
+  - name: image
+    displayName: 镜像
+    description: |
+      本 Addon 的镜像（RLark 构建，extensions/s1u），带 digest，例如 registry.rlark.internal:5443/rlark/s1u-robot@sha256:…
+    type: string
+    default: ""
+    required: true
+
+  - name: nodeSelector
+    displayName: 节点选择器
+    description: |
+      S1U 机器人 x86 节点的标签（label=value）。入网时由 RLark 按准入记录打上。
+    type: string
+    default: "rlark.io/robot-model=s1u"
+    required: true
+
+  - name: reboot
+    displayName: 自动重启
+    description: |
+      节点规格需要重启才生效时怎么办。idle（默认）= 没人用时由节点调优自己做一圈维护：要整机重启的（新机器第一次装规格、内核隔离核变了），先让电源容器停驱动、等 5 秒、下电（参数 powerOff=attended 时电机带电的要等人下电），再经厂商的整机重启（Orin 和 x86 一起），回来后按原期望恢复；只要重启 kubelet 的，先停驱动，只重启 kubelet，Pod 不停，然后恢复。机器人在用（有 Run 或会话占着）时一直等，不算尝试，原因写在节点的报告注解里。重启确实发生而规格仍不成立的，这份规格不再重启；重启没有发生的，五分钟后再试，最多三次（记在节点注解 rlark.io/node-profile-restart 上）；90 秒没降下来的下一遍再试，五分钟仍没降下来算失败、一小时后重来。never = 只把标签置为 reboot-required / kubelet-restart-required，等运维重启。
+    type: enum
+    default: idle
+    options: [idle, never]
+    required: true
+
+  - name: timeSource
+    displayName: 站点时间源
+    description: |
+      机器人时钟要对到的 NTP 服务器（地址或名字，机器人经站点隧道能到），按站点声明，不依赖场地的路由器：站点 Hub 的隧道地址或它在 SiteNetwork names 里的名字（Hub 的 station-gateway 在隧道地址的 udp/123 上给出 Hub 的时间）。空 = 不对时，时钟按厂商自己的时间链走、clock-state 是 no_source。声明了就要求每台机器人 clock-state=locked（与它相差 50 ms 以内），否则节点不符合规格。
+    type: string
+    default: ""
+    required: false
+
+  - name: rollout
+    displayName: 分批执行
+    description: |
+      会让机器人离线或停工的动作（规格需要的整机重启和 kubelet 重启、Orin 载荷切换版本）怎么放行。staged（默认）= 分批：节点标签 rlark.io/rollout-wave 是批次（整数，没有标签的是最后一批）；一批要等更早各批里 Ready 的机器人都用同一个镜像做完满 rolloutSeconds、至少一台做完、没有一台失败，才动手。paused = 所有机器人都不做这些动作。all = 不分批、也不限同时台数，各台只看自己是否没人用。每台在哪一步、在等谁：节点标签 rlark.io/rollout-state 和注解 rlark.io/rollout。Pod 本身由 RLark 的滚动换版本（先 1 台，再每批 Ready 机器人的 10%，只换没人用的机器人，离线的回来后再换）；本参数拦的是换完 Pod 之后的动作。
+    type: enum
+    default: staged
+    options: [staged, paused, all]
+    required: true
+
+  - name: rolloutSeconds
+    displayName: 分批观察时长（秒）
+    description: 更早一批做完之后要保持多久，后一批才动手。
+    type: string
+    default: "600"
+    required: true
+
+  - name: rolloutParallel
+    displayName: 同时维护的台数
+    description: |
+      同一时刻最多有多少台机器人在做维护（持有维护租约：正在降下来、重启或切换载荷）。整数，或站点机器人总数的百分比（如 10%，向上取整，至少 1）。可以做的机器人先在节点上登记排队（maintenance-state=queued），按登记先后拿租约；拿了租约没回来的机器人一直占着名额；有一台用这个镜像做维护失败时，其余的都不开始，等人处理。rollout=all 时不限。
+    type: string
+    default: "10%"
+    required: true
+
+  - name: powerOff
+    displayName: 维护时下电
+    description: |
+      维护需要下电时（整机重启）怎么办。下电一律按机型的固定顺序：先停驱动（手臂缓缓下落），等节点规格里的 S1U_DRIVER_STOP_SECONDS（S1U 为 5 秒）之后再下电；节点页的按钮、期望状态调低、维护一圈都走这个顺序。unattended（默认）= 没人用时节点调优自己让电源容器按这个顺序停驱动、下电，再重启，回来后按原期望恢复。attended = 电机带电的机器人不自己下电，维护一直等（maintenance-state=waiting，原因写明），直到有人在节点页把它下电，然后自己重启；重启后期望仍是下电，由人再上电。电机本来就没电的机器人（包括全新入网、还没上过电的）和人要求的重启两种取值下都直接做。急停、硬件报错时都不开始。只停驱动的维护（重启 kubelet）不受此参数影响。
+    type: enum
+    default: unattended
+    options: [unattended, attended]
+    required: true
+
+  - name: profile
+    displayName: 节点规格
+    description: |
+      installed（默认）= 让宿主机符合节点规格并保持。removed = 撤除：把宿主机上节点规格写的文件全部删掉、内核命令行恢复成装规格之前的（下次开机起生效，不自己重启）；Orin 上的载荷（各自的 install remove）、相机的 USB 规则、adb 密钥和本 Addon 的登录公钥一并删除（在没有 Run 或会话占着时）；时钟的微调归零。x86 经 Orin 上网的单元留着：那是机器人到站点的路。三个标签都变成 removed 之后再卸载本 Addon。
+    type: enum
+    default: installed
+    options: [installed, removed]
+    required: true
+
+  - name: orinPayloads
+    displayName: Orin 上的载荷
+    description: |
+      要放到 Orin 上并开机自启的东西，NAME=IMAGE，多个用英文逗号分隔，例如 quest-bridge=registry.rlark.internal:5443/fleet/quest-bridge@sha256:…。每个镜像里 /payload 目录就是载荷（镜像需带 /bin/sh 和 cp）：其中可执行的 install 由 root 在 Orin 上执行——install 放置并启用它的单元，install restart 切到新版本时启动，install remove 撤除；同目录的 rlark.env 给出机器人的地址和账户。版本是 /payload 内容的哈希。不再声明的载荷会被撤除。空 = 没有载荷。
+    type: string
+    default: ""
+    required: false
+
+  - name: orinRetiredUnits
+    displayName: Orin 上要撤掉的旧单元
+    description: |
+      换名以前留在 Orin 上、做同一件事的 systemd 单元名（不带 .service），多个用英文逗号分隔：停掉、删除，并立刻重启 s1u-orin-uplink（停旧单元会删掉两者共有的转发规则）。只在换名那一批用，之后清空。
+    type: string
+    default: ""
+    required: false
+
+  - name: deviceImage
+    displayName: 设备层镜像
+    description: |
+      机器人设备层的镜像（带 digest），由用机器人的应用提供，例如 registry.rlark.internal:5443/fleet/robot@sha256:…。镜像里可执行的 /device/start 就是设备层，/device/start --station 是机器人上常驻的 Station。空 = 这个站点不放设备层和 Station。
+    type: string
+    default: ""
+    required: false
+
+  - name: stationControlURL
+    displayName: Station 的控制地址
+    description: |
+      Station 取 Run 连接参数的地址：站点常驻的应用控制面（SiteNetwork 名字表里的名字加端口），例如 http://fleet-dashboard.rlark.internal:33334。声明了 deviceImage 时必填。这个名字要先在 SiteNetwork 里、已写进每台机器人的 /etc/hosts，再设这个值或升级到带 Station 的版本：容器的 /etc/hosts 是它启动时宿主机那份的拷贝，之后加的名字它看不到。每个站点一个值，所有机器人相同。
+    type: string
+    default: ""
+    requiredWith: deviceImage
+
+  - name: deviceData
+    displayName: 设备层的数据目录
+    description: 宿主机上设备层放数据的目录（会话录下、还没上传的数据）；它下面的 run 子目录里是应用的 Station 接设备层用的 socket。每个站点一个值，所有机器人相同。
+    type: string
+    default: /var/lib/rlark/s1u/device
+    required: true
+
+  - name: deviceTokenSecret
+    displayName: 设备层令牌的 Secret
+    description: rlark-system 里的站点级 Secret（键 site_token）：应用的控制面写机器人时出示的令牌，设备层用它核对。声明了 deviceImage 时必须存在。
+    type: string
+    default: s1u-device-token
+    required: true
+
+  - name: orinAccessSecret
+    displayName: Orin 登录凭据的 Secret
+    description: |
+      rlark-system 里的站点级 Secret：ssh_key（x86 登录 Orin 的私钥）、password（Orin 账户的口令，也是 sudo 的），可选 adb_key（头显信任的 adb 私钥，放到 Orin 的 ~/.android/adbkey_rlark）。只以内存卷挂进 orin 容器。
+    type: string
+    default: s1u-orin-access
+    required: true
+
+  - name: imagePullSecret
+    displayName: 拉镜像的 Secret
+    description: |
+      rlark-system 里拉本 Addon 镜像和载荷镜像用的 Secret 名（RLark「镜像仓库」凭据分发到本集群的 ir-…）。Addon 的 Pod 要在这里写明；仓库不要认证时留空。
+    type: string
+    default: ""
+    required: false

@@ -65,11 +65,49 @@ export function hasNodeCategory(node: CRDNode, category: NodeCategory) {
   return getNodeCategories(node).includes(category);
 }
 
+const CONTROL_PLANE_ROLE_LABELS = [
+  "node-role.kubernetes.io/control-plane",
+  "node-role.kubernetes.io/master",
+];
+
+export function isControlPlaneLabels(labels: Record<string, string> | undefined): boolean {
+  if (!labels) return false;
+  const kubernetesRole = labels["kubernetes.io/role"];
+  return (
+    CONTROL_PLANE_ROLE_LABELS.some((label) => label in labels) ||
+    kubernetesRole === "master" ||
+    kubernetesRole === "control-plane"
+  );
+}
+
 // Reports whether a Node belongs to the RLark fleet and therefore appears in
 // the Worker view. RLark-managed nodes are marked with NODE_ENABLED_LABEL;
 // category labels only group Workers, and the Kubernetes role does not gate
 // visibility.
 export function isBusinessWorkerNode(node: CRDNode): boolean {
   const labels = getNodeAllLabels(node);
-  return labels[NODE_ENABLED_LABEL] === "true";
+  return node.status?.observedNodeLabels !== undefined
+    ? (labels[NODE_ENABLED_LABEL] ?? node.metadata.labels?.[NODE_ENABLED_LABEL]) === "true"
+    : isLegacyBusinessWorkerNode(node);
+}
+
+function isLegacyBusinessWorkerNode(node: CRDNode): boolean {
+  const labels = node.metadata.labels ?? {};
+  const isControlPlane = isControlPlaneLabels(labels);
+  const resources = {
+    ...(node.status?.capacity ?? {}),
+    ...(node.status?.allocatable ?? {}),
+  };
+  const hasWorkloadDevice = Object.entries(resources).some(
+    ([name, value]) =>
+      Number.parseFloat(value) > 0 &&
+      (/(^|[./-])gpu($|[./-])/i.test(name) ||
+        name === "rlinf.io/device" ||
+        name.startsWith("rlinf.io/device-")),
+  );
+  return (
+    (!isControlPlane || labels["rlark.io/enabled"] === "true") &&
+    (getNodeCategories(node).some((category) => category !== "unknown") ||
+      hasWorkloadDevice)
+  );
 }

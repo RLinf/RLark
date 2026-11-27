@@ -1,0 +1,118 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: station-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: station-agent
+  namespace: station-system
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: station-api-reader
+  namespace: station-system
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-api-member-reader
+  namespace: station-system
+rules:
+- apiGroups: [""]
+  resources: ["pods", "serviceaccounts"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-api-member-reader
+  namespace: station-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-api-member-reader
+subjects:
+- kind: ServiceAccount
+  name: station-api-reader
+  namespace: station-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: station-api-member-identity
+rules:
+- apiGroups: ["authentication.k8s.io"]
+  resources: ["tokenreviews"]
+  verbs: ["create"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: station-api-member-identity
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: station-api-member-identity
+subjects:
+- kind: ServiceAccount
+  name: station-api-reader
+  namespace: station-system
+---
+# Node admission by one-time code: Station API hands the admitted machine a
+# short-lived kubeadm join token and the hash of the cluster CA.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-api-join-token
+  namespace: kube-system
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-api-join-token
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-api-join-token
+subjects:
+- kind: ServiceAccount
+  name: station-api-reader
+  namespace: station-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: station-api-cluster-info
+  namespace: kube-public
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["cluster-info"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: station-api-cluster-info
+  namespace: kube-public
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: station-api-cluster-info
+subjects:
+- kind: ServiceAccount
+  name: station-api-reader
+  namespace: station-system

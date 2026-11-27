@@ -1,0 +1,122 @@
+package addons
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"reflect"
+	"testing"
+
+	"go.yaml.in/yaml/v3"
+	appsv1 "k8s.io/api/apps/v1"
+)
+
+func TestRcloneSelectorsValidateAndDefault(t *testing.T) {
+	addon, _ := Catalog.Get("csi-driver-rclone")
+	for _, name := range []string{"nodeSelector", "controllerNodeSelector"} {
+		for _, value := range []string{"missing-equals", "a=b=c", "bad key=value", "valid/key=bad value"} {
+			if _, err := addon.Render(map[string]string{name: value}, "rlark-system", "csi", "uid"); err == nil {
+				t.Errorf("accepted invalid %s %q", name, value)
+			}
+		}
+	}
+	manifests, err := addon.Render(nil, "rlark-system", "csi", "uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, manifest := range manifests {
+		decoder := yaml.NewDecoder(bytes.NewReader(manifest.Raw))
+		for {
+			var resource map[string]any
+			if err := decoder.Decode(&resource); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if resource["kind"] != "Deployment" {
+				continue
+			}
+			pod := resource["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+			if _, ok := pod["nodeSelector"]; ok {
+				t.Fatal("default controller unexpectedly restricts placement")
+			}
+		}
+	}
+}
+
+func TestRclonePreservesExistingPodsWithOnDelete(t *testing.T) {
+	addon, _ := Catalog.Get("csi-driver-rclone")
+	manifests, err := addon.Render(map[string]string{"nodeUpdateStrategy": "OnDelete", "nodeImagePullPolicy": "IfNotPresent"}, "rlark-system", "csi", "uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, manifest := range manifests {
+		decoder := yaml.NewDecoder(bytes.NewReader(manifest.Raw))
+		for {
+			var resource map[string]any
+			if err := decoder.Decode(&resource); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if resource["kind"] != "DaemonSet" {
+				continue
+			}
+			spec := resource["spec"].(map[string]any)
+			strategy := spec["updateStrategy"].(map[string]any)
+			if strategy["type"] != "OnDelete" || strategy["rollingUpdate"] != nil {
+				t.Fatalf("unexpected strategy: %v", strategy)
+			}
+			pod := spec["template"].(map[string]any)["spec"].(map[string]any)
+			if pod["nodeSelector"] != nil {
+				t.Fatal("default node placement restricted")
+			}
+			for _, c := range pod["containers"].([]any) {
+				if c.(map[string]any)["imagePullPolicy"] != "IfNotPresent" {
+					t.Fatalf("unexpected container: %v", c)
+				}
+			}
+		}
+	}
+	for _, values := range []map[string]string{{"nodeUpdateStrategy": "invalid"}, {"nodeImagePullPolicy": "Never"}} {
+		if _, err := addon.Render(values, "rlark-system", "csi", "uid"); err == nil {
+			t.Fatal("invalid strategy accepted")
+		}
+	}
+}
+
+func TestRcloneControllerFollowsItsSelector(t *testing.T) {
+	found := false
+	for _, object := range render(t, "csi-driver-rclone", map[string]string{"controllerNodeSelector": "kubernetes.io/hostname=worker-1"}) {
+		deployment, ok := object.(*appsv1.Deployment)
+		if !ok {
+			continue
+		}
+		found = true
+		if deployment.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"] != "worker-1" {
+			t.Fatalf("unexpected controller selector: %v", deployment.Spec.Template.Spec.NodeSelector)
+		}
+	}
+	if !found {
+		t.Fatal("controller deployment not rendered")
+	}
+}
+
+// Item.Render repeats the official embeddedAddon.Render (parameter defaults, template data and functions). Every
+// built-in item must come out of both the same (the bytes, or the error of a value a template cannot take), so a change official RLark makes to its own shows here.
+func TestItemsRenderAsTheOfficialRegistryDoes(t *testing.T) {
+	for name, item := range Catalog.builtIn {
+		values := map[string]string{}
+		for _, p := range item.meta.Parameters {
+			if p.Required && p.Default == "" {
+				values[p.Name] = "value"
+			}
+		}
+		official, _ := Registry.Get(name)
+		want, wantErr := official.Render(values, "rlark-system", name, "uid")
+		got, err := item.Render(values, "rlark-system", name, "uid")
+		if fmt.Sprint(err) != fmt.Sprint(wantErr) || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s renders differently from the official registry: official %v, item %v", name, wantErr, err)
+		}
+	}
+}

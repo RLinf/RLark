@@ -32,8 +32,59 @@ export interface ICluster {
     "agentNamespace": string;
     "cordoned"?: boolean;
     "delisted"?: boolean;
+    /**
+     * DisplayName is a human-readable name; metadata.name remains the stable cluster ID.
+     */
+    "displayName"?: string;
     "drainPreviousCordoned"?: boolean;
     "draining"?: boolean;
+    /**
+     * NodeAgents declares the cluster's node Agents. The cluster Agent keeps them as one DaemonSet,
+     * so a Kubernetes Node that joins and matches the selector gets its node Agent without further action.
+     */
+    "nodeAgents"?: {
+      /**
+       * Enabled makes the cluster Agent keep the node Agent DaemonSet; false makes it remove the DaemonSet.
+       */
+      "enabled": boolean;
+      /**
+       * Image is the node Agents' image. It is the node Agents' own: neither the cluster Agent's image nor the
+       * image of the tools the cluster Agent gives Task Pods (its --image), so that each of the three is replaced
+       * by itself. Required while Enabled; without it the cluster Agent leaves the DaemonSet as it is.
+       */
+      "image"?: string;
+      /**
+       * NodeSelector selects the Kubernetes Nodes that run a node Agent. It defaults to rlark.io/enabled=true,
+       * the label that makes RLark manage a Kubernetes Node.
+       */
+      "nodeSelector"?: {
+        [key: string]: string;
+      };
+      /**
+       * Rollout is how the node Agents are replaced when their DaemonSet changes. Absent, the defaults of
+       * RolloutPolicy: one node first, then a tenth of the ready nodes at a time.
+       */
+      "rollout"?: {
+        /**
+         * Canary is how many nodes get the new Pod first. Until that many new Pods
+         * are available (ready for the DaemonSet's minReadySeconds), no other node
+         * is touched, so a template that does not work stops there. Defaults to 1.
+         */
+        "canary"?: number;
+        /**
+         * MaxUnavailable bounds how many ready nodes may be without an available
+         * Pod at once after the canary: a number, or a percentage of the ready
+         * nodes rounded up. Defaults to 10%.
+         */
+        "maxUnavailable"?: number | string;
+        /**
+         * WhenIdle replaces a Pod only while its Node's rlark.io/in-use annotation
+         * is reported and empty: for a workload that must not be interrupted while
+         * its machine works, such as what runs on a robot.
+         */
+        "whenIdle"?: boolean;
+      };
+    };
   };
   /**
    * ClusterStatus reports the controller's current observation of a data-plane cluster.

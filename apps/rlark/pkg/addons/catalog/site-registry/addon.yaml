@@ -1,0 +1,158 @@
+name: site-registry
+displayName: 站点镜像仓库
+category: other
+version: v0.3.0
+description: |
+  站点的私有镜像仓库。每个站点一个仓库、一份存储：云上放在 S3 兼容的对象存储（KS3），站点放在仓库所在节点的本地卷里；一个镜像两个站点都要用，按摘要在两边各放一份（发布时拷）。
+  role=registry：一个仓库进程（Deployment，宿主机网络，钉在带 nodeSelector 标签的节点上），HTTPS + htpasswd 认证，可推可拉，可按摘要删除（之后跑垃圾回收才释放空间）。storage=s3 时内容在对象存储；storage=filesystem 时在节点上 dataDir 这个独立的定长卷里。
+  role=mirror：每个节点一个只读缓存（DaemonSet，宿主机网络，建议只监听 127.0.0.1），直接读存储、不需要认证，由 registry-trust 的“优先端点”指过来。
+  role=cache：站点的拉取穿透缓存（Deployment，宿主机网络，钉在带 nodeSelector 标签的节点上；标签换到别的节点，缓存随之换机器，在新节点上从空开始）。镜像层存在该节点本地目录，第一次从上游源站（upstream，一般是 https://origin.rlark.internal:5443）取并留一份，之后从本地给；只读，推送请走源站。认证、TLS 与 registry 相同，所以客户端凭据不变。同一层被多个客户端同时首次拉取时，只有第一个落盘，其余各自回源，所以发布新镜像后先用参数 prewarm 预热（本 Addon 就绪即预热完成），再换各节点的引用。源站不通时缓存照常启动，已有的层照常给。缓存目录所在盘写满时，没缓存过的层拉取失败。
+  本地卷（registry 的 dataDir、cache 的 cacheDir）须是与节点根盘分开的独立卷：给了 volumeSize，本 Addon 在所选节点上建好并挂上（/var/lib/rlark/volumes/<目录名>.img，同一目录同一个卷，定长 ext4，开机由 systemd 挂载，和入网安装包的节点卷同一做法；已是独立卷的目录原样用；卷已有时只校验大小，不扩缩），不停节点；不给就只校验它是独立卷。
+  密钥都不在参数里：存储的访问密钥、htpasswd、TLS 证书和私钥、http secret、回源账号放在一个 RLark 密钥对象里（键 s3-accesskey、s3-secretkey、http-secret、htpasswd、tls.crt、tls.key、proxy-username、proxy-password；mirror 只用前三个，cache 和 storage=filesystem 的 registry 不用 s3-*），分发到装本 Addon 的集群。
+  镜像须不依赖本仓库就能拉到（入网引导包预置或公网按 digest）。
+icon: package
+
+parameters:
+  - name: role
+    displayName: 角色
+    type: enum
+    default: registry
+    options: [registry, mirror, cache]
+    required: true
+
+  - name: storage
+    displayName: 存储
+    description: role=registry 时内容放哪：s3（对象存储，云上）或 filesystem（节点本地卷 dataDir，站点）
+    type: enum
+    default: s3
+    options: [s3, filesystem]
+    required: false
+
+  - name: dataDir
+    displayName: 仓库目录
+    description: role=registry、storage=filesystem 时节点上存放仓库内容的目录，须是独立的定长卷（见 volumeSize）
+    type: string
+    default: /var/lib/rlark/site-registry
+    required: false
+
+  - name: volumeSize
+    displayName: 卷大小
+    description: 本地卷（dataDir 或 cacheDir）的大小，例如 300G。给了就由本 Addon 在节点上建好并挂上；建好后不能改
+    type: string
+    default: ""
+    required: false
+
+  - name: image
+    displayName: 仓库镜像
+    description: distribution（registry:3）镜像，按 digest 引用
+    type: string
+    default: ""
+    required: true
+
+  - name: listen
+    displayName: 监听地址
+    description: host:port，例如 0.0.0.0:5443（registry）或 127.0.0.1:5444（mirror）
+    type: string
+    default: ""
+    required: true
+
+  - name: localListen
+    displayName: 本机入口
+    description: role=registry 时可选，例如 127.0.0.1:5443：同一份存储在节点本机回环上再开一个入口，HTTP、不要账号，只有这台机器上的进程能用（管理机上的发布命令读写本站仓库，不在机器上放密码）
+    type: string
+    default: ""
+    required: false
+
+  - name: nodeSelector
+    displayName: 节点选择
+    description: role=registry 或 cache 时所在节点的标签 label=value
+    type: string
+    default: rlark.io/site-registry=true
+    required: false
+
+  - name: secret
+    displayName: 密钥对象
+    description: 分发到本集群 rlark-system 的 RLark 密钥对象名
+    type: string
+    default: site-registry
+    required: true
+
+  - name: s3Bucket
+    displayName: 存储桶
+    type: string
+    default: ""
+    required: false
+
+  - name: s3Region
+    displayName: 区域
+    type: string
+    default: ""
+    required: false
+
+  - name: s3Endpoint
+    displayName: 存储端点
+    description: 例如 https://ks3-cn-ningxia.ksyuncs.com；云上节点用内网端点
+    type: string
+    default: ""
+    required: false
+
+  - name: s3RootDirectory
+    displayName: 存储根目录
+    type: string
+    default: ""
+    required: false
+
+  - name: upstream
+    displayName: 上游源站
+    description: role=cache 时回源的地址，例如 https://origin.rlark.internal:5443（名字由 SiteNetwork 的全局名字表解析）
+    type: string
+    default: ""
+    required: false
+
+  - name: caCert
+    displayName: 上游 CA
+    description: role=cache 时签发上游证书的 CA（PEM）
+    type: text
+    default: ""
+    required: false
+
+  - name: cacheDir
+    displayName: 缓存目录
+    description: role=cache 时节点上存放镜像层的目录，须是独立的定长卷（见 volumeSize）
+    type: string
+    default: /var/lib/rlark/site-cache
+    required: false
+
+  - name: ttl
+    displayName: 缓存保留时间
+    description: role=cache 时一层在缓存里保留多久（从放进缓存起算），例如 336h
+    type: string
+    default: 336h
+    required: false
+
+  - name: relayImage
+    displayName: 中继镜像
+    description: role=cache 或 storage=s3 的 registry 时随仓库运行的 rlark-tools idle-relay（RLark 镜像，按 digest 引用）。仓库读源站或对象存储都经过它，连接静默超过 relayIdle 就断开，让这次读失败重来，而不是一直挂着
+    type: string
+    default: ""
+    required: true
+
+  - name: relayPort
+    displayName: 中继端口
+    description: 中继在节点本机回环上监听的端口
+    type: string
+    default: "5480"
+    required: false
+
+  - name: relayIdle
+    displayName: 静默断开时间
+    type: string
+    default: 60s
+    required: false
+
+  - name: prewarm
+    displayName: 预热镜像
+    description: role=cache 时预先经本缓存拉一遍的镜像（逗号分隔，按 digest 引用，例如 registry.rlark.internal:5443/fleet/robot@sha256:…）。发布新镜像后先改这里，等本 Addon 就绪再换各节点的镜像引用
+    type: string
+    default: ""
+    required: false

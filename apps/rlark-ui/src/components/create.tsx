@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, X } from "lucide-react";
 import type { CRDNodeLite } from "../types";
+import { NodeName } from "../astribot/components/NodeName";
 import {
   isValidRoleName,
   parseNodeSelectorStr,
@@ -247,7 +248,7 @@ export function NodeSelectorPicker({
                       "node-dot " + (n.status?.phase ?? "").toLowerCase()
                     }
                   />
-                  <code>{n.metadata.name}</code>
+                  <NodeName node={n} />
                 </div>
               ))}
             </div>

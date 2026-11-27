@@ -1,3 +1,6 @@
+import { ClusterName } from "../astribot/components/ClusterName";
+import { NodeName } from "../astribot/components/NodeName";
+import { useClusters } from "../astribot/components/useClusters";
 import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
@@ -33,8 +36,8 @@ import {
 } from "../utils/nodeBatchMetadata";
 import { useAutoRefresh } from "../hooks";
 import { MetricCard, RefreshOverlay, StatusBadge } from "../components/shared";
-import { NodeResourceBrowser } from "../components/NodeResourceBrowser";
-import { ClusterDetailReal, NodeDetailReal } from "../pages/Clusters";
+import { NodeResourceBrowser } from "../astribot/components/NodeResourceBrowser";
+import { ClusterDetailReal, NodeDetailReal } from "../astribot/pages/Clusters";
 
 // Administrator-managed Node metadata lives on the management Node CR as
 // annotations. It is not derived from the data-plane Kubernetes Node, so these
@@ -74,6 +77,7 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
   const [selectedClusterNs, setSelectedClusterNs] = useState<string | null>(
     null,
   );
+  const clusters = useClusters();
 
   const fetchNodes = async (isInitial = true) => {
     if (isInitial) setLoading(true);
@@ -274,7 +278,7 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
                 <span>
                   <CloudCog size={15} />
                 </span>
-                <strong>{ns}</strong>
+                <strong><ClusterName clusters={clusters} namespace={ns} /></strong>
                 <small>
                   {nsNodes.length} {zh ? "节点" : "nodes"}
                 </small>
@@ -283,7 +287,7 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
           </div>
         </div>
         <ClusterDetailReal
-          namespace={selectedCluster?.[0] ?? ""}
+          name={<ClusterName clusters={clusters} namespace={selectedCluster?.[0] ?? ""} />}
           nodes={selectedClusterNodes}
           copy={c}
         />
@@ -317,7 +321,7 @@ export function ClustersOverviewAdminPage({ copy: c }: { copy: Copy }) {
                   </span>
                   <StatusBadge phase={phase} copy={c} />
                 </div>
-                <strong>{ns}</strong>
+                <strong><ClusterName clusters={clusters} namespace={ns} /></strong>
                 <small>
                   {nsNodes.length} {zh ? "节点" : "nodes"}
                 </small>
@@ -414,7 +418,7 @@ export function NodeCategoryColumn({
                 onClick={() => onSelectNode(node.metadata.name)}
               >
                 <span className={"node-status-ring " + phase.toLowerCase()} />
-                <span className="node-row-name">{node.metadata.name}</span>
+                <span className="node-row-name"><NodeName node={node} /></span>
                 <StatusBadge phase={phase} copy={c} />
               </div>
             );
@@ -449,6 +453,7 @@ export function NodeDetailPanel({
   onUpdateAnnotation: (key: string, value: string) => void;
   onNewLabelKey: (v: string) => void;
   onNewLabelValue: (v: string) => void;
+  onDisplayNameSaved: (node: CRDNode) => void;
 }) {
   const { zh, c } = ctx;
   const isEditing = ctx.editingNode === nodeKey(node);
@@ -984,6 +989,7 @@ export function AdminPage({
   onNavigate: (sub?: string) => void;
 }) {
   const zh = c.nav.overview === "总览";
+  const clusters = useClusters();
   const [nodes, setNodes] = useState<CRDNode[]>([]);
   const [nodeWorkloads, setNodeWorkloads] = useState<
     Record<string, { jobs: string[]; workers: number }>
@@ -1207,8 +1213,8 @@ export function AdminPage({
             ? `确认对节点“${node.metadata.name}”执行暂停调度吗？执行后将停止把新的 RLark 任务调度到该节点，节点上的其他工作负载不受影响，已运行任务也不会被终止。`
             : `Pause scheduling on node "${node.metadata.name}"? New RLark tasks will stop being scheduled to it. Other workloads on the node are unaffected and running tasks remain active.`
           : zh
-            ? `确认对节点“${node.metadata.name}”执行恢复调度吗？仅恢复向该节点调度新任务；被排空停止的任务需先取消驱逐才会恢复。`
-            : `Resume scheduling on node "${node.metadata.name}"? This only allows new tasks to be scheduled to it; tasks stopped by a drain resume only after you cancel the drain.`,
+            ? `确认恢复节点“${node.metadata.name}”的调度吗？被排空停止的任务需要显式启动对应的任务（Job）才会恢复。`
+            : `Resume scheduling on node "${node.metadata.name}"? Explicitly start the corresponding Job to resume tasks stopped by the drain.`,
       )
     )
       return;
@@ -1277,8 +1283,8 @@ export function AdminPage({
     if (
       !confirm(
         zh
-          ? `确认对节点"${node.metadata.name}"执行排空？将停止该节点接收新任务，并尝试将现有任务重调度到其他节点。该操作会同时暂停节点调度（Cordon）。`
-          : `Drain node "${node.metadata.name}"? This will stop the node from accepting new tasks and attempt to reschedule running tasks. It will also cordon the node.`,
+          ? `确认排空节点“${node.metadata.name}”吗？系统会暂停向该节点调度新任务，并停止该节点上受排空影响的 RLark 任务。请显式启动对应的任务（Job）以恢复运行。`
+          : `Drain node "${node.metadata.name}"? This pauses new scheduling and stops affected RLark tasks on the node. Explicitly start the corresponding Job to resume them.`,
       )
     )
       return;
@@ -1567,6 +1573,7 @@ export function AdminPage({
     onUpdateAnnotation: updateAnnotation,
     onNewLabelKey: setNewLabelKey,
     onNewLabelValue: setNewLabelValue,
+    onDisplayNameSaved: (saved: CRDNode) => setNodes((current) => current.map((n) => (n.metadata.namespace === saved.metadata.namespace && n.metadata.name === saved.metadata.name ? saved : n))),
   };
 
   const selectedNodeObj =
@@ -2047,6 +2054,7 @@ export function AdminPage({
       ) : (
         <NodeResourceBrowser
           nodes={nodes}
+          clusters={clusters}
           copy={c}
           onRefresh={handleRefresh}
           refreshing={refreshing}

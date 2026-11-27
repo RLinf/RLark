@@ -68,6 +68,15 @@ export interface IWorkflow {
             "nodeSelector"?: {
               [key: string]: string;
             };
+            /**
+             * PerNode runs one instance of the Task on every node that NodeSelector
+             * matches, like a Kubernetes DaemonSet or a cloud daemon service: a node
+             * that joins the class gets an instance, a node that leaves takes its
+             * instance with it, and neither changes the Task's spec. The class of nodes
+             * must lie in one cluster. On Kubernetes the carrier is
+             * rlinf.io/kubernetes-daemonset; a per-node Task cannot be a Job's head.
+             */
+            "perNode"?: boolean;
           };
           /**
            * TaskRole 描述 Task 在业务编排中的角色，用于前端分组与展示。

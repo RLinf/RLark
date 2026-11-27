@@ -48,6 +48,7 @@ type StorageClassData struct {
 	TenantID         string   `json:"tenantID"`
 	CreatedBy        string   `json:"createdBy,omitempty"`
 	CreatedAt        string   `json:"createdAt"`
+	astribotStorageClassData
 }
 
 // Provider 定义存储提供商信息.
@@ -85,6 +86,9 @@ func (g *Gateway) listStorageClass(c *gin.Context) {
 			Name: stored.Name, StorageClassName: id, Clusters: clusters, Description: stored.Description, Bucket: stored.Bucket,
 			Provider: stored.Provider, Endpoint: stored.Endpoint, Region: stored.Region, PathStyle: stored.PathStyle,
 			AccessKeyId: maskStorageAccessKeyID(stored.AccessKeyID), TenantID: tenant.IDOf(&secrets[i]), CreatedBy: secrets[i].Annotations[tenant.CreatedByAnnotation], CreatedAt: secrets[i].CreationTimestamp.UTC().Format(time.RFC3339),
+		}
+		if !describeAstribotStorage(c, data[stored.Name], id, stored) {
+			return
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"data": data, "success": true})
@@ -170,6 +174,7 @@ type storedStorageClass struct {
 	Bucket      string   `json:"bucket"`
 	Region      string   `json:"region"`
 	PathStyle   bool     `json:"path_style"`
+	astribotStoredStorageClass
 }
 
 func newStorageClassID() string {
@@ -205,6 +210,7 @@ type CreateStorageClassRequest struct {
 	Bucket          string `json:"bucket"`
 	Region          string `json:"region"`
 	PathStyle       bool   `json:"path_style"`
+	astribotStorageClassRequest
 }
 
 // ssSecretTemplate is the rclone remote config rendered into the StorageClass
@@ -233,6 +239,9 @@ func (g *Gateway) createStorageClass(c *gin.Context) {
 		respondError(c, http.StatusBadRequest, CodeInvalidRequestBody, err.Error())
 		return
 	}
+	if !g.borrowStorageCredentials(c, &req) {
+		return
+	}
 	stored, err := normalizeStorageClass(req)
 	if err != nil {
 		respondStorageClassValidationError(c, err)
@@ -242,9 +251,12 @@ func (g *Gateway) createStorageClass(c *gin.Context) {
 		respondStorageClassCredentialValidationError(c, err)
 		return
 	}
+	if !g.storageNameFree(c, stored.Name) {
+		return
+	}
 	for range storageClassCreateAttempts {
 		id := newStorageClassID()
-		secret, err := buildStorageClassReplicationSecret(g.managementNamespace(), id, stored)
+		secret, err := buildAstribotStorageReplicationSecret(g.managementNamespace(), id, stored)
 		if err != nil {
 			respondError(c, http.StatusInternalServerError, CodeInternalError, err.Error())
 			return
@@ -255,6 +267,9 @@ func (g *Gateway) createStorageClass(c *gin.Context) {
 				continue
 			}
 			respondKubeError(c, fmt.Sprintf("create storage class replication: %v", err), err)
+			return
+		}
+		if !g.storageDeclarationWritten(c, secret, &stored) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"success": true})
@@ -275,31 +290,9 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 	if req.Name == "" {
 		req.Name = name
 	}
-	if req.Name != name {
-		respondError(c, http.StatusBadRequest, CodeInvalidRequest, "storage class name cannot be changed")
+	identity, ok := g.prepareStorageUpdate(c, name, &req)
+	if !ok {
 		return
-	}
-	if req.AccessKeyId == "" || isMaskedStorageAccessKeyID(req.AccessKeyId) || req.AccessKeySecret == "" {
-		secret, err := getStorageClassSecretByName(c.Request.Context(), g.rawClient, g.managementNamespace(), name)
-		if err != nil {
-			if errors.IsNotFound(err) {
-				respondError(c, http.StatusNotFound, CodeResourceNotFound, "storage class not found")
-				return
-			}
-			respondKubeError(c, fmt.Sprintf("get storage class replication: %v", err), err)
-			return
-		}
-		_, existing, err := storageClassFromSecret(secret)
-		if err != nil {
-			respondKubeError(c, fmt.Sprintf("decode storage class replication: %v", err), err)
-			return
-		}
-		if req.AccessKeyId == "" || isMaskedStorageAccessKeyID(req.AccessKeyId) {
-			req.AccessKeyId = existing.AccessKeyID
-		}
-		if req.AccessKeySecret == "" {
-			req.AccessKeySecret = existing.AccessKey
-		}
 	}
 	stored, err := normalizeStorageClass(req)
 	if err != nil {
@@ -319,6 +312,9 @@ func (g *Gateway) updateStorageClass(c *gin.Context) {
 		return
 	}
 	g.invalidateStorageClients(name)
+	if !g.storageDeclarationWritten(c, identity, &stored, name, stored.Name) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
@@ -343,6 +339,9 @@ func (g *Gateway) deleteStorageClass(c *gin.Context) {
 		respondKubeError(c, fmt.Sprintf("delete storage class replication: %v", err), err)
 		return
 	}
+	if !g.storageDeclarationWritten(c, secret, nil, name) {
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
@@ -358,6 +357,9 @@ func requiredStorageClassFields(req CreateStorageClassRequest) []string {
 	var fields []string
 	if strings.TrimSpace(req.Name) == "" {
 		fields = append(fields, "name")
+	}
+	if normalizeStorageType(req.Type) != storageTypeS3 {
+		return append(fields, requiredAstribotStorageFields(req)...)
 	}
 	if strings.TrimSpace(req.Bucket) == "" {
 		fields = append(fields, "bucket")
@@ -378,6 +380,9 @@ func respondStorageClassValidationError(c *gin.Context, err error) {
 }
 
 var validateStorageClassCredentials = func(ctx context.Context, stored storedStorageClass) error {
+	if stored.Type != storageTypeS3 {
+		return validateAstribotStorage(ctx, stored)
+	}
 	config := storage.DefaultConfig()
 	config.Provider = stored.Provider
 	config.Endpoint = stored.Endpoint
@@ -400,11 +405,14 @@ var validateStorageClassCredentials = func(ctx context.Context, stored storedSto
 
 func respondStorageClassCredentialValidationError(c *gin.Context, err error) {
 	log.FromContext(c.Request.Context()).Error(err, "storage credential validation failed")
-	respondError(c, http.StatusBadRequest, CodeInvalidRequest, "storage credentials cannot access the configured bucket")
+	respondError(c, http.StatusBadRequest, CodeInvalidRequest, storageCredentialErrorMessage(err))
 }
 
 func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, error) {
 	name := strings.TrimSpace(req.Name)
+	if err := checkStorageType(req.Type); err != nil {
+		return storedStorageClass{}, err
+	}
 	if fields := requiredStorageClassFields(req); len(fields) != 0 {
 		return storedStorageClass{}, &storageClassValidationError{fields: fields}
 	}
@@ -424,6 +432,9 @@ func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, e
 	}
 	sort.Strings(clusters)
 	clusters = slices.Compact(clusters)
+	if stored, ours, err := normalizeAstribotStorage(req, name, clusters); ours || err != nil {
+		return stored, err
+	}
 	// Provider 必须来自已知目录: rclone 对未知 provider 只记录告警并回退到通用
 	// 配置, 错误取值在数据面只表现为挂载后的 I/O 错误. 这里同时把历史客户端提交
 	// 的展示名(如 "Aliyun OSS")改写为 canonical 取值.
@@ -437,12 +448,12 @@ func normalizeStorageClass(req CreateStorageClassRequest) (storedStorageClass, e
 	if err != nil {
 		return storedStorageClass{}, err
 	}
-	return storedStorageClass{
+	return normalizeS3StorageMount(req, storedStorageClass{
 		Version: storageClassVersion, Name: name, Description: req.Description, Clusters: clusters,
 		Provider: provider.Value, Endpoint: endpoint, AccessKeyID: req.AccessKeyId, AccessKey: req.AccessKeySecret,
 		Bucket: req.Bucket, Region: strings.TrimSpace(req.Region),
 		PathStyle: storage.EffectivePathStyle(provider.Value, req.PathStyle),
-	}, nil
+	})
 }
 
 func buildStorageClassReplicationSecret(namespace, id string, stored storedStorageClass) (*v1.Secret, error) {
@@ -536,6 +547,9 @@ func storageClassFromSecret(secret *v1.Secret) (string, storedStorageClass, erro
 	if stored.Version != storageClassVersion {
 		return "", storedStorageClass{}, fmt.Errorf("unsupported storage class version %q", stored.Version)
 	}
+	if stored.Type = normalizeStorageType(stored.Type); stored.Type != storageTypeS3 {
+		return id, stored, nil
+	}
 	// 读取历史记录时把 provider 的展示名改写为 canonical 取值, 并按该 provider
 	// 实际支持的寻址方式修正 path_style, 使旧记录与新写入的记录行为一致.
 	if provider, ok := storage.LookupProvider(stored.Provider); ok {
@@ -582,7 +596,7 @@ func (g *Gateway) updateStorageClassByName(ctx context.Context, name string, sto
 		if err != nil {
 			return errors.NewNotFound(v1.Resource("secrets"), secret.Name)
 		}
-		rebuilt, err := buildStorageClassReplicationSecret(secret.Namespace, id, stored)
+		rebuilt, err := buildAstribotStorageReplicationSecret(secret.Namespace, id, stored)
 		if err != nil {
 			return err
 		}
@@ -623,6 +637,9 @@ func (g *Gateway) getStorageClient(ctx context.Context, name string) (*storage.C
 	if err != nil {
 		return nil, fmt.Errorf("decode storage class declaration: %w", err)
 	}
+	if stored.Type != storageTypeS3 {
+		return nil, errStorageBrowsingUnsupported
+	}
 	config := storage.DefaultConfig()
 	config.Provider = stored.Provider
 	config.Endpoint = stored.Endpoint
@@ -648,7 +665,7 @@ func (g *Gateway) listStorageClassFiles(c *gin.Context) {
 
 	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
+		respondStorageClientError(c, err)
 		return
 	}
 
@@ -698,7 +715,7 @@ func (g *Gateway) uploadStorageClassFile(c *gin.Context) {
 
 	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
+		respondStorageClientError(c, err)
 		return
 	}
 
@@ -734,7 +751,7 @@ func (g *Gateway) getStorageClassObject(c *gin.Context) {
 
 	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
+		respondStorageClientError(c, err)
 		return
 	}
 
@@ -766,7 +783,7 @@ func (g *Gateway) deleteStorageClassObject(c *gin.Context) {
 
 	client, err := g.getStorageClient(c.Request.Context(), name)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, CodeUpstreamUnavailable, err.Error())
+		respondStorageClientError(c, err)
 		return
 	}
 

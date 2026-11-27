@@ -35,6 +35,10 @@ func (c *FakeRlinfV1alpha1) Clusters() v1alpha1.ClusterInterface {
 	return newFakeClusters(c)
 }
 
+func (c *FakeRlinfV1alpha1) ClusterProvisions() v1alpha1.ClusterProvisionInterface {
+	return newFakeClusterProvisions(c)
+}
+
 func (c *FakeRlinfV1alpha1) ClusterUpgradeJobs(namespace string) v1alpha1.ClusterUpgradeJobInterface {
 	return newFakeClusterUpgradeJobs(c, namespace)
 }
@@ -53,6 +57,10 @@ func (c *FakeRlinfV1alpha1) Jobs() v1alpha1.JobInterface {
 
 func (c *FakeRlinfV1alpha1) Nodes(namespace string) v1alpha1.NodeInterface {
 	return newFakeNodes(c, namespace)
+}
+
+func (c *FakeRlinfV1alpha1) NodeJoins() v1alpha1.NodeJoinInterface {
+	return newFakeNodeJoins(c)
 }
 
 func (c *FakeRlinfV1alpha1) Pods(namespace string) v1alpha1.PodInterface {

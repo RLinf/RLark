@@ -36,6 +36,10 @@ export interface INode {
      */
     "agentType"?: "Kubernetes" | "Docker" | "Raw";
     /**
+     * DisplayName is the operator's name; metadata.name remains the node identity.
+     */
+    "displayName"?: string;
+    /**
      * Identity is set by the management API or control plane when the Node is registered.
      */
     "identity"?: {

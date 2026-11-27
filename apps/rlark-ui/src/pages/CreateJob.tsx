@@ -66,12 +66,12 @@ function formatImageUsage(usedAt: string, useCount: number, zh: boolean) {
 }
 import { Check, ChevronDown, Plus, Trash2, X } from "lucide-react";
 import {
-  storageClasses as mockStorageClasses,
   type Cluster,
   clusters,
   type Job,
   type JobType,
 } from "../data";
+import { mockStorageClasses } from "../astribot/mockBackend";
 import type { Copy } from "../i18n";
 import type { RoleResource } from "../types";
 import type { JobTag } from "../data";
@@ -97,6 +97,9 @@ import { useNodeLabels } from "../utils/nodes";
 import { nodeAvailabilityState } from "../utils/nodeState";
 import { imageReferenceHasWhitespace } from "../utils/imageReference";
 import { RoleNameInput } from "../components/create";
+import { RegistryImagePicker } from "../astribot/components/RegistryImagePicker";
+import { StorageMountOptions } from "../astribot/components/StorageMountOptions";
+import { RealName } from "../astribot/components/NodeName";
 import { CodeEditorField } from "../components/CodeEditor";
 import { TagEditor } from "../components/TagEditor";
 import { ResourcePlacementPicker } from "../components/ResourcePlacementPicker";
@@ -126,7 +129,7 @@ function ClusterSelect({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const selected = clusters.find(
-    (cluster) => cluster.id === value || cluster.name === value,
+    (cluster) => cluster.id === value,
   );
 
   useEffect(() => {
@@ -163,7 +166,7 @@ function ClusterSelect({
 
   const optionContent = (cluster: Cluster) => (
     <>
-      <strong>{cluster.name}</strong>
+      <strong><RealName label={cluster.name} name={cluster.id} /></strong>
       <span className="worker-cluster-type">{typeLabel(cluster)}</span>
       <span className={`worker-cluster-state ${cluster.phase.toLowerCase()}`}>
         <i aria-hidden="true" />
@@ -202,7 +205,7 @@ function ClusterSelect({
       {open && (
         <div className="worker-cluster-options" role="listbox">
           {clusters.map((cluster) => {
-            const active = cluster.id === value || cluster.name === value;
+            const active = cluster.id === value;
             return (
               <button
                 type="button"
@@ -344,7 +347,6 @@ export function CreateJobModal({
   const [storageClassFetched, setStorageClassFetched] = useState(false);
   const [clustersLoaded, setClustersLoaded] = useState(false);
   const [recentImages, setRecentImages] = useState<ImageUsage[]>([]);
-  const [imagePickerRole, setImagePickerRole] = useState<string | null>(null);
   const lastFetchedStorageClusterRef = useRef<string>("");
   const inferenceDoneRef = useRef(false);
 
@@ -485,8 +487,9 @@ export function CreateJobModal({
         description?: string;
         bucket?: string;
       }>(cluster);
+      // A Job's volume names the storage; RLark resolves the StorageClass.
       const storageClassList = Object.values(data).map((sc) => ({
-        id: sc.storageClassName,
+        id: sc.name,
         name: sc.name,
         description: sc.description || "",
         bucket: sc.bucket || "",
@@ -528,7 +531,8 @@ export function CreateJobModal({
           objectStorage: m.objectStorage ?? "",
           mountPath: m.mountPath ?? "",
           hostPath: m.hostPath ?? m.objectStorage ?? "",
-          pvcSizeGb: m.pvcSizeGb ?? 10,
+          profile: m.profile ?? "",
+          readOnly: m.readOnly ?? false,
           ...(m.rawVolume ? { rawVolume: m.rawVolume } : {}),
         })),
         ...(res.advanced?.sharedMemorySize
@@ -615,9 +619,7 @@ export function CreateJobModal({
       const next = Object.fromEntries(
         Object.entries(prev).map(([role, resource]) => {
           const matchedCluster = availableClusters.find(
-            (cluster) =>
-              cluster.id === resource.cluster ||
-              cluster.name === resource.cluster,
+            (cluster) => cluster.id === resource.cluster,
           );
           const nextCluster = matchedCluster?.id ?? availableClusters[0].id;
           if (nextCluster !== resource.cluster) changed = true;
@@ -875,8 +877,8 @@ export function CreateJobModal({
   const updateRRMount = (
     role: string,
     i: number,
-    field: "objectStorage" | "mountPath" | "type" | "hostPath" | "pvcSizeGb",
-    v: string | number,
+    field: "objectStorage" | "mountPath" | "type" | "hostPath" | "profile" | "readOnly",
+    v: string | boolean,
   ) => {
     setRoleResources((prev) => {
       const rr = prev[role];
@@ -895,7 +897,8 @@ export function CreateJobModal({
           objectStorage: "",
           mountPath: "",
           hostPath: "",
-          pvcSizeGb: 10,
+          profile: "",
+          readOnly: false,
         },
       ];
       return { ...prev, [role]: { ...rr, mounts: newMounts } };
@@ -1158,14 +1161,6 @@ export function CreateJobModal({
             return zh
               ? `${role} 需要选择对象存储。`
               : `${role} needs an object storage class.`;
-          if (mount.type === "storage") {
-            const size = Number(mount.pvcSizeGb);
-            if (isNaN(size) || size < 1 || size > 200) {
-              return zh
-                ? `${role} 的存储大小必须在 1 到 200 Gi 之间。`
-                : `${role}'s PVC size must be between 1 and 200 Gi.`;
-            }
-          }
         }
         const shmSize = resource?.advanced?.sharedMemorySize;
         if (shmSize) {
@@ -1574,74 +1569,12 @@ export function CreateJobModal({
                           <div className="form-section-head">
                             <small>{zh ? "镜像" : "Image"}</small>
                           </div>
-                          <div className="image-picker">
-                            <input
-                              value={rr.image}
-                              onFocus={() => {
-                                fetchRecentImages();
-                                setImagePickerRole(role);
-                              }}
-                              onChange={(e) => {
-                                updateRR(role, "image", e.target.value);
-                                setImagePickerRole(role);
-                              }}
-                              onBlur={() =>
-                                window.setTimeout(
-                                  () => setImagePickerRole(null),
-                                  150,
-                                )
-                              }
-                              className={
-                                imageHasWhitespace ? "input-invalid" : undefined
-                              }
-                              aria-invalid={imageHasWhitespace}
-                              aria-describedby={
-                                imageHasWhitespace ? imageErrorId : undefined
-                              }
-                              placeholder={
-                                zh
-                                  ? "例如：docker.io/library/ubuntu:22.04（需确保集群可访问）"
-                                  : "Example: docker.io/library/ubuntu:22.04 (must be cluster-accessible)"
-                              }
-                            />
-                            {imagePickerRole === role &&
-                              recentImages.length > 0 && (
-                                <div
-                                  className="image-picker-list"
-                                  role="listbox"
-                                >
-                                  {recentImages
-                                    .filter((item) =>
-                                      item.image
-                                        .toLowerCase()
-                                        .includes(
-                                          rr.image.trim().toLowerCase(),
-                                        ),
-                                    )
-                                    .map((item) => (
-                                      <button
-                                        type="button"
-                                        className="image-picker-option"
-                                        key={item.image}
-                                        onMouseDown={(event) => {
-                                          event.preventDefault();
-                                          updateRR(role, "image", item.image);
-                                          setImagePickerRole(null);
-                                        }}
-                                      >
-                                        <strong>{item.image}</strong>
-                                        <small>
-                                          {formatImageUsage(
-                                            item.lastUsedAt,
-                                            item.useCount,
-                                            zh,
-                                          )}
-                                        </small>
-                                      </button>
-                                    ))}
-                                </div>
-                              )}
-                          </div>
+                          <RegistryImagePicker
+                            zh={zh}
+                            value={rr.image}
+                            onChange={(image) => updateRR(role, "image", image)}
+                            recentImages={recentImages}
+                          />
                           {imageHasWhitespace && (
                             <small
                               className="field-validation-error"
@@ -1894,51 +1827,17 @@ export function CreateJobModal({
                                   />
                                 </label>
                                 {mount.type === "storage" && (
-                                  <label className="mount-field-box mount-size-field">
-                                    <span>
-                                      {zh ? "存储大小 (Gi)" : "PVC size (Gi)"}
-                                    </span>
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      max="200"
-                                      step="1"
-                                      value={mount.pvcSizeGb}
-                                      onChange={(e) =>
-                                        updateRRMount(
-                                          role,
-                                          index,
-                                          "pvcSizeGb",
-                                          e.target.value === ""
-                                            ? ""
-                                            : Number(e.target.value),
-                                        )
-                                      }
-                                      onBlur={(e) => {
-                                        const value = Number(e.target.value);
-                                        if (
-                                          isNaN(value) ||
-                                          value < 1 ||
-                                          value > 200
-                                        ) {
-                                          // 恢复默认值
-                                          updateRRMount(
-                                            role,
-                                            index,
-                                            "pvcSizeGb",
-                                            10,
-                                          );
-                                          // 显示错误提示
-                                          setError(
-                                            zh
-                                              ? "存储大小必须在 1 到 200 Gi 之间"
-                                              : "PVC size must be between 1 and 200 Gi",
-                                          );
-                                          setErrorNonce((n) => n + 1);
-                                        }
-                                      }}
-                                    />
-                                  </label>
+                                  <StorageMountOptions
+                                    zh={zh}
+                                    profile={mount.profile}
+                                    readOnly={mount.readOnly}
+                                    onProfile={(value) =>
+                                      updateRRMount(role, index, "profile", value)
+                                    }
+                                    onReadOnly={(value) =>
+                                      updateRRMount(role, index, "readOnly", value)
+                                    }
+                                  />
                                 )}
                                 <button
                                   className="icon-button danger"

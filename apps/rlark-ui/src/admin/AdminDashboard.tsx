@@ -21,6 +21,7 @@ import type { CRDJob } from "../crdModels";
 import { useAutoRefresh } from "../hooks";
 import { formatChinaDateTime } from "../utils/time";
 import { RefreshOverlay } from "../components/shared";
+import { NodeName } from "../astribot/components/NodeName";
 
 type DashboardData = {
   nodes: CRDNode[];
@@ -136,7 +137,7 @@ export function AdminDashboard({
         ...data.nodes.map((node) => ({
           id: `node-${node.metadata.name}`,
           type: zh ? "节点" : "Node",
-          name: node.metadata.name,
+          name: <NodeName node={node} />,
           resourceName: node.metadata.name,
           state: node.status?.phase ?? "Offline",
           time: node.metadata.creationTimestamp,
@@ -185,10 +186,10 @@ export function AdminDashboard({
 
   const actions = [
     {
-      label: zh ? "创建集群" : "Create cluster",
+      label: zh ? "新建集群" : "New cluster",
       description: zh
-        ? "接入新的计算或端侧集群"
-        : "Connect a compute or edge cluster",
+        ? "用一台机器建新场地的集群"
+        : "Make a new site's cluster from a machine",
       icon: PackagePlus,
       target: "create-cluster",
     },
@@ -369,7 +370,9 @@ export function AdminDashboard({
                   <AlertTriangle size={15} />
                 </span>
                 <div>
-                  <strong>{node.metadata.name}</strong>
+                  <strong>
+                    <NodeName node={node} />
+                  </strong>
                   <small>
                     {node.spec.unschedulable
                       ? zh

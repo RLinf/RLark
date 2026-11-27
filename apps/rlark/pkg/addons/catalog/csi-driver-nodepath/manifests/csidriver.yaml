@@ -1,0 +1,10 @@
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: nodepath.csi.rlark.io
+spec:
+  attachRequired: false
+  # The node plugin names the Pod in the event it records when the node remounts the storage.
+  podInfoOnMount: true
+  fsGroupPolicy: None
+  volumeLifecycleModes: [Persistent]

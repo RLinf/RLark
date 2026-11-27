@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .AddonName }}
+  namespace: rlark-system
+  labels:
+    app: {{ .AddonName }}
+  annotations:
+    rlark.io/not-ready-message: 包源出口不可用
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .AddonName }}
+  template:
+    metadata:
+      labels:
+        app: {{ .AddonName }}
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      nodeSelector:
+        {{ index (splitList "=" .Values.nodeSelector) 0 }}: {{ index (splitList "=" .Values.nodeSelector) 1 | printf "%q" }}
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: relay
+          image: {{ .Values.image }}
+          imagePullPolicy: IfNotPresent
+          # On the site tunnel's address alone: the node's other networks do not reach it. It ends when it cannot
+          # listen there, and the Addon is then not ready.
+          command: [rlark-tools, idle-relay, --interface, {{ .Values.interface | printf "%q" }}, --listen, ":{{ .Values.port }}", --idle, {{ .Values.idle | printf "%q" }}, --allow, {{ .Values.allow | printf "%q" }}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi

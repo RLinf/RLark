@@ -34,6 +34,9 @@ func TestRayKubernetesAdaptersCompileLegacyWorkloadWithoutResourceDrift(t *testi
 		{name: "statefulset", kind: kubernetesworkload.CarrierStatefulSet, new: func() workload.Adapter {
 			return kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace)
 		}},
+		{name: "daemonset", kind: kubernetesworkload.CarrierDaemonSet, new: func() workload.Adapter {
+			return kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace)
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			task := compileTask(test.kind)
@@ -82,6 +85,8 @@ func TestRayKubernetesAdaptersCompileLegacyWorkloadWithoutResourceDrift(t *testi
 				expected = kubernetesworkload.BuildDeployment(task, "runtime", spec, carrierReplicas(task))
 			case kubernetesworkload.CarrierStatefulSet:
 				expected = kubernetesworkload.BuildStatefulSet(task, "runtime", spec, carrierReplicas(task))
+			case kubernetesworkload.CarrierDaemonSet:
+				expected = kubernetesworkload.BuildDaemonSet(task, "runtime", spec, rlarkv1alpha1.RolloutPolicy{})
 			}
 			expectedJSON, _ := json.Marshal(expected)
 			if !jsonEqual(primary.Manifest.Object, expectedJSON) {
@@ -248,6 +253,21 @@ func TestRayKubernetesAdapterRejectsInvalidCarrierParameters(t *testing.T) {
 			kind:       kubernetesworkload.CarrierStatefulSet,
 			parameters: `{"replicas":1,"unknown":true}`,
 		},
+		{
+			name:       "daemonset replicas",
+			kind:       kubernetesworkload.CarrierDaemonSet,
+			parameters: `{"replicas":1}`,
+		},
+		{
+			name:       "daemonset zero maxUnavailable",
+			kind:       kubernetesworkload.CarrierDaemonSet,
+			parameters: `{"maxUnavailable":0}`,
+		},
+		{
+			name:       "daemonset maxUnavailable over 100%",
+			kind:       kubernetesworkload.CarrierDaemonSet,
+			parameters: `{"maxUnavailable":"150%"}`,
+		},
 	}
 
 	for _, test := range tests {
@@ -274,26 +294,6 @@ func TestRayKubernetesAdapterRejectsInvalidCarrierParameters(t *testing.T) {
 				t.Fatal("invalid carrier parameters were accepted")
 			}
 		})
-	}
-}
-
-func TestRayKubernetesAdapterRejectsDaemonSetCarrier(t *testing.T) {
-	task := compileTask(kubernetesworkload.CarrierDeployment)
-	task.Spec.Workload.Carrier.Type = "rlinf.io/kubernetes-daemonset"
-	task.Spec.Workload.Carrier.Parameters = apiextensionsv1.JSON{Raw: []byte(`{}`)}
-	snapshot, err := compatibility.DecodeTask(task)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = kubernetesworkload.NewAdapter(
-		workload.TypeID(taskapi.WorkloadTypeRay),
-		namespace,
-	).Compile(context.Background(), workload.CompileRequest{
-		Task:    snapshot,
-		Runtime: agentruntime.Info{Kind: compatibility.RuntimeKindKubernetes},
-	})
-	if err == nil {
-		t.Fatal("DaemonSet carrier was accepted")
 	}
 }
 
@@ -507,8 +507,20 @@ func TestRayKubernetesAdapterObserveUsesProjectedContainerNameAndFailedSchedulin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observation.Phase != workload.Phase(rlarkv1alpha1.TaskPhasePending) || observation.Message != "FailedScheduling" {
+	if observation.Phase != workload.Phase(rlarkv1alpha1.TaskPhasePending) || observation.Message != "FailedScheduling: no nodes" {
 		t.Fatalf("scheduling observation=%#v", observation)
+	}
+	// A Pod that was scheduled but cannot mount a volume says which and why;
+	// that comes before an earlier scheduling failure of the same Pod.
+	mount := agentruntime.InstanceCondition{Scope: "instance", Reason: "FailedMount", Message: `MountVolume.SetUp failed for volume "kpfs" : hostPath type check failed: /mnt/xc_kpfs/regular is not a directory`}
+	withMount := base
+	withMount.Instances = agentruntime.InstanceSnapshot{Instances: []agentruntime.Instance{{Name: "pod", Conditions: append([]agentruntime.InstanceCondition{mount}, base.Instances.Instances[0].Conditions...)}}}
+	observation, err = kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace).Observe(context.Background(), withMount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observation.Message != "FailedMount: "+mount.Message {
+		t.Fatalf("mount observation=%#v", observation)
 	}
 	base.Instances.Instances[0].Conditions = append(base.Instances.Instances[0].Conditions, agentruntime.InstanceCondition{Scope: "container", Subject: "trainer", Reason: "OOMKilled"})
 	observation, err = kubernetesworkload.NewAdapter(workload.TypeID(taskapi.WorkloadTypeRay), namespace).Observe(context.Background(), base)
@@ -582,11 +594,15 @@ func compileTask(kind string) *rlarkv1alpha1.Task {
 	replicas := int32(2)
 	carrierParameters, _ := json.Marshal(taskapi.KubernetesReplicatedCarrierParametersV1{Replicas: &replicas})
 	carrierType := taskapi.CarrierTypeKubernetesDeployment
-	if kind == kubernetesworkload.CarrierStatefulSet {
+	perNode := false
+	switch kind {
+	case kubernetesworkload.CarrierStatefulSet:
 		carrierType = taskapi.CarrierTypeKubernetesStatefulSet
+	case kubernetesworkload.CarrierDaemonSet:
+		carrierType, perNode, carrierParameters = taskapi.CarrierTypeKubernetesDaemonSet, true, nil
 	}
 	return &rlarkv1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "task", Namespace: "management", UID: types.UID("task-uid"), Generation: 3}, Spec: rlarkv1alpha1.TaskSpec{
-		Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "edge"}},
+		Placement: rlarkv1alpha1.TaskPlacementSpec{NodeSelector: map[string]string{"zone": "edge"}, PerNode: perNode},
 		Runtime:   rlarkv1alpha1.TaskRuntimeSpec{Kind: rlarkv1alpha1.RuntimeKindKubernetes},
 		Workload: rlarkv1alpha1.TaskWorkloadSpec{
 			Kind:       taskapi.WorkloadTypeRay,

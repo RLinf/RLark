@@ -28,6 +28,7 @@ import {
   StatusBadge,
 } from "../components/shared";
 import { OverviewChinaMap } from "../components/OverviewChinaMap";
+import { NodeName } from "../astribot/components/NodeName";
 
 export function Overview({
   navigate,
@@ -277,8 +278,12 @@ export function Overview({
                       <Bot size={17} />
                     </span>
                     <div>
-                      <strong>{n.metadata.name}</strong>
-                      <small>{model}</small>
+                      <strong>
+                        <NodeName node={n} />
+                      </strong>
+                      <small>
+                        {model}
+                      </small>
                     </div>
                     <StatusBadge phase={phase} copy={c} />
                   </div>

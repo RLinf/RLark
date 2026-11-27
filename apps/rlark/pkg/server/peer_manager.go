@@ -86,7 +86,7 @@ func (s *Server) runBroadcaster(ctx context.Context) error {
 		return fmt.Errorf("create leader elector: %w", err)
 	}
 
-	le.Run(ctx)
+	keepLeading(ctx, le)
 	return nil
 }
 

@@ -18,7 +18,8 @@ const (
 	EnvironmentVersionSharedMemoryV1 = "v1"
 )
 
-// RayRole 表示 Task 在 Ray 集群中的角色。
+// RayRole 表示 Task 在 Ray 集群中的角色。空值表示没有 Ray 角色：Job 没有
+// head 时它的 Task 不组成 Ray 集群，launcher 只运行 prepare 与 run 脚本。
 type RayRole string
 
 const (
@@ -33,7 +34,7 @@ type InlineScript struct {
 
 // RayExecutionParametersV1 是 rlinf.io/ray/v1 的参数合同。
 type RayExecutionParametersV1 struct {
-	Role          RayRole       `json:"role"`
+	Role          RayRole       `json:"role,omitempty"`
 	HeadTaskName  string        `json:"headTaskName,omitempty"`
 	TotalNodes    int32         `json:"totalNodes,omitempty"`
 	NodeRankStart int32         `json:"nodeRankStart,omitempty"`

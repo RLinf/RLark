@@ -12,11 +12,13 @@ const generatedHeader =
 const expectedKinds = [
   "Addon",
   "Cluster",
+  "ClusterProvision",
   "ClusterUpgradeJob",
   "Domain",
   "DomainPeer",
   "Job",
   "Node",
+  "NodeJoin",
   "Pod",
   "Task",
   "UpgradeJob",

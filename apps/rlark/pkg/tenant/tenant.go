@@ -16,6 +16,11 @@ const (
 
 	IDLabel             = "rlark.io/tenant-id"
 	CreatedByAnnotation = "rlark.io/created-by"
+
+	// SubmittedByAnnotation records the human username at submission time.
+	SubmittedByAnnotation = "rlark.io/submitted-by"
+	// SubmitterIDAnnotation records the stable IAM user ID when available.
+	SubmitterIDAnnotation = "rlark.io/submitter-id"
 )
 
 // Tenant describes a business tenant and its data-plane namespace placement.

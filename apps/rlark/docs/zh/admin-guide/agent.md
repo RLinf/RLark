@@ -166,7 +166,9 @@ Task root 和 secondary Pod watch 使用仅覆盖历史 workload namespace `rlar
 
 **Worker flag 升级/回滚：**从部署参数中移除 `--task-deployment-push-controller-workers` 和 `--task-statefulset-push-controller-workers`，改为 `--task-runtime-push-controller-workers`（默认 `8`）。旧名称不是 alias，会被拒绝。若旧值不同，应明确选择共享并发预算；取较大值可保留原来的每个 root 上限，但可能提高总并发。回滚到尚不支持统一 flag 的 Agent 时，恢复其支持的两个旧 flag。不要同时运行新旧 Agent 作为 workload/Task Status writer。
 
-Ray-on-Kubernetes Workload Adapter 支持 Deployment 和 StatefulSet carrier。
+Ray-on-Kubernetes Workload Adapter 支持 Deployment 和 StatefulSet。Astribot 的 `placement.perNode` 任务使用 DaemonSet，由同一观测组件观察工作负载和它控制的 Pod。观测器在 `rlark-system` 同时检查 Pod Event 的 `list/watch` 权限。挂载、挂接或调度失败事件触发重新观测，并按 Pod UID 排除过期事件。`--task-daemonset-push-controller-workers` 大于 0 时只覆盖 DaemonSet 观测的并发，0 时继承通用设置。
+
+完整调谐和定向观测通过同一 Task 状态写入器更新 `status.instances`，按 Task UID 和 generation 丢弃过期观测。任务停止或已无实例时清空实例快照，仅有 Condition 更新时保留快照。节点 Agent 在未指定 containerd socket 时读取自身节点声明的 socket。Astribot 的默认指标端口为 10381，就绪探针使用独立监听地址。
 
 Cluster Agent 启动后会立即执行一次修复扫描，随后按配置的抖动周期重复。每轮分页扫描分配给同一 Host 或符合该 Host 条件的 management Task，预算上限为 10,000 个 Task，并产生完整调谐 hint；扫描本身不直接修改 Task 或 Runtime 对象。Management API 的临时 List 失败会记录日志并在后续轮次重试，不会停止 Agent；trigger bridge 背压会按轮汇总，但不会阻止扫描继续访问后续 Task 和分页。禁用扫描会移除 watch event 丢失后的这一恢复路径，只有在其他运维机制能够保证最终收敛时才应这样做。
 
